@@ -37,7 +37,7 @@ describe('parseYamlFile', () => {
 describe('toYaml', () => {
   it('omits undefined values and writes multi-line strings as block scalars', () => {
     const text = toYaml({ a: 1, b: undefined, bib: '@misc{k,\n  t = {v}\n}' })
-    expect(text).not.toContain('b:')
+    expect(text).not.toMatch(/^b:/m)
     expect(text).toContain('bib: |-')
     expect(parse(text)).toEqual({ a: 1, bib: '@misc{k,\n  t = {v}\n}' })
   })
