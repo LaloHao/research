@@ -17,7 +17,7 @@ export interface WebCapture {
 const DOI_META = new Set(['citation_doi', 'prism.doi', 'dc.identifier', 'bepress_citation_doi'])
 const MIN_ARTICLE_CHARS = 200
 
-/** Publisher landing pages carry the identifiers Google Scholar reads; use them before scraping. */
+/** Publisher landing pages carry the identifiers scholarly indexers read; use them before scraping. */
 export function findScholarlyIds(html: string): { doi?: string; arxiv?: string } {
   const { document } = parseHTML(html)
   const out: { doi?: string; arxiv?: string } = {}
