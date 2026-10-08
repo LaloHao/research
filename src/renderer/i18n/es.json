@@ -1,0 +1,114 @@
+{
+  "app": { "loading": "Cargando…" },
+  "rail": { "library": "Biblioteca", "settings": "Ajustes" },
+  "welcome": {
+    "title": "Asistente de investigación",
+    "subtitle": "Crea un proyecto nuevo o abre una carpeta de proyecto existente.",
+    "name_label": "Nombre del proyecto",
+    "name_placeholder": "Mi tesis",
+    "create": "Crear proyecto…",
+    "open": "Abrir proyecto…",
+    "error": "No se pudo abrir el proyecto: {{message}}"
+  },
+  "settings": {
+    "title": "Ajustes",
+    "saved": "Guardado",
+    "project_section": "Proyecto",
+    "project_name": "Nombre",
+    "project_folder": "Carpeta",
+    "content_language": "Idioma del contenido generado",
+    "content_language_help": "Lo usarán las etapas siguientes para resúmenes y respuestas.",
+    "languages": { "en": "Inglés", "es": "Español" },
+    "pdf_policy_label": "PDFs",
+    "pdf_policy": {
+      "track": "Versionarlos con git",
+      "lfs": "Versionarlos con git LFS",
+      "untracked": "Guardarlos fuera de git (sincronízalos aparte)",
+      "download_on_demand": "No guardarlos: descargarlos al abrirlos (solo acceso abierto)"
+    },
+    "pdf_policy_help": "Aplica a los PDFs nuevos; los existentes no se mueven.",
+    "app_section": "Aplicación",
+    "contact_email": "Correo de contacto para Crossref y OpenAlex",
+    "contact_email_help": "Opcional. Con él, esos servicios atienden tus consultas con prioridad. Solo se envía a ellos.",
+    "close_project": "Cerrar proyecto"
+  },
+  "library": {
+    "search_placeholder": "Buscar en títulos, autores y texto…",
+    "add_placeholder": "DOI, arXiv o URL",
+    "add": "Agregar",
+    "drop_hint": "Suelta los PDFs para agregarlos",
+    "empty": "Tu biblioteca está vacía. Agrega un DOI, un ID de arXiv, una URL o arrastra PDFs.",
+    "no_results": "Sin resultados para «{{query}}».",
+    "count": "{{count}} papers",
+    "select_hint": "Selecciona un paper para verlo."
+  },
+  "badges": {
+    "problem": "Error en archivo",
+    "incomplete": "Metadatos incompletos",
+    "web": "Web",
+    "no_pdf": "Sin PDF"
+  },
+  "text_status": {
+    "pending": "Indexando…",
+    "ok": "Texto indexado",
+    "no_text": "PDF sin texto (escaneado)",
+    "no_source": "Sin texto",
+    "error": "Error al extraer el texto"
+  },
+  "jobs": {
+    "title": "Actividad",
+    "cancel": "Cancelar",
+    "ingest_identifier": "Agregar {{input}}",
+    "ingest_pdf": "Agregar {{file}}",
+    "update_metadata": "Completar metadatos de {{id}}",
+    "state": {
+      "queued": "En cola",
+      "running": "En curso",
+      "done": "Listo",
+      "failed": "Falló",
+      "cancelled": "Cancelado"
+    },
+    "outcome": {
+      "added": "agregado",
+      "merged": "actualizado",
+      "duplicate": "ya estaba en la biblioteca"
+    }
+  },
+  "errors": {
+    "invalid_identifier": "No reconozco eso como DOI, ID de arXiv o URL.",
+    "not_found": "No se encontró en el registro de DOIs.",
+    "network": "Error de red. Revisa tu conexión y reintenta.",
+    "unreadable_page": "La página no tiene un artículo legible.",
+    "not_a_pdf": "El archivo no es un PDF.",
+    "file_problem": "paper.yaml tiene un problema; corrígelo primero.",
+    "no_identifier": "Este paper no tiene DOI ni arXiv; escribe uno.",
+    "conflict": "El archivo cambió fuera de la app.",
+    "unknown": "Ocurrió un error inesperado."
+  },
+  "paper": {
+    "tabs": { "pdf": "PDF", "content": "Contenido", "notes": "Notas" },
+    "cite_key": "Clave de cita",
+    "copy_key": "Copiar",
+    "copied": "Copiado",
+    "open_link": "Abrir enlace",
+    "show_in_folder": "Mostrar en carpeta",
+    "problem_title": "No se puede leer paper.yaml",
+    "no_pdf": "Este paper no tiene PDF. Arrastra el archivo a la biblioteca para adjuntarlo.",
+    "pdf_loading": "Cargando PDF…",
+    "pdf_error": "No se pudo cargar el PDF: {{message}}",
+    "metadata": {
+      "incomplete": "Los metadatos están incompletos.",
+      "retry": "Reintentar",
+      "input_placeholder": "Pega un DOI o ID de arXiv",
+      "apply": "Completar"
+    }
+  },
+  "notes": {
+    "placeholder": "Escribe tus notas en Markdown…",
+    "saving": "Guardando…",
+    "saved": "Guardado",
+    "conflict": "Las notas cambiaron fuera de la app.",
+    "reload": "Recargar (descarta lo no guardado)",
+    "overwrite": "Sobrescribir con mi versión"
+  }
+}
