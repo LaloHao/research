@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, type IpcMainEvent } from 'electron'
+import { app, BrowserWindow, ipcMain, session, shell, type IpcMainEvent } from 'electron'
 import { join } from 'node:path'
 import { eventChannel, IPC } from '../shared/ipc'
 import { AppController } from './AppController'
@@ -65,30 +65,48 @@ function createWindow(): BrowserWindow {
   return win
 }
 
-app.whenReady().then(async () => {
-  registerIpc(controller, () => mainWindow)
-  try {
-    await controller.init()
-  } catch (error) {
-    console.error('startup', error)
-  } finally {
-    mainWindow = createWindow()
-  }
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) mainWindow = createWindow()
+function focusMainWindow(): void {
+  if (!mainWindow) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.focus()
+}
+
+/** The renderer only needs to copy to the clipboard; every other permission (camera, geolocation, …) is denied. */
+const ALLOWED_PERMISSIONS = new Set(['clipboard-sanitized-write'])
+
+function start(): void {
+  app.on('second-instance', focusMainWindow)
+
+  app.whenReady().then(async () => {
+    session.defaultSession.setPermissionRequestHandler((_contents, permission, callback) => callback(ALLOWED_PERMISSIONS.has(permission)))
+    registerIpc(controller, () => mainWindow)
+    try {
+      await controller.init()
+    } catch (error) {
+      console.error('startup', error)
+    } finally {
+      mainWindow = createWindow()
+    }
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) mainWindow = createWindow()
+    })
   })
-})
 
-app.on('before-quit', (event) => {
-  if (quitting) return
-  event.preventDefault()
-  quitting = true
-  void flushRenderer(mainWindow)
-    .then(() => controller.shutdown())
-    .catch((error) => console.error('shutdown', error))
-    .finally(() => app.quit())
-})
+  app.on('before-quit', (event) => {
+    if (quitting) return
+    event.preventDefault()
+    quitting = true
+    void flushRenderer(mainWindow)
+      .then(() => controller.shutdown())
+      .catch((error) => console.error('shutdown', error))
+      .finally(() => app.quit())
+  })
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
-})
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit()
+  })
+}
+
+// A second instance would open the same project and cache twice: hand over to the running one instead.
+if (app.requestSingleInstanceLock()) start()
+else app.quit()
