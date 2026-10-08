@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Database outage postmortem</title>
+    <meta property="og:site_name" content="Acme Engineering" />
+    <meta name="author" content="Jane Roe" />
+    <meta property="article:published_time" content="2024-03-01T10:00:00Z" />
+  </head>
+  <body>
+    <nav><a href="/">Home</a></nav>
+    <article>
+      <h1>Database outage postmortem</h1>
+      <h2>Summary</h2>
+      <p>At 09:12 UTC a configuration push disabled the connection pool and every request to the orders database started timing out. At 09:12 UTC a configuration push disabled the connection pool and every request to the orders database started timing out. At 09:12 UTC a configuration push disabled the connection pool and every request to the orders database started timing out.</p>
+      <h2>Timeline</h2>
+      <ul>
+        <li>09:12 config push</li>
+        <li>09:40 rollback</li>
+      </ul>
+      <p>Customer-facing impact lasted 28 minutes; no data was lost. Follow-up actions are tracked in the incident review.</p>
+    </article>
+    <footer>© Acme</footer>
+  </body>
+</html>
