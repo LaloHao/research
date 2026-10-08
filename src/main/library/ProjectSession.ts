@@ -1,12 +1,13 @@
 import { join } from 'node:path'
 import type { JobSpec } from '../../shared/jobs'
+import type { PaperDetail } from '../../shared/library'
 import { IndexCache } from '../cache/IndexCache'
 import { PdfjsExtractor, type PdfExtractor } from '../extract/PdfExtractor'
 import { HttpClient, type FetchFn } from '../ingest/http'
 import { MetadataResolver } from '../ingest/MetadataResolver'
 import { JobQueue } from '../jobs/JobQueue'
 import { ProjectStore } from '../project/ProjectStore'
-import { watchProject } from '../project/watcher'
+import { PAPER_FOLDER, watchProject } from '../project/watcher'
 import { LibraryService } from './LibraryService'
 
 export interface SessionOptions {
@@ -17,12 +18,16 @@ export interface SessionOptions {
   watch?: boolean
 }
 
-type SessionEvent = 'library' | 'jobs'
+type SessionEvent = 'library' | 'jobs' | 'project'
+
+/** Files whose external change alters the bibliography (paper.yaml, or the paper folder appearing or going away). */
+const BIB_FILES = new Set(['paper.yaml', PAPER_FOLDER])
 
 /** Everything that lives while one project is open. */
 export class ProjectSession {
-  private readonly listeners: Record<SessionEvent, Set<() => void>> = { library: new Set(), jobs: new Set() }
+  private readonly listeners: Record<SessionEvent, Set<() => void>> = { library: new Set(), jobs: new Set(), project: new Set() }
   private stopWatching: (() => void) | null = null
+  private readonly inFlight = new Set<Promise<unknown>>()
 
   private constructor(
     readonly store: ProjectStore,
@@ -52,17 +57,23 @@ export class ProjectSession {
     queue.start()
     if (opts.watch !== false) {
       session.stopWatching = watchProject(store.root, {
-        onPaper: (id) => {
-          library
-            .indexPaper(id)
-            .then(() => library.exportBib())
-            .then(() => session.emit('library'))
+        onPaper: (id, files) => {
+          // notes.md does not feed the index or the bibliography; the event still lets an open editor pick up an external edit.
+          const reindex = [...files].some((f) => f !== 'notes.md')
+          const reexport = [...files].some((f) => BIB_FILES.has(f))
+          void session
+            .track(
+              (async () => {
+                if (reindex) await library.indexPaper(id)
+                if (reexport) await library.exportBib()
+                session.emit('library')
+              })()
+            )
             .catch((error) => console.error('reindex', id, error))
         },
         onConfig: () => {
-          store
-            .reloadConfig()
-            .then(() => session.emit('library'))
+          void session
+            .track(store.reloadConfig().then(() => session.emit('project')))
             .catch((error) => console.error('project.yaml', error))
         }
       })
@@ -75,10 +86,27 @@ export class ProjectSession {
     return () => this.listeners[event].delete(listener)
   }
 
+  /** Registers work outside the job queue that uses the cache, so `close()` waits for it. */
+  track<T>(promise: Promise<T>): Promise<T> {
+    this.inFlight.add(promise)
+    const done = (): void => void this.inFlight.delete(promise)
+    promise.then(done, done)
+    return promise
+  }
+
+  readPdf(id: string): Promise<Uint8Array | null> {
+    return this.track(this.library.readPdf(id))
+  }
+
+  detail(id: string): Promise<PaperDetail> {
+    return this.track(this.library.detail(id))
+  }
+
   async close(): Promise<void> {
     this.stopWatching?.()
     this.stopWatching = null
     await this.queue.stop()
+    while (this.inFlight.size > 0) await Promise.allSettled([...this.inFlight])
     this.cache.close()
   }
 

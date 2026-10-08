@@ -103,6 +103,7 @@ export class AppController {
     this.session = session
     session.on('library', () => this.emit('library-changed'))
     session.on('jobs', () => this.emit('jobs-changed'))
+    session.on('project', () => this.emit('project-changed'))
     this.emit('project-changed')
   }
 }

@@ -44,6 +44,8 @@ export class LibraryService {
   private readonly listeners = new Set<() => void>()
   private readonly indexing = new Map<string, Promise<void>>()
   private readonly reading = new Map<string, Promise<Uint8Array | null>>()
+  private bibRun: Promise<void> | null = null
+  private bibNext: Promise<void> | null = null
   private addQueue: Promise<unknown> = Promise.resolve()
   private readonly now: () => Date
 
@@ -211,7 +213,24 @@ export class LibraryService {
     this.emit()
   }
 
-  async exportBib(): Promise<void> {
+  /** One export runs at a time; calls made meanwhile share a single trailing rerun, so the last write sees the latest state. */
+  exportBib(): Promise<void> {
+    if (!this.bibRun) {
+      this.bibRun = this.writeBib().finally(() => {
+        this.bibRun = null
+      })
+      return this.bibRun
+    }
+    this.bibNext ??= this.bibRun
+      .catch(() => undefined)
+      .then(() => {
+        this.bibNext = null
+        return this.exportBib()
+      })
+    return this.bibNext
+  }
+
+  private async writeBib(): Promise<void> {
     const { store } = this.deps
     const papers: Paper[] = []
     for (const id of await store.listPaperIds()) {

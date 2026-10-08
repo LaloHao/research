@@ -46,12 +46,76 @@ describe('ProjectSession', () => {
     session.queue.enqueue({ type: 'ingest_identifier', input: '10.1109/icws.2017.13' })
     await session.queue.whenIdle()
     const file = join(root, 'papers/he2017drain/paper.yaml')
-    await writeFile(file, (await readFile(file, 'utf8')).replace(/^title: .*$/m, 'title: Edited in Emacs'))
+    await writeFile(file, (await readFile(file, 'utf8')).replace(/^title: .*$/m, 'title: Edited in another editor'))
     const start = Date.now()
-    while (session.library.list()[0].title !== 'Edited in Emacs') {
+    while (session.library.list()[0].title !== 'Edited in another editor') {
       if (Date.now() - start > 3000) throw new Error('watcher did not reindex')
       await new Promise((r) => setTimeout(r, 50))
     }
     await session.close()
   })
+
+  it('waits for tracked work before closing the cache', async () => {
+    const session = await ProjectSession.create(await tmpDir(), 'Thesis', { contactEmail: '', fetch: routeFetch([]), watch: false })
+    let release!: () => void
+    let finished = false
+    const pending = session.track(
+      new Promise<void>((resolve) => (release = resolve)).then(() => {
+        session.library.list()
+        finished = true
+      })
+    )
+    const closing = session.close()
+    await new Promise((r) => setTimeout(r, 30))
+    expect(finished).toBe(false)
+    release()
+    await closing
+    await pending
+    expect(finished).toBe(true)
+  })
+
+  it('reindexes but does not re-export the bibliography when only notes change', async () => {
+    const root = await tmpDir()
+    const session = await ProjectSession.create(root, 'Thesis', { contactEmail: '', fetch: routeFetch(DRAIN_ROUTES) })
+    session.queue.enqueue({ type: 'ingest_identifier', input: '10.1109/icws.2017.13' })
+    await session.queue.whenIdle()
+    await new Promise((r) => setTimeout(r, 500))
+    let exports = 0
+    let changes = 0
+    const exportBib = session.library.exportBib.bind(session.library)
+    session.library.exportBib = () => {
+      exports++
+      return exportBib()
+    }
+    session.on('library', () => changes++)
+
+    await writeFile(join(root, 'papers/he2017drain/notes.md'), 'a note')
+    await waitFor(() => changes > 0)
+    expect(exports).toBe(0)
+
+    const file = join(root, 'papers/he2017drain/paper.yaml')
+    await writeFile(file, (await readFile(file, 'utf8')).replace(/^title: .*$/m, 'title: Renamed'))
+    await waitFor(() => exports > 0)
+    await session.close()
+  })
+
+  it('reports an external edit of project.yaml', async () => {
+    const root = await tmpDir()
+    const session = await ProjectSession.create(root, 'Thesis', { contactEmail: '', fetch: routeFetch([]) })
+    let changes = 0
+    session.on('project', () => changes++)
+    const file = join(root, 'project.yaml')
+    await writeFile(file, (await readFile(file, 'utf8')).replace(/^name: .*$/m, 'name: Renamed'))
+    await waitFor(() => changes > 0)
+    expect(session.store.config.name).toBe('Renamed')
+    await session.close()
+  })
 })
+
+async function waitFor(check: () => boolean, ms = 3000): Promise<void> {
+  const start = Date.now()
+  while (!check()) {
+    if (Date.now() - start > ms) throw new Error('timed out')
+    await new Promise((r) => setTimeout(r, 20))
+  }
+}

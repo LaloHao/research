@@ -27,7 +27,7 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
   ipcMain.handle(IPC.projectClose, () => app.closeProject())
 
   ipcMain.handle(IPC.libraryList, (_e, query: string) => app.requireSession().library.list(query))
-  ipcMain.handle(IPC.libraryDetail, (_e, id: string) => app.requireSession().library.detail(id))
+  ipcMain.handle(IPC.libraryDetail, (_e, id: string) => app.requireSession().detail(id))
   ipcMain.handle(IPC.libraryAddIdentifier, (_e, input: string) => {
     app.requireSession().queue.enqueue({ type: 'ingest_identifier', input })
   })
@@ -40,7 +40,7 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
   })
   ipcMain.handle(IPC.libraryReadPdf, async (_e, id: string) => {
     try {
-      return { ok: true, data: await app.requireSession().library.readPdf(id) }
+      return { ok: true, data: await app.requireSession().readPdf(id) }
     } catch (error) {
       return { ok: false, error: toUserFacing(error).code }
     }

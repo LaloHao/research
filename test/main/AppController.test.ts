@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AppController } from '../../src/main/AppController'
 import type { ResearchEvent } from '../../src/shared/ipc'
@@ -33,6 +34,24 @@ describe('AppController', () => {
     const second = await controller(settingsFile)
     expect(second.projectInfo()).toBeNull()
     expect(second.getSettings().lastProjectPath).toBeNull()
+  })
+
+  it('tells the UI when project.yaml is edited outside the app', async () => {
+    const events: ResearchEvent[] = []
+    const c = new AppController(join(await tmpDir(), 'settings.json'), (e) => events.push(e))
+    await c.init()
+    const root = await tmpDir()
+    await c.createProject(root, 'Thesis')
+    events.length = 0
+    const file = join(root, 'project.yaml')
+    await writeFile(file, (await readFile(file, 'utf8')).replace(/^name: .*$/m, 'name: Renamed'))
+    const start = Date.now()
+    while (!events.includes('project-changed')) {
+      if (Date.now() - start > 3000) throw new Error('no project-changed event')
+      await new Promise((r) => setTimeout(r, 20))
+    }
+    expect(c.projectInfo()?.name).toBe('Renamed')
+    await c.shutdown()
   })
 
   it('updates project settings', async () => {

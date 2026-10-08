@@ -94,3 +94,23 @@ describe('LibraryService.detail', () => {
     expect(await library.detail('he2017drain')).toMatchObject({ id: 'he2017drain', problem: null, hasPdf: false, textStatus: 'no_source', content: null })
   })
 })
+
+describe('LibraryService.exportBib', () => {
+  it('coalesces overlapping exports into one run plus one trailing rerun', async () => {
+    const { root, store, library } = await setupLibrary({ resolver: { '10.1109/icws.2017.13': DRAIN } })
+    await library.ingestIdentifier('10.1109/icws.2017.13')
+    let runs = 0
+    const listPaperIds = store.listPaperIds.bind(store)
+    store.listPaperIds = () => {
+      runs++
+      return listPaperIds()
+    }
+    await Promise.all([library.exportBib(), library.exportBib(), library.exportBib(), library.exportBib()])
+    expect(runs).toBe(2)
+    // A call made after a change always gets a run that starts after it.
+    await rm(join(root, 'papers/he2017drain'), { recursive: true })
+    await library.exportBib()
+    expect(runs).toBe(3)
+    expect(await readFile(join(root, 'exports/library.bib'), 'utf8')).not.toContain('he2017drain')
+  })
+})

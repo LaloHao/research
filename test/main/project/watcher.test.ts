@@ -18,8 +18,19 @@ describe('watchProject', () => {
     await mkdir(join(root, 'papers/he2017drain'), { recursive: true })
     await mkdir(join(root, '.cache'), { recursive: true })
     const papers: string[] = []
+    const files = new Set<string>()
     let configs = 0
-    const stop = watchProject(root, { onPaper: (id) => papers.push(id), onConfig: () => configs++ }, 50)
+    const stop = watchProject(
+      root,
+      {
+        onPaper: (id, changed) => {
+          papers.push(id)
+          for (const f of changed) files.add(f)
+        },
+        onConfig: () => configs++
+      },
+      50
+    )
     await new Promise((r) => setTimeout(r, 100))
 
     await writeFile(join(root, '.cache/index.sqlite'), 'x')
@@ -32,6 +43,8 @@ describe('watchProject', () => {
     await new Promise((r) => setTimeout(r, 150))
     stop()
     expect(papers).toEqual(['he2017drain'])
+    expect(files.has('paper.yaml') && files.has('notes.md')).toBe(true)
+    expect([...files].some((f) => f.startsWith('.paper.yaml'))).toBe(false)
     expect(configs).toBe(1)
   })
 })
