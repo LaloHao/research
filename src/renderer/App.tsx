@@ -6,6 +6,7 @@ import { Rail, type View } from './components/Rail'
 import { SettingsView } from './components/SettingsView'
 import { WelcomeView } from './components/WelcomeView'
 import { useEvent } from './hooks/useEvent'
+import { flushAll } from './lib/flush'
 
 export function App(): React.JSX.Element {
   const { t } = useTranslation()
@@ -17,6 +18,9 @@ export function App(): React.JSX.Element {
   }, [])
   useEffect(refresh, [refresh])
   useEvent('project-changed', refresh)
+  useEvent('flush-request', () => {
+    void flushAll().finally(() => window.research.flushDone())
+  })
 
   if (project === undefined) return <div className="center muted">{t('app.loading')}</div>
   if (project === null) return <WelcomeView />

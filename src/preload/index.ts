@@ -34,6 +34,7 @@ const api: ResearchApi = {
     ipcRenderer.on(channel, handler)
     return () => ipcRenderer.removeListener(channel, handler)
   },
+  flushDone: () => ipcRenderer.send(IPC.flushDone),
   pathForFile: (file) => webUtils.getPathForFile(file)
 }
 

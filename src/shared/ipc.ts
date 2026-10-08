@@ -21,10 +21,12 @@ export const IPC = {
   libraryWriteNotes: 'library:write-notes',
   libraryShowInFolder: 'library:show-in-folder',
   jobsList: 'jobs:list',
-  jobsCancel: 'jobs:cancel'
+  jobsCancel: 'jobs:cancel',
+  flushDone: 'window:flush-done'
 } as const
 
-export type ResearchEvent = 'library-changed' | 'jobs-changed' | 'project-changed'
+/** `flush-request`: the window is about to close; save pending edits, then call `flushDone()`. */
+export type ResearchEvent = 'library-changed' | 'jobs-changed' | 'project-changed' | 'flush-request'
 
 export const eventChannel = (event: ResearchEvent): string => `event:${event}`
 
@@ -71,6 +73,8 @@ export interface ResearchApi {
     cancel(id: number): Promise<void>
   }
   on(event: ResearchEvent, callback: () => void): () => void
+  /** Acknowledges a 'flush-request' once pending saves have finished. */
+  flushDone(): void
   /** Absolute path of a dropped file. */
   pathForFile(file: File): string
 }

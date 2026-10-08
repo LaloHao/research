@@ -1,7 +1,8 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, type IpcMainEvent } from 'electron'
 import { join } from 'node:path'
-import { eventChannel } from '../shared/ipc'
+import { eventChannel, IPC } from '../shared/ipc'
 import { AppController } from './AppController'
+import { waitForFlush } from './flush'
 import { registerIpc } from './ipc'
 
 let mainWindow: BrowserWindow | null = null
@@ -10,6 +11,22 @@ let quitting = false
 const controller = new AppController(join(app.getPath('userData'), 'settings.json'), (event) => {
   mainWindow?.webContents.send(eventChannel(event))
 })
+
+/** Lets the renderer save pending edits (e.g. notes still in their autosave delay) before its window goes away. */
+function flushRenderer(win: BrowserWindow | null): Promise<void> {
+  if (!win || win.isDestroyed()) return Promise.resolve()
+  const contents = win.webContents
+  return waitForFlush(
+    () => contents.send(eventChannel('flush-request')),
+    (ack) => {
+      const listener = (event: IpcMainEvent): void => {
+        if (event.sender === contents) ack()
+      }
+      ipcMain.on(IPC.flushDone, listener)
+      return () => ipcMain.removeListener(IPC.flushDone, listener)
+    }
+  )
+}
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -24,6 +41,16 @@ function createWindow(): BrowserWindow {
     }
   })
   win.on('ready-to-show', () => win.show())
+  let flushed = false
+  win.on('close', (event) => {
+    // On quit, before-quit has already flushed and closed the project.
+    if (flushed || quitting) return
+    event.preventDefault()
+    flushed = true
+    void flushRenderer(win).finally(() => {
+      if (!win.isDestroyed()) win.close()
+    })
+  })
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
   })
@@ -56,7 +83,10 @@ app.on('before-quit', (event) => {
   if (quitting) return
   event.preventDefault()
   quitting = true
-  void controller.shutdown().finally(() => app.quit())
+  void flushRenderer(mainWindow)
+    .then(() => controller.shutdown())
+    .catch((error) => console.error('shutdown', error))
+    .finally(() => app.quit())
 })
 
 app.on('window-all-closed', () => {
