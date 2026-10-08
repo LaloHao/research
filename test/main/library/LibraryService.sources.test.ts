@@ -145,6 +145,39 @@ describe('LibraryService.readPdf', () => {
     expect(library.list()[0].text_status).toBe('ok')
   })
 
+  it('downloads once when the same PDF is opened twice at the same time', async () => {
+    const pdf = await makePdf([['Loghub collects system logs for research on software reliability analysis.']])
+    const { store, library, fetch } = await setupLibrary({
+      policy: 'download_on_demand',
+      resolver: { '10.48550/arxiv.2008.06448': LOGHUB_PREPRINT },
+      routes: [{ url: 'https://arxiv.org/pdf/2008.06448', body: pdf }]
+    })
+    await library.ingestIdentifier('2008.06448')
+    const [a, b] = await Promise.all([library.readPdf('zhu2020loghub'), library.readPdf('zhu2020loghub')])
+    expect(a?.byteLength).toBe(pdf.byteLength)
+    expect(b?.byteLength).toBe(pdf.byteLength)
+    expect(fetch.calls.filter((c) => c.url === 'https://arxiv.org/pdf/2008.06448')).toHaveLength(1)
+    const read = await store.readPaper('zhu2020loghub')
+    expect(read.ok && read.value.pdf_sha256).toHaveLength(64)
+  })
+
+  it('still returns the downloaded PDF when paper.yaml changed meanwhile', async () => {
+    const pdf = await makePdf([['Loghub collects system logs for research on software reliability analysis.']])
+    const { store, library } = await setupLibrary({
+      policy: 'download_on_demand',
+      resolver: { '10.48550/arxiv.2008.06448': LOGHUB_PREPRINT },
+      routes: [{ url: 'https://arxiv.org/pdf/2008.06448', body: pdf }]
+    })
+    await library.ingestIdentifier('2008.06448')
+    const file = join(store.paperDir('zhu2020loghub'), 'paper.yaml')
+    const original = store.writePdf.bind(store)
+    store.writePdf = async (id, bytes, opts) => {
+      await writeFile(file, (await readFile(file, 'utf8')).replace(/^title: .*$/m, 'title: Edited in another editor'))
+      return original(id, bytes, opts)
+    }
+    expect((await library.readPdf('zhu2020loghub'))?.byteLength).toBe(pdf.byteLength)
+  })
+
   it('returns null when there is no PDF anywhere', async () => {
     const { library } = await setupLibrary({ resolver: { '10.1109/icws.2017.13': DRAIN } })
     await library.ingestIdentifier('10.1109/icws.2017.13')

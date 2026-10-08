@@ -77,7 +77,8 @@ export async function setupLibrary(opts: { resolver?: Record<string, ResolvedMet
   if (opts.policy) await store.updateConfig({ pdfs: { policy: opts.policy } })
   const cache = IndexCache.open(join(store.cacheDir, 'index.sqlite'))
   const resolver = new FakeResolver(opts.resolver)
-  const http = new HttpClient({ fetch: routeFetch(opts.routes ?? []), sleep: async () => {} })
+  const fetch = routeFetch(opts.routes ?? [])
+  const http = new HttpClient({ fetch, sleep: async () => {} })
   const library = new LibraryService({
     store,
     cache,
@@ -86,5 +87,5 @@ export async function setupLibrary(opts: { resolver?: Record<string, ResolvedMet
     extractor: new PdfjsExtractor(),
     now: () => new Date('2026-10-07T12:00:00.000Z')
   })
-  return { root, store, cache, resolver, library }
+  return { root, store, cache, resolver, library, fetch }
 }

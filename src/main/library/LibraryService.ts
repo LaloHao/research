@@ -43,6 +43,7 @@ const HTML_ACCEPT = 'text/html,application/xhtml+xml,application/pdf;q=0.9'
 export class LibraryService {
   private readonly listeners = new Set<() => void>()
   private readonly indexing = new Map<string, Promise<void>>()
+  private readonly reading = new Map<string, Promise<Uint8Array | null>>()
   private addQueue: Promise<unknown> = Promise.resolve()
   private readonly now: () => Date
 
@@ -82,15 +83,30 @@ export class LibraryService {
     }
   }
 
-  /** The local PDF, downloading the open-access copy first when only its URL is known. */
-  async readPdf(id: string, signal?: AbortSignal): Promise<Uint8Array | null> {
+  /** The local PDF, downloading the open-access copy first when only its URL is known. Concurrent calls for one id share the download. */
+  readPdf(id: string, signal?: AbortSignal): Promise<Uint8Array | null> {
+    const pending = this.reading.get(id)
+    if (pending) return pending
+    const run = this.doReadPdf(id, signal).finally(() => this.reading.delete(id))
+    this.reading.set(id, run)
+    return run
+  }
+
+  private async doReadPdf(id: string, signal?: AbortSignal): Promise<Uint8Array | null> {
     const { store } = this.deps
     if (!store.resolvePdf(id)) {
       const read = await store.readPaper(id)
       if (!read.ok || !read.value.oa_pdf_url) return null
       try {
         const sha = await this.downloadPdf(id, read.value.oa_pdf_url, signal)
-        if (!read.value.pdf_sha256) await store.writePaper({ ...read.value, pdf_sha256: sha, updated_at: this.now().toISOString() }, read.hash)
+        if (!read.value.pdf_sha256) {
+          // Recording the hash is best effort: if paper.yaml changed meanwhile, the PDF is still good.
+          await store
+            .writePaper({ ...read.value, pdf_sha256: sha, updated_at: this.now().toISOString() }, read.hash)
+            .catch((error: unknown) => {
+              if (!(error instanceof ConflictError)) throw error
+            })
+        }
       } catch (error) {
         throw toUserFacing(error)
       }
