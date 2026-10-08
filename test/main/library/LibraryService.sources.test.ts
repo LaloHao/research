@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { PdfjsExtractor } from '../../../src/main/extract/PdfExtractor'
 import { DRAIN, LOGHUB_PREPRINT, setupLibrary } from '../../helpers/library'
 import { makePdf } from '../../helpers/pdf'
 import { tmpDir } from '../../helpers/tmp'
@@ -69,6 +70,16 @@ describe('LibraryService.ingestPdf', () => {
     const { store, library } = await setupLibrary({ policy: 'download_on_demand' })
     const { paperId } = await library.ingestPdf(await pdfFile([['Sanitizing logs with NER for incident reviews in production systems.']]))
     expect(store.resolvePdf(paperId)).toBe(join(store.paperDir(paperId), 'paper.pdf'))
+  })
+
+  it('extracts the text of a freshly ingested PDF only once', async () => {
+    const pdfjs = new PdfjsExtractor()
+    let extractions = 0
+    const extractor = { extract: (data: Uint8Array) => (extractions++, pdfjs.extract(data)) }
+    const { library } = await setupLibrary({ extractor })
+    const { paperId } = await library.ingestPdf(await pdfFile([['Sanitizing logs with NER for incident reviews in production systems.']]))
+    expect(extractions).toBe(1)
+    expect(library.list('sanitizing').map((r) => r.id)).toEqual([paperId])
   })
 
   it('rejects files that are not PDFs', async () => {

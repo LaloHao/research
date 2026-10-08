@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { IndexCache } from '../../src/main/cache/IndexCache'
-import { PdfjsExtractor } from '../../src/main/extract/PdfExtractor'
+import { PdfjsExtractor, type PdfExtractor } from '../../src/main/extract/PdfExtractor'
 import { HttpClient, HttpError } from '../../src/main/ingest/http'
 import type { MetadataSource } from '../../src/main/ingest/MetadataResolver'
 import type { ResolvedMetadata } from '../../src/main/ingest/types'
@@ -71,7 +71,7 @@ export class FakeResolver implements MetadataSource {
   }
 }
 
-export async function setupLibrary(opts: { resolver?: Record<string, ResolvedMetadata>; routes?: Route[]; policy?: PdfPolicy } = {}) {
+export async function setupLibrary(opts: { resolver?: Record<string, ResolvedMetadata>; routes?: Route[]; policy?: PdfPolicy; extractor?: PdfExtractor } = {}) {
   const root = await tmpDir()
   const store = await ProjectStore.create(root, 'Thesis')
   if (opts.policy) await store.updateConfig({ pdfs: { policy: opts.policy } })
@@ -84,7 +84,7 @@ export async function setupLibrary(opts: { resolver?: Record<string, ResolvedMet
     cache,
     resolver,
     http,
-    extractor: new PdfjsExtractor(),
+    extractor: opts.extractor ?? new PdfjsExtractor(),
     now: () => new Date('2026-10-07T12:00:00.000Z')
   })
   return { root, store, cache, resolver, library, fetch }

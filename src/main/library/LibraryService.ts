@@ -5,7 +5,7 @@ import type { Paper } from '../../shared/schemas'
 import type { IndexCache } from '../cache/IndexCache'
 import { writeLibraryBib } from '../export/BibExporter'
 import { chunkSegments } from '../extract/chunker'
-import { isTextless, type PdfExtractor } from '../extract/PdfExtractor'
+import { isTextless, type PdfExtractor, type PdfText } from '../extract/PdfExtractor'
 import { baseCitekey, uniqueCitekey } from '../ingest/citekey'
 import type { HttpClient } from '../ingest/http'
 import { findIdentifiersInText, parseInput } from '../ingest/identifiers'
@@ -44,6 +44,8 @@ export class LibraryService {
   private readonly listeners = new Set<() => void>()
   private readonly indexing = new Map<string, Promise<void>>()
   private readonly reading = new Map<string, Promise<Uint8Array | null>>()
+  /** Text extracted during an ingest, keyed by PDF sha256, so indexing the new paper does not parse it again. */
+  private readonly extracted = new Map<string, PdfText>()
   private bibRun: Promise<void> | null = null
   private bibNext: Promise<void> | null = null
   private addQueue: Promise<unknown> = Promise.resolve()
@@ -271,7 +273,13 @@ export class LibraryService {
     }
     // A PDF served directly by a URL can be fetched from it again.
     if (sourceUrl) meta = { ...meta, oa_pdf_url: meta.oa_pdf_url ?? sourceUrl }
-    return this.add(meta, { pdf: bytes })
+    const sha = sha256(bytes)
+    this.extracted.set(sha, text)
+    try {
+      return await this.add(meta, { pdf: bytes })
+    } finally {
+      this.extracted.delete(sha)
+    }
   }
 
   /** Dedupe + key assignment + write. Serialized so two jobs never claim the same paper. */
@@ -351,7 +359,7 @@ export class LibraryService {
       const hash = sha256(bytes)
       if (cache.textHash(id) === hash) return
       try {
-        const text = await extractor.extract(bytes)
+        const text = this.extracted.get(hash) ?? (await extractor.extract(bytes))
         if (isTextless(text)) cache.setText(id, hash, 'no_text', [])
         else cache.setText(id, hash, 'ok', chunkSegments(text.pages))
       } catch {
