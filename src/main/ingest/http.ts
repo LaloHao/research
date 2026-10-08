@@ -15,8 +15,22 @@ export interface HttpClientOptions {
   contactEmail?: string
   retries?: number
   baseDelayMs?: number
+  /** Time to receive the response headers, and to read a small (text/JSON) body. */
   timeoutMs?: number
+  /** Time to read a large body such as a PDF, counted once the headers arrive. */
+  downloadTimeoutMs?: number
   sleep?: (ms: number) => Promise<void>
+}
+
+/** The only hosts that may receive the contact email: DOI content negotiation, Crossref and OpenAlex. */
+const CONTACT_HOSTS = new Set(['doi.org', 'dx.doi.org', 'api.crossref.org', 'api.openalex.org'])
+
+function acceptsContact(url: string): boolean {
+  try {
+    return CONTACT_HOSTS.has(new URL(url).hostname.toLowerCase())
+  } catch {
+    return false
+  }
 }
 
 const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504])
@@ -33,19 +47,20 @@ export class HttpClient {
     this.contactEmail = email.trim()
   }
 
-  /** Crossref and OpenAlex route requests that identify a contact to their "polite" pool. */
-  userAgent(): string {
-    return this.contactEmail ? `research-app/0.1 (mailto:${this.contactEmail})` : 'research-app/0.1'
+  /** Crossref and OpenAlex route requests that identify a contact to their "polite" pool; no other host sees the email. */
+  userAgent(url: string): string {
+    return this.contactEmail && acceptsContact(url) ? `research-app/0.1 (mailto:${this.contactEmail})` : 'research-app/0.1'
   }
 
   politeUrl(url: string): string {
-    if (!this.contactEmail) return url
+    if (!this.contactEmail || !acceptsContact(url)) return url
     const u = new URL(url)
     u.searchParams.set('mailto', this.contactEmail)
     return u.toString()
   }
 
-  async get(url: string, accept: string, signal?: AbortSignal): Promise<Response> {
+  /** The body must be read within `bodyTimeoutMs` (default: the header timeout) once the headers arrive. */
+  async get(url: string, accept: string, signal?: AbortSignal, bodyTimeoutMs?: number): Promise<Response> {
     const fetchFn = this.opts.fetch ?? fetch
     const retries = this.opts.retries ?? 3
     const baseDelay = this.opts.baseDelayMs ?? 500
@@ -54,13 +69,28 @@ export class HttpClient {
     for (let attempt = 0; ; attempt++) {
       let retryAfterMs: number | undefined
       try {
-        const timeout = AbortSignal.timeout(this.opts.timeoutMs ?? 20_000)
-        const res = await fetchFn(url, {
-          headers: { Accept: accept, 'User-Agent': this.userAgent() },
-          redirect: 'follow',
-          signal: signal ? AbortSignal.any([signal, timeout]) : timeout
-        })
-        if (res.ok) return res
+        const headerTimeoutMs = this.opts.timeoutMs ?? 20_000
+        const timeout = new AbortController()
+        const expire = (ms: number): NodeJS.Timeout => {
+          const timer = setTimeout(() => timeout.abort(new DOMException('The operation timed out.', 'TimeoutError')), ms)
+          timer.unref?.()
+          return timer
+        }
+        const headerTimer = expire(headerTimeoutMs)
+        let res: Response
+        try {
+          res = await fetchFn(url, {
+            headers: { Accept: accept, 'User-Agent': this.userAgent(url) },
+            redirect: 'follow',
+            signal: signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal
+          })
+        } finally {
+          clearTimeout(headerTimer)
+        }
+        if (res.ok) {
+          expire(bodyTimeoutMs ?? headerTimeoutMs)
+          return res
+        }
         lastError = new HttpError(res.status, url)
         if (!RETRYABLE.has(res.status)) throw lastError
         const retryAfter = Number(res.headers.get('retry-after'))
@@ -83,7 +113,12 @@ export class HttpClient {
     return (await (await this.get(url, accept, signal)).json()) as T
   }
 
+  /** Downloads a large body (e.g. a PDF) with the longer download timeout. */
   async bytes(url: string, accept: string, signal?: AbortSignal): Promise<Uint8Array> {
-    return new Uint8Array(await (await this.get(url, accept, signal)).arrayBuffer())
+    return new Uint8Array(await (await this.get(url, accept, signal, this.downloadTimeoutMs)).arrayBuffer())
+  }
+
+  get downloadTimeoutMs(): number {
+    return this.opts.downloadTimeoutMs ?? 120_000
   }
 }

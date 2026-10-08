@@ -206,7 +206,8 @@ export class LibraryService {
   }
 
   protected async ingestUrl(url: string, signal?: AbortSignal): Promise<IngestOutcome> {
-    const res = await this.deps.http.get(url, HTML_ACCEPT, signal)
+    // The URL may serve a large PDF: allow the download timeout for its body.
+    const res = await this.deps.http.get(url, HTML_ACCEPT, signal, this.deps.http.downloadTimeoutMs)
     if ((res.headers.get('content-type') ?? '').includes('application/pdf')) {
       return this.ingestPdfBytes(new Uint8Array(await res.arrayBuffer()), basename(new URL(url).pathname), url, signal)
     }

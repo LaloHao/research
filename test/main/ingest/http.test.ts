@@ -20,15 +20,27 @@ function sequence(...steps: (number | Error | Response)[]): FetchFn & { count: (
 }
 
 describe('HttpClient', () => {
-  it('sends Accept and a User-Agent carrying the contact email', async () => {
+  it('sends Accept and a User-Agent carrying the contact email to Crossref/OpenAlex hosts', async () => {
+    const url = 'https://api.openalex.org/works/x'
+    const fetch = routeFetch([{ url, body: 'ok' }])
+    const http = new HttpClient({ fetch, contactEmail: 'me@uni.test' })
+    expect(await http.text(url, 'text/plain')).toBe('ok')
+    expect(fetch.calls[0]).toEqual({ url, accept: 'text/plain', userAgent: 'research-app/0.1 (mailto:me@uni.test)' })
+    expect(http.userAgent('https://doi.org/10.1/x')).toContain('mailto:')
+    expect(http.userAgent('https://api.crossref.org/works/x')).toContain('mailto:')
+  })
+
+  it('never sends the contact email to other hosts', async () => {
     const fetch = routeFetch([{ url: 'https://x.test/a', body: 'ok' }])
     const http = new HttpClient({ fetch, contactEmail: 'me@uni.test' })
-    expect(await http.text('https://x.test/a', 'text/plain')).toBe('ok')
-    expect(fetch.calls[0]).toEqual({ url: 'https://x.test/a', accept: 'text/plain', userAgent: 'research-app/0.1 (mailto:me@uni.test)' })
+    await http.text('https://x.test/a', 'text/plain')
+    expect(fetch.calls[0].userAgent).toBe('research-app/0.1')
+    expect(http.userAgent('https://arxiv.org/pdf/1')).toBe('research-app/0.1')
+    expect(http.politeUrl('https://evil.test/doi.org/x')).toBe('https://evil.test/doi.org/x')
   })
 
   it('omits the email from the User-Agent when none is configured', () => {
-    expect(new HttpClient().userAgent()).toBe('research-app/0.1')
+    expect(new HttpClient().userAgent('https://api.openalex.org/works/x')).toBe('research-app/0.1')
   })
 
   it('retries 5xx with exponential backoff', async () => {
@@ -65,6 +77,28 @@ describe('HttpClient', () => {
     expect(new HttpClient().politeUrl('https://api.openalex.org/works/x')).toBe('https://api.openalex.org/works/x')
     const http = new HttpClient({ contactEmail: 'me@uni.test' })
     expect(http.politeUrl('https://api.openalex.org/works/x')).toBe('https://api.openalex.org/works/x?mailto=me%40uni.test')
+  })
+
+  it('gives large downloads a longer body timeout than text and JSON', async () => {
+    // Headers arrive at once; the body trickles in after 120 ms.
+    const slowBody: FetchFn = async (_url, init) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const timer = setTimeout(() => {
+            controller.enqueue(new TextEncoder().encode('%PDF-1.7'))
+            controller.close()
+          }, 120)
+          init?.signal?.addEventListener('abort', () => {
+            clearTimeout(timer)
+            controller.error(init.signal!.reason)
+          })
+        }
+      })
+      return new Response(body, { status: 200 })
+    }
+    const http = new HttpClient({ fetch: slowBody, timeoutMs: 50, downloadTimeoutMs: 1000, retries: 0 })
+    expect(new TextDecoder().decode(await http.bytes('https://x.test/a.pdf', 'application/pdf'))).toBe('%PDF-1.7')
+    await expect(http.text('https://x.test/a', 'text/plain')).rejects.toMatchObject({ name: 'TimeoutError' })
   })
 
   it('exposes HttpError with status and url', () => {
