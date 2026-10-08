@@ -187,6 +187,7 @@ export class LibraryService {
       id,
       paper: read.ok ? read.value : null,
       problem: read.ok ? null : `${read.problem.kind}: ${read.problem.message}`,
+      problemKind: read.ok ? null : read.problem.kind,
       hasPdf: store.resolvePdf(id) !== null || Boolean(read.ok && read.value.oa_pdf_url),
       textStatus: cache.getPaper(id)?.text_status ?? 'pending',
       content: await store.readContent(id)

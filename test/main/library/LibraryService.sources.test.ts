@@ -82,6 +82,13 @@ describe('LibraryService.ingestPdf', () => {
     expect(library.list('sanitizing').map((r) => r.id)).toEqual([paperId])
   })
 
+  it('reports a corrupt PDF with a user-facing code', async () => {
+    const { library } = await setupLibrary()
+    const path = join(await tmpDir(), 'broken.pdf')
+    await writeFile(path, '%PDF-1.7 garbage')
+    await expect(library.ingestPdf(path)).rejects.toMatchObject({ code: 'unreadable_pdf' })
+  })
+
   it('rejects files that are not PDFs', async () => {
     const { library } = await setupLibrary()
     const path = join(await tmpDir(), 'fake.pdf')

@@ -31,9 +31,17 @@ export const USER_ERROR_CODES = [
   'file_problem',
   'no_identifier',
   'conflict',
+  'project_exists',
+  'not_a_project',
+  'invalid_project',
+  'unreadable_pdf',
   'unknown'
 ] as const
 export type UserErrorCode = (typeof USER_ERROR_CODES)[number]
+
+/** Why a paper.yaml cannot be read; each has a translation under `paper.problem_kinds.<kind>`. */
+export const FILE_PROBLEM_KINDS = ['conflict_markers', 'invalid_yaml', 'invalid_schema'] as const
+export type FileProblemKind = (typeof FILE_PROBLEM_KINDS)[number]
 
 export const INGEST_STATUSES = ['added', 'merged', 'duplicate'] as const
 export type IngestStatus = (typeof INGEST_STATUSES)[number]
@@ -42,6 +50,7 @@ export interface PaperDetail {
   id: string
   paper: Paper | null
   problem: string | null
+  problemKind: FileProblemKind | null
   /** A local PDF exists, or one can be downloaded on demand. */
   hasPdf: boolean
   textStatus: TextStatus

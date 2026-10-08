@@ -8,7 +8,7 @@
     "name_placeholder": "Mi tesis",
     "create": "Crear proyecto…",
     "open": "Abrir proyecto…",
-    "error": "No se pudo abrir el proyecto: {{message}}"
+    "error": "No se pudo crear o abrir el proyecto: {{message}}"
   },
   "settings": {
     "title": "Ajustes",
@@ -83,6 +83,10 @@
     "file_problem": "paper.yaml tiene un problema; corrígelo primero.",
     "no_identifier": "Este paper no tiene DOI ni arXiv; escribe uno.",
     "conflict": "El archivo cambió fuera de la app.",
+    "project_exists": "Esa carpeta ya tiene un proyecto; ábrelo en lugar de crear otro.",
+    "not_a_project": "Esa carpeta no es un proyecto (no tiene project.yaml).",
+    "invalid_project": "El project.yaml de esa carpeta tiene un problema; corrígelo primero.",
+    "unreadable_pdf": "El PDF está dañado o protegido con contraseña.",
     "unknown": "Ocurrió un error inesperado."
   },
   "paper": {
@@ -93,6 +97,12 @@
     "open_link": "Abrir enlace",
     "show_in_folder": "Mostrar en carpeta",
     "problem_title": "No se puede leer paper.yaml",
+    "problem_kinds": {
+      "conflict_markers": "El archivo tiene marcas de conflicto de git sin resolver.",
+      "invalid_yaml": "El archivo no es YAML válido.",
+      "invalid_schema": "Al archivo le faltan campos o tiene valores no válidos."
+    },
+    "problem_details": "Detalles técnicos",
     "no_pdf": "Este paper no tiene PDF. Arrastra el archivo a la biblioteca para adjuntarlo.",
     "pdf_loading": "Cargando PDF…",
     "pdf_error": "No se pudo cargar el PDF: {{message}}",

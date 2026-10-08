@@ -2,6 +2,7 @@ import * as pdfjs from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { errorText } from '../../lib/errorText'
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -9,13 +10,13 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
 export function PdfViewer({ data }: { data: Uint8Array }): React.JSX.Element {
   const { t } = useTranslation()
   const pagesRef = useRef<HTMLDivElement>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState(false)
 
   useEffect(() => {
     const el = pagesRef.current
     if (!el) return
     el.replaceChildren()
-    setError(null)
+    setError(false)
     let cancelled = false
     const task = pdfjs.getDocument({ data: data.slice() })
     void (async () => {
@@ -36,7 +37,10 @@ export function PdfViewer({ data }: { data: Uint8Array }): React.JSX.Element {
           await page.render({ canvas, viewport } as Parameters<typeof page.render>[0]).promise
         }
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
+        if (!cancelled) {
+          console.error('pdf viewer', e)
+          setError(true)
+        }
       }
     })()
     return () => {
@@ -47,7 +51,7 @@ export function PdfViewer({ data }: { data: Uint8Array }): React.JSX.Element {
 
   return (
     <div className="pdf-viewer">
-      {error && <p className="error">{t('paper.pdf_error', { message: error })}</p>}
+      {error && <p className="error">{t('paper.pdf_error', { message: errorText(t, 'unreadable_pdf') })}</p>}
       <div ref={pagesRef} style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%', alignItems: 'center' }} />
     </div>
   )

@@ -1,5 +1,5 @@
 import type { JobRecord } from './jobs'
-import type { PaperDetail, PaperRow } from './library'
+import type { PaperDetail, PaperRow, UserErrorCode } from './library'
 import type { PdfPolicy } from './schemas'
 import type { AppSettings } from './settings'
 
@@ -36,6 +36,7 @@ export interface ProjectInfo {
 }
 
 export type NotesWriteResult = { ok: true; hash: string } | { ok: false; reason: 'conflict' }
+export type ProjectOpenResult = { ok: true; project: ProjectInfo | null } | { ok: false; error: UserErrorCode }
 export type PdfReadResult = { ok: true; data: Uint8Array | null } | { ok: false; error: string }
 
 /** Everything the renderer can do, exposed as `window.research` by the preload. */
@@ -47,9 +48,9 @@ export interface ResearchApi {
   }
   project: {
     current(): Promise<ProjectInfo | null>
-    /** Asks for a folder, then creates the project there. Null when the user cancels. */
-    create(name: string): Promise<ProjectInfo | null>
-    open(): Promise<ProjectInfo | null>
+    /** Asks for a folder, then creates the project there. `project` is null when the user cancels. */
+    create(name: string): Promise<ProjectOpenResult>
+    open(): Promise<ProjectOpenResult>
     update(patch: { name?: string; contentLanguage?: string; pdfPolicy?: PdfPolicy }): Promise<ProjectInfo>
     close(): Promise<void>
   }

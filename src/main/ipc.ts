@@ -1,6 +1,6 @@
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { join } from 'node:path'
-import { IPC, type ProjectInfo } from '../shared/ipc'
+import { IPC, type ProjectInfo, type ProjectOpenResult } from '../shared/ipc'
 import type { AppController } from './AppController'
 import { arg, ipcArgs } from './ipcArgs'
 import { toUserFacing } from './library/UserFacingError'
@@ -11,19 +11,28 @@ async function pickFolder(window: BrowserWindow | null, create: boolean): Promis
   return result.canceled ? null : (result.filePaths[0] ?? null)
 }
 
+/** Project errors reach the UI as codes it can translate. */
+async function projectResult(action: () => Promise<ProjectInfo | null>): Promise<ProjectOpenResult> {
+  try {
+    return { ok: true, project: await action() }
+  } catch (error) {
+    return { ok: false, error: toUserFacing(error).code }
+  }
+}
+
 export function registerIpc(app: AppController, getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.settingsGet, () => app.getSettings())
   ipcMain.handle(IPC.settingsSet, (_e, patch: unknown) => app.setSettings(arg(ipcArgs.settingsPatch, patch, 'patch')))
 
   ipcMain.handle(IPC.projectCurrent, () => app.projectInfo())
-  ipcMain.handle(IPC.projectCreate, async (_e, rawName: unknown): Promise<ProjectInfo | null> => {
+  ipcMain.handle(IPC.projectCreate, async (_e, rawName: unknown): Promise<ProjectOpenResult> => {
     const name = arg(ipcArgs.projectName, rawName, 'name')
     const root = await pickFolder(getWindow(), true)
-    return root ? app.createProject(root, name) : null
+    return projectResult(() => (root ? app.createProject(root, name) : Promise.resolve(null)))
   })
-  ipcMain.handle(IPC.projectOpen, async (): Promise<ProjectInfo | null> => {
+  ipcMain.handle(IPC.projectOpen, async (): Promise<ProjectOpenResult> => {
     const root = await pickFolder(getWindow(), false)
-    return root ? app.openProject(root) : null
+    return projectResult(() => (root ? app.openProject(root) : Promise.resolve(null)))
   })
   ipcMain.handle(IPC.projectUpdate, (_e, patch: unknown) => app.updateProject(arg(ipcArgs.projectPatch, patch, 'patch')))
   ipcMain.handle(IPC.projectClose, () => app.closeProject())

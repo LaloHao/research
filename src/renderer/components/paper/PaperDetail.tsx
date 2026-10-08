@@ -56,7 +56,11 @@ export function PaperDetail({ id }: { id: string }): React.JSX.Element {
       <div className="paper-header">
         <div className="banner error">
           <strong>{t('paper.problem_title')}</strong>
-          <pre>{detail.problem}</pre>
+          {detail.problemKind && <p>{t(`paper.problem_kinds.${detail.problemKind}`)}</p>}
+          <details>
+            <summary>{t('paper.problem_details')}</summary>
+            <pre>{detail.problem}</pre>
+          </details>
         </div>
         <button onClick={() => void window.research.library.showInFolder(id)}>{t('paper.show_in_folder')}</button>
       </div>

@@ -1,14 +1,20 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { ProjectOpenResult } from '../../shared/ipc'
+import { errorText } from '../lib/errorText'
 
 export function WelcomeView(): React.JSX.Element {
   const { t } = useTranslation()
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
 
-  const run = (action: () => Promise<unknown>): void => {
+  const run = (action: () => Promise<ProjectOpenResult>): void => {
     setError(null)
-    action().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+    action()
+      .then((result) => {
+        if (!result.ok) setError(errorText(t, result.error))
+      })
+      .catch(() => setError(errorText(t, 'unknown')))
   }
 
   return (

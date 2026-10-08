@@ -18,7 +18,7 @@ export class ProjectStore {
   ) {}
 
   static async create(root: string, name: string): Promise<ProjectStore> {
-    if (existsSync(join(root, PROJECT_FILE))) throw new ProjectError(`A project already exists in ${root}`)
+    if (existsSync(join(root, PROJECT_FILE))) throw new ProjectError(`A project already exists in ${root}`, 'project_exists')
     const cfg = ProjectConfigSchema.parse({ schema_version: 1, name })
     const text = toYaml(cfg)
     await atomicWrite(join(root, PROJECT_FILE), text)
@@ -158,9 +158,9 @@ export class ProjectStore {
 
 async function readConfig(root: string): Promise<{ cfg: ProjectConfig; hash: string }> {
   const text = await readOptional(join(root, PROJECT_FILE))
-  if (text === null) throw new ProjectError(`No ${PROJECT_FILE} in ${root}`)
+  if (text === null) throw new ProjectError(`No ${PROJECT_FILE} in ${root}`, 'not_a_project')
   const result = parseYamlFile(text, ProjectConfigSchema)
-  if (!result.ok) throw new ProjectError(`${PROJECT_FILE}: ${result.problem.message}`)
+  if (!result.ok) throw new ProjectError(`${PROJECT_FILE}: ${result.problem.message}`, 'invalid_project')
   return { cfg: result.value, hash: result.hash }
 }
 

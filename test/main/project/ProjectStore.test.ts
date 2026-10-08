@@ -21,7 +21,10 @@ describe('ProjectStore', () => {
     const root = await tmpDir()
     await ProjectStore.create(root, 'Thesis')
     await expect(ProjectStore.create(root, 'Again')).rejects.toBeInstanceOf(ProjectError)
-    await expect(ProjectStore.open(await tmpDir())).rejects.toBeInstanceOf(ProjectError)
+    await expect(ProjectStore.create(root, 'Again')).rejects.toMatchObject({ code: 'project_exists' })
+    await expect(ProjectStore.open(await tmpDir())).rejects.toMatchObject({ name: 'ProjectError', code: 'not_a_project' })
+    await writeFile(join(root, 'project.yaml'), 'schema_version: 1\n')
+    await expect(ProjectStore.open(root)).rejects.toMatchObject({ code: 'invalid_project' })
   })
 
   it('preserves unknown project.yaml keys across updates', async () => {
