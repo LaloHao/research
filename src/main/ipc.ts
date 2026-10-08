@@ -2,6 +2,7 @@ import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { join } from 'node:path'
 import { IPC, type ProjectInfo } from '../shared/ipc'
 import type { AppController } from './AppController'
+import { arg, ipcArgs } from './ipcArgs'
 import { toUserFacing } from './library/UserFacingError'
 
 async function pickFolder(window: BrowserWindow | null, create: boolean): Promise<string | null> {
@@ -12,10 +13,11 @@ async function pickFolder(window: BrowserWindow | null, create: boolean): Promis
 
 export function registerIpc(app: AppController, getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.settingsGet, () => app.getSettings())
-  ipcMain.handle(IPC.settingsSet, (_e, patch) => app.setSettings(patch))
+  ipcMain.handle(IPC.settingsSet, (_e, patch: unknown) => app.setSettings(arg(ipcArgs.settingsPatch, patch, 'patch')))
 
   ipcMain.handle(IPC.projectCurrent, () => app.projectInfo())
-  ipcMain.handle(IPC.projectCreate, async (_e, name: string): Promise<ProjectInfo | null> => {
+  ipcMain.handle(IPC.projectCreate, async (_e, rawName: unknown): Promise<ProjectInfo | null> => {
+    const name = arg(ipcArgs.projectName, rawName, 'name')
     const root = await pickFolder(getWindow(), true)
     return root ? app.createProject(root, name) : null
   })
@@ -23,34 +25,41 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     const root = await pickFolder(getWindow(), false)
     return root ? app.openProject(root) : null
   })
-  ipcMain.handle(IPC.projectUpdate, (_e, patch) => app.updateProject(patch))
+  ipcMain.handle(IPC.projectUpdate, (_e, patch: unknown) => app.updateProject(arg(ipcArgs.projectPatch, patch, 'patch')))
   ipcMain.handle(IPC.projectClose, () => app.closeProject())
 
-  ipcMain.handle(IPC.libraryList, (_e, query: string) => app.requireSession().library.list(query))
-  ipcMain.handle(IPC.libraryDetail, (_e, id: string) => app.requireSession().detail(id))
-  ipcMain.handle(IPC.libraryAddIdentifier, (_e, input: string) => {
-    app.requireSession().queue.enqueue({ type: 'ingest_identifier', input })
+  ipcMain.handle(IPC.libraryList, (_e, query: unknown) => app.requireSession().library.list(arg(ipcArgs.text, query, 'query')))
+  ipcMain.handle(IPC.libraryDetail, (_e, id: unknown) => app.requireSession().detail(arg(ipcArgs.paperId, id, 'id')))
+  ipcMain.handle(IPC.libraryAddIdentifier, (_e, input: unknown) => {
+    app.requireSession().queue.enqueue({ type: 'ingest_identifier', input: arg(ipcArgs.text, input, 'input') })
   })
-  ipcMain.handle(IPC.libraryAddPdfs, (_e, paths: string[]) => {
+  ipcMain.handle(IPC.libraryAddPdfs, (_e, paths: unknown) => {
     const { queue } = app.requireSession()
-    for (const path of paths) queue.enqueue({ type: 'ingest_pdf', path })
+    for (const path of arg(ipcArgs.paths, paths, 'paths')) queue.enqueue({ type: 'ingest_pdf', path })
   })
-  ipcMain.handle(IPC.libraryUpdateMetadata, (_e, paperId: string, input?: string) => {
-    app.requireSession().queue.enqueue({ type: 'update_metadata', paperId, input })
+  ipcMain.handle(IPC.libraryUpdateMetadata, (_e, paperId: unknown, input: unknown) => {
+    app.requireSession().queue.enqueue({
+      type: 'update_metadata',
+      paperId: arg(ipcArgs.paperId, paperId, 'id'),
+      input: arg(ipcArgs.optionalText, input, 'input')
+    })
   })
-  ipcMain.handle(IPC.libraryReadPdf, async (_e, id: string) => {
+  ipcMain.handle(IPC.libraryReadPdf, async (_e, rawId: unknown) => {
+    const id = arg(ipcArgs.paperId, rawId, 'id')
     try {
       return { ok: true, data: await app.requireSession().readPdf(id) }
     } catch (error) {
       return { ok: false, error: toUserFacing(error).code }
     }
   })
-  ipcMain.handle(IPC.libraryReadNotes, (_e, id: string) => app.requireSession().library.readNotes(id))
-  ipcMain.handle(IPC.libraryWriteNotes, (_e, id: string, text: string, hash: string | null) => app.requireSession().library.writeNotes(id, text, hash))
-  ipcMain.handle(IPC.libraryShowInFolder, (_e, id: string) => {
-    shell.showItemInFolder(join(app.requireSession().store.paperDir(id), 'paper.yaml'))
+  ipcMain.handle(IPC.libraryReadNotes, (_e, id: unknown) => app.requireSession().library.readNotes(arg(ipcArgs.paperId, id, 'id')))
+  ipcMain.handle(IPC.libraryWriteNotes, (_e, id: unknown, text: unknown, hash: unknown) =>
+    app.requireSession().library.writeNotes(arg(ipcArgs.paperId, id, 'id'), arg(ipcArgs.text, text, 'text'), arg(ipcArgs.hash, hash, 'hash'))
+  )
+  ipcMain.handle(IPC.libraryShowInFolder, (_e, id: unknown) => {
+    shell.showItemInFolder(join(app.requireSession().store.paperDir(arg(ipcArgs.paperId, id, 'id')), 'paper.yaml'))
   })
 
   ipcMain.handle(IPC.jobsList, () => app.requireSession().queue.list())
-  ipcMain.handle(IPC.jobsCancel, (_e, id: number) => app.requireSession().queue.cancel(id))
+  ipcMain.handle(IPC.jobsCancel, (_e, id: unknown) => app.requireSession().queue.cancel(arg(ipcArgs.jobId, id, 'job')))
 }

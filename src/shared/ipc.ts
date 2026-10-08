@@ -42,7 +42,8 @@ export type PdfReadResult = { ok: true; data: Uint8Array | null } | { ok: false;
 export interface ResearchApi {
   settings: {
     get(): Promise<AppSettings>
-    set(patch: Partial<AppSettings>): Promise<AppSettings>
+    /** Only the contact email; the last project path is managed by the main process. */
+    set(patch: Pick<Partial<AppSettings>, 'contactEmail'>): Promise<AppSettings>
   }
   project: {
     current(): Promise<ProjectInfo | null>
