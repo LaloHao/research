@@ -73,6 +73,84 @@ export class LibraryService {
     }
   }
 
+  async ingestPdf(path: string, signal?: AbortSignal): Promise<IngestOutcome> {
+    try {
+      const bytes = new Uint8Array(await readFile(path))
+      return await this.ingestPdfBytes(bytes, basename(path), undefined, signal)
+    } catch (error) {
+      throw toUserFacing(error)
+    }
+  }
+
+  /** The local PDF, downloading the open-access copy first when only its URL is known. */
+  async readPdf(id: string, signal?: AbortSignal): Promise<Uint8Array | null> {
+    const { store } = this.deps
+    if (!store.resolvePdf(id)) {
+      const read = await store.readPaper(id)
+      if (!read.ok || !read.value.oa_pdf_url) return null
+      try {
+        const sha = await this.downloadPdf(id, read.value.oa_pdf_url, signal)
+        if (!read.value.pdf_sha256) await store.writePaper({ ...read.value, pdf_sha256: sha, updated_at: this.now().toISOString() }, read.hash)
+      } catch (error) {
+        throw toUserFacing(error)
+      }
+      await this.afterWrite(id)
+    }
+    const path = store.resolvePdf(id)
+    return path ? new Uint8Array(await readFile(path)) : null
+  }
+
+  /** Re-resolves metadata from the paper's DOI/arXiv id, or from one the user typed. The id never changes. */
+  async updateMetadata(id: string, input?: string, signal?: AbortSignal): Promise<IngestOutcome> {
+    const { store, resolver } = this.deps
+    try {
+      const read = await store.readPaper(id)
+      if (!read.ok) throw new UserFacingError('file_problem')
+      let { doi, arxiv } = read.value.identifiers
+      if (input?.trim()) {
+        const parsed = parseInput(input)
+        if (parsed.kind === 'doi') [doi, arxiv] = [parsed.doi, undefined]
+        else if (parsed.kind === 'arxiv') [doi, arxiv] = [undefined, parsed.arxiv]
+        else throw new UserFacingError('invalid_identifier')
+      }
+      const meta = doi ? await resolver.byDoi(doi, signal) : arxiv ? await resolver.byArxiv(arxiv, signal) : null
+      if (!meta) throw new UserFacingError('no_identifier')
+      const fresh = buildPaper(meta, id, this.now())
+      const updated: Paper = {
+        ...read.value,
+        kind: fresh.kind,
+        title: fresh.title,
+        authors: fresh.authors,
+        year: fresh.year,
+        venue: fresh.venue,
+        abstract: fresh.abstract ?? read.value.abstract,
+        oa_pdf_url: fresh.oa_pdf_url ?? read.value.oa_pdf_url,
+        bibtex: fresh.bibtex,
+        metadata_status: fresh.metadata_status,
+        identifiers: { ...compact(read.value.identifiers), ...compact(fresh.identifiers) },
+        updated_at: fresh.updated_at
+      }
+      await store.writePaper(compact(updated) as Paper, read.hash)
+      await this.afterWrite(id)
+      return { status: 'merged', paperId: id }
+    } catch (error) {
+      throw toUserFacing(error)
+    }
+  }
+
+  readNotes(id: string): Promise<{ text: string; hash: string | null }> {
+    return this.deps.store.readNotes(id)
+  }
+
+  async writeNotes(id: string, text: string, expectedHash: string | null): Promise<{ ok: true; hash: string } | { ok: false; reason: 'conflict' }> {
+    try {
+      return { ok: true, hash: await this.deps.store.writeNotes(id, text, expectedHash) }
+    } catch (error) {
+      if (error instanceof ConflictError) return { ok: false, reason: 'conflict' }
+      throw error
+    }
+  }
+
   list(query = ''): PaperRow[] {
     const rows = this.deps.cache.listPapers()
     if (!query.trim()) return rows
