@@ -3,11 +3,10 @@ import { useTranslation } from 'react-i18next'
 import type { PaperDetail as Detail } from '../../../shared/library'
 import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
+import { paperTabs, type Tab } from '../../lib/paperTabs'
 import { MetadataCompletion } from './MetadataCompletion'
 import { NotesEditor } from './NotesEditor'
 import { PdfViewer } from './PdfViewer'
-
-type Tab = 'pdf' | 'content' | 'notes'
 
 type PdfState = { status: 'loading' } | { status: 'ready'; data: Uint8Array } | { status: 'missing' } | { status: 'error'; message: string }
 
@@ -81,7 +80,7 @@ export function PaperDetail({ id }: { id: string }): React.JSX.Element {
     )
   }
 
-  const tabs: Tab[] = detail.content !== null ? ['content', 'pdf', 'notes'] : ['pdf', 'notes']
+  const tabs: Tab[] = paperTabs(detail)
   const active = tabs.includes(tab) ? tab : tabs[0]
   const link = paper.identifiers.doi ? `https://doi.org/${paper.identifiers.doi}` : paper.identifiers.url
   const authors = paper.authors.map((a) => (a.given ? `${a.given} ${a.family}` : a.family)).join(', ')
