@@ -95,6 +95,16 @@ describe('LibraryService.detail', () => {
   })
 })
 
+describe('LibraryService cancellation', () => {
+  it('writes nothing when the job was cancelled before the paper is added', async () => {
+    const { store, library } = await setupLibrary({ resolver: { '10.1109/icws.2017.13': DRAIN } })
+    const controller = new AbortController()
+    controller.abort()
+    await expect(library.ingestIdentifier('10.1109/icws.2017.13', controller.signal)).rejects.toBeDefined()
+    expect(await store.listPaperIds()).toEqual([])
+  })
+})
+
 describe('LibraryService.exportBib', () => {
   it('coalesces overlapping exports into one run plus one trailing rerun', async () => {
     const { root, store, library } = await setupLibrary({ resolver: { '10.1109/icws.2017.13': DRAIN } })

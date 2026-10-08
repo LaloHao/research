@@ -36,6 +36,8 @@ export interface LibraryDeps {
 interface AddExtras {
   pdf?: Uint8Array
   content?: string
+  /** Checked before anything is written: a cancelled job leaves the library untouched. */
+  signal?: AbortSignal
 }
 
 const HTML_ACCEPT = 'text/html,application/xhtml+xml,application/pdf;q=0.9'
@@ -67,9 +69,9 @@ export class LibraryService {
         case 'invalid':
           throw new UserFacingError('invalid_identifier')
         case 'doi':
-          return await this.add(await this.deps.resolver.byDoi(parsed.doi, signal), {})
+          return await this.add(await this.deps.resolver.byDoi(parsed.doi, signal), { signal })
         case 'arxiv':
-          return await this.add(await this.deps.resolver.byArxiv(parsed.arxiv, signal), {})
+          return await this.add(await this.deps.resolver.byArxiv(parsed.arxiv, signal), { signal })
         case 'url':
           return await this.ingestUrl(parsed.url, signal)
       }
@@ -250,11 +252,11 @@ export class LibraryService {
     }
     const html = await res.text()
     const ids = findScholarlyIds(html)
-    if (ids.doi) return this.add(await this.deps.resolver.byDoi(ids.doi, signal), {})
-    if (ids.arxiv) return this.add(await this.deps.resolver.byArxiv(ids.arxiv, signal), {})
+    if (ids.doi) return this.add(await this.deps.resolver.byDoi(ids.doi, signal), { signal })
+    if (ids.arxiv) return this.add(await this.deps.resolver.byArxiv(ids.arxiv, signal), { signal })
     const capture = captureWebPage(html, url)
     if (!capture) throw new UserFacingError('unreadable_page')
-    return this.add(webMetadata(capture, url), { content: `# ${capture.title}\n\nSource: ${url}\n\n${capture.markdown}\n` })
+    return this.add(webMetadata(capture, url), { content: `# ${capture.title}\n\nSource: ${url}\n\n${capture.markdown}\n`, signal })
   }
 
   protected async ingestPdfBytes(bytes: Uint8Array, fileName: string, sourceUrl: string | undefined, signal?: AbortSignal): Promise<IngestOutcome> {
@@ -276,7 +278,7 @@ export class LibraryService {
     const sha = sha256(bytes)
     this.extracted.set(sha, text)
     try {
-      return await this.add(meta, { pdf: bytes })
+      return await this.add(meta, { pdf: bytes, signal })
     } finally {
       this.extracted.delete(sha)
     }
@@ -291,10 +293,12 @@ export class LibraryService {
 
   private async addNow(meta: ResolvedMetadata, extras: AddExtras): Promise<IngestOutcome> {
     const { store, cache } = this.deps
+    extras.signal?.throwIfAborted()
     const dup = findDuplicate({ doi: meta.identifiers.doi, arxiv: meta.identifiers.arxiv, title: meta.title }, cache.dedupeEntries())
     if (dup) {
       const current = await store.readPaper(dup.id)
       if (!current.ok) throw new UserFacingError('file_problem')
+      extras.signal?.throwIfAborted()
       let merged = mergePapers(current.value, buildPaper(meta, dup.id, this.now()))
       if (extras.pdf && !store.resolvePdf(dup.id)) {
         merged = { ...merged, pdf_sha256: await store.writePdf(dup.id, extras.pdf, { redownloadable: Boolean(merged.oa_pdf_url) }) }
