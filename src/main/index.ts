@@ -40,8 +40,13 @@ function createWindow(): BrowserWindow {
 
 app.whenReady().then(async () => {
   registerIpc(controller, () => mainWindow)
-  await controller.init()
-  mainWindow = createWindow()
+  try {
+    await controller.init()
+  } catch (error) {
+    console.error('startup', error)
+  } finally {
+    mainWindow = createWindow()
+  }
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) mainWindow = createWindow()
   })

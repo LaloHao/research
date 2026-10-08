@@ -3,12 +3,14 @@ import { DEFAULT_SETTINGS, type AppSettings } from '../shared/settings'
 import { atomicWrite } from './project/atomicWrite'
 
 export async function loadSettings(file: string): Promise<AppSettings> {
-  let raw: Record<string, unknown>
+  let parsed: unknown
   try {
-    raw = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>
+    parsed = JSON.parse(await readFile(file, 'utf8'))
   } catch {
     return { ...DEFAULT_SETTINGS }
   }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return { ...DEFAULT_SETTINGS }
+  const raw = parsed as Record<string, unknown>
   return {
     contactEmail: typeof raw.contactEmail === 'string' ? raw.contactEmail : DEFAULT_SETTINGS.contactEmail,
     lastProjectPath: typeof raw.lastProjectPath === 'string' ? raw.lastProjectPath : DEFAULT_SETTINGS.lastProjectPath

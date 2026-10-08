@@ -11,6 +11,10 @@ describe('app settings', () => {
     expect(await loadSettings(join(dir, 'missing.json'))).toEqual(DEFAULT_SETTINGS)
     await writeFile(join(dir, 'bad.json'), '{oops')
     expect(await loadSettings(join(dir, 'bad.json'))).toEqual(DEFAULT_SETTINGS)
+    for (const json of ['null', '42', '"text"', '[1, 2]']) {
+      await writeFile(join(dir, 'odd.json'), json)
+      expect(await loadSettings(join(dir, 'odd.json'))).toEqual(DEFAULT_SETTINGS)
+    }
   })
 
   it('round-trips and drops fields of the wrong type', async () => {
@@ -19,5 +23,7 @@ describe('app settings', () => {
     expect(await loadSettings(file)).toEqual({ contactEmail: 'me@uni.test', lastProjectPath: '/tmp/thesis' })
     await writeFile(file, JSON.stringify({ contactEmail: 42, lastProjectPath: '/x', extra: true }))
     expect(await loadSettings(file)).toEqual({ contactEmail: '', lastProjectPath: '/x' })
+    await writeFile(file, JSON.stringify({ contactEmail: 'me@uni.test', lastProjectPath: 7 }))
+    expect(await loadSettings(file)).toEqual({ contactEmail: 'me@uni.test', lastProjectPath: null })
   })
 })
