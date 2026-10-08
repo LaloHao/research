@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { captureWebPage, findScholarlyIds, webMetadata } from '../../../src/main/ingest/web'
+import { captureWebPage, findScholarlyIds, parseByline, webMetadata } from '../../../src/main/ingest/web'
 
 const fx = (name: string): string => readFileSync(new URL(`../../fixtures/web/${name}`, import.meta.url), 'utf8')
 const URL_ = 'https://eng.acme.test/posts/database-outage'
@@ -27,7 +27,7 @@ describe('captureWebPage', () => {
       site: 'Acme Engineering',
       date: '2024-03-01',
       year: 2024,
-      authors: [{ family: 'Jane Roe' }]
+      authors: [{ family: 'Roe', given: 'Jane' }]
     })
     expect(capture!.markdown).toContain('## Summary')
     expect(capture!.markdown).toMatch(/^-\s+09:12 config push$/m)
@@ -42,6 +42,35 @@ describe('captureWebPage', () => {
   it('falls back to the hostname when the page names no site', () => {
     const html = fx('postmortem.html').replace('<meta property="og:site_name" content="Acme Engineering" />', '')
     expect(captureWebPage(html, 'https://www.eng.acme.test/x')!.site).toBe('eng.acme.test')
+  })
+})
+
+describe('parseByline', () => {
+  it('splits a multi-author byline and drops an editor clause', () => {
+    expect(parseByline('Written by John Lunney and Sue Lueder Edited by Gary O’Connor')).toEqual([
+      { family: 'Lunney', given: 'John' },
+      { family: 'Lueder', given: 'Sue' }
+    ])
+  })
+
+  it('strips a leading "By" and splits given/family', () => {
+    expect(parseByline('By Jane Roe')).toEqual([{ family: 'Roe', given: 'Jane' }])
+  })
+
+  it('splits Spanish-style "y" lists with accented names', () => {
+    expect(parseByline('Ana Pérez, Luis Gómez y Marta Ruiz')).toEqual([
+      { family: 'Pérez', given: 'Ana' },
+      { family: 'Gómez', given: 'Luis' },
+      { family: 'Ruiz', given: 'Marta' }
+    ])
+  })
+
+  it('keeps an organization name as a single family', () => {
+    expect(parseByline('The Google SRE Team')).toEqual([{ family: 'The Google SRE Team' }])
+  })
+
+  it('returns an empty list for an empty byline', () => {
+    expect(parseByline('')).toEqual([])
   })
 })
 

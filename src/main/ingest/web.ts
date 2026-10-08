@@ -37,6 +37,30 @@ export function findScholarlyIds(html: string): { doi?: string; arxiv?: string }
   return out
 }
 
+const EDITOR_CLAUSE = /\b(edited|reviewed|translated)\s+by\b.*$/i
+const LEADING_BY = /^(written\s+by|posted\s+by|author:|by)\s+/i
+const NAME_SPLIT = /\s*(?:,|\band\b|&|\sy\s|\n)\s*/i
+const ORG_WORD = /\b(team|staff|editors)\b/i
+
+/** Splits a Readability byline into authors, dropping an editor/reviewer/translator credit. */
+export function parseByline(byline: string): Author[] {
+  const trimmed = byline.trim()
+  if (!trimmed) return []
+  const withoutEditors = trimmed.replace(EDITOR_CLAUSE, '').trim()
+  const withoutLeadingBy = withoutEditors.replace(LEADING_BY, '').trim()
+  if (!withoutLeadingBy) return []
+  return withoutLeadingBy
+    .split(NAME_SPLIT)
+    .map((name) => name.trim())
+    .filter(Boolean)
+    .map((name): Author => {
+      const words = name.split(/\s+/)
+      const isOrg = words.length < 2 || ORG_WORD.test(name) || name === name.toUpperCase()
+      if (isOrg) return { family: name }
+      return { family: words[words.length - 1], given: words.slice(0, -1).join(' ') }
+    })
+}
+
 export function captureWebPage(html: string, url: string): WebCapture | null {
   const { document } = parseHTML(html)
   const article = new Readability(document as unknown as Document).parse()
@@ -44,10 +68,10 @@ export function captureWebPage(html: string, url: string): WebCapture | null {
   const markdown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-' }).turndown(article.content).trim()
   const date = article.publishedTime?.match(/^\d{4}-\d{2}-\d{2}/)?.[0]
   const site = article.siteName?.trim() || new URL(url).hostname.replace(/^www\./, '')
-  const byline = article.byline?.trim().replace(/^by\s+/i, '')
+  const authors = article.byline ? parseByline(article.byline) : []
   return {
     title: article.title?.trim() || site,
-    authors: byline ? [{ family: byline }] : [],
+    authors,
     site,
     date,
     year: date ? Number(date.slice(0, 4)) : undefined,

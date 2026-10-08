@@ -101,10 +101,10 @@ describe('LibraryService URLs', () => {
   it('captures a blog post as grey literature with readable content', async () => {
     const { store, library } = await setupLibrary({ routes: [{ url: BLOG, body: html('postmortem.html'), headers: { 'content-type': 'text/html' } }] })
     const { paperId } = await library.ingestIdentifier(BLOG)
-    expect(paperId).toBe('janeroe2024database')
+    expect(paperId).toBe('roe2024database')
     const read = await store.readPaper(paperId)
     expect(read.ok && read.value).toMatchObject({ kind: 'web', identifiers: { url: BLOG } })
-    expect(read.ok && read.value.bibtex).toContain('@online{janeroe2024database,')
+    expect(read.ok && read.value.bibtex).toContain('@online{roe2024database,')
     expect(await store.readContent(paperId)).toContain('## Timeline')
     expect(library.list('rollback').map((r) => r.id)).toEqual([paperId])
   })
