@@ -106,6 +106,7 @@
     "no_pdf": "Este paper no tiene PDF. Arrastra el archivo a la biblioteca para adjuntarlo.",
     "pdf_loading": "Cargando PDF…",
     "pdf_error": "No se pudo cargar el PDF: {{message}}",
+    "not_found": "Este paper ya no está en la biblioteca.",
     "metadata": {
       "incomplete": "Los metadatos están incompletos.",
       "retry": "Reintentar",

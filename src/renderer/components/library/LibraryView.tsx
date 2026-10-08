@@ -15,7 +15,8 @@ export function LibraryView(): React.JSX.Element {
   const [dragging, setDragging] = useState(false)
 
   const refresh = useCallback(() => {
-    void window.research.library.list(query).then(setRows)
+    // Fails only when the project was just closed; this view is about to go away.
+    window.research.library.list(query).then(setRows, () => undefined)
   }, [query])
   useEffect(() => {
     const handle = setTimeout(refresh, 150)
@@ -29,7 +30,7 @@ export function LibraryView(): React.JSX.Element {
     const paths = Array.from(e.dataTransfer.files)
       .filter((f) => f.name.toLowerCase().endsWith('.pdf'))
       .map((f) => window.research.pathForFile(f))
-    if (paths.length) void window.research.library.addPdfs(paths)
+    if (paths.length) window.research.library.addPdfs(paths).catch((error: unknown) => console.error('add pdfs', error))
   }
 
   return (

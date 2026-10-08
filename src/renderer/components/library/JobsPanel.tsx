@@ -8,7 +8,7 @@ export function JobsPanel({ onSelectPaper }: { onSelectPaper: (id: string) => vo
   const { t } = useTranslation()
   const [jobs, setJobs] = useState<JobRecord[]>([])
   const refresh = useCallback(() => {
-    void window.research.jobs.list().then(setJobs)
+    window.research.jobs.list().then(setJobs, () => undefined)
   }, [])
   useEffect(refresh, [refresh])
   useEvent('jobs-changed', refresh)
