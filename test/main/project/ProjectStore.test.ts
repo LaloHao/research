@@ -57,6 +57,19 @@ describe('ProjectStore', () => {
     await expect(store.writePaper(samplePaper({ title: 'X' }), hash)).rejects.toBeInstanceOf(ConflictError)
   })
 
+  it('reports a paper.yaml whose id does not match its folder', async () => {
+    const root = await tmpDir()
+    const store = await ProjectStore.create(root, 'Thesis')
+    const hash = await store.writePaper(samplePaper(), null)
+    await mkdir(join(root, 'papers/copied'), { recursive: true })
+    await writeFile(join(root, 'papers/copied/paper.yaml'), await readFile(join(root, 'papers/he2017drain/paper.yaml'), 'utf8'))
+    expect(await store.readPaper('copied')).toEqual({
+      ok: false,
+      hash,
+      problem: { kind: 'invalid_schema', message: 'id he2017drain does not match folder copied' }
+    })
+  })
+
   it('lists only folders that contain a paper.yaml, sorted', async () => {
     const root = await tmpDir()
     const store = await ProjectStore.create(root, 'Thesis')

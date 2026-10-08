@@ -79,7 +79,11 @@ export class ProjectStore {
 
   async readPaper(id: string): Promise<ReadResult<Paper>> {
     const text = await readFile(join(this.paperDir(id), 'paper.yaml'), 'utf8')
-    return parseYamlFile(text, PaperSchema)
+    const result = parseYamlFile(text, PaperSchema)
+    if (result.ok && result.value.id !== id) {
+      return { ok: false, hash: result.hash, problem: { kind: 'invalid_schema', message: `id ${result.value.id} does not match folder ${id}` } }
+    }
+    return result
   }
 
   /** `expectedHash` is the hash from the last read, or null when the paper must not exist yet. */
