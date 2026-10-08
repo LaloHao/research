@@ -65,6 +65,12 @@ describe('LibraryService.ingestPdf', () => {
     expect(store.resolvePdf('he2017drain')).not.toBeNull()
   })
 
+  it('keeps a dropped PDF in the paper folder under download_on_demand when it cannot be downloaded again', async () => {
+    const { store, library } = await setupLibrary({ policy: 'download_on_demand' })
+    const { paperId } = await library.ingestPdf(await pdfFile([['Sanitizing logs with NER for incident reviews in production systems.']]))
+    expect(store.resolvePdf(paperId)).toBe(join(store.paperDir(paperId), 'paper.pdf'))
+  })
+
   it('rejects files that are not PDFs', async () => {
     const { library } = await setupLibrary()
     const path = join(await tmpDir(), 'fake.pdf')
@@ -101,6 +107,18 @@ describe('LibraryService URLs', () => {
       routes: [{ url: 'https://files.acme.test/drain.pdf', body: pdf, headers: { 'content-type': 'application/pdf' } }]
     })
     expect(await library.ingestIdentifier('https://files.acme.test/drain.pdf')).toEqual({ status: 'added', paperId: 'he2017drain' })
+  })
+
+  it('keeps a PDF from a direct URL re-downloadable from that URL under download_on_demand', async () => {
+    const pdf = await makePdf([['Sanitizing logs with NER for incident reviews in production systems.']])
+    const { root, store, library } = await setupLibrary({
+      policy: 'download_on_demand',
+      routes: [{ url: 'https://files.acme.test/ner.pdf', body: pdf, headers: { 'content-type': 'application/pdf' } }]
+    })
+    const { paperId } = await library.ingestIdentifier('https://files.acme.test/ner.pdf')
+    const read = await store.readPaper(paperId)
+    expect(read.ok && read.value.oa_pdf_url).toBe('https://files.acme.test/ner.pdf')
+    expect(store.resolvePdf(paperId)).toBe(join(root, '.cache/pdfs', `${paperId}.pdf`))
   })
 
   it('reports pages without a readable article', async () => {

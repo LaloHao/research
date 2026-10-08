@@ -233,6 +233,8 @@ export class LibraryService {
       identifiers: compact({ doi: ids.doi, arxiv: ids.arxiv, url: sourceUrl }),
       complete: false
     }
+    // A PDF served directly by a URL can be fetched from it again.
+    if (sourceUrl) meta = { ...meta, oa_pdf_url: meta.oa_pdf_url ?? sourceUrl }
     return this.add(meta, { pdf: bytes })
   }
 
@@ -250,7 +252,9 @@ export class LibraryService {
       const current = await store.readPaper(dup.id)
       if (!current.ok) throw new UserFacingError('file_problem')
       let merged = mergePapers(current.value, buildPaper(meta, dup.id, this.now()))
-      if (extras.pdf && !store.resolvePdf(dup.id)) merged = { ...merged, pdf_sha256: await store.writePdf(dup.id, extras.pdf) }
+      if (extras.pdf && !store.resolvePdf(dup.id)) {
+        merged = { ...merged, pdf_sha256: await store.writePdf(dup.id, extras.pdf, { redownloadable: Boolean(merged.oa_pdf_url) }) }
+      }
       const changed = !samePaperContent(current.value, merged)
       if (changed) await store.writePaper(merged, current.hash)
       await this.afterWrite(dup.id)
@@ -261,7 +265,7 @@ export class LibraryService {
     )
     let paper = buildPaper(meta, id, this.now())
     if (extras.pdf) {
-      paper = { ...paper, pdf_sha256: await store.writePdf(id, extras.pdf) }
+      paper = { ...paper, pdf_sha256: await store.writePdf(id, extras.pdf, { redownloadable: Boolean(paper.oa_pdf_url) }) }
     } else if (meta.oa_pdf_url && store.config.pdfs.policy !== 'download_on_demand') {
       const sha = await this.downloadPdf(id, meta.oa_pdf_url).catch(() => null)
       if (sha) paper = { ...paper, pdf_sha256: sha }
@@ -275,7 +279,7 @@ export class LibraryService {
   protected async downloadPdf(id: string, url: string, signal?: AbortSignal): Promise<string> {
     const bytes = await this.deps.http.bytes(url, 'application/pdf', signal)
     if (!isPdf(bytes)) throw new UserFacingError('not_a_pdf')
-    return this.deps.store.writePdf(id, bytes)
+    return this.deps.store.writePdf(id, bytes, { redownloadable: true })
   }
 
   protected async afterWrite(id: string): Promise<void> {

@@ -97,9 +97,12 @@ export class ProjectStore {
     return this.writeChecked(join(this.paperDir(id), 'notes.md'), text, expectedHash)
   }
 
-  /** Where a newly acquired PDF goes under the current policy. */
-  pdfLocation(id: string): string {
-    return this.cfg.pdfs.policy === 'download_on_demand'
+  /**
+   * Where a newly acquired PDF goes under the current policy. Only a PDF that can be downloaded
+   * again (the paper has an `oa_pdf_url`) may live in `.cache/`, which is always safe to delete.
+   */
+  pdfLocation(id: string, opts: { redownloadable: boolean }): string {
+    return this.cfg.pdfs.policy === 'download_on_demand' && opts.redownloadable
       ? join(this.cacheDir, 'pdfs', `${id}.pdf`)
       : join(this.paperDir(id), 'paper.pdf')
   }
@@ -112,8 +115,8 @@ export class ProjectStore {
     return null
   }
 
-  async writePdf(id: string, bytes: Uint8Array): Promise<string> {
-    await atomicWrite(this.pdfLocation(id), bytes)
+  async writePdf(id: string, bytes: Uint8Array, opts: { redownloadable: boolean }): Promise<string> {
+    await atomicWrite(this.pdfLocation(id, opts), bytes)
     return sha256(bytes)
   }
 

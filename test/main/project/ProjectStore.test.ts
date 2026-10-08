@@ -79,13 +79,22 @@ describe('ProjectStore', () => {
   it('places PDFs according to the policy and resolves either location', async () => {
     const root = await tmpDir()
     const store = await ProjectStore.create(root, 'Thesis')
-    expect(store.pdfLocation('he2017drain')).toBe(join(root, 'papers/he2017drain/paper.pdf'))
+    expect(store.pdfLocation('he2017drain', { redownloadable: true })).toBe(join(root, 'papers/he2017drain/paper.pdf'))
     await store.updateConfig({ pdfs: { policy: 'download_on_demand' } })
-    expect(store.pdfLocation('he2017drain')).toBe(join(root, '.cache/pdfs/he2017drain.pdf'))
+    expect(store.pdfLocation('he2017drain', { redownloadable: true })).toBe(join(root, '.cache/pdfs/he2017drain.pdf'))
     expect(store.resolvePdf('he2017drain')).toBeNull()
-    const sha = await store.writePdf('he2017drain', new TextEncoder().encode('%PDF-1.7 fake'))
+    const sha = await store.writePdf('he2017drain', new TextEncoder().encode('%PDF-1.7 fake'), { redownloadable: true })
     expect(sha).toHaveLength(64)
     expect(store.resolvePdf('he2017drain')).toBe(join(root, '.cache/pdfs/he2017drain.pdf'))
+  })
+
+  it('never keeps a PDF that cannot be downloaded again only in the cache', async () => {
+    const root = await tmpDir()
+    const store = await ProjectStore.create(root, 'Thesis')
+    await store.updateConfig({ pdfs: { policy: 'download_on_demand' } })
+    expect(store.pdfLocation('he2017drain', { redownloadable: false })).toBe(join(root, 'papers/he2017drain/paper.pdf'))
+    await store.writePdf('he2017drain', new TextEncoder().encode('%PDF-1.7 fake'), { redownloadable: false })
+    expect(store.resolvePdf('he2017drain')).toBe(join(root, 'papers/he2017drain/paper.pdf'))
   })
 
   it('stores readable content for web pages', async () => {
