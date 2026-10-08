@@ -1,0 +1,45 @@
+{
+  "type": "article",
+  "id": "https://doi.org/10.48550/arxiv.2008.06448",
+  "categories": [
+    "Software Engineering (cs.SE)",
+    "FOS: Computer and information sciences",
+    "FOS: Computer and information sciences"
+  ],
+  "author": [
+    {
+      "family": "Zhu",
+      "given": "Jieming"
+    },
+    {
+      "family": "He",
+      "given": "Shilin"
+    },
+    {
+      "family": "He",
+      "given": "Pinjia"
+    },
+    {
+      "family": "Liu",
+      "given": "Jinyang"
+    },
+    {
+      "family": "Lyu",
+      "given": "Michael R."
+    }
+  ],
+  "issued": {
+    "date-parts": [
+      [
+        2020
+      ]
+    ]
+  },
+  "abstract": "Logs have been widely adopted in software system development and maintenance because of the rich runtime information they record. In recent years, the increase of software size and complexity leads to the rapid growth of the volume of logs. To handle these large volumes of logs efficiently and effectively, a line of research focuses on developing intelligent and automated log analysis techniques. However, only a few of these techniques have reached successful deployments in industry due to the lack of public log datasets and open benchmarking upon them. To fill this significant gap and facilitate more research on AI-driven log analytics, we have collected and released loghub, a large collection of system log datasets. In particular, loghub provides 19 real-world log datasets collected from a wide range of software systems, including distributed systems, supercomputers, operating systems, mobile systems, server applications, and standalone software. In this paper, we summarize the statistics of these datasets, introduce some practical usage scenarios of the loghub datasets, and present our benchmarking results on loghub to benefit the researchers and practitioners in this field. Up to the time of this paper writing, the loghub datasets have been downloaded for roughly 90,000 times in total by hundreds of organizations from both industry and academia. The loghub datasets are available at https://github.com/logpai/loghub.",
+  "DOI": "10.48550/ARXIV.2008.06448",
+  "publisher": "arXiv",
+  "title": "Loghub: A Large Collection of System Log Datasets for AI-driven Log Analytics",
+  "URL": "https://arxiv.org/abs/2008.06448",
+  "copyright": "arXiv.org perpetual, non-exclusive license",
+  "version": "3"
+}
