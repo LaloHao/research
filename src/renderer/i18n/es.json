@@ -154,6 +154,7 @@
     "thesis_rqs": "Preguntas de investigación",
     "thesis_score": "Relevancia {{score}}/5",
     "thesis_missing": "Define el tema de tu tesis en Ajustes para obtener esta sección.",
+    "thesis_pending": "Regenera el resumen para obtener la relación con la tesis.",
     "status": { "generated": "generado", "verified": "verificado", "edited": "editado", "evidence_missing": "evidencia no encontrada" },
     "fields": { "tldr": "En pocas palabras", "problem": "Problema", "contribution": "Contribución", "method": "Método", "evaluation": "Evaluación", "results": "Resultados", "limitations": "Limitaciones", "future_work": "Trabajo futuro", "research_type": "Tipo de investigación" },
     "research_types": { "solution_proposal": "Propuesta de solución", "validation": "Validación", "evaluation": "Evaluación", "experience": "Experiencia", "philosophical": "Filosófico", "opinion": "Opinión" },

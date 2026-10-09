@@ -135,7 +135,7 @@ export function PaperDetail({ id }: { id: string }): React.JSX.Element {
         ))}
       </nav>
       <div className="tab-body">
-        {active === 'summary' && <SummaryTab detail={detail} onOpenEvidence={openEvidence} />}
+        {active === 'summary' && <SummaryTab key={detail.id} detail={detail} onOpenEvidence={openEvidence} />}
         {active === 'pdf' && <PdfTab key={id} id={id} hasPdf={detail.hasPdf} focus={focus} />}
         {active === 'content' && <pre className="content">{detail.content}</pre>}
         {active === 'notes' && <NotesEditor key={id} paperId={id} />}

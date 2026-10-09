@@ -127,6 +127,9 @@ describe('summarizeAvailability', () => {
   it('needs extracted text', () => {
     expect(summarizeAvailability(detail({ textStatus: 'no_text' }), [])).toBe('no_text')
   })
+  it.each(['pending', 'no_source', 'error'] as const)('treats text status %s as no text', (textStatus) => {
+    expect(summarizeAvailability(detail({ textStatus }), [])).toBe('no_text')
+  })
   it('reports a text over the limit', () => {
     expect(summarizeAvailability(detail({ summaryStatus: 'too_long' }), [])).toBe('too_long')
   })

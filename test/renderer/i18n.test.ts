@@ -23,7 +23,9 @@ describe('es.json covers every code the UI can receive', () => {
     ...SUMMARY_FIELD_KEYS.map((k) => `summary.fields.${k}`),
     ...RESEARCH_TYPES.map((r) => `summary.research_types.${r}`),
     ...CARD_STATUSES.map((s) => `summary.status.${s}`),
-    'paper.tabs.summary'
+    'paper.tabs.summary',
+    'summary.thesis_missing',
+    'summary.thesis_pending'
   ])('%s', (path) => {
     expect(typeof lookup(path)).toBe('string')
   })
