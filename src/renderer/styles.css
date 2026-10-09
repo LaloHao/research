@@ -118,7 +118,10 @@ code { font-family: ui-monospace, 'JetBrains Mono', monospace; font-size: 12px; 
 .tabs button.active { border-bottom-color: var(--accent); font-weight: 600; }
 .tab-body { flex: 1; min-height: 0; overflow: auto; }
 .pdf-viewer { padding: 16px; display: flex; flex-direction: column; align-items: center; gap: 12px; background: var(--bg); }
+.pdf-page-wrap { position: relative; }
 .pdf-page { box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2); background: #fff; }
+.textLayer .evidence-hl { background: rgba(250, 204, 21, 0.45); }
+mark { background: rgba(250, 204, 21, 0.45); }
 .content { white-space: pre-wrap; font-family: inherit; padding: 16px 20px; margin: 0; max-width: 80ch; }
 .notes { display: flex; flex-direction: column; height: 100%; padding: 12px 20px; gap: 6px; }
 .notes textarea { flex: 1; resize: none; font-family: ui-monospace, monospace; line-height: 1.5; }
@@ -144,4 +147,11 @@ code { font-family: ui-monospace, 'JetBrains Mono', monospace; font-size: 12px; 
 .editor { display: flex; flex-direction: column; gap: 6px; }
 .editor .field { margin-bottom: 0; }
 .checks { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+
+.review-view { display: flex; height: 100%; }
+.review-left { width: 40%; flex-shrink: 0; overflow: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; border-right: 1px solid var(--border); }
+.review-right { flex: 1; min-width: 0; overflow: auto; }
+.review-empty { flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
+.review-passage { padding: 16px 20px; max-width: 80ch; }
+.review-passage mark { background: rgba(250, 204, 21, 0.45); }
 .proposals { display: flex; flex-direction: column; gap: 4px; }

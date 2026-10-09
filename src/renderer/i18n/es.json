@@ -196,6 +196,16 @@
     "research_types": { "solution_proposal": "Propuesta de solución", "validation": "Validación", "evaluation": "Evaluación", "experience": "Experiencia", "philosophical": "Filosófico", "opinion": "Opinión" },
     "none_value": "—"
   },
+  "review": {
+    "open": "Revisar pendientes",
+    "progress": "{{position}} de {{total}} · {{title}}",
+    "empty": "No hay nada pendiente de revisar.",
+    "exit": "Salir",
+    "shortcuts": "V verificar · E editar · U desverificar · → siguiente · ← anterior · Esc salir",
+    "passage": "Texto extraído de la página {{page}}",
+    "passage_web": "Texto extraído",
+    "quote_not_in_pdf": "No se encontró la cita en el PDF; se muestra el texto extraído."
+  },
   "notes": {
     "placeholder": "Escribe tus notas en Markdown…",
     "saving": "Guardando…",

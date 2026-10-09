@@ -19,13 +19,15 @@ export function SummaryToolbar({
   onFilterChange,
   model,
   onModelChange,
-  visibleRows
+  visibleRows,
+  onReview
 }: {
   filter: SummaryFilter
   onFilterChange: (filter: SummaryFilter) => void
   model: LlmModel | 'any'
   onModelChange: (model: LlmModel | 'any') => void
   visibleRows: PaperRow[]
+  onReview: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [batchModel, setBatchModel] = useState<LlmModel | ''>('')
@@ -107,6 +109,7 @@ export function SummaryToolbar({
           ))}
         </select>
         <button onClick={openPendingConfirm}>{t('library.summarize_pending')}</button>
+        <button onClick={onReview}>{t('review.open')}</button>
         {filter !== 'all' && (
           <select
             value=""

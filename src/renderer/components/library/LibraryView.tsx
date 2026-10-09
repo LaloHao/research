@@ -5,6 +5,7 @@ import type { LlmModel } from '../../../shared/summary'
 import { useEvent } from '../../hooks/useEvent'
 import { filterByModel, filterBySummary, type SummaryFilter } from '../../lib/badges'
 import { PaperDetail } from '../paper/PaperDetail'
+import { ReviewView } from '../review/ReviewView'
 import { AddPaperBar } from './AddPaperBar'
 import { JobsPanel } from './JobsPanel'
 import { PaperList } from './PaperList'
@@ -18,6 +19,7 @@ export function LibraryView(): React.JSX.Element {
   const [modelFilter, setModelFilter] = useState<LlmModel | 'any'>('any')
   const [selected, setSelected] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
+  const [reviewIds, setReviewIds] = useState<string[] | null>(null)
 
   const refresh = useCallback(() => {
     // Fails only when the project was just closed; this view is about to go away.
@@ -55,12 +57,25 @@ export function LibraryView(): React.JSX.Element {
       <aside className="library-list">
         <input className="search" type="search" value={query} placeholder={t('library.search_placeholder')} onChange={(e) => setQuery(e.target.value)} />
         <AddPaperBar />
-        <SummaryToolbar filter={summaryFilter} onFilterChange={setSummaryFilter} model={modelFilter} onModelChange={setModelFilter} visibleRows={visibleRows} />
-        <PaperList rows={visibleRows} query={query} selected={selected} onSelect={setSelected} />
+        <SummaryToolbar
+          filter={summaryFilter}
+          onFilterChange={setSummaryFilter}
+          model={modelFilter}
+          onModelChange={setModelFilter}
+          visibleRows={visibleRows}
+          onReview={() => setReviewIds(visibleRows.map((row) => row.id))}
+        />
+        {reviewIds === null && <PaperList rows={visibleRows} query={query} selected={selected} onSelect={setSelected} />}
         <JobsPanel onSelectPaper={setSelected} />
       </aside>
       <section className="library-detail">
-        {selected ? <PaperDetail id={selected} /> : <div className="center muted">{t('library.select_hint')}</div>}
+        {reviewIds !== null ? (
+          <ReviewView ids={reviewIds} onExit={() => setReviewIds(null)} />
+        ) : selected ? (
+          <PaperDetail id={selected} />
+        ) : (
+          <div className="center muted">{t('library.select_hint')}</div>
+        )}
       </section>
       {dragging && <div className="drop-overlay">{t('library.drop_hint')}</div>}
     </div>
