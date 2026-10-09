@@ -28,7 +28,8 @@ describe('es.json covers every code the UI can receive', () => {
     ...SUMMARY_FILTERS.map((f) => `library.summary_filter.${f}`),
     'paper.tabs.summary',
     'summary.thesis_missing',
-    'summary.thesis_pending'
+    'summary.thesis_pending',
+    'summary.truncated'
   ])('%s', (path) => {
     expect(typeof lookup(path)).toBe('string')
   })

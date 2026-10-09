@@ -95,7 +95,7 @@ export class Summarizer {
         else lastError = parsed.error
       }
       if (!out) throw new LlmError('llm_invalid_output', spent)
-      const meta = { model, at: (this.deps.now ?? (() => new Date()))().toISOString(), cost_usd_est: round(spent), prompt_version: PROMPT_VERSION, language: store.config.content_language }
+      const meta = { model, at: (this.deps.now ?? (() => new Date()))().toISOString(), cost_usd_est: round(spent), prompt_version: PROMPT_VERSION, language: store.config.content_language, ...(text.truncated ? { truncated: true } : {}) }
       const generated = toGeneratedFiles(out, form.form, form.hash, meta, thesis)
       const checked = checkEvidence(generated.summary, generated.extraction, text.pages)
       await this.write(id, paper.value.title, checked.summary, checked.extraction)

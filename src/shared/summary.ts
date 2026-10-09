@@ -48,7 +48,9 @@ export const SummaryFileSchema = z.looseObject({
     at: z.string(),
     cost_usd_est: z.number(),
     prompt_version: z.number().int(),
-    language: z.string()
+    language: z.string(),
+    /** Set when the paper exceeded max_input_chars and only its beginning was sent (a forced run). */
+    truncated: z.boolean().optional()
   }),
   fields: SummaryFieldsSchema
 })

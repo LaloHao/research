@@ -56,7 +56,7 @@ describe('SummaryService', () => {
 
   it('records a failure and cancels the rest of a batch on quota errors', async () => {
     const s = await session([new LlmError('llm_quota')], ['a2020x', 'b2020x', 'c2020x'])
-    expect(s.summaries.plan()).toMatchObject({ count: 3, batchLimitUsd: 10 })
+    expect(await s.summaries.plan()).toMatchObject({ count: 3, batchLimitUsd: 10 })
     const { count } = await s.summaries.requestBatch()
     expect(count).toBe(3)
     await s.queue.whenIdle()
@@ -64,7 +64,7 @@ describe('SummaryService', () => {
     expect(states).toEqual(['cancelled', 'cancelled', 'failed'])
     const failed = s.library.list().find((r) => r.summary_status === 'failed')
     expect(failed).toBeDefined()
-    expect(s.summaries.plan().count).toBe(3)
+    expect((await s.summaries.plan()).count).toBe(3)
     await s.close()
   })
 
@@ -224,6 +224,68 @@ describe('SummaryService', () => {
     const e = await s.store.readExtraction('he2017drain')
     expect(e?.ok && e.value.thesis_relation?.status).toBe('verified')
     expect((await s.summaries.reviewQueue()).some((i) => i.section === 'thesis')).toBe(false)
+    await s.close()
+  })
+})
+
+describe('SummaryService: papers longer than max_input_chars', () => {
+  const tooLong = async (s: ProjectSession) => {
+    await s.store.updateConfig({ llm: { ...s.store.config.llm, max_input_chars: 50 } })
+    for (const id of await s.store.listPaperIds()) await s.library.indexPaper(id)
+  }
+
+  it('batches skip a too-long paper that was never forced, even when asked by id', async () => {
+    const s = await session([ok()], ['a2020x', 'b2020x'])
+    await tooLong(s)
+    expect(s.library.list().map((r) => r.summary_status)).toEqual(['too_long', 'too_long'])
+    expect((await s.summaries.plan()).count).toBe(0)
+    expect((await s.summaries.requestBatch({ ids: ['a2020x', 'b2020x'] })).count).toBe(0)
+    await s.close()
+  })
+
+  it('remembers a forced summary was truncated and forces regenerations and stale batches automatically', async () => {
+    const venue = { ...DEFAULT_EXTRACTION_FORM, facets: [...DEFAULT_EXTRACTION_FORM.facets, { key: 'venue_type', type: 'text' as const, description: 'Kind of venue' }] }
+    let form = DEFAULT_EXTRACTION_FORM
+    const s = await session([() => ok(form)], ['a2020x', 'b2020x'])
+    await tooLong(s)
+    await s.summaries.request('a2020x', { force: true })
+    await s.queue.whenIdle()
+    const first = await s.store.readSummary('a2020x')
+    expect(first?.ok && first.value.generated.truncated).toBe(true)
+
+    // Regenerate (and "Regenerate with…") send no force flag.
+    await s.summaries.request('a2020x', { model: 'haiku' })
+    await s.queue.whenIdle()
+    expect(s.queue.list().filter((j) => j.state === 'failed')).toEqual([])
+    expect(s.library.list().find((r) => r.id === 'a2020x')?.summary_status).toBe('generated')
+
+    // The form changes: the stale batch regenerates the forced paper and still skips the never-forced one.
+    form = venue
+    await s.store.updateConfig({ extraction_form: venue })
+    for (const id of ['a2020x', 'b2020x']) await s.library.indexPaper(id)
+    expect((await s.summaries.plan()).count).toBe(1)
+    const { count } = await s.summaries.requestBatch()
+    expect(count).toBe(1)
+    await s.queue.whenIdle()
+    expect(s.queue.list().filter((j) => j.state === 'failed')).toEqual([])
+    const row = s.library.list().find((r) => r.id === 'a2020x')
+    expect(row?.summary_status).toBe('generated')
+    expect((await s.summaries.requestBatch({ ids: ['a2020x', 'b2020x'] })).count).toBe(1)
+    await s.queue.whenIdle()
+    await s.close()
+  })
+
+  it('a full-text regeneration clears the truncated flag', async () => {
+    const s = await session([ok()])
+    await s.store.updateConfig({ llm: { ...s.store.config.llm, max_input_chars: 50 } })
+    await s.library.indexPaper('he2017drain')
+    await s.summaries.request('he2017drain', { force: true })
+    await s.queue.whenIdle()
+    await s.store.updateConfig({ llm: { ...s.store.config.llm, max_input_chars: 400000 } })
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    const summary = await s.store.readSummary('he2017drain')
+    expect(summary?.ok && summary.value.generated.truncated).toBeFalsy()
     await s.close()
   })
 })

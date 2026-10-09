@@ -49,7 +49,6 @@ export function SummaryTab({ detail, onOpenEvidence }: { detail: PaperDetail; on
 
   const availability = summarizeAvailability(detail, jobs)
   const summarize = (opts?: { force?: boolean; model?: LlmModel }): void => void run(() => window.research.summary.run(detail.id, opts))
-  const force = detail.summaryStatus === 'too_long'
   const lastError = detail.summaryError && <div className="banner error">{t('summary.last_error', { error: errorText(t, detail.summaryError) })}</div>
   const actionError = error && <div className="banner error">{error}</div>
 
@@ -83,9 +82,11 @@ export function SummaryTab({ detail, onOpenEvidence }: { detail: PaperDetail; on
             {t('summary.meta', { model: summary.generated.model, date: formatDate(summary.generated.at), cost: summary.generated.cost_usd_est.toFixed(2) })}
           </span>
           {detail.summaryStatus === 'stale' && <span className="badge badge-incomplete">{t('summary.stale')}</span>}
+          {summary.generated.truncated && <span className="muted">{t('summary.truncated')}</span>}
         </div>
         <div className="row">
-          <button disabled={busy} onClick={() => summarize(force ? { force } : undefined)}>
+          {/* A summary made from truncated text is forced again by the main process. */}
+          <button disabled={busy} onClick={() => summarize()}>
             {t('summary.regenerate')}
           </button>
           <select
@@ -93,7 +94,7 @@ export function SummaryTab({ detail, onOpenEvidence }: { detail: PaperDetail; on
             value=""
             onChange={(e) => {
               const model = e.target.value as LlmModel | ''
-              if (model) summarize({ model, force })
+              if (model) summarize({ model })
             }}
           >
             <option value="">{t('summary.regenerate_with')}</option>

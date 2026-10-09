@@ -102,7 +102,9 @@ export class SummaryService {
   async run(paperId: string, opts: { force?: boolean; batchId?: string; model?: LlmModel; signal?: AbortSignal }): Promise<{ paperId: string; message: 'summarized' }> {
     const { cache, summarizer } = this.deps
     try {
-      await summarizer.summarize({ paperId, ...opts })
+      // A summary already made from truncated text was consented to once: regenerating it (alone or in a batch) forces again.
+      const force = opts.force || (await this.wasTruncated(paperId))
+      await summarizer.summarize({ paperId, ...opts, force })
       cache.setSummaryError(paperId, null)
       return { paperId, message: 'summarized' }
     } catch (error) {
@@ -126,22 +128,36 @@ export class SummaryService {
     this.deps.enqueue({ type: 'summarize', paperId, ...(opts.force ? { force: true } : {}), ...(opts.model ? { model: opts.model } : {}) })
   }
 
-  private eligibleIds(ids?: string[]): string[] {
-    const rows = ids ? ids.flatMap((id) => this.deps.cache.getPaper(id) ?? []) : this.deps.cache.listPapers()
-    return rows
-      .filter((r) => r.text_status === 'ok' && (ids ? true : ELIGIBLE.has(r.summary_status)) && !this.deps.cache.hasActiveJob('summarize', r.id))
-      .map((r) => r.id)
+  /**
+   * Papers a batch would summarize: with `ids`, those papers whatever their state; otherwise the ones without an
+   * up-to-date summary. Either way a paper over max_input_chars is skipped unless its summary was already forced.
+   */
+  private async eligibleIds(ids?: string[]): Promise<string[]> {
+    const { cache, store } = this.deps
+    const rows = ids ? ids.flatMap((id) => cache.getPaper(id) ?? []) : cache.listPapers()
+    const eligible: string[] = []
+    for (const r of rows) {
+      if (r.text_status !== 'ok' || (!ids && !ELIGIBLE.has(r.summary_status)) || cache.hasActiveJob('summarize', r.id)) continue
+      if (cache.textChars(r.id) > store.config.llm.max_input_chars && !(await this.wasTruncated(r.id))) continue
+      eligible.push(r.id)
+    }
+    return eligible
   }
 
-  plan(): SummaryPlan {
-    const count = this.eligibleIds().length
+  private async wasTruncated(paperId: string): Promise<boolean> {
+    const s = await this.deps.store.readSummary(paperId).catch(() => null)
+    return Boolean(s?.ok && s.value.generated.truncated)
+  }
+
+  async plan(): Promise<SummaryPlan> {
+    const count = (await this.eligibleIds()).length
     return { count, estimateUsd: count * this.deps.budget.currentEstimate(), batchLimitUsd: this.deps.store.config.llm.budget.per_batch_usd }
   }
 
   async requestBatch(opts: { model?: LlmModel; ids?: string[] } = {}): Promise<{ batchId: string; count: number }> {
     await this.ensureForm()
     const batchId = randomUUID()
-    const ids = this.eligibleIds(opts.ids)
+    const ids = await this.eligibleIds(opts.ids)
     for (const paperId of ids) this.deps.enqueue({ type: 'summarize', paperId, batchId, ...(opts.model ? { model: opts.model } : {}) })
     return { batchId, count: ids.length }
   }
