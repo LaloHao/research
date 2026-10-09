@@ -89,6 +89,11 @@ export class AppController {
     return this.session
   }
 
+  /** Lets an IPC handler signal that something outside the session's own events changed (e.g. Claude settings, thesis context). */
+  notifyProjectChanged(): void {
+    this.emit('project-changed')
+  }
+
   /** Called on quit: running jobs go back to the queue and resume on the next launch. */
   async shutdown(): Promise<void> {
     if (!this.session) return

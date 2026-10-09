@@ -97,6 +97,7 @@
     "no_text": "Este paper no tiene texto para resumir.",
     "too_long": "El texto supera el tamaño máximo configurado.",
     "invalid_form": "El formulario de extracción en project.yaml tiene errores.",
+    "invalid_edit": "El valor no es válido para este campo.",
     "unknown": "Ocurrió un error inesperado."
   },
   "paper": {

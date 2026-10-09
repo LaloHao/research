@@ -49,6 +49,7 @@ export const USER_ERROR_CODES = [
   'no_text',
   'too_long',
   'invalid_form',
+  'invalid_edit',
   'unknown'
 ] as const
 export type UserErrorCode = (typeof USER_ERROR_CODES)[number]

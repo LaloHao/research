@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { HttpError } from '../../../src/main/ingest/http'
 import { toUserFacing, UserFacingError } from '../../../src/main/library/UserFacingError'
 import { ConflictError, ProjectError } from '../../../src/main/project/errors'
+import { InvalidEdit } from '../../../src/main/summary/merge'
 
 const named = (name: string): Error => Object.assign(new Error('raw English text'), { name })
 
@@ -15,5 +16,6 @@ describe('toUserFacing', () => {
     expect(toUserFacing(new ProjectError('No project.yaml in /x', 'not_a_project')).code).toBe('not_a_project')
     expect(toUserFacing(named('InvalidPDFException')).code).toBe('unreadable_pdf')
     expect(toUserFacing(named('PasswordException')).code).toBe('unreadable_pdf')
+    expect(toUserFacing(new InvalidEdit('x')).code).toBe('invalid_edit')
   })
 })

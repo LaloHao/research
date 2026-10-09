@@ -2,6 +2,7 @@ import type { UserErrorCode } from '../../shared/library'
 import { HttpError } from '../ingest/http'
 import { LlmError } from '../llm/LlmProvider'
 import { ConflictError, ProjectError } from '../project/errors'
+import { InvalidEdit } from '../summary/merge'
 
 /** An error whose `message` is a code the UI translates (`errors.<code>`). */
 export class UserFacingError extends Error {
@@ -18,6 +19,7 @@ const PDF_ERRORS = new Set(['InvalidPDFException', 'PasswordException', 'FormatE
 
 export function toUserFacing(error: unknown): UserFacingError {
   if (error instanceof UserFacingError) return error
+  if (error instanceof InvalidEdit) return new UserFacingError('invalid_edit', { cause: error })
   if (error instanceof LlmError) return new UserFacingError(error.code, { cause: error })
   if (error instanceof HttpError) return new UserFacingError(error.status === 404 ? 'not_found' : 'network', { cause: error })
   if (error instanceof ConflictError) return new UserFacingError('conflict', { cause: error })
