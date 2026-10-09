@@ -1,4 +1,5 @@
 import type { Paper } from './schemas'
+import type { SummaryStatus } from './summary'
 
 export const TEXT_STATUSES = ['pending', 'ok', 'no_text', 'no_source', 'error'] as const
 export type TextStatus = (typeof TEXT_STATUSES)[number]
@@ -19,6 +20,9 @@ export interface PaperRow {
   problem: string | null
   added_at: string | null
   text_status: TextStatus
+  summary_status: SummaryStatus
+  /** Fields and facets still `generated` (not yet verified or edited). */
+  pending_review: number
 }
 
 /** Error codes the main process hands to the UI; each has a translation under `errors.<code>`. */
@@ -35,6 +39,14 @@ export const USER_ERROR_CODES = [
   'not_a_project',
   'invalid_project',
   'unreadable_pdf',
+  'llm_unavailable',
+  'llm_quota',
+  'llm_invalid_output',
+  'llm_timeout',
+  'budget_exceeded',
+  'no_text',
+  'too_long',
+  'invalid_form',
   'unknown'
 ] as const
 export type UserErrorCode = (typeof USER_ERROR_CODES)[number]
@@ -45,6 +57,9 @@ export type FileProblemKind = (typeof FILE_PROBLEM_KINDS)[number]
 
 export const INGEST_STATUSES = ['added', 'merged', 'duplicate'] as const
 export type IngestStatus = (typeof INGEST_STATUSES)[number]
+
+/** What a finished job reports in `message`; each has a translation under `jobs.outcome.<value>`. */
+export const JOB_OUTCOMES = [...INGEST_STATUSES, 'summarized'] as const
 
 export interface PaperDetail {
   id: string

@@ -34,6 +34,8 @@ const row = (over: Partial<PaperRow>): PaperRow => ({
   problem: null,
   added_at: null,
   text_status: 'ok',
+  summary_status: 'none',
+  pending_review: 0,
   ...over
 })
 

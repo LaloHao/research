@@ -2,6 +2,9 @@ export type JobSpec =
   | { type: 'ingest_identifier'; input: string }
   | { type: 'ingest_pdf'; path: string }
   | { type: 'update_metadata'; paperId: string; input?: string }
+  | { type: 'summarize'; paperId: string; batchId?: string; force?: boolean }
+
+export type JobType = JobSpec['type']
 
 export type JobState = 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
 

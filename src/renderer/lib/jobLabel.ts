@@ -10,6 +10,8 @@ export function jobLabel(t: TFunction, job: JobRecord): string {
       return t('jobs.ingest_pdf', { file: job.spec.path.split(/[\\/]/).pop() })
     case 'update_metadata':
       return t('jobs.update_metadata', { id: job.spec.paperId })
+    case 'summarize':
+      return t('jobs.summarize', { id: job.spec.paperId })
   }
 }
 

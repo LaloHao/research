@@ -61,6 +61,7 @@
     "ingest_identifier": "Agregar {{input}}",
     "ingest_pdf": "Agregar {{file}}",
     "update_metadata": "Completar metadatos de {{id}}",
+    "summarize": "Resumir {{id}}",
     "state": {
       "queued": "En cola",
       "running": "En curso",
@@ -71,7 +72,8 @@
     "outcome": {
       "added": "agregado",
       "merged": "actualizado",
-      "duplicate": "ya estaba en la biblioteca"
+      "duplicate": "ya estaba en la biblioteca",
+      "summarized": "resumido"
     }
   },
   "errors": {
@@ -87,6 +89,14 @@
     "not_a_project": "Esa carpeta no es un proyecto (no tiene project.yaml).",
     "invalid_project": "El project.yaml de esa carpeta tiene un problema; corrígelo primero.",
     "unreadable_pdf": "El PDF está dañado o protegido con contraseña.",
+    "llm_unavailable": "No se pudo usar Claude: revisa que la CLI `claude` esté instalada y con sesión iniciada.",
+    "llm_quota": "Se agotó la cuota de tu suscripción de Claude. Intenta más tarde.",
+    "llm_invalid_output": "Claude devolvió una respuesta inválida dos veces.",
+    "llm_timeout": "Claude tardó demasiado y se canceló.",
+    "budget_exceeded": "Se alcanzó el presupuesto configurado.",
+    "no_text": "Este paper no tiene texto para resumir.",
+    "too_long": "El texto supera el tamaño máximo configurado.",
+    "invalid_form": "El formulario de extracción en project.yaml tiene errores.",
     "unknown": "Ocurrió un error inesperado."
   },
   "paper": {

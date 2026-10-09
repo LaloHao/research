@@ -116,6 +116,7 @@ export class ProjectSession {
 }
 
 export async function runJob(library: LibraryService, spec: JobSpec, signal: AbortSignal): Promise<{ paperId?: string; message?: string }> {
+  if (spec.type === 'summarize') throw new Error('summarize jobs are not implemented yet')
   const outcome =
     spec.type === 'ingest_identifier'
       ? await library.ingestIdentifier(spec.input, signal)

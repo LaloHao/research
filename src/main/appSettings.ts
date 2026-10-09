@@ -1,19 +1,22 @@
+import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { DEFAULT_SETTINGS, type AppSettings } from '../shared/settings'
 import { atomicWrite } from './project/atomicWrite'
+
+const DEVICE_ID = /^[0-9a-f-]{36}$/
 
 export async function loadSettings(file: string): Promise<AppSettings> {
   let parsed: unknown
   try {
     parsed = JSON.parse(await readFile(file, 'utf8'))
   } catch {
-    return { ...DEFAULT_SETTINGS }
+    parsed = null
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return { ...DEFAULT_SETTINGS }
-  const raw = parsed as Record<string, unknown>
+  const raw = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {}
   return {
     contactEmail: typeof raw.contactEmail === 'string' ? raw.contactEmail : DEFAULT_SETTINGS.contactEmail,
-    lastProjectPath: typeof raw.lastProjectPath === 'string' ? raw.lastProjectPath : DEFAULT_SETTINGS.lastProjectPath
+    lastProjectPath: typeof raw.lastProjectPath === 'string' ? raw.lastProjectPath : DEFAULT_SETTINGS.lastProjectPath,
+    deviceId: typeof raw.deviceId === 'string' && DEVICE_ID.test(raw.deviceId) ? raw.deviceId : randomUUID()
   }
 }
 
