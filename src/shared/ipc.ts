@@ -2,7 +2,7 @@ import type { JobRecord } from './jobs'
 import type { PaperDetail, PaperRow, UserErrorCode } from './library'
 import type { PdfPolicy } from './schemas'
 import type { AppSettings } from './settings'
-import type { FormInfo, LlmConfig, LlmModel, ReviewItem, Section, SummaryPlan, ThesisContext } from './summary'
+import type { ExtractionForm, FormImpact, FormInfo, LlmConfig, LlmModel, ReviewItem, Section, SummaryPlan, ThesisContext } from './summary'
 
 export const IPC = {
   settingsGet: 'settings:get',
@@ -36,6 +36,9 @@ export const IPC = {
   llmInfo: 'llm:info',
   llmUpdate: 'llm:update',
   llmCreateForm: 'llm:create-form',
+  llmFormImpact: 'llm:form-impact',
+  llmUpdateForm: 'llm:update-form',
+  llmResetForm: 'llm:reset-form',
   llmShowProjectFile: 'llm:show-project-file',
   thesisGet: 'thesis:get',
   thesisUpdate: 'thesis:update',
@@ -117,6 +120,10 @@ export interface ResearchApi {
     /** The main process deep-merges `budget`, so a partial budget patch only touches the fields given. */
     update(patch: Partial<Omit<LlmConfig, 'budget'>> & { budget?: Partial<LlmConfig['budget']> }): Promise<ActionResult>
     createForm(): Promise<ActionResult>
+    /** How many summaries would become stale, and which removed values are still in use, if `form` were saved. */
+    formImpact(form: ExtractionForm): Promise<FormImpact>
+    updateForm(form: ExtractionForm): Promise<ActionResult>
+    resetForm(): Promise<ActionResult>
     showProjectFile(): Promise<void>
   }
   thesis: {

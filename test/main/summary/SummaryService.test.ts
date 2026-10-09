@@ -167,6 +167,134 @@ describe('SummaryService', () => {
     await s.close()
   })
 
+  describe('editing the extraction form', () => {
+    it('formImpact: adding or removing allowed values does not make summaries stale', async () => {
+      const s = await session()
+      await s.summaries.request('he2017drain')
+      await s.queue.whenIdle()
+      const next = {
+        ...DEFAULT_EXTRACTION_FORM,
+        facets: DEFAULT_EXTRACTION_FORM.facets.map((f) => (f.key === 'data_type' && 'values' in f ? { ...f, values: [...f.values, 'metrics'] } : f))
+      }
+      expect(await s.summaries.formImpact(next)).toEqual({ staleCount: 0, removedValuesInUse: [] })
+      await s.close()
+    })
+
+    it('formImpact: a description change counts the up-to-date summaries as newly stale', async () => {
+      const s = await session([ok(), ok()], ['a2020x', 'b2020x'])
+      await s.summaries.requestBatch()
+      await s.queue.whenIdle()
+      expect(s.library.list().map((r) => r.summary_status)).toEqual(['generated', 'generated'])
+      const next = {
+        ...DEFAULT_EXTRACTION_FORM,
+        facets: DEFAULT_EXTRACTION_FORM.facets.map((f) => (f.key === 'rigor' ? { ...f, description: 'Changed description' } : f))
+      }
+      expect(await s.summaries.formImpact(next)).toMatchObject({ staleCount: 2 })
+      // A paper that is already stale (not up to date with the current form) does not count again.
+      await s.summaries.updateForm(next)
+      expect(await s.summaries.formImpact(DEFAULT_EXTRACTION_FORM)).toMatchObject({ staleCount: 0 })
+      await s.close()
+    })
+
+    it('formImpact: reports removed values still used by papers, and how many', async () => {
+      const out = llmOutputFor(DEFAULT_EXTRACTION_FORM)
+      out.facets.data_type = { values: ['logs', 'traces'], proposed: [], evidence: [] }
+      const outB = llmOutputFor(DEFAULT_EXTRACTION_FORM)
+      outB.facets.data_type = { values: ['logs'], proposed: [], evidence: [] }
+      const s = await session(
+        [{ value: out, costUsd: 0.01, model: 'm' }, { value: outB, costUsd: 0.01, model: 'm' }],
+        ['a2020x', 'b2020x']
+      )
+      await s.summaries.requestBatch()
+      await s.queue.whenIdle()
+      const next = {
+        ...DEFAULT_EXTRACTION_FORM,
+        facets: DEFAULT_EXTRACTION_FORM.facets.map((f) => (f.key === 'data_type' && 'values' in f ? { ...f, values: f.values.filter((v) => v !== 'logs') } : f))
+      }
+      const impact = await s.summaries.formImpact(next)
+      expect(impact.removedValuesInUse).toEqual([{ facet: 'data_type', value: 'logs', papers: 2 }])
+      await s.close()
+    })
+
+    it('updateForm rejects an invalid form with invalid_form and does not change project.yaml', async () => {
+      const s = await session()
+      const before = structuredClone(s.store.config.extraction_form)
+      await expect(s.summaries.updateForm({ facets: [{ key: 'dup', type: 'text', description: 'd' }, { key: 'dup', type: 'text', description: 'd' }], value_aliases: {} })).rejects.toMatchObject({
+        code: 'invalid_form'
+      })
+      expect(s.store.config.extraction_form).toEqual(before)
+      await s.close()
+    })
+
+    it('updateForm prunes aliases whose facet or target value no longer exists, and refreshes states', async () => {
+      const out = llmOutputFor(DEFAULT_EXTRACTION_FORM)
+      out.facets.sanitization_technique = { values: [], proposed: ['tokenization'], evidence: [] }
+      const s = await session([{ value: out, costUsd: 0.01, model: 'm' }])
+      await s.summaries.request('he2017drain')
+      await s.queue.whenIdle()
+      await s.summaries.mapProposed('sanitization_technique', 'tokenization', 'ner')
+      expect(s.summaries.formInfo()).toMatchObject({ form: { value_aliases: { sanitization_technique: { tokenization: 'ner' } } } })
+
+      const dropValue = {
+        ...DEFAULT_EXTRACTION_FORM,
+        facets: DEFAULT_EXTRACTION_FORM.facets.map((f) => (f.key === 'sanitization_technique' && 'values' in f ? { ...f, values: f.values.filter((v) => v !== 'ner') } : f))
+      }
+      await s.summaries.updateForm(dropValue)
+      expect(s.summaries.formInfo()).toMatchObject({ form: { value_aliases: {} } })
+      expect(s.library.list()[0].summary_status).toBe('generated')
+      await s.close()
+    })
+
+    it('updateForm marks up-to-date summaries stale when the hash changes', async () => {
+      const s = await session()
+      await s.summaries.request('he2017drain')
+      await s.queue.whenIdle()
+      const next = {
+        ...DEFAULT_EXTRACTION_FORM,
+        facets: DEFAULT_EXTRACTION_FORM.facets.map((f) => (f.key === 'rigor' ? { ...f, description: 'Changed' } : f))
+      }
+      await s.summaries.updateForm(next)
+      expect(s.library.list()[0].summary_status).toBe('stale')
+      await s.close()
+    })
+
+    it('resetForm restores the default draft', async () => {
+      const s = await session()
+      const changed = { ...DEFAULT_EXTRACTION_FORM, facets: [...DEFAULT_EXTRACTION_FORM.facets, { key: 'venue_type', type: 'text' as const, description: 'd' }] }
+      await s.summaries.updateForm(changed)
+      await s.summaries.resetForm()
+      expect(s.summaries.formInfo()).toMatchObject({ form: DEFAULT_EXTRACTION_FORM })
+      await s.close()
+    })
+
+    it('a facet recreated with a different type ignores the old entry everywhere, even when verified, and replaces it on regeneration', async () => {
+      let form = DEFAULT_EXTRACTION_FORM
+      const s = await session([() => ok(form)])
+      await s.summaries.request('he2017drain')
+      await s.queue.whenIdle()
+      await s.summaries.verifyAll('he2017drain')
+      expect(s.library.list()[0].summary_status).toBe('reviewed')
+
+      // Remove the scale facet "rigor" and recreate it under the same key as a text facet.
+      const asText = {
+        ...DEFAULT_EXTRACTION_FORM,
+        facets: DEFAULT_EXTRACTION_FORM.facets.map((f) => (f.key === 'rigor' ? { key: 'rigor', type: 'text' as const, description: 'Now free text' } : f))
+      }
+      form = asText
+      await s.summaries.updateForm(asText)
+      // The stored scale entry (score/justification) no longer fits the text facet: treated as absent.
+      expect((await s.summaries.reviewQueue()).some((i) => i.key === 'rigor')).toBe(false)
+      expect(s.library.list()[0].summary_status).toBe('stale')
+
+      await s.summaries.request('he2017drain')
+      await s.queue.whenIdle()
+      const e2 = await s.store.readExtraction('he2017drain')
+      // Regenerating overwrites the verified-but-type-mismatched entry with the freshly generated text value.
+      expect(e2?.ok && e2.value.facets.rigor).toMatchObject({ text: 'not addressed' })
+      await s.close()
+    })
+  })
+
   it('updateThesis keeps the question ids, saves project.yaml and marks summarized papers stale', async () => {
     const s = await session()
     expect(s.summaries.thesis()).toEqual({ title: '', description: '', research_questions: [] })

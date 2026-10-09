@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { PDF_POLICIES } from '../shared/schemas'
-import { LLM_MODELS, ThesisContextSchema } from '../shared/summary'
+import { ExtractionFormSchema, LLM_MODELS, ThesisContextSchema } from '../shared/summary'
 
 const paperIdSchema = z.string().regex(/^[a-z][a-z0-9]*$/)
 
@@ -42,7 +42,8 @@ export const ipcArgs = {
   batchOptions: z
     .strictObject({ model: z.enum(LLM_MODELS).optional(), ids: z.array(paperIdSchema).optional() })
     .optional(),
-  thesisContext: ThesisContextSchema.strict()
+  thesisContext: ThesisContextSchema.strict(),
+  extractionForm: ExtractionFormSchema.strict()
 }
 
 export class InvalidIpcArgument extends Error {

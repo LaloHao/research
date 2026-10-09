@@ -56,4 +56,14 @@ describe('IPC argument validation', () => {
     expect(() => arg(ipcArgs.llmPatch, { model: 'gpt' }, 'patch')).toThrow()
     expect(() => arg(ipcArgs.llmPatch, { unknown: true }, 'patch')).toThrow()
   })
+
+  it('checks the extraction form', () => {
+    const form = { facets: [{ key: 'llm_usage', type: 'single', description: 'd', values: ['none'] }], value_aliases: {} }
+    expect(arg(ipcArgs.extractionForm, form, 'form')).toEqual(form)
+    expect(() => arg(ipcArgs.extractionForm, { ...form, extra: true }, 'form')).toThrow()
+    expect(() => arg(ipcArgs.extractionForm, { facets: [{ key: 'Bad', type: 'text', description: 'd' }] }, 'form')).toThrow()
+    expect(() => arg(ipcArgs.extractionForm, { facets: [{ key: 'a', type: 'scale', description: 'd', min: 5, max: 1 }] }, 'form')).toThrow()
+    expect(() => arg(ipcArgs.extractionForm, 'garbage', 'form')).toThrow()
+    expect(() => arg(ipcArgs.extractionForm, null, 'form')).toThrow()
+  })
 })

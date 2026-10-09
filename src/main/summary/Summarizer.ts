@@ -1,4 +1,4 @@
-import type { ExtractionFile, LlmModel, SummaryFile } from '../../shared/summary'
+import type { ExtractionFile, FacetDef, LlmModel, SummaryFile } from '../../shared/summary'
 import type { IndexCache } from '../cache/IndexCache'
 import type { BudgetGuard } from '../llm/BudgetGuard'
 import type { CostLedger } from '../llm/CostLedger'
@@ -98,7 +98,7 @@ export class Summarizer {
       const meta = { model, at: (this.deps.now ?? (() => new Date()))().toISOString(), cost_usd_est: round(spent), prompt_version: PROMPT_VERSION, language: store.config.content_language, ...(text.truncated ? { truncated: true } : {}) }
       const generated = toGeneratedFiles(out, form.form, form.hash, meta, thesis)
       const checked = checkEvidence(generated.summary, generated.extraction, text.pages)
-      await this.write(id, paper.value.title, checked.summary, checked.extraction)
+      await this.write(id, paper.value.title, checked.summary, checked.extraction, form.form.facets)
       return { costUsd: spent, evidenceFound: checked.found, evidenceTotal: checked.total }
     } finally {
       reservation.settle(spent)
@@ -114,7 +114,7 @@ export class Summarizer {
   }
 
   /** Merges with what is on disk (never touching verified/edited) and writes; re-reads once on a concurrent edit. */
-  private async write(id: string, title: string, summary: SummaryFile, extraction: ExtractionFile): Promise<void> {
+  private async write(id: string, title: string, summary: SummaryFile, extraction: ExtractionFile, facetDefs: FacetDef[]): Promise<void> {
     const { store } = this.deps
     for (let attempt = 0; ; attempt++) {
       const curS = await store.readSummary(id)
@@ -122,7 +122,7 @@ export class Summarizer {
       // Re-checked here too: a file edited to something unreadable between the pre-flight check and this write must still block.
       if ((curS && !curS.ok) || (curE && !curE.ok)) throw new UserFacingError('file_problem')
       const s = mergeSummary(curS?.ok ? curS.value : null, summary)
-      const e = mergeExtraction(curE?.ok ? curE.value : null, extraction)
+      const e = mergeExtraction(curE?.ok ? curE.value : null, extraction, facetDefs)
       try {
         await store.writeSummary(id, s, renderSummaryMarkdown(title, s, e), curS?.hash ?? null)
         await store.writeExtraction(id, e, curE?.hash ?? null)

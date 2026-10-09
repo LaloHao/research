@@ -44,6 +44,9 @@ const api: ResearchApi = {
     info: () => ipcRenderer.invoke(IPC.llmInfo),
     update: (patch) => ipcRenderer.invoke(IPC.llmUpdate, patch),
     createForm: () => ipcRenderer.invoke(IPC.llmCreateForm),
+    formImpact: (form) => ipcRenderer.invoke(IPC.llmFormImpact, form),
+    updateForm: (form) => ipcRenderer.invoke(IPC.llmUpdateForm, form),
+    resetForm: () => ipcRenderer.invoke(IPC.llmResetForm),
     showProjectFile: () => ipcRenderer.invoke(IPC.llmShowProjectFile)
   },
   thesis: {

@@ -4,6 +4,7 @@ import {
   SummaryFieldsSchema,
   type ExtractionFile,
   type ExtractionForm,
+  type FacetDef,
   type FacetEntry,
   type SummaryFieldKey,
   type SummaryFile,
@@ -19,6 +20,23 @@ export class InvalidEdit extends Error {
 
 export type FacetPatch = { value?: string | null; values?: string[]; text?: string; score?: number; justification?: string }
 
+/**
+ * Whether a stored facet entry's shape matches `def`'s current type, e.g. an old `text` entry under a now-`scale`
+ * facet (the facet was removed and recreated with a different type) does not fit and must be treated as absent.
+ */
+export function entryFitsFacet(def: FacetDef, entry: FacetEntry): boolean {
+  switch (def.type) {
+    case 'single':
+      return entry.value !== undefined
+    case 'multi':
+      return entry.values !== undefined
+    case 'text':
+      return entry.text !== undefined
+    case 'scale':
+      return entry.score !== undefined
+  }
+}
+
 export function mergeSummary(existing: SummaryFile | null, generated: SummaryFile): SummaryFile {
   if (!existing) return generated
   const fields = { ...generated.fields } as Record<SummaryFieldKey, unknown>
@@ -26,12 +44,17 @@ export function mergeSummary(existing: SummaryFile | null, generated: SummaryFil
   return { ...existing, generated: generated.generated, fields: fields as SummaryFile['fields'] }
 }
 
-export function mergeExtraction(existing: ExtractionFile | null, generated: ExtractionFile): ExtractionFile {
+export function mergeExtraction(existing: ExtractionFile | null, generated: ExtractionFile, facetDefs: FacetDef[] | null = null): ExtractionFile {
   if (!existing) return generated
+  const defByKey = facetDefs ? new Map(facetDefs.map((d) => [d.key, d])) : null
   const facets = { ...existing.facets }
   for (const [k, entry] of Object.entries(generated.facets)) {
     const old = existing.facets[k]
-    if (!old || old.status === 'generated') facets[k] = entry
+    const def = defByKey?.get(k)
+    // A stored entry whose shape no longer fits the facet's current type (it was removed and recreated with a
+    // different type) is replaced even if the user had verified or edited it: it is effectively a different facet.
+    const oldFits = !old || !def || entryFitsFacet(def, old)
+    if (!old || old.status === 'generated' || !oldFits) facets[k] = entry
   }
   const { thesis_relation: oldRelation, thesis_hash: oldHash, ...rest } = existing
   // A relation the user reviewed keeps the hash of the thesis it was reviewed against: if the thesis changed since,
@@ -154,15 +177,27 @@ export function thesisRelationOutdated(extraction: ExtractionFile | null, thesis
 /**
  * `facetKeys` are the facets of the current form (null when there is no valid form): removed facets stay in the file but are not reviewed.
  * `thesisHash` is the current thesis's (null without one): a reviewed relation made against another thesis counts as pending.
+ * `facetDefs`, when given, excludes entries whose shape no longer fits their facet's current type (see entryFitsFacet):
+ * they are treated as absent, same as a facet missing from the file entirely.
  */
 export function countPending(
   summary: SummaryFile | null,
   extraction: ExtractionFile | null,
   facetKeys: string[] | null = null,
-  thesisHash: string | null = null
+  thesisHash: string | null = null,
+  facetDefs: FacetDef[] | null = null
 ): number {
   const fields = summary ? Object.values(summary.fields).filter((f) => f.status === 'generated').length : 0
-  const shown = extraction ? (facetKeys ? facetKeys.flatMap((k) => extraction.facets[k] ?? []) : Object.values(extraction.facets)) : []
+  const defByKey = facetDefs ? new Map(facetDefs.map((d) => [d.key, d])) : null
+  const fits = (k: string, entry: FacetEntry): boolean => {
+    const def = defByKey?.get(k)
+    return !def || entryFitsFacet(def, entry)
+  }
+  const shown = extraction
+    ? facetKeys
+      ? facetKeys.flatMap((k) => (extraction.facets[k] && fits(k, extraction.facets[k]) ? [extraction.facets[k]] : []))
+      : Object.values(extraction.facets)
+    : []
   const facets = shown.filter((f) => f.status === 'generated').length
   const relation = extraction?.thesis_relation?.status === 'generated' || thesisRelationOutdated(extraction, thesisHash) ? 1 : 0
   return fields + facets + relation
@@ -179,13 +214,15 @@ export function summaryState(i: {
   error: string | null
   /** Facet keys of the current form; see countPending. */
   facetKeys?: string[] | null
+  /** Facet defs of the current form, to ignore type-mismatched entries; see countPending. */
+  facetDefs?: FacetDef[] | null
 }): SummaryStatus {
   if (i.error) return 'failed'
   if (!i.summary) return i.textChars > i.maxChars ? 'too_long' : 'none'
   if (i.formHash && i.extraction && i.extraction.form_hash !== i.formHash) return 'stale'
   // A reviewed relation is never regenerated over: when only it is outdated, the paper waits for review instead (see countPending).
   if (i.thesisHash && i.extraction?.thesis_hash !== i.thesisHash && !thesisRelationOutdated(i.extraction, i.thesisHash)) return 'stale'
-  return countPending(i.summary, i.extraction, i.facetKeys ?? null, i.thesisHash) > 0 ? 'generated' : 'reviewed'
+  return countPending(i.summary, i.extraction, i.facetKeys ?? null, i.thesisHash, i.facetDefs ?? null) > 0 ? 'generated' : 'reviewed'
 }
 
 export function summarySearchText(summary: SummaryFile | null, extraction: ExtractionFile | null): string {

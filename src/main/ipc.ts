@@ -1,5 +1,6 @@
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { join } from 'node:path'
+import type { FormImpact } from '../shared/summary'
 import { IPC, type ActionResult, type LlmInfo, type ProjectInfo, type ProjectOpenResult, type RunBatchResult } from '../shared/ipc'
 import type { AppController } from './AppController'
 import { arg, ipcArgs } from './ipcArgs'
@@ -151,6 +152,23 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     })
   })
   ipcMain.handle(IPC.llmCreateForm, (): Promise<ActionResult> => actionResult(() => app.requireSession().summaries.ensureForm()))
+  ipcMain.handle(IPC.llmFormImpact, (_e, rawForm: unknown): Promise<FormImpact> => {
+    const form = arg(ipcArgs.extractionForm, rawForm, 'form')
+    return app.requireSession().summaries.formImpact(form)
+  })
+  ipcMain.handle(IPC.llmUpdateForm, (_e, rawForm: unknown): Promise<ActionResult> => {
+    const form = arg(ipcArgs.extractionForm, rawForm, 'form')
+    return actionResult(async () => {
+      await app.requireSession().summaries.updateForm(form)
+      app.notifyProjectChanged()
+    })
+  })
+  ipcMain.handle(IPC.llmResetForm, (): Promise<ActionResult> =>
+    actionResult(async () => {
+      await app.requireSession().summaries.resetForm()
+      app.notifyProjectChanged()
+    })
+  )
   ipcMain.handle(IPC.llmShowProjectFile, () => {
     shell.showItemInFolder(join(app.requireSession().store.root, 'project.yaml'))
   })

@@ -6,6 +6,7 @@ import {
   countPending,
   editFacet,
   editField,
+  entryFitsFacet,
   InvalidEdit,
   mapProposed,
   mergeExtraction,
@@ -219,5 +220,52 @@ describe('thesis relation', () => {
     expect(summaryState({ ...base, ...v, thesisHash: 't2' })).toBe('generated')
     expect(countPending(v.summary, v.extraction, null, 't2')).toBe(1)
     expect(countPending(v.summary, v.extraction, null, 't1')).toBe(0)
+  })
+})
+
+describe('entryFitsFacet', () => {
+  const single = { key: 'llm_usage', type: 'single' as const, description: 'd', values: ['none', 'local'] }
+  const multi = { key: 'technique', type: 'multi' as const, description: 'd', values: ['ner'] }
+  const text = { key: 'traceability', type: 'text' as const, description: 'd' }
+  const scale = { key: 'relevance', type: 'scale' as const, description: 'd', min: 1, max: 5 }
+  const base = { proposed: [], status: 'generated' as const, evidence: [] }
+
+  it('matches an entry whose stored shape fits the facet type', () => {
+    expect(entryFitsFacet(single, { ...base, value: 'none' })).toBe(true)
+    expect(entryFitsFacet(multi, { ...base, values: ['ner'] })).toBe(true)
+    expect(entryFitsFacet(text, { ...base, text: 't' })).toBe(true)
+    expect(entryFitsFacet(scale, { ...base, score: 3, justification: 'j' })).toBe(true)
+  })
+
+  it('rejects an entry stored under a different facet type, e.g. after the facet was recreated', () => {
+    expect(entryFitsFacet(scale, { ...base, text: 't' })).toBe(false)
+    expect(entryFitsFacet(text, { ...base, score: 3, justification: 'j' })).toBe(false)
+    expect(entryFitsFacet(single, { ...base, values: ['ner'] })).toBe(false)
+    expect(entryFitsFacet(multi, { ...base, value: 'none' })).toBe(false)
+  })
+})
+
+describe('type-mismatched facet entries are treated as absent', () => {
+  const scale = { key: 'rigor', type: 'scale' as const, description: 'd', min: 1, max: 5 }
+  const defs = [scale]
+  // An old `text` entry left over from before the facet was removed and recreated as a scale.
+  const mismatched = { text: 'old text value', proposed: [], status: 'verified' as const, evidence: [] }
+
+  it('mergeExtraction replaces it even though it was verified, only when given the current facet defs', () => {
+    const existing = sampleExtraction({ rigor: mismatched }, 'old')
+    const generated = sampleExtraction({ rigor: { score: 4, justification: 'j', proposed: [], status: 'generated', evidence: [] } }, 'new')
+    expect(mergeExtraction(existing, generated, defs).facets.rigor).toEqual({ score: 4, justification: 'j', proposed: [], status: 'generated', evidence: [] })
+    // Without the current facet defs, a verified entry is kept as before (unrelated call sites stay unaffected).
+    expect(mergeExtraction(existing, generated).facets.rigor).toEqual(mismatched)
+  })
+
+  it('countPending and summaryState ignore it', () => {
+    const e = sampleExtraction({ rigor: { ...mismatched, status: 'generated' } }, 'h')
+    // Without the defs, the leftover `text` entry is counted as a pending facet; with them, it is treated as absent.
+    expect(countPending(null, e, ['rigor'])).toBe(1)
+    expect(countPending(null, e, ['rigor'], null, defs)).toBe(0)
+    const reviewedSummary = verifyAll(sampleSummary(), null).summary!
+    const base = { summary: reviewedSummary, extraction: e, formHash: 'h', thesisHash: null, textChars: 10, maxChars: 100, error: null }
+    expect(summaryState({ ...base, facetKeys: ['rigor'], facetDefs: defs })).toBe('reviewed')
   })
 })

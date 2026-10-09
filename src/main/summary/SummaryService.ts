@@ -6,6 +6,7 @@ import {
   SUMMARY_FIELD_KEYS,
   type ExtractionFile,
   type ExtractionForm,
+  type FormImpact,
   type FormInfo,
   type LlmConfig,
   type LlmModel,
@@ -22,7 +23,7 @@ import type { BudgetGuard } from '../llm/BudgetGuard'
 import type { CostLedger } from '../llm/CostLedger'
 import { toUserFacing, UserFacingError } from '../library/UserFacingError'
 import type { ProjectStore } from '../project/ProjectStore'
-import { DEFAULT_EXTRACTION_FORM, loadForm } from './extractionForm'
+import { DEFAULT_EXTRACTION_FORM, formHash, loadForm } from './extractionForm'
 import { renderSummaryMarkdown } from './markdown'
 import {
   acceptProposed,
@@ -31,6 +32,7 @@ import {
   countPending,
   editFacet,
   editField,
+  entryFitsFacet,
   InvalidEdit,
   mapProposed,
   setFacetStatus,
@@ -56,10 +58,12 @@ export async function indexSummary(store: ProjectStore, cache: IndexCache, id: s
   const summary = s?.ok ? s.value : null
   const extraction = e?.ok ? e.value : null
   const form = loadForm(store.config.extraction_form)
-  const facetKeys = form.status === 'ok' ? form.form.facets.map((f) => f.key) : null
+  const facetDefs = form.status === 'ok' ? form.form.facets : null
+  const facetKeys = facetDefs ? facetDefs.map((f) => f.key) : null
   const currentThesis = currentThesisHash(store)
   const status = summaryState({
     facetKeys,
+    facetDefs,
     summary,
     extraction,
     formHash: form.status === 'ok' ? form.hash : null,
@@ -68,7 +72,13 @@ export async function indexSummary(store: ProjectStore, cache: IndexCache, id: s
     maxChars: store.config.llm.max_input_chars,
     error: cache.summaryError(id)
   })
-  cache.setSummaryState(id, status, countPending(summary, extraction, facetKeys, currentThesis), summarySearchText(summary, extraction), summary?.generated.model ?? null)
+  cache.setSummaryState(
+    id,
+    status,
+    countPending(summary, extraction, facetKeys, currentThesis, facetDefs),
+    summarySearchText(summary, extraction),
+    summary?.generated.model ?? null
+  )
 }
 
 /** Hash of the project's thesis context; null when there is none. */
@@ -256,9 +266,17 @@ export class SummaryService {
         for (const key of SUMMARY_FIELD_KEYS) if (summary.fields[key].status === 'generated') items.push({ ...base, section: 'fields', key })
       }
       if (extraction) {
-        // Facets removed from the form stay in the file but are not shown.
-        const keys = form.status === 'ok' ? form.form.facets.map((f) => f.key) : Object.keys(extraction.facets)
-        for (const key of keys) if (extraction.facets[key]?.status === 'generated') items.push({ ...base, section: 'facets', key })
+        // Facets removed from the form stay in the file but are not shown; so does an entry whose shape no longer
+        // fits its facet (it was removed and recreated with a different type).
+        const defs = form.status === 'ok' ? form.form.facets : null
+        const keys = defs ? defs.map((f) => f.key) : Object.keys(extraction.facets)
+        for (const key of keys) {
+          const entry = extraction.facets[key]
+          if (!entry || entry.status !== 'generated') continue
+          const def = defs?.find((f) => f.key === key)
+          if (def && !entryFitsFacet(def, entry)) continue
+          items.push({ ...base, section: 'facets', key })
+        }
         if (extraction.thesis_relation?.status === 'generated' || thesisRelationOutdated(extraction, thesis)) items.push({ ...base, section: 'thesis', key: 'relation' })
       }
     }
@@ -275,6 +293,66 @@ export class SummaryService {
   formInfo(): FormInfo {
     const load = loadForm(this.deps.store.config.extraction_form)
     return load.status === 'ok' ? { status: 'ok', form: load.form } : load
+  }
+
+  /**
+   * What saving `next` over the current form would do. 0 stale summaries when the facet hashes are equal (editing
+   * descriptions or adding/removing facets or a scale's min/max changes the hash; adding/removing allowed values does not).
+   * `removedValuesInUse` only looks at single/multi facets kept under the same key in both forms.
+   */
+  async formImpact(next: ExtractionForm): Promise<FormImpact> {
+    const { store, cache } = this.deps
+    const current = loadForm(store.config.extraction_form)
+    if (current.status !== 'ok') return { staleCount: 0, removedValuesInUse: [] }
+    const staleCount =
+      formHash(next) === current.hash ? 0 : cache.listPapers().filter((r) => r.summary_status === 'generated' || r.summary_status === 'reviewed').length
+
+    const removedValuesInUse: FormImpact['removedValuesInUse'] = []
+    for (const curFacet of current.form.facets) {
+      if (!('values' in curFacet)) continue
+      const nextFacet = next.facets.find((f) => f.key === curFacet.key)
+      if (!nextFacet || !('values' in nextFacet) || nextFacet.type !== curFacet.type) continue
+      const removed = curFacet.values.filter((v) => !nextFacet.values.includes(v))
+      if (!removed.length) continue
+      const counts = new Map<string, number>()
+      for (const id of await store.listPaperIds()) {
+        const e = await store.readExtraction(id)
+        if (!e?.ok) continue
+        const entry = e.value.facets[curFacet.key]
+        if (!entry || !entryFitsFacet(curFacet, entry)) continue
+        const used = curFacet.type === 'single' ? (entry.value ? [entry.value] : []) : (entry.values ?? [])
+        for (const v of removed) if (used.includes(v)) counts.set(v, (counts.get(v) ?? 0) + 1)
+      }
+      for (const v of removed) {
+        const papers = counts.get(v) ?? 0
+        if (papers > 0) removedValuesInUse.push({ facet: curFacet.key, value: v, papers })
+      }
+    }
+    return { staleCount, removedValuesInUse }
+  }
+
+  /** Validated exactly like loadForm; aliases that no longer refer to an existing facet or allowed value are dropped. */
+  async updateForm(next: ExtractionForm): Promise<void> {
+    const load = loadForm(next)
+    if (load.status !== 'ok') throw new UserFacingError('invalid_form')
+    const form = load.form
+    const allowed = new Map<string, Set<string>>()
+    for (const f of form.facets) if ('values' in f) allowed.set(f.key, new Set(f.values))
+    const value_aliases = Object.fromEntries(
+      Object.entries(form.value_aliases).flatMap(([facetKey, aliases]) => {
+        const values = allowed.get(facetKey)
+        if (!values) return []
+        const kept = Object.fromEntries(Object.entries(aliases).filter(([, to]) => values.has(to)))
+        return Object.keys(kept).length ? [[facetKey, kept]] : []
+      })
+    )
+    await this.deps.store.updateConfig({ extraction_form: { ...form, value_aliases } })
+    await this.refreshStates()
+  }
+
+  /** Restores the default draft form. */
+  resetForm(): Promise<void> {
+    return this.updateForm(DEFAULT_EXTRACTION_FORM)
   }
 
   monthSpent(): Promise<number> {

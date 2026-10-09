@@ -196,3 +196,9 @@ export interface SummaryPlan {
 }
 
 export type FormInfo = { status: 'missing' } | { status: 'ok'; form: ExtractionForm } | { status: 'invalid'; errors: string[] }
+
+/** What saving a changed extraction form would do: see SummaryService.formImpact. */
+export interface FormImpact {
+  staleCount: number
+  removedValuesInUse: Array<{ facet: string; value: string; papers: number }>
+}
