@@ -17,6 +17,12 @@ describe('loadForm', () => {
     if (load.status === 'invalid') expect(load.errors.join('\n')).toContain('facets')
   })
 
+  it('rejects a scale whose min is above its max', () => {
+    const load = loadForm({ facets: [{ key: 'rigor', type: 'scale', description: 'd', min: 5, max: 1 }] })
+    expect(load.status).toBe('invalid')
+    expect(loadForm({ facets: [{ key: 'rigor', type: 'scale', description: 'd', min: 3, max: 3 }] }).status).toBe('ok')
+  })
+
   it('rejects duplicated facet keys', () => {
     const load = loadForm({ facets: [{ key: 'a', type: 'text', description: 'd' }, { key: 'a', type: 'text', description: 'e' }] })
     expect(load).toMatchObject({ status: 'invalid' })

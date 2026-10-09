@@ -42,7 +42,17 @@ function classify(text: string, status: number | null | undefined, subtype: stri
   return 'llm_unavailable'
 }
 
-export function parseCliOutput(stdout: string, stderr: string, exitCode: number | null): CompleteResult {
+/** The CLI may call a helper model too (e.g. haiku for small tasks): the one with the most output, then cost, did the work. */
+function mainModel(usage: Record<string, unknown> | undefined, requested: string | undefined): string {
+  const num = (v: unknown, key: string): number => {
+    const n = v && typeof v === 'object' ? Number((v as Record<string, unknown>)[key]) : NaN
+    return Number.isFinite(n) ? n : 0
+  }
+  const ranked = Object.entries(usage ?? {}).sort(([, a], [, b]) => num(b, 'outputTokens') - num(a, 'outputTokens') || num(b, 'costUSD') - num(a, 'costUSD'))
+  return ranked[0]?.[0] ?? requested ?? 'unknown'
+}
+
+export function parseCliOutput(stdout: string, stderr: string, exitCode: number | null, requestedModel?: string): CompleteResult {
   let out: CliOutput
   try {
     out = JSON.parse(stdout) as CliOutput
@@ -54,7 +64,7 @@ export function parseCliOutput(stdout: string, stderr: string, exitCode: number 
     throw new LlmError(classify(`${out.result ?? ''}\n${stderr}`, out.api_error_status, out.subtype), cost)
   }
   if (out.structured_output === undefined || out.structured_output === null) throw new LlmError('llm_invalid_output', cost)
-  return { value: out.structured_output, costUsd: cost, model: Object.keys(out.modelUsage ?? {})[0] ?? 'unknown' }
+  return { value: out.structured_output, costUsd: cost, model: mainModel(out.modelUsage, requestedModel) }
 }
 
 /** Runs `claude -p` with no tools, no MCP servers, no user settings and no saved session. */
@@ -95,7 +105,7 @@ export class ClaudeCliProvider implements LlmProvider {
       child.on('close', (code) =>
         finish(() => {
           try {
-            resolve(parseCliOutput(stdout, stderr, code))
+            resolve(parseCliOutput(stdout, stderr, code, req.model))
           } catch (error) {
             reject(error)
           }

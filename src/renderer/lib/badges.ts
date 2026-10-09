@@ -31,14 +31,15 @@ export function rowBadges(row: PaperRow): Badge[] {
   return badges
 }
 
-export type SummaryFilter = 'all' | 'none' | 'to_review' | 'reviewed' | 'stale'
-export const SUMMARY_FILTERS: SummaryFilter[] = ['all', 'none', 'to_review', 'reviewed', 'stale']
+export type SummaryFilter = 'all' | 'none' | 'to_review' | 'reviewed' | 'stale' | 'failed'
+export const SUMMARY_FILTERS: SummaryFilter[] = ['all', 'none', 'to_review', 'reviewed', 'stale', 'failed']
 
 const SUMMARY_FILTER_STATUS: Record<Exclude<SummaryFilter, 'all'>, PaperRow['summary_status']> = {
   none: 'none',
   to_review: 'generated',
   reviewed: 'reviewed',
-  stale: 'stale'
+  stale: 'stale',
+  failed: 'failed'
 }
 
 export function filterBySummary(rows: PaperRow[], filter: SummaryFilter): PaperRow[] {

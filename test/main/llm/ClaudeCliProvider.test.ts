@@ -39,6 +39,18 @@ describe('parseCliOutput', () => {
       model: 'claude-haiku-4-5-20251001'
     })
   })
+
+  it('names the model that did the work when several appear, and falls back to the requested one', () => {
+    const out = (modelUsage?: Record<string, unknown>) => JSON.stringify({ subtype: 'success', structured_output: {}, total_cost_usd: 0.1, modelUsage })
+    const usage = {
+      'claude-haiku-4-5': { inputTokens: 900, outputTokens: 20, costUSD: 0.001 },
+      'claude-sonnet-4-5': { inputTokens: 5000, outputTokens: 1500, costUSD: 0.09 }
+    }
+    expect(parseCliOutput(out(usage), '', 0, 'sonnet').model).toBe('claude-sonnet-4-5')
+    expect(parseCliOutput(out({ a: { costUSD: 0.01 }, b: { costUSD: 0.2 } }), '', 0).model).toBe('b')
+    expect(parseCliOutput(out(), '', 0, 'opus').model).toBe('opus')
+    expect(parseCliOutput(out({}), '', 0).model).toBe('unknown')
+  })
 })
 
 describe('ClaudeCliProvider', () => {

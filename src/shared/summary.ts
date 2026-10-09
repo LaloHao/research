@@ -62,7 +62,10 @@ export const FacetDefSchema = z.discriminatedUnion('type', [
   z.object({ key, type: z.literal('single'), description, values: z.array(key).min(1) }),
   z.object({ key, type: z.literal('multi'), description, values: z.array(key).min(1) }),
   z.object({ key, type: z.literal('text'), description }),
-  z.object({ key, type: z.literal('scale'), description, min: z.number().int(), max: z.number().int() })
+  z.object({ key, type: z.literal('scale'), description, min: z.number().int(), max: z.number().int() }).refine((f) => f.min <= f.max, {
+    message: 'min must not be greater than max',
+    path: ['max']
+  })
 ])
 export type FacetDef = z.infer<typeof FacetDefSchema>
 

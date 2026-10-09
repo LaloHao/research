@@ -111,6 +111,7 @@ describe('filterBySummary', () => {
     expect(filterBySummary(rows, 'to_review').map((r) => r.id)).toEqual(['b'])
     expect(filterBySummary(rows, 'reviewed').map((r) => r.id)).toEqual(['c'])
     expect(filterBySummary(rows, 'stale').map((r) => r.id)).toEqual(['d'])
+    expect(filterBySummary(rows, 'failed').map((r) => r.id)).toEqual(['e'])
   })
 })
 

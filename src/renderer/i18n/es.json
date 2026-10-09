@@ -64,7 +64,7 @@
     "no_results": "Sin resultados para «{{query}}».",
     "count": "{{count}} papers",
     "select_hint": "Selecciona un paper para verlo.",
-    "summary_filter": { "all": "Todos", "none": "Sin resumen", "to_review": "Por revisar", "reviewed": "Revisados", "stale": "Desactualizados" },
+    "summary_filter": { "all": "Todos", "none": "Sin resumen", "to_review": "Por revisar", "reviewed": "Revisados", "stale": "Desactualizados", "failed": "Con error" },
     "model_filter": { "label": "Resumido con", "any": "Cualquier modelo" },
     "summarize_pending": "Resumir pendientes",
     "batch_model": "Modelo del lote",
