@@ -56,6 +56,7 @@ const detail = (over: Partial<PaperDetail>): PaperDetail => ({
   form: null,
   summaryStatus: 'none',
   summaryError: null,
+  thesisOutdated: false,
   ...over
 })
 

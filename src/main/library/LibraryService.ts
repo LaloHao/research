@@ -16,7 +16,8 @@ import { sha256 } from '../project/atomicWrite'
 import { ConflictError } from '../project/errors'
 import type { ProjectStore } from '../project/ProjectStore'
 import { loadForm } from '../summary/extractionForm'
-import { indexSummary } from '../summary/SummaryService'
+import { currentThesisHash, indexSummary } from '../summary/SummaryService'
+import { thesisRelationOutdated } from '../summary/merge'
 import { buildPaper, compact } from './buildPaper'
 import { findDuplicate, mergePapers, samePaperContent } from './dedupe'
 import { toUserFacing, UserFacingError } from './UserFacingError'
@@ -200,7 +201,8 @@ export class LibraryService {
       extraction: extraction?.ok ? extraction.value : null,
       form: form.status === 'ok' ? form.form : null,
       summaryStatus: cache.getPaper(id)?.summary_status ?? 'none',
-      summaryError: cache.summaryError(id)
+      summaryError: cache.summaryError(id),
+      thesisOutdated: thesisRelationOutdated(extraction?.ok ? extraction.value : null, currentThesisHash(store))
     }
   }
 

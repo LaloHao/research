@@ -49,16 +49,27 @@ export function EvidenceList({ evidence, onOpen }: { evidence: Evidence[]; onOpe
 }
 
 /** Verify / unverify and edit; an edited entry is already the user's own and needs no verification. */
-export function CardActions({ status, onStatus, onEdit }: { status: FieldStatus; onStatus: (next: 'verified' | 'generated') => void; onEdit: () => void }): React.JSX.Element {
+/** `reverify` offers "Verificar" on an already reviewed value that needs another look (e.g. the thesis changed). */
+export function CardActions({
+  status,
+  onStatus,
+  onEdit,
+  reverify = false
+}: {
+  status: FieldStatus
+  onStatus: (next: 'verified' | 'generated') => void
+  onEdit: () => void
+  reverify?: boolean
+}): React.JSX.Element {
   const { t } = useTranslation()
   return (
     <div className="row card-actions">
-      {status === 'generated' && (
+      {(status === 'generated' || reverify) && (
         <button className="small" onClick={() => onStatus('verified')}>
           {t('summary.verify')}
         </button>
       )}
-      {status === 'verified' && (
+      {status === 'verified' && !reverify && (
         <button className="small" onClick={() => onStatus('generated')}>
           {t('summary.unverify')}
         </button>

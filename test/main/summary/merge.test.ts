@@ -211,4 +211,13 @@ describe('thesis relation', () => {
     expect(summaryState({ ...base, extraction: sampleExtraction({}, 'h'), thesisHash: 't1' })).toBe('stale')
     expect(summaryState({ ...base, extraction: sampleExtraction({}, 'h'), thesisHash: null })).toBe('generated')
   })
+
+  it('a reviewed relation made against another thesis waits for review instead of making the paper stale', () => {
+    const base = { formHash: 'h', textChars: 100, maxChars: 1000, error: null }
+    const v = verifyAll(sampleSummary(), { ...sampleExtraction({}, 'h'), thesis_relation: relation('generated'), thesis_hash: 't1' })
+    expect(summaryState({ ...base, ...v, thesisHash: 't1' })).toBe('reviewed')
+    expect(summaryState({ ...base, ...v, thesisHash: 't2' })).toBe('generated')
+    expect(countPending(v.summary, v.extraction, null, 't2')).toBe(1)
+    expect(countPending(v.summary, v.extraction, null, 't1')).toBe(0)
+  })
 })

@@ -81,4 +81,6 @@ export interface PaperDetail {
   summaryStatus: SummaryStatus
   /** Error code of the last failed summary, if any. */
   summaryError: string | null
+  /** The relation to the thesis was reviewed against an earlier version of the thesis. */
+  thesisOutdated: boolean
 }

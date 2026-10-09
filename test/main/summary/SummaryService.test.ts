@@ -194,7 +194,7 @@ describe('SummaryService', () => {
     await s.close()
   })
 
-  it('a reviewed relation stays stale after the thesis changes until the user verifies or edits it again', async () => {
+  it('a reviewed relation goes back to review (not stale, not in batches) after the thesis changes, until verified or edited again', async () => {
     const answer = () => ({ value: llmOutputFor(DEFAULT_EXTRACTION_FORM, undefined, sampleThesis), costUsd: 0.03, model: 'claude-sonnet-5' })
     const s = await session([answer])
     await s.summaries.updateThesis(sampleThesis)
@@ -205,20 +205,38 @@ describe('SummaryService', () => {
 
     const changed = { ...sampleThesis, research_questions: [...sampleThesis.research_questions, { id: 'RQ3', text: 'A new question?' }] }
     await s.summaries.updateThesis(changed)
-    expect(s.library.list()[0].summary_status).toBe('stale')
-    // Regenerating keeps the verified relation, which was reviewed against the old thesis.
-    await s.summaries.request('he2017drain')
-    await s.queue.whenIdle()
-    expect(s.library.list()[0].summary_status).toBe('stale')
+    expect(s.library.list()[0]).toMatchObject({ summary_status: 'generated', pending_review: 1 })
+    expect(await s.summaries.reviewQueue()).toEqual([expect.objectContaining({ paperId: 'he2017drain', section: 'thesis', key: 'relation' })])
+    expect((await s.summaries.plan()).count).toBe(0)
+    expect((await s.detail('he2017drain')).thesisOutdated).toBe(true)
     await s.summaries.setStatus('he2017drain', 'thesis', 'relation', 'verified')
-    expect(s.library.list()[0].summary_status).not.toBe('stale')
+    expect(s.library.list()[0]).toMatchObject({ summary_status: 'reviewed', pending_review: 0 })
+    expect((await s.detail('he2017drain')).thesisOutdated).toBe(false)
 
     await s.summaries.updateThesis(sampleThesis)
-    expect(s.library.list()[0].summary_status).toBe('stale')
+    expect(s.library.list()[0].summary_status).toBe('generated')
+    // Regenerating keeps the reviewed relation and its old thesis hash: still waiting for review.
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    await s.summaries.verifyAll('he2017drain')
+    expect(s.library.list()[0].summary_status).toBe('reviewed')
+    await s.summaries.updateThesis(changed)
     await s.summaries.edit('he2017drain', 'thesis', 'relation', { score: 2 })
-    expect(s.library.list()[0].summary_status).not.toBe('stale')
+    expect(s.library.list()[0].summary_status).toBe('reviewed')
     const e = await s.store.readExtraction('he2017drain')
-    expect(e?.ok && e.value.thesis_hash).toBe(thesisHash(sampleThesis))
+    expect(e?.ok && e.value.thesis_hash).toBe(thesisHash(changed))
+    await s.close()
+  })
+
+  it('a paper without a relation, or with a generated one, is stale when the thesis changes', async () => {
+    const answer = () => ({ value: llmOutputFor(DEFAULT_EXTRACTION_FORM, undefined, sampleThesis), costUsd: 0.03, model: 'claude-sonnet-5' })
+    const s = await session([answer])
+    await s.summaries.updateThesis(sampleThesis)
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    await s.summaries.updateThesis({ ...sampleThesis, title: 'Another title' })
+    expect(s.library.list()[0].summary_status).toBe('stale')
+    expect((await s.summaries.plan()).count).toBe(1)
     await s.close()
   })
 

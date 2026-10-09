@@ -60,10 +60,13 @@ export function ThesisCard({
   questions,
   fallback,
   onOpenEvidence,
-  run
+  run,
+  outdated = false
 }: {
   paperId: string
   relation: ThesisRelation
+  /** Reviewed against an earlier version of the thesis. */
+  outdated?: boolean
   questions: Questions
   fallback: Origin
   onOpenEvidence: OpenEvidence
@@ -77,6 +80,7 @@ export function ThesisCard({
   const questionText = (id: string): string | undefined => questions.find((q) => q.id === id)?.text
   return (
     <article className={`card card-${cardStatus(relation)}`}>
+      {outdated && <div className="banner warning">{t('summary.thesis_outdated')}</div>}
       {editing ? (
         <ThesisEditor relation={relation} questions={questions} onSave={save} onCancel={() => setEditing(false)} />
       ) : (
@@ -105,6 +109,7 @@ export function ThesisCard({
           status={relation.status}
           onStatus={(next) => void run(() => window.research.summary.setStatus(paperId, 'thesis', 'relation', next))}
           onEdit={() => setEditing(true)}
+          reverify={outdated}
         />
       )}
     </article>

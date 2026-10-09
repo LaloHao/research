@@ -35,7 +35,7 @@ export function mergeExtraction(existing: ExtractionFile | null, generated: Extr
   }
   const { thesis_relation: oldRelation, thesis_hash: oldHash, ...rest } = existing
   // A relation the user reviewed keeps the hash of the thesis it was reviewed against: if the thesis changed since,
-  // the paper stays stale until the user verifies or edits the relation again.
+  // it waits for review (see countPending) until the user verifies or edits it again.
   const keep = Boolean(oldRelation && oldRelation.status !== 'generated')
   const relation = keep ? oldRelation : generated.thesis_relation
   const hash = keep ? oldHash : generated.thesis_hash
@@ -145,12 +145,26 @@ export function addAlias(form: ExtractionForm, facetKey: string, from: string, t
   return { ...form, value_aliases: { ...form.value_aliases, [facetKey]: { ...(form.value_aliases[facetKey] ?? {}), [from]: to } } }
 }
 
-/** `facetKeys` are the facets of the current form (null when there is no valid form): removed facets stay in the file but are not reviewed. */
-export function countPending(summary: SummaryFile | null, extraction: ExtractionFile | null, facetKeys: string[] | null = null): number {
+/** A relation the user reviewed against an older thesis: it goes back to review instead of being regenerated. */
+export function thesisRelationOutdated(extraction: ExtractionFile | null, thesisHash: string | null): boolean {
+  const relation = extraction?.thesis_relation
+  return Boolean(thesisHash && relation && relation.status !== 'generated' && extraction?.thesis_hash !== thesisHash)
+}
+
+/**
+ * `facetKeys` are the facets of the current form (null when there is no valid form): removed facets stay in the file but are not reviewed.
+ * `thesisHash` is the current thesis's (null without one): a reviewed relation made against another thesis counts as pending.
+ */
+export function countPending(
+  summary: SummaryFile | null,
+  extraction: ExtractionFile | null,
+  facetKeys: string[] | null = null,
+  thesisHash: string | null = null
+): number {
   const fields = summary ? Object.values(summary.fields).filter((f) => f.status === 'generated').length : 0
   const shown = extraction ? (facetKeys ? facetKeys.flatMap((k) => extraction.facets[k] ?? []) : Object.values(extraction.facets)) : []
   const facets = shown.filter((f) => f.status === 'generated').length
-  const relation = extraction?.thesis_relation?.status === 'generated' ? 1 : 0
+  const relation = extraction?.thesis_relation?.status === 'generated' || thesisRelationOutdated(extraction, thesisHash) ? 1 : 0
   return fields + facets + relation
 }
 
@@ -169,8 +183,9 @@ export function summaryState(i: {
   if (i.error) return 'failed'
   if (!i.summary) return i.textChars > i.maxChars ? 'too_long' : 'none'
   if (i.formHash && i.extraction && i.extraction.form_hash !== i.formHash) return 'stale'
-  if (i.thesisHash && i.extraction?.thesis_hash !== i.thesisHash) return 'stale'
-  return countPending(i.summary, i.extraction, i.facetKeys ?? null) > 0 ? 'generated' : 'reviewed'
+  // A reviewed relation is never regenerated over: when only it is outdated, the paper waits for review instead (see countPending).
+  if (i.thesisHash && i.extraction?.thesis_hash !== i.thesisHash && !thesisRelationOutdated(i.extraction, i.thesisHash)) return 'stale'
+  return countPending(i.summary, i.extraction, i.facetKeys ?? null, i.thesisHash) > 0 ? 'generated' : 'reviewed'
 }
 
 export function summarySearchText(summary: SummaryFile | null, extraction: ExtractionFile | null): string {

@@ -130,7 +130,7 @@ export function SummaryTab({ detail, onOpenEvidence }: { detail: PaperDetail; on
           {relation.status === 'no_context' ? (
             <p className="muted">{t('summary.thesis_missing')}</p>
           ) : relation.relation ? (
-            <ThesisCard paperId={detail.id} relation={relation.relation} questions={relation.questions} fallback={fallback} onOpenEvidence={onOpenEvidence} run={run} />
+            <ThesisCard paperId={detail.id} outdated={detail.thesisOutdated} relation={relation.relation} questions={relation.questions} fallback={fallback} onOpenEvidence={onOpenEvidence} run={run} />
           ) : (
             <p className="muted">{t('summary.thesis_pending')}</p>
           )}

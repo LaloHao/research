@@ -171,6 +171,7 @@
     "meta": "{{model}} · {{date}} · est. ${{cost}}",
     "generated_with": "generado con {{model}} · {{date}}",
     "stale": "Desactualizado: cambió el formulario o la tesis",
+    "thesis_outdated": "La tesis cambió; revisa esta relación",
     "truncated": "Resumido solo con el comienzo del texto: el paper supera el máximo de caracteres",
     "last_error": "Último intento falló: {{error}}",
     "classification": "Clasificación",

@@ -38,6 +38,7 @@ import {
   setThesisStatus,
   summarySearchText,
   summaryState,
+  thesisRelationOutdated,
   verifyAll,
   type FacetPatch
 } from './merge'
@@ -56,17 +57,23 @@ export async function indexSummary(store: ProjectStore, cache: IndexCache, id: s
   const extraction = e?.ok ? e.value : null
   const form = loadForm(store.config.extraction_form)
   const facetKeys = form.status === 'ok' ? form.form.facets.map((f) => f.key) : null
+  const currentThesis = currentThesisHash(store)
   const status = summaryState({
     facetKeys,
     summary,
     extraction,
     formHash: form.status === 'ok' ? form.hash : null,
-    thesisHash: hasThesisContext(store.config.thesis) ? thesisHash(store.config.thesis) : null,
+    thesisHash: currentThesis,
     textChars: cache.textChars(id),
     maxChars: store.config.llm.max_input_chars,
     error: cache.summaryError(id)
   })
-  cache.setSummaryState(id, status, countPending(summary, extraction, facetKeys), summarySearchText(summary, extraction), summary?.generated.model ?? null)
+  cache.setSummaryState(id, status, countPending(summary, extraction, facetKeys, currentThesis), summarySearchText(summary, extraction), summary?.generated.model ?? null)
+}
+
+/** Hash of the project's thesis context; null when there is none. */
+export function currentThesisHash(store: ProjectStore): string | null {
+  return hasThesisContext(store.config.thesis) ? thesisHash(store.config.thesis) : null
 }
 
 export interface SummaryServiceDeps {
@@ -236,6 +243,7 @@ export class SummaryService {
     const { cache, store } = this.deps
     const rows = ids ? ids.flatMap((id) => cache.getPaper(id) ?? []) : cache.listPapers()
     const form = loadForm(store.config.extraction_form)
+    const thesis = currentThesisHash(store)
     const items: ReviewItem[] = []
     for (const row of rows) {
       if (row.pending_review <= 0) continue
@@ -251,7 +259,7 @@ export class SummaryService {
         // Facets removed from the form stay in the file but are not shown.
         const keys = form.status === 'ok' ? form.form.facets.map((f) => f.key) : Object.keys(extraction.facets)
         for (const key of keys) if (extraction.facets[key]?.status === 'generated') items.push({ ...base, section: 'facets', key })
-        if (extraction.thesis_relation?.status === 'generated') items.push({ ...base, section: 'thesis', key: 'relation' })
+        if (extraction.thesis_relation?.status === 'generated' || thesisRelationOutdated(extraction, thesis)) items.push({ ...base, section: 'thesis', key: 'relation' })
       }
     }
     return items
