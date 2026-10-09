@@ -82,19 +82,19 @@ export function SettingsView({ project }: { project: ProjectInfo }): React.JSX.E
       </nav>
       {/* All panels stay mounted so switching tabs never discards an unsaved extraction-form draft. */}
       <div className="tab-body">
-        <div id="settings-panel-project" role="tabpanel" aria-labelledby="settings-tab-project" hidden={tab !== 'project'} className="narrow">
+        <div id="settings-panel-project" role="tabpanel" tabIndex={0} aria-labelledby="settings-tab-project" hidden={tab !== 'project'} className="narrow">
           <ProjectSection project={project} onSaved={flash} />
         </div>
-        <div id="settings-panel-claude" role="tabpanel" aria-labelledby="settings-tab-claude" hidden={tab !== 'claude'} className="narrow">
+        <div id="settings-panel-claude" role="tabpanel" tabIndex={0} aria-labelledby="settings-tab-claude" hidden={tab !== 'claude'} className="narrow">
           <ClaudeSection />
         </div>
-        <div id="settings-panel-thesis" role="tabpanel" aria-labelledby="settings-tab-thesis" hidden={tab !== 'thesis'} className="narrow">
+        <div id="settings-panel-thesis" role="tabpanel" tabIndex={0} aria-labelledby="settings-tab-thesis" hidden={tab !== 'thesis'} className="narrow">
           <ThesisSection />
         </div>
-        <div id="settings-panel-form" role="tabpanel" aria-labelledby="settings-tab-form" hidden={tab !== 'form'}>
+        <div id="settings-panel-form" role="tabpanel" tabIndex={0} aria-labelledby="settings-tab-form" hidden={tab !== 'form'}>
           <ExtractionFormView />
         </div>
-        <div id="settings-panel-app" role="tabpanel" aria-labelledby="settings-tab-app" hidden={tab !== 'app'} className="narrow">
+        <div id="settings-panel-app" role="tabpanel" tabIndex={0} aria-labelledby="settings-tab-app" hidden={tab !== 'app'} className="narrow">
           <AppSection onSaved={flash} />
         </div>
       </div>

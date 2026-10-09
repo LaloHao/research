@@ -20,7 +20,6 @@
       "form": "Formulario",
       "app": "Aplicación"
     },
-    "project_section": "Proyecto",
     "project_name": "Nombre",
     "project_folder": "Carpeta",
     "content_language": "Idioma del contenido generado",
@@ -34,11 +33,9 @@
       "download_on_demand": "No guardarlos: descargarlos al abrirlos (solo acceso abierto)"
     },
     "pdf_policy_help": "Aplica a los PDFs nuevos; los existentes no se mueven.",
-    "app_section": "Aplicación",
     "contact_email": "Correo de contacto para Crossref y OpenAlex",
     "contact_email_help": "Opcional. Con él, esos servicios atienden tus consultas con prioridad. Solo se envía a ellos.",
     "close_project": "Cerrar proyecto",
-    "claude_section": "Claude",
     "model": "Modelo",
     "models": { "sonnet": "Sonnet (recomendado)", "haiku": "Haiku (más rápido, menor calidad)", "opus": "Opus (máxima calidad, consume más cuota)" },
     "auto_summarize": "Resumir automáticamente al agregar papers",
@@ -48,7 +45,6 @@
     "max_input": "Tamaño máximo de entrada (caracteres)",
     "month_spent": "Gasto estimado este mes (todos tus equipos): ${{amount}}",
     "estimate_note": "Con suscripción, los costos son estimaciones de la cuota que consumes.",
-    "form_section": "Formulario de extracción",
     "form_missing": "Este proyecto aún no tiene formulario de extracción.",
     "form_create": "Crear formulario por defecto",
     "form_invalid": "El formulario en project.yaml tiene errores:",
@@ -102,7 +98,6 @@
       "cap_not_positive": "Debe ser mayor que 0. Para no tener tope, deja el campo vacío.",
       "not_integer": "Debe ser un número entero, sin decimales."
     },
-    "thesis_section": "Tesis",
     "thesis_title": "Título",
     "thesis_description": "Descripción (problema, enfoque, alcance)",
     "thesis_rqs": "Preguntas de investigación",
