@@ -89,4 +89,24 @@ describe('toGeneratedFiles', () => {
     const out = { ...validOutput, fields: { ...validOutput.fields, tldr: { value: 'x', evidence: [{ quote: '  ', page: 1 }] } } }
     expect(toGeneratedFiles(out, form, 'h', meta).summary.fields.tldr.evidence).toEqual([])
   })
+
+  it('treats a non-positive page as unknown', () => {
+    const out = {
+      ...validOutput,
+      fields: {
+        ...validOutput.fields,
+        tldr: {
+          value: 'x',
+          evidence: [
+            { quote: 'zero page', page: 0 },
+            { quote: 'negative page', page: -3 }
+          ]
+        }
+      }
+    }
+    expect(toGeneratedFiles(out, form, 'h', meta).summary.fields.tldr.evidence).toEqual([
+      { quote: 'zero page', page: null, found: false },
+      { quote: 'negative page', page: null, found: false }
+    ])
+  })
 })

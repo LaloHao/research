@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import {
+  LimitationsSchema,
   RESEARCH_TYPES,
   SUMMARY_TEXT_FIELDS,
   type Evidence,
@@ -85,7 +86,7 @@ function outputZod(form: ExtractionForm): z.ZodType {
   return z.object({
     fields: z.object({
       ...Object.fromEntries(SUMMARY_TEXT_FIELDS.map((k) => [k, textField])),
-      limitations: z.object({ value: z.object({ stated: z.array(z.string()), inferred: z.array(z.string()) }), evidence: evidenceZod }),
+      limitations: z.object({ value: LimitationsSchema, evidence: evidenceZod }),
       research_type: z.object({ value: z.enum(RESEARCH_TYPES), evidence: evidenceZod })
     }),
     facets: z.object(Object.fromEntries(form.facets.map((f) => [f.key, facetZod(f)])))
@@ -98,7 +99,9 @@ export function parseLlmOutput(raw: unknown, form: ExtractionForm): { ok: true; 
 }
 
 function toEvidence(list: LlmEvidence[]): Evidence[] {
-  return list.filter((e) => e.quote.trim()).map((e) => ({ quote: e.quote.trim(), page: e.page, found: false }))
+  return list
+    .filter((e) => e.quote.trim())
+    .map((e) => ({ quote: e.quote.trim(), page: e.page !== null && e.page > 0 ? e.page : null, found: false }))
 }
 
 function facetEntry(form: ExtractionForm, f: FacetDef, out: LlmFacet): FacetEntry {
