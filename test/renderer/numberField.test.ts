@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import es from '../../src/renderer/i18n/es.json'
-import { NUMBER_ISSUES, parseCap, parseCount, parseUsd } from '../../src/renderer/lib/numberField'
+import { NUMBER_ISSUES, parseCap, parseCount, parseInteger, parseUsd } from '../../src/renderer/lib/numberField'
 
 describe('parseUsd', () => {
   it('accepts positive amounts, with a dot or a comma', () => {
@@ -33,6 +33,19 @@ describe('parseCount', () => {
     expect(parseCount('1.5')).toEqual({ ok: false, issue: 'not_integer' })
     expect(parseCount('0')).toEqual({ ok: false, issue: 'not_positive' })
     expect(parseCount('')).toEqual({ ok: false, issue: 'required' })
+  })
+})
+
+describe('parseInteger', () => {
+  it('accepts negative numbers and zero', () => {
+    expect(parseInteger('-3')).toEqual({ ok: true, value: -3 })
+    expect(parseInteger('0')).toEqual({ ok: true, value: 0 })
+    expect(parseInteger('5')).toEqual({ ok: true, value: 5 })
+  })
+  it('requires a value and rejects non-integers', () => {
+    expect(parseInteger('')).toEqual({ ok: false, issue: 'required' })
+    expect(parseInteger('abc')).toEqual({ ok: false, issue: 'not_number' })
+    expect(parseInteger('1.5')).toEqual({ ok: false, issue: 'not_integer' })
   })
 })
 

@@ -4,15 +4,20 @@ import { FACET_TYPES, type ExtractionForm, type FacetDef, type FormImpact, type 
 import {
   addFacet,
   addValue,
+  draftFromForm,
+  formFromDraft,
   isDirty,
   removeAlias,
   removeFacet,
   removeValue,
+  replaceFacet,
   updateFacet,
   validateDraft,
   validateNewValue,
-  type DraftIssue
+  type DraftIssue,
+  type FormDraft
 } from '../../lib/formDraft'
+import { parseInteger, type NumberIssue } from '../../lib/numberField'
 import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
 
@@ -20,7 +25,9 @@ type FacetType = (typeof FACET_TYPES)[number]
 
 interface Editor {
   saved: ExtractionForm
-  draft: ExtractionForm
+  draft: FormDraft
+  /** Ids present when `saved` was loaded; a facet whose id isn't here was added this editing session, so its key and type stay editable. */
+  savedIds: Set<string>
 }
 
 interface NewFacetDraft {
@@ -35,12 +42,22 @@ interface NewFacetDraft {
 
 const EMPTY_NEW_FACET: NewFacetDraft = { key: '', type: 'single', description: '', values: [], valueInput: '', min: '1', max: '5' }
 
-function FieldError({ id, issue }: { id: string; issue: DraftIssue | undefined }): React.JSX.Element | null {
+function describedBy(...ids: Array<string | undefined>): string | undefined {
+  const list = ids.filter((id): id is string => Boolean(id))
+  return list.length ? list.join(' ') : undefined
+}
+
+function editorFor(saved: ExtractionForm): Editor {
+  const draft = draftFromForm(saved)
+  return { saved, draft, savedIds: new Set(draft.facets.map((f) => f.id)) }
+}
+
+function FieldError({ id, issue, namespace = 'settings.form_editor.issues' }: { id: string; issue: DraftIssue | NumberIssue | undefined; namespace?: string }): React.JSX.Element | null {
   const { t } = useTranslation()
   if (!issue) return null
   return (
     <small id={id} className="field-error" role="alert">
-      {t(`settings.form_editor.issues.${issue}`)}
+      {t(`${namespace}.${issue}`)}
     </small>
   )
 }
@@ -51,7 +68,10 @@ export function ExtractionFormView(): React.JSX.Element {
   const [editor, setEditor] = useState<Editor | null>(null)
   const [outdated, setOutdated] = useState(false)
   const [issues, setIssues] = useState<Record<string, DraftIssue>>({})
+  const [attempted, setAttempted] = useState(false)
   const [impact, setImpact] = useState<FormImpact | null>(null)
+  const [impactDraft, setImpactDraft] = useState<FormDraft | null>(null)
+  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null)
   const [confirmReset, setConfirmReset] = useState(false)
@@ -59,42 +79,64 @@ export function ExtractionFormView(): React.JSX.Element {
   const [newFacetIssues, setNewFacetIssues] = useState<Record<string, DraftIssue>>({})
   const [newValueText, setNewValueText] = useState<Record<string, string>>({})
   const [newValueIssue, setNewValueIssue] = useState<Record<string, DraftIssue>>({})
+  const [scaleText, setScaleText] = useState<Record<string, string>>({})
+  const [scaleIssues, setScaleIssues] = useState<Record<string, NumberIssue>>({})
 
+  // Mirrored synchronously (not via an effect) so an IPC event handled right after our own setEditor call always
+  // sees the latest draft, instead of racing a false "changed outside this editor" banner.
   const editorRef = useRef<Editor | null>(null)
-  useEffect(() => {
-    editorRef.current = editor
-  }, [editor])
+  const applyEditor = (next: Editor | null): void => {
+    editorRef.current = next
+    setEditor(next)
+  }
+
+  const clearPending = (): void => {
+    setIssues({})
+    setAttempted(false)
+    setImpact(null)
+    setImpactDraft(null)
+    setNewFacet(null)
+    setNewFacetIssues({})
+    setNewValueText({})
+    setNewValueIssue({})
+    setScaleText({})
+    setScaleIssues({})
+  }
 
   const load = useCallback(() => {
     window.research.llm.info().then((info) => {
       setFormInfo(info.form)
       if (info.form.status !== 'ok') {
-        setEditor(null)
+        applyEditor(null)
         setOutdated(false)
         return
       }
       const nextSaved = info.form.form
       const current = editorRef.current
       if (current && isDirty(current.saved, current.draft)) {
-        if (isDirty(current.saved, nextSaved)) setOutdated(true)
+        if (isDirty(current.saved, draftFromForm(nextSaved))) setOutdated(true)
         return
       }
-      setEditor({ saved: nextSaved, draft: nextSaved })
+      applyEditor(editorFor(nextSaved))
       setOutdated(false)
     }, () => undefined)
   }, [])
   useEffect(load, [load])
   useEvent('project-changed', load)
 
-  const mutate = (fn: (draft: ExtractionForm) => ExtractionForm): void => {
-    setEditor((current) => (current ? { ...current, draft: fn(current.draft) } : current))
+  const mutate = (fn: (draft: FormDraft) => FormDraft): void => {
+    if (!editor) return
+    const nextDraft = fn(editor.draft)
+    applyEditor({ ...editor, draft: nextDraft })
     setImpact(null)
+    setImpactDraft(null)
+    if (attempted) setIssues(validateDraft(nextDraft))
   }
 
   const discardAndReload = (): void => {
     setOutdated(false)
-    editorRef.current = null
-    setEditor(null)
+    applyEditor(null)
+    clearPending()
     load()
   }
 
@@ -110,64 +152,140 @@ export function ExtractionFormView(): React.JSX.Element {
 
   const onDiscardChanges = (): void => {
     if (!editor) return
-    setEditor({ saved: editor.saved, draft: editor.saved })
-    setIssues({})
-    setImpact(null)
-    setNewFacet(null)
-    setNewFacetIssues({})
+    applyEditor(editorFor(editor.saved))
+    clearPending()
+    setOutdated(false)
   }
 
   const onSave = (): void => {
-    if (!editor) return
+    if (!editor || busy) return
+    setAttempted(true)
     const problems = validateDraft(editor.draft)
     setIssues(problems)
     if (Object.keys(problems).length) return
     setError(null)
-    window.research.llm.formImpact(editor.draft).then(setImpact, () => setError(errorText(t, 'unknown')))
+    const requestDraft = editor.draft
+    setBusy(true)
+    window.research.llm.formImpact(formFromDraft(requestDraft)).then(
+      (result) => {
+        setBusy(false)
+        if (editorRef.current?.draft !== requestDraft) return // the draft moved on while this request was in flight
+        setImpact(result)
+        setImpactDraft(requestDraft)
+      },
+      () => {
+        setBusy(false)
+        if (editorRef.current?.draft !== requestDraft) return
+        setError(errorText(t, 'unknown'))
+      }
+    )
   }
 
   const confirmSave = (): void => {
-    if (!editor) return
-    window.research.llm.updateForm(editor.draft).then(
+    if (!editor || !impactDraft || busy) return
+    if (editor.draft !== impactDraft) {
+      // The draft changed since this impact was previewed; drop it rather than save something the user didn't see.
+      setImpact(null)
+      setImpactDraft(null)
+      return
+    }
+    setError(null)
+    setBusy(true)
+    window.research.llm.updateForm(formFromDraft(impactDraft)).then(
       (result) => {
-        if (result.ok) {
-          setImpact(null)
-          setIssues({})
-          setEditor({ saved: editor.draft, draft: editor.draft })
-        } else setError(errorText(t, result.error))
+        setBusy(false)
+        if (!result.ok) {
+          setError(errorText(t, result.error))
+          return
+        }
+        setImpact(null)
+        setImpactDraft(null)
+        setIssues({})
+        setAttempted(false)
+        applyEditor(editorFor(formFromDraft(impactDraft)))
+        setOutdated(false)
       },
-      () => setError(errorText(t, 'unknown'))
+      () => {
+        setBusy(false)
+        setError(errorText(t, 'unknown'))
+      }
     )
   }
 
   const onResetConfirmed = (): void => {
+    if (busy) return
     setConfirmReset(false)
     setError(null)
+    setBusy(true)
     window.research.llm.resetForm().then(
       (result) => {
-        if (result.ok) {
-          editorRef.current = null
-          setEditor(null)
-          load()
-        } else setError(errorText(t, result.error))
+        setBusy(false)
+        if (!result.ok) {
+          setError(errorText(t, result.error))
+          return
+        }
+        applyEditor(null)
+        clearPending()
+        setOutdated(false)
+        load()
       },
-      () => setError(errorText(t, 'unknown'))
+      () => {
+        setBusy(false)
+        setError(errorText(t, 'unknown'))
+      }
     )
   }
 
-  const addValueClick = (facetKey: string, existing: string[]): void => {
-    const text = (newValueText[facetKey] ?? '').trim()
+  const addValueClick = (id: string, existing: string[]): void => {
+    const text = (newValueText[id] ?? '').trim()
     const problem = validateNewValue(existing, text)
     if (problem) {
-      setNewValueIssue((c) => ({ ...c, [facetKey]: problem }))
+      setNewValueIssue((c) => ({ ...c, [id]: problem }))
       return
     }
-    mutate((d) => addValue(d, facetKey, text))
-    setNewValueText((c) => ({ ...c, [facetKey]: '' }))
+    mutate((d) => addValue(d, id, text))
+    setNewValueText((c) => ({ ...c, [id]: '' }))
     setNewValueIssue((c) => {
-      const { [facetKey]: _removed, ...rest } = c
+      const { [id]: _removed, ...rest } = c
       return rest
     })
+  }
+
+  const scaleKey = (id: string, field: 'min' | 'max'): string => `${id}.${field}`
+
+  const scaleValue = (id: string, field: 'min' | 'max', current: number): string => scaleText[scaleKey(id, field)] ?? String(current)
+
+  const editScale = (id: string, field: 'min' | 'max', value: string): void => {
+    setScaleText((c) => ({ ...c, [scaleKey(id, field)]: value }))
+    setScaleIssues((c) => {
+      const { [scaleKey(id, field)]: _removed, ...rest } = c
+      return rest
+    })
+  }
+
+  const commitScale = (id: string, field: 'min' | 'max'): void => {
+    const raw = scaleText[scaleKey(id, field)]
+    if (raw === undefined) return
+    const parsed = parseInteger(raw)
+    if (parsed.ok) {
+      setScaleIssues((c) => {
+        const { [scaleKey(id, field)]: _removed, ...rest } = c
+        return rest
+      })
+      mutate((d) => updateFacet(d, id, { [field]: parsed.value } as Partial<FacetDef>))
+    } else {
+      setScaleIssues((c) => ({ ...c, [scaleKey(id, field)]: parsed.issue }))
+    }
+  }
+
+  const changeFacetType = (id: string, current: FacetDef, nextType: FacetType): void => {
+    if (nextType === current.type) return
+    const base = { key: current.key, description: current.description }
+    let next: FacetDef
+    if (nextType === 'text') next = { ...base, type: 'text' }
+    else if (nextType === 'scale') next = { ...base, type: 'scale', min: 1, max: 5 }
+    else next = { ...base, type: nextType, values: 'values' in current ? current.values : [] }
+    mutate((d) => replaceFacet(d, id, next))
   }
 
   const addValueToNewFacet = (): void => {
@@ -193,10 +311,10 @@ export function ExtractionFormView(): React.JSX.Element {
       candidate = { key: newFacet.key, type: 'scale', description: newFacet.description, min: Number(newFacet.min), max: Number(newFacet.max) }
     else candidate = { key: newFacet.key, type: newFacet.type, description: newFacet.description, values: newFacet.values }
 
-    const candidateDraft = addFacet(editor.draft, candidate)
-    const index = editor.draft.facets.length
+    const id = crypto.randomUUID()
+    const candidateDraft = addFacet(editor.draft, candidate, id)
     const problems = validateDraft(candidateDraft)
-    const prefix = `facets.${index}.`
+    const prefix = `facets.${id}.`
     const relevant: Record<string, DraftIssue> = {}
     for (const [path, issue] of Object.entries(problems)) {
       if (path.startsWith(prefix)) relevant[path.slice(prefix.length)] = issue
@@ -205,14 +323,13 @@ export function ExtractionFormView(): React.JSX.Element {
       setNewFacetIssues(relevant)
       return
     }
-    setEditor({ ...editor, draft: candidateDraft })
+    mutate(() => candidateDraft)
     setNewFacet(null)
     setNewFacetIssues({})
   }
 
   if (!formInfo) return <section className="extraction-form" />
 
-  const savedKeys = new Set(editor?.saved.facets.map((f) => f.key) ?? [])
   const dirty = editor ? isDirty(editor.saved, editor.draft) : false
 
   return (
@@ -249,42 +366,64 @@ export function ExtractionFormView(): React.JSX.Element {
             </div>
           )}
 
-          {editor.draft.facets.map((facet, i) => {
-            const isNew = !savedKeys.has(facet.key)
-            const keyErrorId = `facet-${i}-key-error`
-            const descErrorId = `facet-${i}-description-error`
-            const valuesErrorId = `facet-${i}-values-error`
-            const newValueErrorId = `newvalue-${i}-error`
+          {editor.draft.facets.map(({ id, facet }) => {
+            const isNew = !editor.savedIds.has(id)
+            const keyErrorId = `facet-${id}-key-error`
+            const keyHintId = `facet-${id}-key-hint`
+            const descErrorId = `facet-${id}-description-error`
+            const valuesErrorId = `facet-${id}-values-error`
+            const newValueErrorId = `newvalue-${id}-error`
+            const newValueHintId = `newvalue-${id}-hint`
+            const minErrorId = `facet-${id}-min-error`
+            const maxErrorId = `facet-${id}-max-error`
+            const minIssue = scaleIssues[scaleKey(id, 'min')]
+            const maxIssue = scaleIssues[scaleKey(id, 'max')]
+            const maxOrderIssue = !maxIssue && issues[`facets.${id}.max`] === 'scale_order' ? 'scale_order' : undefined
             return (
-              <div className="card" key={`${facet.key}-${i}`}>
+              <div className="card" key={id}>
                 <div className="row">
                   {isNew ? (
-                    <input
-                      aria-invalid={issues[`facets.${i}.key`] ? true : undefined}
-                      aria-describedby={issues[`facets.${i}.key`] ? keyErrorId : undefined}
-                      className={issues[`facets.${i}.key`] ? 'invalid' : undefined}
-                      value={facet.key}
-                      onChange={(e) => mutate((d) => updateFacet(d, facet.key, { key: e.target.value } as Partial<FacetDef>))}
-                    />
+                    <label className="field">
+                      <span>{t('settings.form_editor.key_label')}</span>
+                      <input
+                        aria-invalid={issues[`facets.${id}.key`] ? true : undefined}
+                        aria-describedby={describedBy(keyHintId, issues[`facets.${id}.key`] ? keyErrorId : undefined)}
+                        className={issues[`facets.${id}.key`] ? 'invalid' : undefined}
+                        value={facet.key}
+                        onChange={(e) => mutate((d) => updateFacet(d, id, { key: e.target.value }))}
+                      />
+                      <small id={keyHintId} className="muted">
+                        {t('settings.form_editor.snake_case_hint')}
+                      </small>
+                      <FieldError id={keyErrorId} issue={issues[`facets.${id}.key`]} />
+                    </label>
                   ) : (
                     <strong>{facet.key}</strong>
                   )}
-                  <span className="chip">{t(`settings.form_editor.types.${facet.type}`)}</span>
+                  {isNew ? (
+                    <select value={facet.type} onChange={(e) => changeFacetType(id, facet, e.target.value as FacetType)}>
+                      {FACET_TYPES.map((ft) => (
+                        <option key={ft} value={ft}>
+                          {t(`settings.form_editor.types.${ft}`)}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="chip">{t(`settings.form_editor.types.${facet.type}`)}</span>
+                  )}
                 </div>
-                <FieldError id={keyErrorId} issue={issues[`facets.${i}.key`]} />
-                {isNew && <small className="muted">{t('settings.form_editor.key_hint')}</small>}
 
                 <label className="field">
                   <span>{t('settings.form_editor.description_label')}</span>
                   <textarea
-                    aria-invalid={issues[`facets.${i}.description`] ? true : undefined}
-                    aria-describedby={issues[`facets.${i}.description`] ? descErrorId : undefined}
-                    className={issues[`facets.${i}.description`] ? 'invalid' : undefined}
+                    aria-invalid={issues[`facets.${id}.description`] ? true : undefined}
+                    aria-describedby={issues[`facets.${id}.description`] ? descErrorId : undefined}
+                    className={issues[`facets.${id}.description`] ? 'invalid' : undefined}
                     value={facet.description}
-                    onChange={(e) => mutate((d) => updateFacet(d, facet.key, { description: e.target.value }))}
+                    onChange={(e) => mutate((d) => updateFacet(d, id, { description: e.target.value }))}
                   />
+                  <FieldError id={descErrorId} issue={issues[`facets.${id}.description`]} />
                 </label>
-                <FieldError id={descErrorId} issue={issues[`facets.${i}.description`]} />
 
                 {(facet.type === 'single' || facet.type === 'multi') && (
                   <div className="field">
@@ -293,35 +432,37 @@ export function ExtractionFormView(): React.JSX.Element {
                       {facet.values.map((v) => (
                         <span className="chip" key={v}>
                           {v}{' '}
-                          <button type="button" className="chip-remove" aria-label={t('settings.form_editor.remove_value')} onClick={() => mutate((d) => removeValue(d, facet.key, v))}>
+                          <button type="button" className="chip-remove" aria-label={t('settings.form_editor.remove_value')} onClick={() => mutate((d) => removeValue(d, id, v))}>
                             ×
                           </button>
                         </span>
                       ))}
                     </div>
-                    <FieldError id={valuesErrorId} issue={issues[`facets.${i}.values`]} />
+                    <FieldError id={valuesErrorId} issue={issues[`facets.${id}.values`]} />
                     <div className="row small">
                       <input
-                        aria-invalid={newValueIssue[facet.key] ? true : undefined}
-                        aria-describedby={newValueIssue[facet.key] ? newValueErrorId : undefined}
-                        className={newValueIssue[facet.key] ? 'invalid' : undefined}
+                        aria-invalid={newValueIssue[id] ? true : undefined}
+                        aria-describedby={describedBy(newValueHintId, newValueIssue[id] ? newValueErrorId : undefined)}
+                        className={newValueIssue[id] ? 'invalid' : undefined}
                         placeholder={t('settings.form_editor.add_value_placeholder')}
-                        value={newValueText[facet.key] ?? ''}
+                        value={newValueText[id] ?? ''}
                         onChange={(e) => {
                           const value = e.target.value
-                          setNewValueText((c) => ({ ...c, [facet.key]: value }))
+                          setNewValueText((c) => ({ ...c, [id]: value }))
                           setNewValueIssue((c) => {
-                            const { [facet.key]: _removed, ...rest } = c
+                            const { [id]: _removed, ...rest } = c
                             return rest
                           })
                         }}
                       />
-                      <button type="button" onClick={() => addValueClick(facet.key, facet.values)}>
+                      <button type="button" onClick={() => addValueClick(id, facet.values)}>
                         {t('settings.form_editor.add_value')}
                       </button>
                     </div>
-                    <FieldError id={newValueErrorId} issue={newValueIssue[facet.key]} />
-                    <small className="muted">{t('settings.form_editor.value_hint')}</small>
+                    <FieldError id={newValueErrorId} issue={newValueIssue[id]} />
+                    <small id={newValueHintId} className="muted">
+                      {t('settings.form_editor.snake_case_hint')}
+                    </small>
                   </div>
                 )}
 
@@ -330,24 +471,34 @@ export function ExtractionFormView(): React.JSX.Element {
                     <label className="field">
                       <span>{t('settings.form_editor.min_label')}</span>
                       <input
-                        type="number"
-                        aria-invalid={issues[`facets.${i}.min`] ? true : undefined}
-                        className={issues[`facets.${i}.min`] ? 'invalid' : undefined}
-                        value={facet.min}
-                        onChange={(e) => mutate((d) => updateFacet(d, facet.key, { min: Number(e.target.value) }))}
+                        type="text"
+                        inputMode="numeric"
+                        aria-invalid={minIssue ? true : undefined}
+                        aria-describedby={minIssue ? minErrorId : undefined}
+                        className={minIssue ? 'invalid' : undefined}
+                        value={scaleValue(id, 'min', facet.min)}
+                        onChange={(e) => editScale(id, 'min', e.target.value)}
+                        onBlur={() => commitScale(id, 'min')}
                       />
-                      <FieldError id={`facet-${i}-min-error`} issue={issues[`facets.${i}.min`]} />
+                      <FieldError id={minErrorId} issue={minIssue} namespace="settings.invalid" />
                     </label>
                     <label className="field">
                       <span>{t('settings.form_editor.max_label')}</span>
                       <input
-                        type="number"
-                        aria-invalid={issues[`facets.${i}.max`] ? true : undefined}
-                        className={issues[`facets.${i}.max`] ? 'invalid' : undefined}
-                        value={facet.max}
-                        onChange={(e) => mutate((d) => updateFacet(d, facet.key, { max: Number(e.target.value) }))}
+                        type="text"
+                        inputMode="numeric"
+                        aria-invalid={maxIssue || maxOrderIssue ? true : undefined}
+                        aria-describedby={maxIssue ? maxErrorId : maxOrderIssue ? maxErrorId : undefined}
+                        className={maxIssue || maxOrderIssue ? 'invalid' : undefined}
+                        value={scaleValue(id, 'max', facet.max)}
+                        onChange={(e) => editScale(id, 'max', e.target.value)}
+                        onBlur={() => commitScale(id, 'max')}
                       />
-                      <FieldError id={`facet-${i}-max-error`} issue={issues[`facets.${i}.max`]} />
+                      {maxIssue ? (
+                        <FieldError id={maxErrorId} issue={maxIssue} namespace="settings.invalid" />
+                      ) : (
+                        <FieldError id={maxErrorId} issue={maxOrderIssue} />
+                      )}
                     </label>
                   </div>
                 )}
@@ -359,7 +510,12 @@ export function ExtractionFormView(): React.JSX.Element {
                       {Object.entries(editor.draft.value_aliases[facet.key] ?? {}).map(([from, to]) => (
                         <span className="chip" key={from}>
                           {from} → {to}{' '}
-                          <button type="button" className="chip-remove" aria-label={t('settings.form_editor.remove_alias')} onClick={() => mutate((d) => removeAlias(d, facet.key, from))}>
+                          <button
+                            type="button"
+                            className="chip-remove"
+                            aria-label={t('settings.form_editor.remove_alias')}
+                            onClick={() => mutate((d) => removeAlias(d, facet.key, from))}
+                          >
                             ×
                           </button>
                         </span>
@@ -368,13 +524,13 @@ export function ExtractionFormView(): React.JSX.Element {
                   </div>
                 )}
 
-                {confirmRemove === facet.key ? (
+                {confirmRemove === id ? (
                   <div className="banner warning">
                     <span>{t('settings.form_editor.remove_facet_confirm_text')}</span>
                     <button
                       className="primary"
                       onClick={() => {
-                        mutate((d) => removeFacet(d, facet.key))
+                        mutate((d) => removeFacet(d, id))
                         setConfirmRemove(null)
                       }}
                     >
@@ -383,7 +539,7 @@ export function ExtractionFormView(): React.JSX.Element {
                     <button onClick={() => setConfirmRemove(null)}>{t('settings.form_editor.cancel')}</button>
                   </div>
                 ) : (
-                  <button onClick={() => setConfirmRemove(facet.key)}>{t('settings.form_editor.remove_facet')}</button>
+                  <button onClick={() => setConfirmRemove(id)}>{t('settings.form_editor.remove_facet')}</button>
                 )}
               </div>
             )
@@ -395,12 +551,15 @@ export function ExtractionFormView(): React.JSX.Element {
                 <span>{t('settings.form_editor.key_label')}</span>
                 <input
                   aria-invalid={newFacetIssues.key ? true : undefined}
+                  aria-describedby={describedBy('new-facet-key-hint', newFacetIssues.key ? 'new-facet-key-error' : undefined)}
                   className={newFacetIssues.key ? 'invalid' : undefined}
                   value={newFacet.key}
                   onChange={(e) => setNewFacet({ ...newFacet, key: e.target.value })}
                 />
+                <small id="new-facet-key-hint" className="muted">
+                  {t('settings.form_editor.snake_case_hint')}
+                </small>
                 <FieldError id="new-facet-key-error" issue={newFacetIssues.key} />
-                <small className="muted">{t('settings.form_editor.key_hint')}</small>
               </label>
               <label className="field">
                 <span>{t('settings.form_editor.type_label')}</span>
@@ -416,6 +575,7 @@ export function ExtractionFormView(): React.JSX.Element {
                 <span>{t('settings.form_editor.description_label')}</span>
                 <textarea
                   aria-invalid={newFacetIssues.description ? true : undefined}
+                  aria-describedby={newFacetIssues.description ? 'new-facet-description-error' : undefined}
                   className={newFacetIssues.description ? 'invalid' : undefined}
                   value={newFacet.description}
                   onChange={(e) => setNewFacet({ ...newFacet, description: e.target.value })}
@@ -445,6 +605,7 @@ export function ExtractionFormView(): React.JSX.Element {
                   <div className="row small">
                     <input
                       aria-invalid={newFacetIssues.valueInput ? true : undefined}
+                      aria-describedby={describedBy('new-facet-value-input-hint', newFacetIssues.valueInput ? 'new-facet-value-input-error' : undefined)}
                       className={newFacetIssues.valueInput ? 'invalid' : undefined}
                       placeholder={t('settings.form_editor.add_value_placeholder')}
                       value={newFacet.valueInput}
@@ -455,7 +616,9 @@ export function ExtractionFormView(): React.JSX.Element {
                     </button>
                   </div>
                   <FieldError id="new-facet-value-input-error" issue={newFacetIssues.valueInput} />
-                  <small className="muted">{t('settings.form_editor.value_hint')}</small>
+                  <small id="new-facet-value-input-hint" className="muted">
+                    {t('settings.form_editor.snake_case_hint')}
+                  </small>
                 </div>
               )}
 
@@ -464,8 +627,10 @@ export function ExtractionFormView(): React.JSX.Element {
                   <label className="field">
                     <span>{t('settings.form_editor.min_label')}</span>
                     <input
-                      type="number"
+                      type="text"
+                      inputMode="numeric"
                       aria-invalid={newFacetIssues.min ? true : undefined}
+                      aria-describedby={newFacetIssues.min ? 'new-facet-min-error' : undefined}
                       className={newFacetIssues.min ? 'invalid' : undefined}
                       value={newFacet.min}
                       onChange={(e) => setNewFacet({ ...newFacet, min: e.target.value })}
@@ -475,8 +640,10 @@ export function ExtractionFormView(): React.JSX.Element {
                   <label className="field">
                     <span>{t('settings.form_editor.max_label')}</span>
                     <input
-                      type="number"
+                      type="text"
+                      inputMode="numeric"
                       aria-invalid={newFacetIssues.max ? true : undefined}
+                      aria-describedby={newFacetIssues.max ? 'new-facet-max-error' : undefined}
                       className={newFacetIssues.max ? 'invalid' : undefined}
                       value={newFacet.max}
                       onChange={(e) => setNewFacet({ ...newFacet, max: e.target.value })}
@@ -507,7 +674,7 @@ export function ExtractionFormView(): React.JSX.Element {
           {confirmReset ? (
             <div className="banner warning">
               <span>{t('settings.form_editor.reset_confirm_text')}</span>
-              <button className="primary" onClick={onResetConfirmed}>
+              <button className="primary" disabled={busy} onClick={onResetConfirmed}>
                 {t('settings.form_editor.confirm')}
               </button>
               <button onClick={() => setConfirmReset(false)}>{t('settings.form_editor.cancel')}</button>
@@ -516,24 +683,31 @@ export function ExtractionFormView(): React.JSX.Element {
             <button onClick={() => setConfirmReset(true)}>{t('settings.form_editor.reset')}</button>
           )}
 
-          {impact && (
+          {impact && impactDraft === editor.draft && (
             <div className="banner">
               <span>{impact.staleCount > 0 ? t('settings.form_editor.impact_stale', { count: impact.staleCount }) : t('settings.form_editor.impact_none')}</span>
               {impact.removedValuesInUse.map((r) => (
                 <span key={`${r.facet}-${r.value}`}>{t('settings.form_editor.impact_value_in_use', { value: r.value, facet: r.facet, papers: r.papers })}</span>
               ))}
-              <button className="primary" onClick={confirmSave}>
+              <button className="primary" disabled={busy} onClick={confirmSave}>
                 {t('settings.form_editor.confirm')}
               </button>
-              <button onClick={() => setImpact(null)}>{t('settings.form_editor.cancel')}</button>
+              <button
+                onClick={() => {
+                  setImpact(null)
+                  setImpactDraft(null)
+                }}
+              >
+                {t('settings.form_editor.cancel')}
+              </button>
             </div>
           )}
 
           <div className="row">
-            <button className="primary" disabled={!dirty} onClick={onSave}>
+            <button className="primary" disabled={!dirty || busy} onClick={onSave}>
               {t('settings.form_editor.save')}
             </button>
-            <button disabled={!dirty} onClick={onDiscardChanges}>
+            <button disabled={!dirty || busy} onClick={onDiscardChanges}>
               {t('settings.form_editor.discard')}
             </button>
             <button onClick={() => void window.research.llm.showProjectFile()}>{t('settings.form_show_file')}</button>

@@ -157,5 +157,5 @@ mark { background: rgba(250, 204, 21, 0.45); }
 .review-passage { padding: 16px 20px; max-width: 80ch; }
 .review-passage mark { background: rgba(250, 204, 21, 0.45); }
 .proposals { display: flex; flex-direction: column; gap: 4px; }
-.field input.invalid { border-color: var(--error); }
+.field input.invalid, .field textarea.invalid { border-color: var(--error); }
 .field-error { color: var(--error); font-size: 12px; }

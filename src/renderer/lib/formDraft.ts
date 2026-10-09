@@ -13,45 +13,83 @@ export const DRAFT_ISSUE_CODES = [
 ] as const
 export type DraftIssue = (typeof DRAFT_ISSUE_CODES)[number]
 
+/**
+ * One facet being edited, with a stable id that never changes for the life of the editing session — unlike its
+ * `key`, which the user can retype while the facet is new. Actions and validation issues address a facet by this
+ * id instead of its key, so renaming a facet never merges it with another or loses focus mid-keystroke.
+ */
+export interface DraftFacet {
+  id: string
+  facet: FacetDef
+}
+
+/** The draft form being edited: `ExtractionForm.facets` with a stable id attached to each entry. */
+export interface FormDraft {
+  facets: DraftFacet[]
+  value_aliases: ExtractionForm['value_aliases']
+}
+
 function hasValues(facet: FacetDef): facet is FacetDef & { values: string[] } {
   return facet.type === 'single' || facet.type === 'multi'
 }
 
-export function addFacet(draft: ExtractionForm, facet: FacetDef): ExtractionForm {
-  return { ...draft, facets: [...draft.facets, facet] }
+/** Starts a draft from a saved form, assigning every facet a fresh id. */
+export function draftFromForm(form: ExtractionForm): FormDraft {
+  return { facets: form.facets.map((facet) => ({ id: crypto.randomUUID(), facet })), value_aliases: form.value_aliases }
 }
 
-/** Drops the facet and any learned aliases recorded under its key. */
-export function removeFacet(draft: ExtractionForm, key: string): ExtractionForm {
-  const { [key]: _dropped, ...value_aliases } = draft.value_aliases
-  return { facets: draft.facets.filter((f) => f.key !== key), value_aliases }
+/** The plain `ExtractionForm` a draft represents, dropping the local-only ids. */
+export function formFromDraft(draft: FormDraft): ExtractionForm {
+  return { facets: draft.facets.map((d) => d.facet), value_aliases: draft.value_aliases }
 }
 
-export function updateFacet(draft: ExtractionForm, key: string, patch: Partial<FacetDef>): ExtractionForm {
-  return { ...draft, facets: draft.facets.map((f) => (f.key === key ? ({ ...f, ...patch } as FacetDef) : f)) }
+export function addFacet(draft: FormDraft, facet: FacetDef, id: string = crypto.randomUUID()): FormDraft {
+  return { ...draft, facets: [...draft.facets, { id, facet }] }
 }
 
-export function addValue(draft: ExtractionForm, facetKey: string, value: string): ExtractionForm {
-  return {
-    ...draft,
-    facets: draft.facets.map((f) => (f.key === facetKey && hasValues(f) ? { ...f, values: [...f.values, value] } : f))
-  }
+/** Replaces a facet's definition outright (e.g. switching its type), keeping its id. */
+export function replaceFacet(draft: FormDraft, id: string, facet: FacetDef): FormDraft {
+  return { ...draft, facets: draft.facets.map((f) => (f.id === id ? { id, facet } : f)) }
 }
 
-/** Removes the value from its facet and drops any learned alias that pointed to it. */
-export function removeValue(draft: ExtractionForm, facetKey: string, value: string): ExtractionForm {
-  const facets = draft.facets.map((f) => (f.key === facetKey && hasValues(f) ? { ...f, values: f.values.filter((v) => v !== value) } : f))
-  const aliasesForFacet = draft.value_aliases[facetKey]
-  if (!aliasesForFacet) return { ...draft, facets }
-  const kept = Object.fromEntries(Object.entries(aliasesForFacet).filter(([, to]) => to !== value))
-  const value_aliases = { ...draft.value_aliases }
-  if (Object.keys(kept).length) value_aliases[facetKey] = kept
-  else delete value_aliases[facetKey]
+/** Drops the facet and any learned aliases recorded under its (current) key. */
+export function removeFacet(draft: FormDraft, id: string): FormDraft {
+  const target = draft.facets.find((f) => f.id === id)
+  const facets = draft.facets.filter((f) => f.id !== id)
+  if (!target) return { ...draft, facets }
+  const { [target.facet.key]: _dropped, ...value_aliases } = draft.value_aliases
   return { facets, value_aliases }
 }
 
-/** Removes one learned alias (`proposed` -> allowed value) from a facet. */
-export function removeAlias(draft: ExtractionForm, facetKey: string, proposed: string): ExtractionForm {
+export function updateFacet(draft: FormDraft, id: string, patch: Partial<FacetDef>): FormDraft {
+  return { ...draft, facets: draft.facets.map((f) => (f.id === id ? { id, facet: { ...f.facet, ...patch } as FacetDef } : f)) }
+}
+
+export function addValue(draft: FormDraft, id: string, value: string): FormDraft {
+  return {
+    ...draft,
+    facets: draft.facets.map((f) => (f.id === id && hasValues(f.facet) ? { id, facet: { ...f.facet, values: [...f.facet.values, value] } } : f))
+  }
+}
+
+/** Removes the value from its facet and drops any learned alias (keyed by the facet's current key) that pointed to it. */
+export function removeValue(draft: FormDraft, id: string, value: string): FormDraft {
+  const target = draft.facets.find((f) => f.id === id)
+  const facets = draft.facets.map((f) =>
+    f.id === id && hasValues(f.facet) ? { id, facet: { ...f.facet, values: f.facet.values.filter((v) => v !== value) } } : f
+  )
+  if (!target) return { ...draft, facets }
+  const aliasesForFacet = draft.value_aliases[target.facet.key]
+  if (!aliasesForFacet) return { ...draft, facets }
+  const kept = Object.fromEntries(Object.entries(aliasesForFacet).filter(([, to]) => to !== value))
+  const value_aliases = { ...draft.value_aliases }
+  if (Object.keys(kept).length) value_aliases[target.facet.key] = kept
+  else delete value_aliases[target.facet.key]
+  return { facets, value_aliases }
+}
+
+/** Removes one learned alias (`proposed` -> allowed value) from the facet currently at this key. */
+export function removeAlias(draft: FormDraft, facetKey: string, proposed: string): FormDraft {
   const aliasesForFacet = draft.value_aliases[facetKey]
   if (!aliasesForFacet) return draft
   const { [proposed]: _dropped, ...kept } = aliasesForFacet
@@ -71,25 +109,29 @@ function sortedJson(value: unknown): string {
   })
 }
 
-export function isDirty(saved: ExtractionForm, draft: ExtractionForm): boolean {
-  return sortedJson(saved) !== sortedJson(draft)
+export function isDirty(saved: ExtractionForm, draft: FormDraft): boolean {
+  return sortedJson(saved) !== sortedJson(formFromDraft(draft))
 }
 
-/** Validates a draft form client-side, the same checks `loadForm` applies on the main side. */
-export function validateDraft(draft: ExtractionForm): Record<string, DraftIssue> {
+/**
+ * Validates a draft form client-side, the same checks `loadForm` applies on the main side. Issues are keyed by a
+ * facet's stable id (`facets.<id>.key|description|values|min|max`) rather than its array index, so they keep
+ * pointing at the right field as facets are added, removed or reordered.
+ */
+export function validateDraft(draft: FormDraft): Record<string, DraftIssue> {
   const issues: Record<string, DraftIssue> = {}
   const keyCounts = new Map<string, number>()
-  for (const f of draft.facets) keyCounts.set(f.key, (keyCounts.get(f.key) ?? 0) + 1)
+  for (const { facet } of draft.facets) keyCounts.set(facet.key, (keyCounts.get(facet.key) ?? 0) + 1)
 
-  draft.facets.forEach((facet, i) => {
-    if (facet.key.trim() === '') issues[`facets.${i}.key`] = 'required'
-    else if (!FACET_KEY_PATTERN.test(facet.key)) issues[`facets.${i}.key`] = 'key_format'
-    else if ((keyCounts.get(facet.key) ?? 0) > 1) issues[`facets.${i}.key`] = 'key_duplicate'
+  for (const { id, facet } of draft.facets) {
+    if (facet.key.trim() === '') issues[`facets.${id}.key`] = 'required'
+    else if (!FACET_KEY_PATTERN.test(facet.key)) issues[`facets.${id}.key`] = 'key_format'
+    else if ((keyCounts.get(facet.key) ?? 0) > 1) issues[`facets.${id}.key`] = 'key_duplicate'
 
-    if (facet.description.trim() === '') issues[`facets.${i}.description`] = 'required'
+    if (facet.description.trim() === '') issues[`facets.${id}.description`] = 'required'
 
     if (hasValues(facet)) {
-      if (facet.values.length === 0) issues[`facets.${i}.values`] = 'values_required'
+      if (facet.values.length === 0) issues[`facets.${id}.values`] = 'values_required'
       else {
         const seen = new Set<string>()
         let bad: DraftIssue | undefined
@@ -98,18 +140,18 @@ export function validateDraft(draft: ExtractionForm): Record<string, DraftIssue>
           else if (seen.has(v)) bad ??= 'value_duplicate'
           seen.add(v)
         }
-        if (bad) issues[`facets.${i}.values`] = bad
+        if (bad) issues[`facets.${id}.values`] = bad
       }
     }
 
     if (facet.type === 'scale') {
       const minOk = Number.isInteger(facet.min)
       const maxOk = Number.isInteger(facet.max)
-      if (!minOk) issues[`facets.${i}.min`] = 'not_integer'
-      if (!maxOk) issues[`facets.${i}.max`] = 'not_integer'
-      if (minOk && maxOk && facet.min > facet.max) issues[`facets.${i}.max`] = 'scale_order'
+      if (!minOk) issues[`facets.${id}.min`] = 'not_integer'
+      if (!maxOk) issues[`facets.${id}.max`] = 'not_integer'
+      if (minOk && maxOk && facet.min > facet.max) issues[`facets.${id}.max`] = 'scale_order'
     }
-  })
+  }
 
   return issues
 }

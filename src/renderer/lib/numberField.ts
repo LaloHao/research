@@ -32,3 +32,11 @@ export function parseCount(raw: string): Parsed<number> {
   if (!Number.isInteger(value)) return { ok: false, issue: 'not_integer' }
   return value > 0 ? { ok: true, value } : { ok: false, issue: 'not_positive' }
 }
+
+/** A required whole number that may be negative or zero — e.g. a scale facet's min/max bound. */
+export function parseInteger(raw: string): Parsed<number> {
+  if (raw.trim() === '') return { ok: false, issue: 'required' }
+  const value = toNumber(raw)
+  if (value === null) return { ok: false, issue: 'not_number' }
+  return Number.isInteger(value) ? { ok: true, value } : { ok: false, issue: 'not_integer' }
+}

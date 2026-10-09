@@ -48,8 +48,7 @@
     "form_show_file": "Mostrar project.yaml",
     "form_editor": {
       "help": "Las facetas son las columnas con las que Claude clasifica cada paper. Agregar o quitar valores no desactualiza los resúmenes; cambiar descripciones, facetas o escalas sí.",
-      "key_hint": "En inglés, minúsculas y guiones bajos, p. ej. dataset_public",
-      "value_hint": "En inglés, minúsculas y guiones bajos, p. ej. dataset_public",
+      "snake_case_hint": "En inglés, minúsculas y guiones bajos, p. ej. dataset_public",
       "key_label": "Clave",
       "type_label": "Tipo",
       "description_label": "Descripción",
