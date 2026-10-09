@@ -1,4 +1,4 @@
-import type { ExtractionFile, SummaryFile } from '../../shared/summary'
+import type { ExtractionFile, LlmModel, SummaryFile } from '../../shared/summary'
 import type { IndexCache } from '../cache/IndexCache'
 import type { BudgetGuard } from '../llm/BudgetGuard'
 import type { CostLedger } from '../llm/CostLedger'
@@ -27,6 +27,7 @@ export interface SummarizeRequest {
   paperId: string
   force?: boolean
   batchId?: string
+  model?: LlmModel
   signal?: AbortSignal
 }
 
@@ -59,13 +60,13 @@ export class Summarizer {
 
     const reservation = await budget.admit(req.batchId)
     let spent = 0
-    let model: string = llm.model
+    let model: string = req.model ?? llm.model
     try {
       const base = {
         system: systemPrompt(form.form, store.config.content_language),
         input: userInput(paper.value.title, text.input),
         schema: outputJsonSchema(form.form),
-        model: llm.model,
+        model: req.model ?? llm.model,
         maxUsd: llm.budget.per_operation_usd,
         signal: req.signal
       }

@@ -8,6 +8,7 @@ import {
   type ExtractionForm,
   type FormInfo,
   type LlmConfig,
+  type LlmModel,
   type ReviewItem,
   type Section,
   type SummaryFieldKey,
@@ -58,7 +59,7 @@ export async function indexSummary(store: ProjectStore, cache: IndexCache, id: s
     maxChars: store.config.llm.max_input_chars,
     error: cache.summaryError(id)
   })
-  cache.setSummaryState(id, status, countPending(summary, extraction), summarySearchText(summary, extraction))
+  cache.setSummaryState(id, status, countPending(summary, extraction), summarySearchText(summary, extraction), summary?.generated.model ?? null)
 }
 
 export interface SummaryServiceDeps {
@@ -93,7 +94,7 @@ export class SummaryService {
     return DEFAULT_EXTRACTION_FORM
   }
 
-  async run(paperId: string, opts: { force?: boolean; batchId?: string; signal?: AbortSignal }): Promise<{ paperId: string; message: 'summarized' }> {
+  async run(paperId: string, opts: { force?: boolean; batchId?: string; model?: LlmModel; signal?: AbortSignal }): Promise<{ paperId: string; message: 'summarized' }> {
     const { cache, summarizer } = this.deps
     try {
       await summarizer.summarize({ paperId, ...opts })
@@ -114,16 +115,16 @@ export class SummaryService {
     }
   }
 
-  async request(paperId: string, force = false): Promise<void> {
+  async request(paperId: string, opts: { force?: boolean; model?: LlmModel } = {}): Promise<void> {
     await this.ensureForm()
     if (this.deps.cache.hasActiveJob('summarize', paperId)) return
-    this.deps.enqueue({ type: 'summarize', paperId, ...(force ? { force: true } : {}) })
+    this.deps.enqueue({ type: 'summarize', paperId, ...(opts.force ? { force: true } : {}), ...(opts.model ? { model: opts.model } : {}) })
   }
 
-  private eligibleIds(): string[] {
-    return this.deps.cache
-      .listPapers()
-      .filter((r) => r.text_status === 'ok' && ELIGIBLE.has(r.summary_status) && !this.deps.cache.hasActiveJob('summarize', r.id))
+  private eligibleIds(ids?: string[]): string[] {
+    const rows = ids ? ids.flatMap((id) => this.deps.cache.getPaper(id) ?? []) : this.deps.cache.listPapers()
+    return rows
+      .filter((r) => r.text_status === 'ok' && (ids ? true : ELIGIBLE.has(r.summary_status)) && !this.deps.cache.hasActiveJob('summarize', r.id))
       .map((r) => r.id)
   }
 
@@ -132,11 +133,11 @@ export class SummaryService {
     return { count, estimateUsd: count * this.deps.budget.currentEstimate(), batchLimitUsd: this.deps.store.config.llm.budget.per_batch_usd }
   }
 
-  async requestBatch(): Promise<{ batchId: string; count: number }> {
+  async requestBatch(opts: { model?: LlmModel; ids?: string[] } = {}): Promise<{ batchId: string; count: number }> {
     await this.ensureForm()
     const batchId = randomUUID()
-    const ids = this.eligibleIds()
-    for (const paperId of ids) this.deps.enqueue({ type: 'summarize', paperId, batchId })
+    const ids = this.eligibleIds(opts.ids)
+    for (const paperId of ids) this.deps.enqueue({ type: 'summarize', paperId, batchId, ...(opts.model ? { model: opts.model } : {}) })
     return { batchId, count: ids.length }
   }
 

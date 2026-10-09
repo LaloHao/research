@@ -108,8 +108,8 @@ describe('IndexCache v2: summaries', () => {
       { page: 1, text: 'first' },
       { page: 2, text: 'second part' }
     ])
-    cache.setSummaryState('he2017drain', 'generated', 7, 'differential privacy keeps referential integrity')
-    expect(cache.getPaper('he2017drain')).toMatchObject({ summary_status: 'generated', pending_review: 7 })
+    cache.setSummaryState('he2017drain', 'generated', 7, 'differential privacy keeps referential integrity', 'claude-haiku-4-5')
+    expect(cache.getPaper('he2017drain')).toMatchObject({ summary_status: 'generated', pending_review: 7, summary_model: 'claude-haiku-4-5' })
     expect(cache.search('referential')).toEqual(['he2017drain'])
   })
 
@@ -130,6 +130,16 @@ describe('IndexCache v2: summaries', () => {
     const cache = IndexCache.open(file)
     cache.upsertPaper(samplePaper(), 'h', false)
     expect(cache.getPaper('he2017drain')?.summary_status).toBe('none')
+  })
+
+  it('rebuilds a v2 cache (schema v3 adds summary_model)', async () => {
+    const file = join(await tmpDir(), 'index.sqlite')
+    const db = new DatabaseSync(file)
+    db.exec('CREATE TABLE papers (id TEXT PRIMARY KEY); PRAGMA user_version = 2')
+    db.close()
+    const cache = IndexCache.open(file)
+    cache.upsertPaper(samplePaper(), 'h', false)
+    expect(cache.getPaper('he2017drain')).toMatchObject({ summary_status: 'none', summary_model: null })
   })
 })
 

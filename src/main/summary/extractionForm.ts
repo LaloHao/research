@@ -38,9 +38,14 @@ export function loadForm(raw: unknown): FormLoad {
   return { status: 'ok', form: result.data, hash: formHash(result.data) }
 }
 
-/** Hash of the facet definitions only: editing value_aliases does not make summaries stale. */
+/** Hash of the facet definitions only: editing value_aliases, or adding/removing allowed `values`, does not make summaries stale. */
 export function formHash(form: ExtractionForm): string {
-  return sha256(JSON.stringify(sortKeys(form.facets)))
+  const facets = form.facets.map((f) => {
+    if (!('values' in f)) return f
+    const { values: _values, ...rest } = f
+    return rest
+  })
+  return sha256(JSON.stringify(sortKeys(facets)))
 }
 
 const toSnake = (v: string): string =>

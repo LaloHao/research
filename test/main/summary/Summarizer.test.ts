@@ -32,6 +32,32 @@ describe('Summarizer', () => {
     expect(call.system).toContain('sanitization_technique')
   })
 
+  it('uses a model given per run instead of the project default, and records the resolved id as origin', async () => {
+    const { store, summarizer, provider } = await setupSummaries({ responses: [answer(0.02)] })
+    await summarizer.summarize({ paperId: 'he2017drain', model: 'haiku' })
+    expect(provider.calls[0].model).toBe('haiku')
+    const summary = await store.readSummary('he2017drain')
+    expect(summary?.ok && summary.value.generated.model).toBe('claude-sonnet-5')
+    expect(summary?.ok && summary.value.fields.tldr.origin?.model).toBe('claude-sonnet-5')
+  })
+
+  it('keeps the origin of the first run on a verified field after regenerating with another model', async () => {
+    const second = answer(0.01, (o) => {
+      o.fields.method.value = 'regenerated method'
+    })
+    const { store, summarizer } = await setupSummaries({ responses: [answer(0.03), second] })
+    await summarizer.summarize({ paperId: 'he2017drain' })
+    const first = await store.readSummary('he2017drain')
+    if (!first?.ok) throw new Error('no summary')
+    const verified = { ...first.value, fields: { ...first.value.fields, tldr: { ...first.value.fields.tldr, status: 'verified' as const } } }
+    await store.writeSummary('he2017drain', verified, 'x', first.hash)
+    const firstOrigin = first.value.fields.tldr.origin
+    await summarizer.summarize({ paperId: 'he2017drain', model: 'opus' })
+    const after = await store.readSummary('he2017drain')
+    expect(after?.ok && after.value.fields.tldr.origin).toEqual(firstOrigin)
+    expect(after?.ok && after.value.fields.method.origin?.model).toBe('claude-sonnet-5')
+  })
+
   it('never overwrites a verified field when regenerating', async () => {
     const second = answer(0.01, (o) => {
       o.fields.tldr.value = 'regenerated'

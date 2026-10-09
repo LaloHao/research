@@ -36,6 +36,7 @@ const row = (over: Partial<PaperRow>): PaperRow => ({
   text_status: 'ok',
   summary_status: 'none',
   pending_review: 0,
+  summary_model: null,
   ...over
 })
 

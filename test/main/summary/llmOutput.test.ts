@@ -74,8 +74,19 @@ describe('toGeneratedFiles', () => {
   const { summary, extraction } = toGeneratedFiles(validOutput, form, 'hash1', meta)
 
   it('marks every field generated, with evidence still unchecked', () => {
-    expect(summary.fields.method).toEqual({ value: 'BERT', status: 'generated', evidence: [{ quote: 'we fine-tune BERT', page: 4, found: false }] })
+    expect(summary.fields.method).toEqual({
+      value: 'BERT',
+      status: 'generated',
+      evidence: [{ quote: 'we fine-tune BERT', page: 4, found: false }],
+      origin: { model: 'sonnet', at: meta.at, prompt_version: 1 }
+    })
     expect(summary.generated).toEqual(meta)
+  })
+
+  it('stamps every field and facet with the origin taken from meta', () => {
+    const origin = { model: meta.model, at: meta.at, prompt_version: meta.prompt_version }
+    for (const field of Object.values(summary.fields)) expect(field.origin).toEqual(origin)
+    for (const facet of Object.values(extraction.facets)) expect(facet.origin).toEqual(origin)
   })
 
   it('applies aliases and keeps genuine proposals in snake_case', () => {

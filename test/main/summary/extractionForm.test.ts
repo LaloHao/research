@@ -30,6 +30,28 @@ describe('formHash', () => {
     expect(formHash(a)).toBe(formHash(b))
     expect(formHash(a)).not.toBe(formHash({ ...a, facets: [{ key: 'task', type: 'text', description: 'changed' }] }))
   })
+
+  it('ignores a facet\'s allowed values, but not its description, type, range or presence', () => {
+    const base = { facets: [{ key: 'technique', type: 'multi' as const, description: 'd', values: ['ner'] }], value_aliases: {} }
+    const moreValues = { ...base, facets: [{ ...base.facets[0], values: ['ner', 'pseudonymization'] }] }
+    const fewerValues = { ...base, facets: [{ ...base.facets[0], values: [] }] }
+    expect(formHash(base)).toBe(formHash(moreValues))
+    expect(formHash(base)).toBe(formHash(fewerValues))
+
+    const renamed = { ...base, facets: [{ ...base.facets[0], key: 'other' }] }
+    const changedDescription = { ...base, facets: [{ ...base.facets[0], description: 'changed' }] }
+    const changedType = { ...base, facets: [{ key: 'technique', type: 'text' as const, description: 'd' }] }
+    const addedFacet = { ...base, facets: [...base.facets, { key: 'extra', type: 'text' as const, description: 'd' }] }
+    const removedFacet = { ...base, facets: [] }
+    const scaleRange = { facets: [{ key: 'relevance', type: 'scale' as const, description: 'd', min: 1, max: 5 }], value_aliases: {} }
+    const changedRange = { ...scaleRange, facets: [{ ...scaleRange.facets[0], max: 10 }] }
+    expect(formHash(base)).not.toBe(formHash(renamed))
+    expect(formHash(base)).not.toBe(formHash(changedDescription))
+    expect(formHash(base)).not.toBe(formHash(changedType))
+    expect(formHash(base)).not.toBe(formHash(addedFacet))
+    expect(formHash(base)).not.toBe(formHash(removedFacet))
+    expect(formHash(scaleRange)).not.toBe(formHash(changedRange))
+  })
 })
 
 describe('applyAliases', () => {
