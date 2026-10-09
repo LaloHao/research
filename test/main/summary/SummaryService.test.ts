@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { LlmError } from '../../../src/main/llm/LlmProvider'
@@ -360,6 +360,26 @@ describe('SummaryService: config changes refresh every summary state', () => {
     await s.reloadConfig()
     expect(libraryEvents).toBe(1)
     await s.close()
+  })
+
+  it('the project watcher picks up an in-place edit of project.yaml after the app replaced it', async () => {
+    const s = await ProjectSession.create(await tmpDir(), 'Thesis', { contactEmail: '', llm: new FakeLlmProvider([ok()]) })
+    try {
+      await s.store.writePaper(samplePaper({ id: 'he2017drain' }), null)
+      await s.store.writeContent('he2017drain', PAPER_TEXT)
+      await s.library.indexPaper('he2017drain')
+      await s.summaries.request('he2017drain')
+      await s.queue.whenIdle()
+      // The app's own writes (project.yaml included) reach the watcher too; let them settle so only the edit below can change the state.
+      await new Promise((resolve) => setTimeout(resolve, 700))
+      expect(s.library.list()[0].summary_status).toBe('generated')
+      const raw = parse(await readFile(join(s.store.root, 'project.yaml'), 'utf8'))
+      raw.extraction_form.facets.push({ key: 'venue_type', type: 'text', description: 'Kind of venue' })
+      await writeFile(join(s.store.root, 'project.yaml'), toYaml(raw))
+      await vi.waitFor(() => expect(s.library.list()[0].summary_status).toBe('stale'), { timeout: 3000, interval: 50 })
+    } finally {
+      await s.close()
+    }
   })
 
   it('updateLlm recomputes the states (max_input_chars decides too_long)', async () => {
