@@ -313,6 +313,28 @@ describe('SummaryService', () => {
       expect(e2?.ok && e2.value.facets.rigor).toMatchObject({ text: 'not addressed' })
       await s.close()
     })
+
+    it('verifyAll leaves a type-mismatched generated facet entry untouched', async () => {
+      let form = DEFAULT_EXTRACTION_FORM
+      const s = await session([() => ok(form)])
+      await s.summaries.request('he2017drain')
+      await s.queue.whenIdle()
+
+      const asText = {
+        ...DEFAULT_EXTRACTION_FORM,
+        facets: DEFAULT_EXTRACTION_FORM.facets.map((f) => (f.key === 'rigor' ? { key: 'rigor', type: 'text' as const, description: 'Now free text' } : f))
+      }
+      form = asText
+      await s.summaries.updateForm(asText)
+      await s.summaries.verifyAll('he2017drain')
+
+      const e = await s.store.readExtraction('he2017drain')
+      // The leftover scale entry (score/justification) must not be flipped to "verified": it is not the current facet.
+      expect(e?.ok && e.value.facets.rigor.status).toBe('generated')
+      // Everything else still gets verified.
+      expect(e?.ok && e.value.facets.data_type.status).toBe('verified')
+      await s.close()
+    })
   })
 
   it('updateThesis keeps the question ids, saves project.yaml and marks summarized papers stale', async () => {

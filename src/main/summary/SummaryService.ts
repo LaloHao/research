@@ -229,7 +229,8 @@ export class SummaryService {
 
   async verifyAll(paperId: string): Promise<void> {
     const files = await this.read(paperId)
-    const next = verifyAll(files.summary?.value ?? null, files.extraction?.value ?? null)
+    const form = loadForm(this.deps.store.config.extraction_form)
+    const next = verifyAll(files.summary?.value ?? null, files.extraction?.value ?? null, form.status === 'ok' ? form.form.facets : null)
     const extraction = next.extraction?.thesis_relation ? this.stampThesis(next.extraction) : next.extraction
     await this.save(paperId, files, { ...(next.summary ? { summary: next.summary } : {}), ...(extraction ? { extraction } : {}) })
     await this.changed([paperId])

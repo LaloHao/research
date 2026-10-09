@@ -120,6 +120,15 @@ describe('status changes and edits', () => {
     expect(r.summary!.fields.tldr.status).toBe('edited')
     expect(r.extraction!.facets.relevance.status).toBe('verified')
   })
+
+  it('leaves a facet entry untouched when it no longer fits its current facet, even though it is generated', () => {
+    // "relevance" is a scale facet in `form`, but the stored entry is a leftover `text` one (facet recreated with a different type).
+    const e = sampleExtraction({ relevance: { text: 'old text value', proposed: [], status: 'generated', evidence: [] } })
+    const relevanceDef = form.facets.find((f) => f.key === 'relevance')!
+    expect(verifyAll(null, e, [relevanceDef]).extraction!.facets.relevance.status).toBe('generated')
+    // Without facet defs, the mismatched entry is still verified (unrelated call sites stay unaffected).
+    expect(verifyAll(null, e).extraction!.facets.relevance.status).toBe('verified')
+  })
 })
 
 describe('proposed values', () => {

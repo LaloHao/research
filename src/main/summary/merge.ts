@@ -96,15 +96,27 @@ export function setThesisStatus(extraction: ExtractionFile, status: 'verified' |
   return { ...extraction, thesis_relation: { ...relation, status: nextStatus(relation.status, status) } }
 }
 
-export function verifyAll(summary: SummaryFile | null, extraction: ExtractionFile | null): { summary: SummaryFile | null; extraction: ExtractionFile | null } {
+/** `facetDefs`, when given, leaves a facet entry untouched if it no longer fits its facet's current type (see entryFitsFacet): it is effectively a different facet and must not be verified. */
+export function verifyAll(
+  summary: SummaryFile | null,
+  extraction: ExtractionFile | null,
+  facetDefs: FacetDef[] | null = null
+): { summary: SummaryFile | null; extraction: ExtractionFile | null } {
   const s = summary && {
     ...summary,
     fields: Object.fromEntries(Object.entries(summary.fields).map(([k, f]) => [k, f.status === 'generated' ? { ...f, status: 'verified' } : f])) as SummaryFile['fields']
   }
+  const defByKey = facetDefs ? new Map(facetDefs.map((d) => [d.key, d])) : null
   const relation = extraction?.thesis_relation
   const e = extraction && {
     ...extraction,
-    facets: Object.fromEntries(Object.entries(extraction.facets).map(([k, f]) => [k, f.status === 'generated' ? { ...f, status: 'verified' as const } : f])),
+    facets: Object.fromEntries(
+      Object.entries(extraction.facets).map(([k, f]) => {
+        const def = defByKey?.get(k)
+        if (f.status !== 'generated' || (def && !entryFitsFacet(def, f))) return [k, f]
+        return [k, { ...f, status: 'verified' as const }]
+      })
+    ),
     ...(relation ? { thesis_relation: relation.status === 'generated' ? { ...relation, status: 'verified' as const } : relation } : {})
   }
   return { summary: s, extraction: e }
