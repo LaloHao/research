@@ -1,0 +1,15 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "api_error_status": null,
+  "duration_ms": 2227,
+  "num_turns": 2,
+  "result": "{\"method\":\"Fine-tune BERT on 12k log lines\"}",
+  "structured_output": { "method": "Fine-tune BERT on 12k log lines" },
+  "stop_reason": "tool_use",
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "total_cost_usd": 0.002419,
+  "terminal_reason": "completed",
+  "modelUsage": { "claude-haiku-4-5-20251001": { "inputTokens": 1469, "outputTokens": 190, "costUSD": 0.002419 } }
+}
