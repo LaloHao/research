@@ -334,7 +334,6 @@ export function ExtractionFormView(): React.JSX.Element {
 
   return (
     <section className="extraction-form">
-      <h3>{t('settings.form_section')}</h3>
       {error && <div className="banner error">{error}</div>}
       {formInfo.status === 'missing' && (
         <div>

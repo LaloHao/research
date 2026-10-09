@@ -65,7 +65,6 @@ export function ClaudeSection(): React.JSX.Element {
 
   return (
     <section className="claude-section">
-      <h3>{t('settings.claude_section')}</h3>
       {error && <div className="banner error">{error}</div>}
       <label className="field">
         <span>{t('settings.model')}</span>

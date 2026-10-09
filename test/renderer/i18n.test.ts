@@ -6,6 +6,7 @@ import { PDF_POLICIES } from '../../src/shared/schemas'
 import { LLM_MODELS, RESEARCH_TYPES, SUMMARY_FIELD_KEYS } from '../../src/shared/summary'
 import type { CardStatus } from '../../src/renderer/lib/summaryView'
 import { SUMMARY_FILTERS } from '../../src/renderer/lib/badges'
+import { SETTINGS_TABS } from '../../src/renderer/lib/settingsTabs'
 
 const lookup = (path: string): unknown => path.split('.').reduce<unknown>((node, key) => (node as Record<string, unknown> | undefined)?.[key], es)
 const JOB_STATES: JobState[] = ['queued', 'running', 'done', 'failed', 'cancelled']
@@ -26,6 +27,7 @@ describe('es.json covers every code the UI can receive', () => {
     ...CARD_STATUSES.map((s) => `summary.status.${s}`),
     ...LLM_MODELS.map((m) => `settings.models.${m}`),
     ...SUMMARY_FILTERS.map((f) => `library.summary_filter.${f}`),
+    ...SETTINGS_TABS.map((tab) => `settings.tabs.${tab}`),
     'paper.tabs.summary',
     'summary.thesis_missing',
     'summary.thesis_pending',

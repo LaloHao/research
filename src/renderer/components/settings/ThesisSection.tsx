@@ -42,7 +42,6 @@ export function ThesisSection(): React.JSX.Element {
 
   return (
     <section className="thesis-section">
-      <h3>{t('settings.thesis_section')}</h3>
       <p className="muted small">{t('settings.thesis_help')}</p>
       {error && <div className="banner error">{error}</div>}
       <label className="field">

@@ -1,93 +1,103 @@
-import { useEffect, useState } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ProjectInfo } from '../../shared/ipc'
-import { PDF_POLICIES, type PdfPolicy } from '../../shared/schemas'
+import { nextTab, SETTINGS_TABS, type SettingsTab } from '../lib/settingsTabs'
+import { AppSection } from './settings/AppSection'
 import { ClaudeSection } from './settings/ClaudeSection'
 import { ExtractionFormView } from './settings/ExtractionFormView'
+import { ProjectSection } from './settings/ProjectSection'
 import { ThesisSection } from './settings/ThesisSection'
 
-const CONTENT_LANGUAGES = ['en', 'es'] as const
+const STORAGE_KEY = 'research.settings.tab'
+const DEFAULT_TAB: SettingsTab = 'project'
+
+function loadTab(): SettingsTab {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY)
+    if (stored && (SETTINGS_TABS as readonly string[]).includes(stored)) return stored as SettingsTab
+  } catch {
+    // localStorage unavailable (e.g. private browsing); fall back to the default tab.
+  }
+  return DEFAULT_TAB
+}
+
+function saveTab(tab: SettingsTab): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, tab)
+  } catch {
+    // ignore, this is just a convenience for the next visit
+  }
+}
 
 export function SettingsView({ project }: { project: ProjectInfo }): React.JSX.Element {
   const { t } = useTranslation()
-  const [name, setName] = useState(project.name)
-  const [email, setEmail] = useState('')
+  const [tab, setTab] = useState<SettingsTab>(loadTab)
   const [saved, setSaved] = useState(false)
+  const tabButtons = useRef(new Map<SettingsTab, HTMLButtonElement>())
 
-  useEffect(() => setName(project.name), [project.name])
-  useEffect(() => {
-    void window.research.settings.get().then((s) => setEmail(s.contactEmail))
-  }, [])
+  const selectTab = (next: SettingsTab): void => {
+    setTab(next)
+    saveTab(next)
+  }
+
+  const onKeyDown = (e: React.KeyboardEvent): void => {
+    const moved = nextTab(tab, e.key)
+    if (moved === tab) return
+    e.preventDefault()
+    selectTab(moved)
+    tabButtons.current.get(moved)?.focus()
+  }
 
   const flash = (): void => {
     setSaved(true)
     setTimeout(() => setSaved(false), 1500)
   }
-  const update = (patch: { name?: string; contentLanguage?: string; pdfPolicy?: PdfPolicy }): void => {
-    void window.research.project.update(patch).then(flash)
-  }
 
   return (
     <div className="settings">
-      <h2>
-        {t('settings.title')} {saved && <span className="muted small">{t('settings.saved')}</span>}
-      </h2>
-      <section>
-        <h3>{t('settings.project_section')}</h3>
-        <label className="field">
-          <span>{t('settings.project_name')}</span>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onBlur={() => {
-              if (name.trim() && name.trim() !== project.name) update({ name: name.trim() })
+      <header className="settings-header">
+        <h2>
+          {t('settings.title')} {saved && <span className="muted small">{t('settings.saved')}</span>}
+        </h2>
+      </header>
+      <nav className="tabs" role="tablist" onKeyDown={onKeyDown}>
+        {SETTINGS_TABS.map((id) => (
+          <button
+            key={id}
+            ref={(el) => {
+              if (el) tabButtons.current.set(id, el)
+              else tabButtons.current.delete(id)
             }}
-          />
-        </label>
-        <div className="field">
-          <span>{t('settings.project_folder')}</span>
-          <code>{project.root}</code>
+            role="tab"
+            id={`settings-tab-${id}`}
+            aria-selected={tab === id}
+            aria-controls={`settings-panel-${id}`}
+            tabIndex={tab === id ? 0 : -1}
+            className={tab === id ? 'active' : ''}
+            onClick={() => selectTab(id)}
+          >
+            {t(`settings.tabs.${id}`)}
+          </button>
+        ))}
+      </nav>
+      {/* All panels stay mounted so switching tabs never discards an unsaved extraction-form draft. */}
+      <div className="tab-body">
+        <div id="settings-panel-project" role="tabpanel" aria-labelledby="settings-tab-project" hidden={tab !== 'project'} className="narrow">
+          <ProjectSection project={project} onSaved={flash} />
         </div>
-        <label className="field">
-          <span>{t('settings.content_language')}</span>
-          <select value={project.contentLanguage} onChange={(e) => update({ contentLanguage: e.target.value })}>
-            {CONTENT_LANGUAGES.map((l) => (
-              <option key={l} value={l}>
-                {t(`settings.languages.${l}`)}
-              </option>
-            ))}
-          </select>
-          <small className="muted">{t('settings.content_language_help')}</small>
-        </label>
-        <label className="field">
-          <span>{t('settings.pdf_policy_label')}</span>
-          <select value={project.pdfPolicy} onChange={(e) => update({ pdfPolicy: e.target.value as PdfPolicy })}>
-            {PDF_POLICIES.map((p) => (
-              <option key={p} value={p}>
-                {t(`settings.pdf_policy.${p}`)}
-              </option>
-            ))}
-          </select>
-          <small className="muted">{t('settings.pdf_policy_help')}</small>
-        </label>
-      </section>
-      <ClaudeSection />
-      <ThesisSection />
-      <ExtractionFormView />
-      <section>
-        <h3>{t('settings.app_section')}</h3>
-        <label className="field">
-          <span>{t('settings.contact_email')}</span>
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            onBlur={() => void window.research.settings.set({ contactEmail: email.trim() }).then(flash)}
-          />
-          <small className="muted">{t('settings.contact_email_help')}</small>
-        </label>
-        <button onClick={() => void window.research.project.close()}>{t('settings.close_project')}</button>
-      </section>
+        <div id="settings-panel-claude" role="tabpanel" aria-labelledby="settings-tab-claude" hidden={tab !== 'claude'} className="narrow">
+          <ClaudeSection />
+        </div>
+        <div id="settings-panel-thesis" role="tabpanel" aria-labelledby="settings-tab-thesis" hidden={tab !== 'thesis'} className="narrow">
+          <ThesisSection />
+        </div>
+        <div id="settings-panel-form" role="tabpanel" aria-labelledby="settings-tab-form" hidden={tab !== 'form'}>
+          <ExtractionFormView />
+        </div>
+        <div id="settings-panel-app" role="tabpanel" aria-labelledby="settings-tab-app" hidden={tab !== 'app'} className="narrow">
+          <AppSection onSaved={flash} />
+        </div>
+      </div>
     </div>
   )
 }
