@@ -350,6 +350,6 @@ function renderCard(
   const relation = detail.extraction?.thesis_relation
   if (!relation) return null
   return (
-    <ThesisCard key={key} paperId={detail.id} relation={relation} questions={thesis?.research_questions ?? []} fallback={fallback} onOpenEvidence={onOpenEvidence} run={run} />
+    <ThesisCard key={key} paperId={detail.id} outdated={detail.thesisOutdated} relation={relation} questions={thesis?.research_questions ?? []} fallback={fallback} onOpenEvidence={onOpenEvidence} run={run} />
   )
 }
