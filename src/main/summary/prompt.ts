@@ -39,8 +39,13 @@ export function systemPrompt(form: ExtractionForm, language: string): string {
   ].join('\n')
 }
 
+/** Neutralizes a literal `</paper` inside `text` so a crafted document cannot close the data block early. */
+function escapeClosingTag(text: string): string {
+  return text.replace(/<\/paper/gi, '<\\/paper')
+}
+
 export function userInput(title: string, text: string): string {
-  return `<paper title=${JSON.stringify(title)}>\n${text}\n</paper>`
+  return `<paper title=${JSON.stringify(title)}>\n${escapeClosingTag(text)}\n</paper>`
 }
 
 export function retryNote(error: string): string {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { LlmError } from '../../../src/main/llm/LlmProvider'
 import { DEFAULT_EXTRACTION_FORM } from '../../../src/main/summary/extractionForm'
@@ -93,10 +93,26 @@ describe('Summarizer', () => {
     expect(provider.calls).toHaveLength(1)
   })
 
-  it('never overwrites an unreadable summary.md', async () => {
-    const { store, summarizer } = await setupSummaries()
+  it('never overwrites an unreadable summary.md, and never calls Claude for it', async () => {
+    const { store, summarizer, provider } = await setupSummaries()
     await writeFile(join(store.paperDir('he2017drain'), 'summary.md'), '---\n<<<<<<< HEAD\n')
     await expect(summarizer.summarize({ paperId: 'he2017drain' })).rejects.toMatchObject({ code: 'file_problem' })
     expect(await readFile(join(store.paperDir('he2017drain'), 'summary.md'), 'utf8')).toBe('---\n<<<<<<< HEAD\n')
+    expect(provider.calls).toHaveLength(0)
+  })
+
+  it('never overwrites an unreadable extraction.yaml, and never calls Claude for it', async () => {
+    const { store, summarizer, provider } = await setupSummaries()
+    await writeFile(join(store.paperDir('he2017drain'), 'extraction.yaml'), '---\n<<<<<<< HEAD\n')
+    await expect(summarizer.summarize({ paperId: 'he2017drain' })).rejects.toMatchObject({ code: 'file_problem' })
+    expect(await readFile(join(store.paperDir('he2017drain'), 'extraction.yaml'), 'utf8')).toBe('---\n<<<<<<< HEAD\n')
+    expect(provider.calls).toHaveLength(0)
+  })
+
+  it('fails with file_problem (never a raw ENOENT) when the paper folder is missing', async () => {
+    const { store, summarizer, provider } = await setupSummaries()
+    await rm(store.paperDir('he2017drain'), { recursive: true, force: true })
+    await expect(summarizer.summarize({ paperId: 'he2017drain' })).rejects.toMatchObject({ code: 'file_problem' })
+    expect(provider.calls).toHaveLength(0)
   })
 })

@@ -45,6 +45,7 @@ export class Summarizer {
   async summarize(req: SummarizeRequest): Promise<SummarizeResult> {
     const { store, cache, provider, budget, ledger } = this.deps
     const id = req.paperId
+    if (!store.paperExists(id)) throw new UserFacingError('file_problem')
     const paper = await store.readPaper(id)
     if (!paper.ok) throw new UserFacingError('file_problem')
     const form = loadForm(store.config.extraction_form)
@@ -53,6 +54,7 @@ export class Summarizer {
     const llm = store.config.llm
     const text = buildPaperText(cache.chunksFor(id), { maxChars: llm.max_input_chars, force: req.force })
     if (text.tooLong && !req.force) throw new UserFacingError('too_long')
+    await this.assertFilesReadable(id)
     req.signal?.throwIfAborted()
 
     const reservation = await budget.admit(req.batchId)
@@ -99,12 +101,21 @@ export class Summarizer {
     }
   }
 
+  /** Throws before anything is spent if either file exists but cannot be read. */
+  private async assertFilesReadable(id: string): Promise<void> {
+    const { store } = this.deps
+    const curS = await store.readSummary(id)
+    const curE = await store.readExtraction(id)
+    if ((curS && !curS.ok) || (curE && !curE.ok)) throw new UserFacingError('file_problem')
+  }
+
   /** Merges with what is on disk (never touching verified/edited) and writes; re-reads once on a concurrent edit. */
   private async write(id: string, title: string, summary: SummaryFile, extraction: ExtractionFile): Promise<void> {
     const { store } = this.deps
     for (let attempt = 0; ; attempt++) {
       const curS = await store.readSummary(id)
       const curE = await store.readExtraction(id)
+      // Re-checked here too: a file edited to something unreadable between the pre-flight check and this write must still block.
       if ((curS && !curS.ok) || (curE && !curE.ok)) throw new UserFacingError('file_problem')
       const s = mergeSummary(curS?.ok ? curS.value : null, summary)
       const e = mergeExtraction(curE?.ok ? curE.value : null, extraction)
