@@ -1,20 +1,38 @@
 import { existsSync } from 'node:fs'
-import { mkdir, readdir, readFile } from 'node:fs/promises'
+import { appendFile, mkdir, readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PaperSchema, ProjectConfigSchema, type Paper, type ProjectConfig } from '../../shared/schemas'
+import { parse } from 'yaml'
+import {
+  ExtractionFileSchema,
+  LlmConfigShape,
+  SummaryFileSchema,
+  ThesisContextSchema,
+  type CostEntry,
+  type ExtractionFile,
+  type SummaryFile,
+  type ThesisContext
+} from '../../shared/summary'
 import { atomicWrite, sha256 } from './atomicWrite'
 import { ConflictError, ProjectError, type ReadResult } from './errors'
 import { gitattributesLines, gitignoreLines, withManagedBlock } from './gitFiles'
-import { parseYamlFile, toYaml } from './yamlFile'
+import { parseFrontmatterFile, parseYamlFile, toFrontmatter, toYaml } from './yamlFile'
 
 export const PROJECT_FILE = 'project.yaml'
+
+/** Blocks of project.yaml read leniently: an invalid one is replaced by defaults in memory but never on disk by accident. */
+const LENIENT_BLOCKS = { llm: LlmConfigShape, thesis: ThesisContextSchema } as const
+type LenientBlock = keyof typeof LENIENT_BLOCKS
+type InvalidBlocks = Partial<Record<LenientBlock, unknown>>
 
 /** The only writer of the project folder (exports/ and .cache/ aside). */
 export class ProjectStore {
   private constructor(
     readonly root: string,
     private cfg: ProjectConfig,
-    private cfgHash: string
+    private cfgHash: string,
+    /** The raw on-disk value of each lenient block that failed strict validation, written back as is. */
+    private invalidBlocks: InvalidBlocks = {}
   ) {}
 
   static async create(root: string, name: string): Promise<ProjectStore> {
@@ -29,27 +47,36 @@ export class ProjectStore {
   }
 
   static async open(root: string): Promise<ProjectStore> {
-    const { cfg, hash } = await readConfig(root)
-    return new ProjectStore(root, cfg, hash)
+    const { cfg, hash, invalid } = await readConfig(root)
+    return new ProjectStore(root, cfg, hash, invalid)
   }
 
   get config(): ProjectConfig {
     return this.cfg
   }
 
-  async updateConfig(patch: Partial<Pick<ProjectConfig, 'name' | 'content_language' | 'pdfs'>>): Promise<ProjectConfig> {
+  async updateConfig(
+    patch: Partial<Pick<ProjectConfig, 'name' | 'content_language' | 'pdfs' | 'llm' | 'extraction_form'>> & { thesis?: ThesisContext }
+  ): Promise<ProjectConfig> {
     const next = ProjectConfigSchema.parse({ ...this.cfg, ...patch })
-    this.cfgHash = await this.writeChecked(join(this.root, PROJECT_FILE), toYaml(next), this.cfgHash)
+    // An invalid llm/thesis block stays as the user wrote it unless this write replaces that block on purpose.
+    const invalid = Object.fromEntries(Object.entries(this.invalidBlocks).filter(([k]) => !(k in patch))) as InvalidBlocks
+    const onDisk: Record<string, unknown> = { ...next, ...invalid }
+    this.cfgHash = await this.writeChecked(join(this.root, PROJECT_FILE), toYaml(onDisk), this.cfgHash)
     this.cfg = next
+    this.invalidBlocks = invalid
     await this.syncIgnoreFiles()
     return next
   }
 
-  /** Picks up an external edit of project.yaml (e.g. after a git pull). */
-  async reloadConfig(): Promise<void> {
-    const { cfg, hash } = await readConfig(this.root)
+  /** Picks up an external edit of project.yaml (e.g. after a git pull). Returns false when the file is what we last wrote or read. */
+  async reloadConfig(): Promise<boolean> {
+    const { cfg, hash, invalid } = await readConfig(this.root)
+    const changed = hash !== this.cfgHash
     this.cfg = cfg
     this.cfgHash = hash
+    this.invalidBlocks = invalid
+    return changed
   }
 
   paperDir(id: string): string {
@@ -132,6 +159,53 @@ export class ProjectStore {
     return readOptional(join(this.paperDir(id), 'content.md'))
   }
 
+  async readSummary(id: string): Promise<ReadResult<SummaryFile> | null> {
+    const text = await readOptional(join(this.paperDir(id), 'summary.md'))
+    return text === null ? null : parseFrontmatterFile(text, SummaryFileSchema)
+  }
+
+  async writeSummary(id: string, summary: SummaryFile, body: string, expectedHash: string | null): Promise<string> {
+    const valid = SummaryFileSchema.parse(summary)
+    return this.writeChecked(join(this.paperDir(id), 'summary.md'), toFrontmatter(valid, body), expectedHash)
+  }
+
+  async readExtraction(id: string): Promise<ReadResult<ExtractionFile> | null> {
+    const text = await readOptional(join(this.paperDir(id), 'extraction.yaml'))
+    return text === null ? null : parseYamlFile(text, ExtractionFileSchema)
+  }
+
+  async writeExtraction(id: string, file: ExtractionFile, expectedHash: string | null): Promise<string> {
+    const valid = ExtractionFileSchema.parse(file)
+    return this.writeChecked(join(this.paperDir(id), 'extraction.yaml'), toYaml(valid), expectedHash)
+  }
+
+  /** Append-only, one file per device, so synced folders never conflict. */
+  async appendCost(deviceId: string, entry: CostEntry): Promise<void> {
+    if (!/^[A-Za-z0-9-]+$/.test(deviceId)) throw new Error(`Invalid device id: ${deviceId}`)
+    const dir = join(this.root, 'costs')
+    await mkdir(dir, { recursive: true })
+    await appendFile(join(dir, `${deviceId}.jsonl`), `${JSON.stringify(entry)}\n`)
+  }
+
+  async readCosts(): Promise<CostEntry[]> {
+    const dir = join(this.root, 'costs')
+    const files = await readdir(dir).catch(() => [] as string[])
+    const entries: CostEntry[] = []
+    for (const file of files.filter((f) => f.endsWith('.jsonl'))) {
+      const text = await readFile(join(dir, file), 'utf8')
+      for (const line of text.split('\n')) {
+        if (!line.trim()) continue
+        try {
+          const e = JSON.parse(line) as CostEntry
+          if (typeof e.cost_usd === 'number' && typeof e.at === 'string') entries.push(e)
+        } catch {
+          // A corrupt line (e.g. a sync glitch) is skipped, never fatal.
+        }
+      }
+    }
+    return entries
+  }
+
   private async writeChecked(path: string, text: string, expectedHash: string | null): Promise<string> {
     const current = await readOptional(path)
     const currentHash = current === null ? null : sha256(current)
@@ -156,12 +230,17 @@ export class ProjectStore {
   }
 }
 
-async function readConfig(root: string): Promise<{ cfg: ProjectConfig; hash: string }> {
+async function readConfig(root: string): Promise<{ cfg: ProjectConfig; hash: string; invalid: InvalidBlocks }> {
   const text = await readOptional(join(root, PROJECT_FILE))
   if (text === null) throw new ProjectError(`No ${PROJECT_FILE} in ${root}`, 'not_a_project')
   const result = parseYamlFile(text, ProjectConfigSchema)
   if (!result.ok) throw new ProjectError(`${PROJECT_FILE}: ${result.problem.message}`, 'invalid_project')
-  return { cfg: result.value, hash: result.hash }
+  const raw = parse(text) as Record<string, unknown>
+  const invalid: InvalidBlocks = {}
+  for (const [key, strict] of Object.entries(LENIENT_BLOCKS) as [LenientBlock, (typeof LENIENT_BLOCKS)[LenientBlock]][]) {
+    if (raw[key] !== undefined && !strict.safeParse(raw[key]).success) invalid[key] = raw[key]
+  }
+  return { cfg: result.value, hash: result.hash, invalid }
 }
 
 async function readOptional(path: string): Promise<string | null> {

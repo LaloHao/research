@@ -9,7 +9,7 @@ import { ProjectError } from './project/errors'
 
 /** App-level state: settings plus the one open project. Electron-free so it can be tested. */
 export class AppController {
-  private settings: AppSettings = { ...DEFAULT_SETTINGS }
+  private settings: AppSettings = { ...DEFAULT_SETTINGS, deviceId: '' }
   private session: ProjectSession | null = null
 
   constructor(
@@ -20,6 +20,8 @@ export class AppController {
 
   async init(): Promise<void> {
     this.settings = await loadSettings(this.settingsFile)
+    // Idempotent: persists a freshly generated deviceId when the settings file didn't have one yet.
+    await saveSettings(this.settingsFile, this.settings)
     const last = this.settings.lastProjectPath
     if (!last) return
     if (!existsSync(join(last, 'project.yaml'))) {
@@ -87,6 +89,11 @@ export class AppController {
     return this.session
   }
 
+  /** Lets an IPC handler signal that something outside the session's own events changed (e.g. Claude settings, thesis context). */
+  notifyProjectChanged(): void {
+    this.emit('project-changed')
+  }
+
   /** Called on quit: running jobs go back to the queue and resume on the next launch. */
   async shutdown(): Promise<void> {
     if (!this.session) return
@@ -96,7 +103,7 @@ export class AppController {
   }
 
   private sessionOptions(): SessionOptions {
-    return { ...this.sessionDefaults, contactEmail: this.settings.contactEmail }
+    return { ...this.sessionDefaults, contactEmail: this.settings.contactEmail, deviceId: this.settings.deviceId }
   }
 
   private attach(session: ProjectSession): void {

@@ -5,9 +5,11 @@ import { authorsLabel } from '../../shared/format'
 import type { JobState } from '../../shared/jobs'
 import type { PaperRow, TextStatus } from '../../shared/library'
 import type { Paper } from '../../shared/schemas'
+import type { SummaryStatus } from '../../shared/summary'
 import type { Chunk } from '../extract/chunker'
 import type { DedupeEntry } from '../library/dedupe'
 import type { FileProblem } from '../project/errors'
+import { buildPaperText } from '../summary/paperText'
 
 export type { PaperRow, TextStatus }
 
@@ -21,7 +23,8 @@ export interface JobRow {
   updated_at: string
 }
 
-const SCHEMA_VERSION = 1
+// 4: text_chars measures the text as the too-long check does.
+const SCHEMA_VERSION = 4
 const TOKENIZER = "tokenize='unicode61 remove_diacritics 2'"
 const DDL = `
 CREATE TABLE papers (
@@ -39,10 +42,16 @@ CREATE TABLE papers (
   problem TEXT,
   added_at TEXT,
   text_hash TEXT,
-  text_status TEXT NOT NULL DEFAULT 'pending'
+  text_status TEXT NOT NULL DEFAULT 'pending',
+  text_chars INTEGER NOT NULL DEFAULT 0,
+  summary_status TEXT NOT NULL DEFAULT 'none',
+  pending_review INTEGER NOT NULL DEFAULT 0,
+  summary_error TEXT,
+  summary_model TEXT
 );
 CREATE VIRTUAL TABLE papers_fts USING fts5(id UNINDEXED, title, authors, venue, abstract, ${TOKENIZER});
 CREATE VIRTUAL TABLE chunks_fts USING fts5(paper_id UNINDEXED, chunk_index UNINDEXED, page UNINDEXED, text, ${TOKENIZER});
+CREATE VIRTUAL TABLE summaries_fts USING fts5(paper_id UNINDEXED, text, ${TOKENIZER});
 CREATE TABLE jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   spec TEXT NOT NULL,
@@ -54,7 +63,8 @@ CREATE TABLE jobs (
 );
 `
 
-const PAPER_COLUMNS = 'id, title, authors_label, year, venue, kind, doi, arxiv, metadata_status, has_pdf, problem, added_at, text_status'
+const PAPER_COLUMNS =
+  'id, title, authors_label, year, venue, kind, doi, arxiv, metadata_status, has_pdf, problem, added_at, text_status, summary_status, pending_review, summary_model'
 
 /** Rebuildable per-device index. Anything here can be recomputed from the project files. */
 export class IndexCache {
@@ -122,6 +132,7 @@ export class IndexCache {
       this.db.prepare('DELETE FROM papers WHERE id = ?').run(id)
       this.db.prepare('DELETE FROM papers_fts WHERE id = ?').run(id)
       this.db.prepare('DELETE FROM chunks_fts WHERE paper_id = ?').run(id)
+      this.db.prepare('DELETE FROM summaries_fts WHERE paper_id = ?').run(id)
     })
   }
 
@@ -137,11 +148,45 @@ export class IndexCache {
 
   setText(id: string, textHash: string | null, status: TextStatus, chunks: Chunk[]): void {
     this.tx(() => {
-      this.db.prepare('UPDATE papers SET text_hash = ?, text_status = ? WHERE id = ?').run(textHash, status, id)
+      // The size the too-long check compares with max_input_chars: without the reference list, with page markers.
+      const textChars = chunks.length ? buildPaperText(chunks, { maxChars: Infinity }).chars : 0
+      this.db.prepare('UPDATE papers SET text_hash = ?, text_status = ?, text_chars = ? WHERE id = ?').run(textHash, status, textChars, id)
       this.db.prepare('DELETE FROM chunks_fts WHERE paper_id = ?').run(id)
       const insert = this.db.prepare('INSERT INTO chunks_fts (paper_id, chunk_index, page, text) VALUES (?, ?, ?, ?)')
       for (const c of chunks) insert.run(id, c.index, c.page, c.text)
     })
+  }
+
+  textChars(id: string): number {
+    const row = this.db.prepare('SELECT text_chars FROM papers WHERE id = ?').get(id) as { text_chars: number } | undefined
+    return row?.text_chars ?? 0
+  }
+
+  /** Indexed text of a paper in reading order (the input for summaries). */
+  chunksFor(id: string): { page: number | null; text: string }[] {
+    return (
+      this.db.prepare('SELECT page, text FROM chunks_fts WHERE paper_id = ? ORDER BY CAST(chunk_index AS INTEGER)').all(id) as {
+        page: number | null
+        text: string
+      }[]
+    ).map((r) => ({ page: r.page === null ? null : Number(r.page), text: r.text }))
+  }
+
+  setSummaryState(id: string, status: SummaryStatus, pending: number, text: string, model: string | null): void {
+    this.tx(() => {
+      this.db.prepare('UPDATE papers SET summary_status = ?, pending_review = ?, summary_model = ? WHERE id = ?').run(status, pending, model, id)
+      this.db.prepare('DELETE FROM summaries_fts WHERE paper_id = ?').run(id)
+      if (text) this.db.prepare('INSERT INTO summaries_fts (paper_id, text) VALUES (?, ?)').run(id, text)
+    })
+  }
+
+  setSummaryError(id: string, code: string | null): void {
+    this.db.prepare('UPDATE papers SET summary_error = ? WHERE id = ?').run(code, id)
+  }
+
+  summaryError(id: string): string | null {
+    const row = this.db.prepare('SELECT summary_error FROM papers WHERE id = ?').get(id) as { summary_error: string | null } | undefined
+    return row?.summary_error ?? null
   }
 
   paperIds(): string[] {
@@ -168,9 +213,11 @@ export class IndexCache {
            SELECT id, bm25(papers_fts) * 2 AS score FROM papers_fts WHERE papers_fts MATCH ?
            UNION ALL
            SELECT paper_id AS id, bm25(chunks_fts) AS score FROM chunks_fts WHERE chunks_fts MATCH ?
+           UNION ALL
+           SELECT paper_id AS id, bm25(summaries_fts) * 1.5 AS score FROM summaries_fts WHERE summaries_fts MATCH ?
          ) GROUP BY id ORDER BY score LIMIT ?`
       )
-      .all(match, match, limit) as { id: string }[]
+      .all(match, match, match, limit) as { id: string }[]
     return rows.map((r) => r.id)
   }
 
@@ -195,8 +242,24 @@ export class IndexCache {
     return (this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as JobRow | undefined) ?? null
   }
 
-  nextQueuedJob(): JobRow | null {
-    return (this.db.prepare("SELECT * FROM jobs WHERE state = 'queued' ORDER BY id LIMIT 1").get() as JobRow | undefined) ?? null
+  nextQueuedJob(excludeTypes: string[] = []): JobRow | null {
+    const filter = excludeTypes.length ? ` AND json_extract(spec, '$.type') NOT IN (${excludeTypes.map(() => '?').join(', ')})` : ''
+    return (this.db.prepare(`SELECT * FROM jobs WHERE state = 'queued'${filter} ORDER BY id LIMIT 1`).get(...excludeTypes) as JobRow | undefined) ?? null
+  }
+
+  cancelQueuedBatch(batchId: string, now: string): number {
+    const r = this.db
+      .prepare("UPDATE jobs SET state = 'cancelled', updated_at = ? WHERE state = 'queued' AND json_extract(spec, '$.batchId') = ?")
+      .run(now, batchId)
+    return Number(r.changes)
+  }
+
+  hasActiveJob(type: string, paperId: string): boolean {
+    return Boolean(
+      this.db
+        .prepare("SELECT 1 FROM jobs WHERE state IN ('queued', 'running') AND json_extract(spec, '$.type') = ? AND json_extract(spec, '$.paperId') = ? LIMIT 1")
+        .get(type, paperId)
+    )
   }
 
   listJobs(limit = 50): JobRow[] {
@@ -251,6 +314,9 @@ function toPaperRow(r: Record<string, unknown>): PaperRow {
     has_pdf: Boolean(r.has_pdf),
     problem: (r.problem as string | null) ?? null,
     added_at: (r.added_at as string | null) ?? null,
-    text_status: r.text_status as TextStatus
+    text_status: r.text_status as TextStatus,
+    summary_status: (r.summary_status as SummaryStatus) ?? 'none',
+    pending_review: Number(r.pending_review ?? 0),
+    summary_model: (r.summary_model as string | null) ?? null
   }
 }

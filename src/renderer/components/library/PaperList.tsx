@@ -29,7 +29,7 @@ export function PaperList({
               <span className="badges">
                 {rowBadges(row).map((badge) => (
                   <span key={badge} className={`badge badge-${badge}`}>
-                    {t(`badges.${badge}`)}
+                    {t(`badges.${badge}`, badge === 'to_review' ? { count: row.pending_review } : undefined)}
                   </span>
                 ))}
               </span>

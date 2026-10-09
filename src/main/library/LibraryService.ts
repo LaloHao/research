@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import type { IngestStatus, PaperDetail, PaperRow } from '../../shared/library'
 import type { Paper } from '../../shared/schemas'
+import type { ExtractionFile, FacetDef } from '../../shared/summary'
 import type { IndexCache } from '../cache/IndexCache'
 import { writeLibraryBib } from '../export/BibExporter'
 import { chunkSegments } from '../extract/chunker'
@@ -15,9 +16,28 @@ import { captureWebPage, findScholarlyIds, webMetadata } from '../ingest/web'
 import { sha256 } from '../project/atomicWrite'
 import { ConflictError } from '../project/errors'
 import type { ProjectStore } from '../project/ProjectStore'
+import { loadForm } from '../summary/extractionForm'
+import { currentThesisHash, indexSummary } from '../summary/SummaryService'
+import { entryFitsFacet, thesisRelationOutdated } from '../summary/merge'
 import { buildPaper, compact } from './buildPaper'
 import { findDuplicate, mergePapers, samePaperContent } from './dedupe'
 import { toUserFacing, UserFacingError } from './UserFacingError'
+
+/**
+ * The extraction as the UI should see it: a facet entry whose stored shape no longer fits its facet's current type
+ * (the facet was removed and recreated with a different type) is dropped, so the detail/review UI never renders
+ * it or lets the user verify/edit it. The file on disk is left untouched; the next regeneration overwrites it (see
+ * mergeExtraction).
+ */
+function visibleExtraction(extraction: ExtractionFile | null, facets: FacetDef[] | null): ExtractionFile | null {
+  if (!extraction || !facets) return extraction
+  const defByKey = new Map(facets.map((d) => [d.key, d]))
+  const filtered = Object.fromEntries(Object.entries(extraction.facets).filter(([k, entry]) => {
+    const def = defByKey.get(k)
+    return !def || entryFitsFacet(def, entry)
+  }))
+  return { ...extraction, facets: filtered }
+}
 
 export interface IngestOutcome {
   status: IngestStatus
@@ -183,6 +203,10 @@ export class LibraryService {
   async detail(id: string): Promise<PaperDetail> {
     const { store, cache } = this.deps
     const read = await store.readPaper(id)
+    const summary = await store.readSummary(id)
+    const extraction = await store.readExtraction(id)
+    const form = loadForm(store.config.extraction_form)
+    const extractionValue = extraction?.ok ? extraction.value : null
     return {
       id,
       paper: read.ok ? read.value : null,
@@ -190,7 +214,13 @@ export class LibraryService {
       problemKind: read.ok ? null : read.problem.kind,
       hasPdf: store.resolvePdf(id) !== null || Boolean(read.ok && read.value.oa_pdf_url),
       textStatus: cache.getPaper(id)?.text_status ?? 'pending',
-      content: await store.readContent(id)
+      content: await store.readContent(id),
+      summary: summary?.ok ? summary.value : null,
+      extraction: visibleExtraction(extractionValue, form.status === 'ok' ? form.form.facets : null),
+      form: form.status === 'ok' ? form.form : null,
+      summaryStatus: cache.getPaper(id)?.summary_status ?? 'none',
+      summaryError: cache.summaryError(id),
+      thesisOutdated: thesisRelationOutdated(extractionValue, currentThesisHash(store))
     }
   }
 
@@ -355,6 +385,7 @@ export class LibraryService {
     const pdfPath = store.resolvePdf(id)
     cache.upsertPaper(read.value, read.hash, pdfPath !== null)
     await this.indexText(id, pdfPath)
+    await indexSummary(store, cache, id)
   }
 
   private async indexText(id: string, pdfPath: string | null): Promise<void> {

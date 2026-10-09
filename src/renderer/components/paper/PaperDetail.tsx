@@ -6,11 +6,12 @@ import { errorText } from '../../lib/errorText'
 import { paperTabs, type Tab } from '../../lib/paperTabs'
 import { MetadataCompletion } from './MetadataCompletion'
 import { NotesEditor } from './NotesEditor'
-import { PdfViewer } from './PdfViewer'
+import { PdfViewer, type PdfFocus } from './PdfViewer'
+import { SummaryTab } from '../summary/SummaryTab'
 
 type PdfState = { status: 'loading' } | { status: 'ready'; data: Uint8Array } | { status: 'missing' } | { status: 'error'; message: string }
 
-function PdfTab({ id, hasPdf }: { id: string; hasPdf: boolean }): React.JSX.Element {
+function PdfTab({ id, hasPdf, focus }: { id: string; hasPdf: boolean; focus: PdfFocus | null }): React.JSX.Element {
   const { t } = useTranslation()
   const [state, setState] = useState<PdfState>({ status: 'loading' })
   useEffect(() => {
@@ -35,7 +36,7 @@ function PdfTab({ id, hasPdf }: { id: string; hasPdf: boolean }): React.JSX.Elem
     }
   }, [id, hasPdf, t])
 
-  if (state.status === 'ready') return <PdfViewer data={state.data} />
+  if (state.status === 'ready') return <PdfViewer data={state.data} focus={focus} />
   if (state.status === 'loading') return <div className="center muted">{t('paper.pdf_loading')}</div>
   if (state.status === 'error') return <div className="center error">{t('paper.pdf_error', { message: state.message })}</div>
   return <div className="center muted">{t('paper.no_pdf')}</div>
@@ -46,7 +47,9 @@ export function PaperDetail({ id }: { id: string }): React.JSX.Element {
   const [detail, setDetail] = useState<Detail | null>(null)
   // The id whose detail could not be read (deleted, or the project closed).
   const [failed, setFailed] = useState<string | null>(null)
-  const [tab, setTab] = useState<Tab>('pdf')
+  const [tab, setTab] = useState<Tab>('summary')
+  // The quote to show in the PDF after following an evidence link.
+  const [focus, setFocus] = useState<PdfFocus | null>(null)
   const [copied, setCopied] = useState(false)
 
   const refresh = useCallback(() => {
@@ -59,7 +62,9 @@ export function PaperDetail({ id }: { id: string }): React.JSX.Element {
     )
   }, [id])
   useEffect(refresh, [refresh])
+  useEffect(() => setFocus(null), [id])
   useEvent('library-changed', refresh)
+  useEvent('jobs-changed', refresh)
 
   if (failed === id) return <div className="center muted">{t('paper.not_found')}</div>
   if (!detail || detail.id !== id) return <div className="center muted">{t('app.loading')}</div>
@@ -84,6 +89,12 @@ export function PaperDetail({ id }: { id: string }): React.JSX.Element {
   const active = tabs.includes(tab) ? tab : tabs[0]
   const link = paper.identifiers.doi ? `https://doi.org/${paper.identifiers.doi}` : paper.identifiers.url
   const authors = paper.authors.map((a) => (a.given ? `${a.given} ${a.family}` : a.family)).join(', ')
+  const openEvidence = (page: number, quote: string): void => {
+    if (tabs.includes('pdf')) {
+      setFocus({ page, quote })
+      setTab('pdf')
+    } else if (tabs.includes('content')) setTab('content')
+  }
   const copyKey = (): void => {
     void navigator.clipboard.writeText(paper.id).then(() => {
       setCopied(true)
@@ -124,7 +135,8 @@ export function PaperDetail({ id }: { id: string }): React.JSX.Element {
         ))}
       </nav>
       <div className="tab-body">
-        {active === 'pdf' && <PdfTab key={id} id={id} hasPdf={detail.hasPdf} />}
+        {active === 'summary' && <SummaryTab key={detail.id} detail={detail} onOpenEvidence={openEvidence} />}
+        {active === 'pdf' && <PdfTab key={id} id={id} hasPdf={detail.hasPdf} focus={focus} />}
         {active === 'content' && <pre className="content">{detail.content}</pre>}
         {active === 'notes' && <NotesEditor key={id} paperId={id} />}
       </div>

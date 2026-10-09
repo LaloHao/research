@@ -119,3 +119,41 @@ describe('JobQueue', () => {
     expect(changes).toBeGreaterThanOrEqual(3)
   })
 })
+
+describe('JobQueue limits by type', () => {
+  it('runs one summary at a time while ingests keep their own slots', async () => {
+    const running: Record<string, number> = {}
+    const peak: Record<string, number> = {}
+    const gates: (() => void)[] = []
+    const handler: JobHandler = async (s) => {
+      running[s.type] = (running[s.type] ?? 0) + 1
+      peak[s.type] = Math.max(peak[s.type] ?? 0, running[s.type])
+      await new Promise<void>((r) => gates.push(r))
+      running[s.type]--
+      return {}
+    }
+    const queue = new JobQueue(await cache(), handler, { total: 3, byType: { summarize: 1 } })
+    queue.start()
+    for (const id of ['a', 'b', 'c']) queue.enqueue({ type: 'summarize', paperId: id })
+    queue.enqueue({ type: 'ingest_identifier', input: 'x' })
+    queue.enqueue({ type: 'ingest_identifier', input: 'y' })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(running).toEqual({ summarize: 1, ingest_identifier: 2 })
+    while (gates.length) {
+      gates.shift()!()
+      await new Promise((r) => setTimeout(r, 10))
+    }
+    await queue.whenIdle()
+    expect(peak.summarize).toBe(1)
+  })
+
+  it('cancelBatch drops only the queued jobs of that batch', async () => {
+    const c = await cache()
+    const queue = new JobQueue(c, async () => ({}), 1)
+    const ids = ['p1', 'p2'].map((paperId) => queue.enqueue({ type: 'summarize', paperId, batchId: 'b' }))
+    const other = queue.enqueue({ type: 'summarize', paperId: 'p3' })
+    expect(queue.cancelBatch('b')).toBe(2)
+    expect(ids.map((id) => c.getJob(id)?.state)).toEqual(['cancelled', 'cancelled'])
+    expect(c.getJob(other)?.state).toBe('queued')
+  })
+})

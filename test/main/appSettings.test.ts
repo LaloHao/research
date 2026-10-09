@@ -2,28 +2,35 @@ import { describe, expect, it } from 'vitest'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { loadSettings, saveSettings } from '../../src/main/appSettings'
-import { DEFAULT_SETTINGS } from '../../src/shared/settings'
 import { tmpDir } from '../helpers/tmp'
 
 describe('app settings', () => {
   it('returns defaults when the file is missing or corrupt', async () => {
     const dir = await tmpDir()
-    expect(await loadSettings(join(dir, 'missing.json'))).toEqual(DEFAULT_SETTINGS)
+    expect(await loadSettings(join(dir, 'missing.json'))).toMatchObject({ contactEmail: '', lastProjectPath: null })
     await writeFile(join(dir, 'bad.json'), '{oops')
-    expect(await loadSettings(join(dir, 'bad.json'))).toEqual(DEFAULT_SETTINGS)
+    expect(await loadSettings(join(dir, 'bad.json'))).toMatchObject({ contactEmail: '', lastProjectPath: null })
     for (const json of ['null', '42', '"text"', '[1, 2]']) {
       await writeFile(join(dir, 'odd.json'), json)
-      expect(await loadSettings(join(dir, 'odd.json'))).toEqual(DEFAULT_SETTINGS)
+      expect(await loadSettings(join(dir, 'odd.json'))).toMatchObject({ contactEmail: '', lastProjectPath: null })
     }
   })
 
   it('round-trips and drops fields of the wrong type', async () => {
     const file = join(await tmpDir(), 'settings.json')
-    await saveSettings(file, { contactEmail: 'me@uni.test', lastProjectPath: '/tmp/thesis' })
-    expect(await loadSettings(file)).toEqual({ contactEmail: 'me@uni.test', lastProjectPath: '/tmp/thesis' })
+    await saveSettings(file, { contactEmail: 'me@uni.test', lastProjectPath: '/tmp/thesis', deviceId: 'd0d0d0d0-0000-0000-0000-000000000000' })
+    expect(await loadSettings(file)).toMatchObject({ contactEmail: 'me@uni.test', lastProjectPath: '/tmp/thesis' })
     await writeFile(file, JSON.stringify({ contactEmail: 42, lastProjectPath: '/x', extra: true }))
-    expect(await loadSettings(file)).toEqual({ contactEmail: '', lastProjectPath: '/x' })
+    expect(await loadSettings(file)).toMatchObject({ contactEmail: '', lastProjectPath: '/x' })
     await writeFile(file, JSON.stringify({ contactEmail: 'me@uni.test', lastProjectPath: 7 }))
-    expect(await loadSettings(file)).toEqual({ contactEmail: 'me@uni.test', lastProjectPath: null })
+    expect(await loadSettings(file)).toMatchObject({ contactEmail: 'me@uni.test', lastProjectPath: null })
+  })
+
+  it('generates a device id once and keeps it', async () => {
+    const file = join(await tmpDir(), 'settings.json')
+    const first = await loadSettings(file)
+    expect(first.deviceId).toMatch(/^[0-9a-f-]{36}$/)
+    await saveSettings(file, first)
+    expect((await loadSettings(file)).deviceId).toBe(first.deviceId)
   })
 })

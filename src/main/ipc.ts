@@ -1,9 +1,20 @@
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { join } from 'node:path'
-import { IPC, type ProjectInfo, type ProjectOpenResult } from '../shared/ipc'
+import type { FormImpact } from '../shared/summary'
+import { IPC, type ActionResult, type LlmInfo, type ProjectInfo, type ProjectOpenResult, type RunBatchResult } from '../shared/ipc'
 import type { AppController } from './AppController'
 import { arg, ipcArgs } from './ipcArgs'
 import { toUserFacing } from './library/UserFacingError'
+
+/** Writes travel back as `{ ok }`; failures carry the code the UI translates. */
+async function actionResult(action: () => Promise<unknown>): Promise<ActionResult> {
+  try {
+    await action()
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error: toUserFacing(error).code }
+  }
+}
 
 async function pickFolder(window: BrowserWindow | null, create: boolean): Promise<string | null> {
   const options: Electron.OpenDialogOptions = { properties: create ? ['openDirectory', 'createDirectory'] : ['openDirectory'] }
@@ -71,4 +82,103 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
 
   ipcMain.handle(IPC.jobsList, () => app.requireSession().queue.list())
   ipcMain.handle(IPC.jobsCancel, (_e, id: unknown) => app.requireSession().queue.cancel(arg(ipcArgs.jobId, id, 'job')))
+
+  ipcMain.handle(IPC.summaryRun, (_e, rawId: unknown, rawOpts: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.paperId, rawId, 'id')
+    const opts = arg(ipcArgs.runOptions, rawOpts, 'opts')
+    return actionResult(() => app.requireSession().summaries.request(id, opts))
+  })
+  ipcMain.handle(IPC.summaryPlan, () => app.requireSession().summaries.plan())
+  ipcMain.handle(IPC.summaryRunBatch, async (_e, rawOpts: unknown): Promise<RunBatchResult> => {
+    const opts = arg(ipcArgs.batchOptions, rawOpts, 'opts')
+    try {
+      const { batchId, count } = await app.requireSession().summaries.requestBatch(opts)
+      return { ok: true, batchId, count }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).code }
+    }
+  })
+  ipcMain.handle(IPC.summarySetStatus, (_e, rawId: unknown, rawSection: unknown, rawKey: unknown, rawStatus: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.paperId, rawId, 'id')
+    const section = arg(ipcArgs.section, rawSection, 'section')
+    const key = arg(ipcArgs.fieldKey, rawKey, 'key')
+    const status = arg(ipcArgs.reviewStatus, rawStatus, 'status')
+    return actionResult(() => app.requireSession().summaries.setStatus(id, section, key, status))
+  })
+  ipcMain.handle(IPC.summaryEdit, (_e, rawId: unknown, rawSection: unknown, rawKey: unknown, value: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.paperId, rawId, 'id')
+    const section = arg(ipcArgs.section, rawSection, 'section')
+    const key = arg(ipcArgs.fieldKey, rawKey, 'key')
+    return actionResult(() => app.requireSession().summaries.edit(id, section, key, value))
+  })
+  ipcMain.handle(IPC.summaryVerifyAll, (_e, rawId: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.paperId, rawId, 'id')
+    return actionResult(() => app.requireSession().summaries.verifyAll(id))
+  })
+  ipcMain.handle(IPC.summaryAcceptProposed, (_e, rawFacetKey: unknown, rawValue: unknown): Promise<ActionResult> => {
+    const facetKey = arg(ipcArgs.fieldKey, rawFacetKey, 'facetKey')
+    const value = arg(ipcArgs.fieldKey, rawValue, 'value')
+    return actionResult(() => app.requireSession().summaries.acceptProposed(facetKey, value))
+  })
+  ipcMain.handle(IPC.summaryMapProposed, (_e, rawFacetKey: unknown, rawFrom: unknown, rawTo: unknown): Promise<ActionResult> => {
+    const facetKey = arg(ipcArgs.fieldKey, rawFacetKey, 'facetKey')
+    const from = arg(ipcArgs.text, rawFrom, 'from')
+    const to = arg(ipcArgs.text, rawTo, 'to')
+    return actionResult(() => app.requireSession().summaries.mapProposed(facetKey, from, to))
+  })
+  ipcMain.handle(IPC.summaryReviewQueue, (_e, rawIds: unknown) =>
+    app.requireSession().summaries.reviewQueue(arg(ipcArgs.paperIds, rawIds, 'ids'))
+  )
+  ipcMain.handle(IPC.summaryPageText, (_e, rawId: unknown, rawPage: unknown) => {
+    const id = arg(ipcArgs.paperId, rawId, 'id')
+    const page = arg(ipcArgs.pageNumber, rawPage, 'page')
+    return app.requireSession().summaries.pageText(id, page)
+  })
+
+  ipcMain.handle(IPC.llmInfo, async (): Promise<LlmInfo> => {
+    const session = app.requireSession()
+    return {
+      config: session.store.config.llm,
+      monthSpentUsd: await session.summaries.monthSpent(),
+      estimatePerPaperUsd: session.summaries.estimate(),
+      form: session.summaries.formInfo()
+    }
+  })
+  ipcMain.handle(IPC.llmUpdate, (_e, rawPatch: unknown): Promise<ActionResult> => {
+    const patch = arg(ipcArgs.llmPatch, rawPatch, 'patch')
+    return actionResult(async () => {
+      await app.requireSession().summaries.updateLlm(patch)
+      app.notifyProjectChanged()
+    })
+  })
+  ipcMain.handle(IPC.llmCreateForm, (): Promise<ActionResult> => actionResult(() => app.requireSession().summaries.ensureForm()))
+  ipcMain.handle(IPC.llmFormImpact, (_e, rawForm: unknown): Promise<FormImpact> => {
+    const form = arg(ipcArgs.extractionForm, rawForm, 'form')
+    return app.requireSession().summaries.formImpact(form)
+  })
+  ipcMain.handle(IPC.llmUpdateForm, (_e, rawForm: unknown): Promise<ActionResult> => {
+    const form = arg(ipcArgs.extractionForm, rawForm, 'form')
+    return actionResult(async () => {
+      await app.requireSession().summaries.updateForm(form)
+      app.notifyProjectChanged()
+    })
+  })
+  ipcMain.handle(IPC.llmResetForm, (): Promise<ActionResult> =>
+    actionResult(async () => {
+      await app.requireSession().summaries.resetForm()
+      app.notifyProjectChanged()
+    })
+  )
+  ipcMain.handle(IPC.llmShowProjectFile, () => {
+    shell.showItemInFolder(join(app.requireSession().store.root, 'project.yaml'))
+  })
+
+  ipcMain.handle(IPC.thesisGet, () => app.requireSession().summaries.thesis())
+  ipcMain.handle(IPC.thesisUpdate, (_e, rawCtx: unknown): Promise<ActionResult> => {
+    const ctx = arg(ipcArgs.thesisContext, rawCtx, 'ctx')
+    return actionResult(async () => {
+      await app.requireSession().summaries.updateThesis(ctx)
+      app.notifyProjectChanged()
+    })
+  })
 }

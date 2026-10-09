@@ -45,3 +45,20 @@ function stripUndefined(obj: unknown): unknown {
 export function toYaml(value: unknown): string {
   return stringify(stripUndefined(value), { lineWidth: 0 })
 }
+
+const FRONTMATTER = /^---\n([\s\S]*?)\n---\n?/
+
+/** Parses a Markdown file whose YAML frontmatter holds the data; the body is presentation only. */
+export function parseFrontmatterFile<T>(text: string, schema: z.ZodType<T>): ReadResult<T> {
+  const hash = sha256(text)
+  if (CONFLICT_MARKER.test(text)) {
+    return { ok: false, hash, problem: { kind: 'conflict_markers', message: 'File contains git conflict markers' } }
+  }
+  const m = text.match(FRONTMATTER)
+  if (!m) return { ok: false, hash, problem: { kind: 'invalid_yaml', message: 'Missing YAML frontmatter' } }
+  return { ...parseYamlFile(m[1], schema), hash }
+}
+
+export function toFrontmatter(value: unknown, body: string): string {
+  return `---\n${toYaml(value)}---\n\n${body.trimEnd()}\n`
+}
