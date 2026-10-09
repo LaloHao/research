@@ -47,6 +47,13 @@
     "form_invalid": "El formulario en project.yaml tiene errores:",
     "form_show_file": "Mostrar project.yaml",
     "form_columns": { "key": "Faceta", "type": "Tipo", "description": "Descripción", "values": "Valores", "aliases": "Alias aprendidos" },
+    "invalid": {
+      "required": "Escribe un valor.",
+      "not_number": "Debe ser un número, por ejemplo 0.5.",
+      "not_positive": "Debe ser mayor que 0.",
+      "cap_not_positive": "Debe ser mayor que 0. Para no tener tope, deja el campo vacío.",
+      "not_integer": "Debe ser un número entero, sin decimales."
+    },
     "thesis_section": "Tesis",
     "thesis_title": "Título",
     "thesis_description": "Descripción (problema, enfoque, alcance)",
