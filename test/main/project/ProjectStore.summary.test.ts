@@ -3,6 +3,8 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ConflictError } from '../../../src/main/project/errors'
 import { ProjectStore } from '../../../src/main/project/ProjectStore'
+import { toYaml } from '../../../src/main/project/yamlFile'
+import { parse } from 'yaml'
 import type { CostEntry } from '../../../src/shared/summary'
 import { samplePaper } from '../../helpers/papers'
 import { sampleExtraction, sampleSummary } from '../../helpers/summaries'
@@ -76,5 +78,44 @@ describe('ProjectStore config blocks', () => {
     const text = await readFile(join(s.root, 'project.yaml'), 'utf8')
     expect(text).toContain('auto_summarize: true')
     expect(text).toContain('extraction_form:')
+  })
+
+  it('keeps an invalid llm or thesis block verbatim on disk when another part of project.yaml is written', async () => {
+    const s = await store()
+    const path = join(s.root, 'project.yaml')
+    const raw = parse(await readFile(path, 'utf8'))
+    raw.llm = { model: 'gpt-x', max_input_chars: 1000, budget: { per_batch_usd: 'ten' } }
+    raw.thesis = { title: 'Mine', research_questions: [{ id: 'Q1', text: 'typo id' }] }
+    await writeFile(path, toYaml(raw))
+    await s.reloadConfig()
+    expect(s.config.llm).toMatchObject({ model: 'sonnet', max_input_chars: 1000 })
+    expect(s.config.thesis).toEqual({ title: '', description: '', research_questions: [] })
+
+    await s.updateConfig({ name: 'Renamed' })
+    const after = parse(await readFile(path, 'utf8'))
+    expect(after.name).toBe('Renamed')
+    expect(after.llm).toEqual(raw.llm)
+    expect(after.thesis).toEqual(raw.thesis)
+
+    // Writing a block on purpose replaces it.
+    await s.updateConfig({ llm: { ...s.config.llm, model: 'haiku' } })
+    const fixed = parse(await readFile(path, 'utf8'))
+    expect(fixed.llm).toMatchObject({ model: 'haiku', max_input_chars: 1000 })
+    expect(fixed.thesis).toEqual(raw.thesis)
+    await s.updateConfig({ thesis: { title: 'New', description: '', research_questions: [] } })
+    expect(parse(await readFile(path, 'utf8')).thesis).toEqual({ title: 'New', description: '', research_questions: [] })
+    await s.updateConfig({ name: 'Again' })
+    expect(parse(await readFile(path, 'utf8')).llm).toMatchObject({ model: 'haiku' })
+  })
+
+  it('keeps an invalid block found when the project is opened', async () => {
+    const s = await store()
+    const path = join(s.root, 'project.yaml')
+    const raw = parse(await readFile(path, 'utf8'))
+    raw.llm = { model: 'gpt-x' }
+    await writeFile(path, toYaml(raw))
+    const reopened = await ProjectStore.open(s.root)
+    await reopened.updateConfig({ name: 'Renamed' })
+    expect(parse(await readFile(path, 'utf8')).llm).toEqual({ model: 'gpt-x' })
   })
 })

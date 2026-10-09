@@ -84,6 +84,14 @@ describe('LlmConfigSchema', () => {
 
   it('falls back to defaults when the block is invalid, so project.yaml still opens', () => {
     expect(LlmConfigSchema.parse({ model: 'gpt' }).model).toBe('sonnet')
+    expect(LlmConfigSchema.parse('not a block').model).toBe('sonnet')
+  })
+
+  it('falls back field by field: one bad value keeps the others', () => {
+    expect(
+      LlmConfigSchema.parse({ model: 'gpt', auto_summarize: true, max_input_chars: 1000, budget: { per_operation_usd: -1, per_batch_usd: 3, per_month_usd: 20 } })
+    ).toEqual({ model: 'sonnet', auto_summarize: true, max_input_chars: 1000, budget: { per_operation_usd: 0.5, per_batch_usd: 3, per_month_usd: 20 } })
+    expect(LlmConfigSchema.parse({ model: 'opus', budget: 'oops' })).toMatchObject({ model: 'opus', budget: { per_operation_usd: 0.5, per_batch_usd: 10, per_month_usd: null } })
   })
 })
 

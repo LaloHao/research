@@ -140,8 +140,26 @@ export const LlmConfigShape = z.object({
     .prefault({})
 })
 
-/** An invalid `llm` block falls back to defaults instead of making project.yaml unreadable. */
-export const LlmConfigSchema = LlmConfigShape.catch(() => structuredClone(DEFAULT_LLM_CONFIG))
+const B = DEFAULT_LLM_CONFIG.budget
+
+/**
+ * Lenient version for reading project.yaml: an invalid value falls back to its own default (the rest of the block is
+ * kept) instead of making the file unreadable. ProjectStore keeps the invalid block on disk until it is rewritten on purpose.
+ */
+export const LlmConfigSchema = z
+  .object({
+    model: LlmConfigShape.shape.model.catch(DEFAULT_LLM_CONFIG.model),
+    auto_summarize: LlmConfigShape.shape.auto_summarize.catch(DEFAULT_LLM_CONFIG.auto_summarize),
+    max_input_chars: LlmConfigShape.shape.max_input_chars.catch(DEFAULT_LLM_CONFIG.max_input_chars),
+    budget: z
+      .object({
+        per_operation_usd: z.number().positive().catch(B.per_operation_usd),
+        per_batch_usd: z.number().positive().catch(B.per_batch_usd),
+        per_month_usd: z.number().positive().nullable().catch(B.per_month_usd)
+      })
+      .catch(() => ({ ...B }))
+  })
+  .catch(() => structuredClone(DEFAULT_LLM_CONFIG))
 export type LlmConfig = z.infer<typeof LlmConfigShape>
 
 export const SUMMARY_STATUSES = ['none', 'generated', 'reviewed', 'stale', 'too_long', 'failed'] as const
