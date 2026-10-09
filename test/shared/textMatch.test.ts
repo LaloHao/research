@@ -30,6 +30,25 @@ describe('findInNormalized', () => {
   it('rejects an invented quote', () => {
     expect(findInNormalized(normalizeForMatch('we train a GPT model on synthetic traces'), text)).toBeNull()
   })
+
+  it('matches a hyphenated quote word against a joined text word', () => {
+    const q = normalizeForMatch('we fine-tune a BERT model')
+    const joined = normalizeForMatch('For detection, we finetune a BERT model on 12k log lines.')
+    expect(findInNormalized(q, joined)?.score).toBeGreaterThanOrEqual(0.85)
+  })
+
+  it('matches a joined quote word against a hyphenated text word', () => {
+    const q = normalizeForMatch('we finetune a BERT model')
+    expect(findInNormalized(q, text)?.score).toBeGreaterThanOrEqual(0.85)
+  })
+
+  it('still rejects an invented quote that only shares a merged pair with the text', () => {
+    const q = normalizeForMatch('we use pre training on synthetic traces only')
+    const unrelated = normalizeForMatch(
+      'Researchers announced that the pretraining team expanded their computing budget for next quarter releases across multiple laboratories worldwide.',
+    )
+    expect(findInNormalized(q, unrelated)).toBeNull()
+  })
 })
 
 describe('quoteFound', () => {
