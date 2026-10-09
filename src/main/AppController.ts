@@ -98,7 +98,7 @@ export class AppController {
   }
 
   private sessionOptions(): SessionOptions {
-    return { ...this.sessionDefaults, contactEmail: this.settings.contactEmail }
+    return { ...this.sessionDefaults, contactEmail: this.settings.contactEmail, deviceId: this.settings.deviceId }
   }
 
   private attach(session: ProjectSession): void {

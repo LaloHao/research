@@ -1,0 +1,117 @@
+import { describe, expect, it } from 'vitest'
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { LlmError } from '../../../src/main/llm/LlmProvider'
+import { ProjectSession } from '../../../src/main/library/ProjectSession'
+import { DEFAULT_EXTRACTION_FORM } from '../../../src/main/summary/extractionForm'
+import { toYaml } from '../../../src/main/project/yamlFile'
+import { FakeLlmProvider, llmOutputFor, PAPER_TEXT } from '../../helpers/llm'
+import { samplePaper } from '../../helpers/papers'
+import { tmpDir } from '../../helpers/tmp'
+
+const ok = (form = DEFAULT_EXTRACTION_FORM) => ({ value: llmOutputFor(form), costUsd: 0.03, model: 'claude-sonnet-5' })
+
+/** A session whose papers have indexed text, without network or PDFs. */
+async function session(responses: ConstructorParameters<typeof FakeLlmProvider>[0] = [ok()], ids = ['he2017drain']) {
+  const root = await tmpDir()
+  const s = await ProjectSession.create(root, 'Thesis', { contactEmail: '', watch: false, llm: new FakeLlmProvider(responses) })
+  for (const id of ids) {
+    await s.store.writePaper(samplePaper({ id, title: `Paper ${id} about log anonymization methods` }), null)
+    await s.store.writeContent(id, PAPER_TEXT)
+    await s.library.indexPaper(id)
+  }
+  return s
+}
+
+describe('SummaryService', () => {
+  it('summarizes through the queue, writes the default form and indexes the state', async () => {
+    const s = await session()
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    expect(s.queue.list()[0]).toMatchObject({ state: 'done', message: 'summarized', paperId: 'he2017drain' })
+    expect(s.store.config.extraction_form).toBeDefined()
+    expect(s.library.list()[0]).toMatchObject({ summary_status: 'generated' })
+    expect(s.library.list()[0].pending_review).toBeGreaterThan(0)
+    const detail = await s.detail('he2017drain')
+    expect(detail.summaryStatus).toBe('generated')
+    expect(detail.summary?.fields.tldr.value).toBe('tldr text')
+    await s.close()
+  })
+
+  it('records a failure and cancels the rest of a batch on quota errors', async () => {
+    const s = await session([new LlmError('llm_quota')], ['a2020x', 'b2020x', 'c2020x'])
+    expect(s.summaries.plan()).toMatchObject({ count: 3, batchLimitUsd: 10 })
+    const { count } = await s.summaries.requestBatch()
+    expect(count).toBe(3)
+    await s.queue.whenIdle()
+    const states = s.queue.list().map((j) => j.state).sort()
+    expect(states).toEqual(['cancelled', 'cancelled', 'failed'])
+    const failed = s.library.list().find((r) => r.summary_status === 'failed')
+    expect(failed).toBeDefined()
+    expect(s.summaries.plan().count).toBe(3)
+    await s.close()
+  })
+
+  it('does not queue the same paper twice', async () => {
+    const s = await session()
+    await s.queue.stop()
+    await s.summaries.request('he2017drain')
+    await s.summaries.request('he2017drain')
+    expect(s.queue.list()).toHaveLength(1)
+    await s.close()
+  })
+
+  it('edits, verifies and lists what is left to review', async () => {
+    const s = await session()
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    const before = await s.summaries.reviewQueue()
+    expect(before[0]).toMatchObject({ paperId: 'he2017drain', section: 'fields', key: 'tldr' })
+    await s.summaries.edit('he2017drain', 'fields', 'tldr', 'my own words')
+    await s.summaries.setStatus('he2017drain', 'facets', 'relevance', 'verified')
+    const after = await s.summaries.reviewQueue()
+    expect(after).toHaveLength(before.length - 2)
+    await expect(s.summaries.edit('he2017drain', 'fields', 'research_type', 'essay')).rejects.toMatchObject({ name: 'InvalidEdit' })
+    await s.summaries.verifyAll('he2017drain')
+    expect(await s.summaries.reviewQueue()).toEqual([])
+    expect(s.library.list()[0].summary_status).toBe('reviewed')
+    await s.close()
+  })
+
+  it('accepts and maps proposed values across papers and remembers aliases', async () => {
+    const out = llmOutputFor(DEFAULT_EXTRACTION_FORM)
+    out.facets.sanitization_technique = { values: [], proposed: ['tokenization'], evidence: [] }
+    const s = await session([{ value: out, costUsd: 0.01, model: 'm' }], ['a2020x', 'b2020x'])
+    await s.summaries.requestBatch()
+    await s.queue.whenIdle()
+    await s.summaries.mapProposed('sanitization_technique', 'tokenization', 'pseudonymization')
+    for (const id of ['a2020x', 'b2020x']) {
+      const e = await s.store.readExtraction(id)
+      expect(e?.ok && e.value.facets.sanitization_technique).toMatchObject({ values: ['pseudonymization'], proposed: [] })
+    }
+    const form = s.summaries.formInfo()
+    expect(form.status === 'ok' && form.form.value_aliases).toEqual({ sanitization_technique: { tokenization: 'pseudonymization' } })
+    await s.close()
+  })
+
+  it('marks summaries stale when the form changes', async () => {
+    const s = await session()
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    const form = { ...DEFAULT_EXTRACTION_FORM, facets: [...DEFAULT_EXTRACTION_FORM.facets, { key: 'venue_type', type: 'text' as const, description: 'Kind of venue' }] }
+    await s.store.updateConfig({ extraction_form: form })
+    await s.library.indexPaper('he2017drain')
+    expect(s.library.list()[0].summary_status).toBe('stale')
+    await s.close()
+  })
+
+  it('reports form errors without blocking the project', async () => {
+    const s = await session()
+    const text = toYaml({ ...s.store.config, extraction_form: { facets: [{ key: 'Bad Key', type: 'text' }] } })
+    await writeFile(join(s.store.root, 'project.yaml'), text)
+    await s.store.reloadConfig()
+    expect(s.summaries.formInfo().status).toBe('invalid')
+    await expect(s.summaries.request('he2017drain')).rejects.toMatchObject({ code: 'invalid_form' })
+    await s.close()
+  })
+})

@@ -15,6 +15,8 @@ import { captureWebPage, findScholarlyIds, webMetadata } from '../ingest/web'
 import { sha256 } from '../project/atomicWrite'
 import { ConflictError } from '../project/errors'
 import type { ProjectStore } from '../project/ProjectStore'
+import { loadForm } from '../summary/extractionForm'
+import { indexSummary } from '../summary/SummaryService'
 import { buildPaper, compact } from './buildPaper'
 import { findDuplicate, mergePapers, samePaperContent } from './dedupe'
 import { toUserFacing, UserFacingError } from './UserFacingError'
@@ -183,6 +185,9 @@ export class LibraryService {
   async detail(id: string): Promise<PaperDetail> {
     const { store, cache } = this.deps
     const read = await store.readPaper(id)
+    const summary = await store.readSummary(id)
+    const extraction = await store.readExtraction(id)
+    const form = loadForm(store.config.extraction_form)
     return {
       id,
       paper: read.ok ? read.value : null,
@@ -190,7 +195,12 @@ export class LibraryService {
       problemKind: read.ok ? null : read.problem.kind,
       hasPdf: store.resolvePdf(id) !== null || Boolean(read.ok && read.value.oa_pdf_url),
       textStatus: cache.getPaper(id)?.text_status ?? 'pending',
-      content: await store.readContent(id)
+      content: await store.readContent(id),
+      summary: summary?.ok ? summary.value : null,
+      extraction: extraction?.ok ? extraction.value : null,
+      form: form.status === 'ok' ? form.form : null,
+      summaryStatus: cache.getPaper(id)?.summary_status ?? 'none',
+      summaryError: cache.summaryError(id)
     }
   }
 
@@ -355,6 +365,7 @@ export class LibraryService {
     const pdfPath = store.resolvePdf(id)
     cache.upsertPaper(read.value, read.hash, pdfPath !== null)
     await this.indexText(id, pdfPath)
+    await indexSummary(store, cache, id)
   }
 
   private async indexText(id: string, pdfPath: string | null): Promise<void> {

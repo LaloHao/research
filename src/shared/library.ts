@@ -1,5 +1,5 @@
 import type { Paper } from './schemas'
-import type { SummaryStatus } from './summary'
+import type { ExtractionFile, ExtractionForm, SummaryFile, SummaryStatus } from './summary'
 
 export const TEXT_STATUSES = ['pending', 'ok', 'no_text', 'no_source', 'error'] as const
 export type TextStatus = (typeof TEXT_STATUSES)[number]
@@ -71,4 +71,11 @@ export interface PaperDetail {
   textStatus: TextStatus
   /** Readable text of a web page, when the paper is grey literature. */
   content: string | null
+  summary: SummaryFile | null
+  extraction: ExtractionFile | null
+  /** The project's extraction form, when it is valid. */
+  form: ExtractionForm | null
+  summaryStatus: SummaryStatus
+  /** Error code of the last failed summary, if any. */
+  summaryError: string | null
 }

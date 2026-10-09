@@ -6,8 +6,14 @@ import { PdfjsExtractor, type PdfExtractor } from '../extract/PdfExtractor'
 import { HttpClient, type FetchFn } from '../ingest/http'
 import { MetadataResolver } from '../ingest/MetadataResolver'
 import { JobQueue } from '../jobs/JobQueue'
+import { BudgetGuard, limitsFromConfig } from '../llm/BudgetGuard'
+import { ClaudeCliProvider } from '../llm/ClaudeCliProvider'
+import { CostLedger } from '../llm/CostLedger'
+import type { LlmProvider } from '../llm/LlmProvider'
 import { ProjectStore } from '../project/ProjectStore'
 import { PAPER_FOLDER, watchProject } from '../project/watcher'
+import { Summarizer } from '../summary/Summarizer'
+import { SummaryService } from '../summary/SummaryService'
 import { LibraryService } from './LibraryService'
 
 export interface SessionOptions {
@@ -16,7 +22,13 @@ export interface SessionOptions {
   extractor?: PdfExtractor
   /** Defaults to true; tests turn it off. */
   watch?: boolean
+  /** Names this device's cost log (costs/<device-id>.jsonl). */
+  deviceId?: string
+  /** Defaults to the Claude CLI; tests pass a fake. */
+  llm?: LlmProvider
 }
+
+const DEFAULT_DEVICE_ID = '00000000-0000-0000-0000-000000000000'
 
 type SessionEvent = 'library' | 'jobs' | 'project'
 
@@ -34,7 +46,8 @@ export class ProjectSession {
     readonly cache: IndexCache,
     readonly http: HttpClient,
     readonly library: LibraryService,
-    readonly queue: JobQueue
+    readonly queue: JobQueue,
+    readonly summaries: SummaryService
   ) {}
 
   static async create(root: string, name: string, opts: SessionOptions): Promise<ProjectSession> {
@@ -49,8 +62,26 @@ export class ProjectSession {
     const cache = IndexCache.open(join(store.cacheDir, 'index.sqlite'))
     const http = new HttpClient({ fetch: opts.fetch, contactEmail: opts.contactEmail })
     const library = new LibraryService({ store, cache, resolver: new MetadataResolver(http), http, extractor: opts.extractor ?? new PdfjsExtractor() })
-    const queue = new JobQueue(cache, (spec, signal) => runJob(library, spec, signal))
-    const session = new ProjectSession(store, cache, http, library, queue)
+    const ledger = new CostLedger(store, opts.deviceId ?? DEFAULT_DEVICE_ID)
+    const budget = new BudgetGuard(
+      () => limitsFromConfig(store.config.llm),
+      () => ledger.monthTotal()
+    )
+    const summarizer = new Summarizer({ store, cache, provider: opts.llm ?? new ClaudeCliProvider(), budget, ledger })
+    // The handler reads `session.summaries` when a job runs: the queue has to exist before the service.
+    const queue = new JobQueue(cache, (spec, signal) => runJob(library, session.summaries, spec, signal), { total: 3, byType: { summarize: 1 } })
+    const summaries = new SummaryService({
+      store,
+      cache,
+      summarizer,
+      budget,
+      ledger,
+      reindex: (id) => library.indexPaper(id),
+      emit: () => session.emit('library'),
+      enqueue: (spec) => queue.enqueue(spec),
+      cancelBatch: (batchId) => queue.cancelBatch(batchId)
+    })
+    const session: ProjectSession = new ProjectSession(store, cache, http, library, queue, summaries)
     await library.reindexAll()
     library.onChange(() => session.emit('library'))
     queue.onChange(() => session.emit('jobs'))
@@ -115,13 +146,14 @@ export class ProjectSession {
   }
 }
 
-export async function runJob(library: LibraryService, spec: JobSpec, signal: AbortSignal): Promise<{ paperId?: string; message?: string }> {
-  if (spec.type === 'summarize') throw new Error('summarize jobs are not implemented yet')
+export async function runJob(library: LibraryService, summaries: SummaryService, spec: JobSpec, signal: AbortSignal): Promise<{ paperId?: string; message?: string }> {
+  if (spec.type === 'summarize') return summaries.run(spec.paperId, { force: spec.force, batchId: spec.batchId, signal })
   const outcome =
     spec.type === 'ingest_identifier'
       ? await library.ingestIdentifier(spec.input, signal)
       : spec.type === 'ingest_pdf'
         ? await library.ingestPdf(spec.path, signal)
         : await library.updateMetadata(spec.paperId, spec.input, signal)
+  if (outcome.status !== 'duplicate') await summaries.autoAfterIngest(outcome.paperId).catch((error) => console.error('auto summarize', error))
   return { paperId: outcome.paperId, message: outcome.status }
 }

@@ -127,3 +127,21 @@ export interface CostEntry {
   cost_usd: number
   operation: 'summarize'
 }
+
+export type Section = 'fields' | 'facets'
+
+/** One field or facet still waiting for the user's review. */
+export interface ReviewItem {
+  paperId: string
+  title: string
+  section: Section
+  key: string
+}
+
+export interface SummaryPlan {
+  count: number
+  estimateUsd: number
+  batchLimitUsd: number
+}
+
+export type FormInfo = { status: 'missing' } | { status: 'ok'; form: ExtractionForm } | { status: 'invalid'; errors: string[] }
