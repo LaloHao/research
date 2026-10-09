@@ -6,8 +6,13 @@ import { errorText } from '../../lib/errorText'
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
 
-/** Renders every page to a canvas, fitted to the panel width. */
-export function PdfViewer({ data }: { data: Uint8Array }): React.JSX.Element {
+export type PdfFocus = { page: number; quote: string }
+
+/**
+ * Renders every page to a canvas, fitted to the panel width.
+ * `focus` and `onFocusResult` (scroll to a quote and report whether it was found) are accepted but not used yet.
+ */
+export function PdfViewer({ data }: { data: Uint8Array; focus?: PdfFocus | null; onFocusResult?: (found: boolean) => void }): React.JSX.Element {
   const { t } = useTranslation()
   const pagesRef = useRef<HTMLDivElement>(null)
   const [error, setError] = useState(false)

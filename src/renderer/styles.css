@@ -6,6 +6,7 @@
   --muted: #6b6966;
   --accent: #4f46e5;
   --accent-soft: rgba(79, 70, 229, 0.12);
+  --warning: #d97706;
   --warning-soft: #fef3c7;
   --error: #b91c1c;
   --error-soft: #fee2e2;
@@ -25,6 +26,7 @@
     --muted: #9b9995;
     --accent: #818cf8;
     --accent-soft: rgba(129, 140, 248, 0.16);
+    --warning: #f59e0b;
     --warning-soft: #3d3216;
     --error: #f87171;
     --error-soft: #3b1818;
@@ -111,3 +113,26 @@ code { font-family: ui-monospace, 'JetBrains Mono', monospace; font-size: 12px; 
 .content { white-space: pre-wrap; font-family: inherit; padding: 16px 20px; margin: 0; max-width: 80ch; }
 .notes { display: flex; flex-direction: column; height: 100%; padding: 12px 20px; gap: 6px; }
 .notes textarea { flex: 1; resize: none; font-family: ui-monospace, monospace; line-height: 1.5; }
+
+.summary-tab { padding: 12px 20px 24px; max-width: 90ch; display: flex; flex-direction: column; gap: 10px; }
+.summary-tab h3 { margin: 16px 0 4px; font-size: 15px; }
+.summary-tab section { display: flex; flex-direction: column; gap: 10px; }
+.summary-header { display: flex; flex-direction: column; gap: 6px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.card-evidence_missing { border-color: var(--warning); }
+.card h4 { margin: 0; font-size: 13px; }
+.card h5 { margin: 4px 0 2px; font-size: 12px; color: var(--muted); }
+.card p { margin: 0; }
+.card ul { margin: 0; padding-left: 18px; }
+.card-text { white-space: pre-wrap; }
+.chip { font-size: 11px; padding: 0 6px; border-radius: 10px; background: var(--border); }
+.chip-verified { background: var(--accent-soft); color: var(--accent); }
+.chip-edited { background: var(--accent-soft); }
+.chip-evidence_missing, .chip-proposed { background: var(--warning-soft); }
+.evidence { list-style: none; padding-left: 0 !important; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.evidence q { color: var(--muted); font-style: italic; }
+.evidence li.not-found q { text-decoration: underline wavy var(--warning); }
+.editor { display: flex; flex-direction: column; gap: 6px; }
+.editor .field { margin-bottom: 0; }
+.checks { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.proposals { display: flex; flex-direction: column; gap: 4px; }
