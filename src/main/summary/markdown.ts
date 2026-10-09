@@ -1,0 +1,42 @@
+import { SUMMARY_FIELD_KEYS, type Evidence, type ExtractionFile, type SummaryFieldKey, type SummaryFile } from '../../shared/summary'
+
+const HEADINGS: Record<SummaryFieldKey, string> = {
+  tldr: 'TL;DR',
+  problem: 'Problem',
+  contribution: 'Contribution',
+  method: 'Method',
+  evaluation: 'Evaluation',
+  results: 'Results',
+  limitations: 'Limitations',
+  future_work: 'Future work',
+  research_type: 'Research type'
+}
+
+const quote = (e: Evidence): string => `> "${e.quote}"${e.page === null ? '' : ` (p. ${e.page})`}`
+
+/** Human-readable body of summary.md; regenerated from the frontmatter on every write. */
+export function renderSummaryMarkdown(title: string, summary: SummaryFile, extraction: ExtractionFile | null): string {
+  const out = [`# ${title}`, '']
+  for (const key of SUMMARY_FIELD_KEYS) {
+    const field = summary.fields[key]
+    out.push(`## ${HEADINGS[key]}`, '')
+    if (key === 'limitations') {
+      const v = field.value as { stated: string[]; inferred: string[] }
+      out.push('**Stated**', '', ...v.stated.map((s) => `- ${s}`), '', '**Inferred**', '', ...v.inferred.map((s) => `- ${s}`))
+    } else {
+      out.push(String(field.value))
+    }
+    if (field.evidence.length) out.push('', ...field.evidence.map(quote))
+    out.push('')
+  }
+  if (extraction) {
+    out.push('## Classification', '')
+    for (const [key, f] of Object.entries(extraction.facets)) {
+      const value =
+        f.values !== undefined ? f.values.join(', ') : f.score !== undefined ? `${f.score} — ${f.justification ?? ''}` : (f.text ?? f.value ?? '—')
+      const proposed = f.proposed.length ? ` (proposed: ${f.proposed.join(', ')})` : ''
+      out.push(`- **${key}**: ${value}${proposed}`)
+    }
+  }
+  return out.join('\n')
+}
