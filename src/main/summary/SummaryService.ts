@@ -201,7 +201,9 @@ export class SummaryService {
       await this.save(paperId, files, { extraction: status === 'verified' ? this.stampThesis(next) : next })
     } else {
       const extraction = requireExtraction(files)
-      await this.save(paperId, files, { extraction: setFacetStatus(extraction, key, status) })
+      const form = await this.ensureForm()
+      const def = form.facets.find((f) => f.key === key)
+      await this.save(paperId, files, { extraction: setFacetStatus(extraction, key, status, def) })
     }
     await this.changed([paperId])
   }
@@ -307,25 +309,39 @@ export class SummaryService {
     const staleCount =
       formHash(next) === current.hash ? 0 : cache.listPapers().filter((r) => r.summary_status === 'generated' || r.summary_status === 'reviewed').length
 
-    const removedValuesInUse: FormImpact['removedValuesInUse'] = []
+    // One candidate (with its removed values) per kept single/multi facet; checked against each paper's
+    // extraction with a single read, instead of re-reading every paper once per facet.
+    const candidates: { def: Extract<ExtractionForm['facets'][number], { values: string[] }>; removed: string[] }[] = []
     for (const curFacet of current.form.facets) {
       if (!('values' in curFacet)) continue
       const nextFacet = next.facets.find((f) => f.key === curFacet.key)
       if (!nextFacet || !('values' in nextFacet) || nextFacet.type !== curFacet.type) continue
       const removed = curFacet.values.filter((v) => !nextFacet.values.includes(v))
-      if (!removed.length) continue
-      const counts = new Map<string, number>()
+      if (removed.length) candidates.push({ def: curFacet, removed })
+    }
+
+    const counts = new Map<string, Map<string, number>>()
+    if (candidates.length) {
       for (const id of await store.listPaperIds()) {
         const e = await store.readExtraction(id)
         if (!e?.ok) continue
-        const entry = e.value.facets[curFacet.key]
-        if (!entry || !entryFitsFacet(curFacet, entry)) continue
-        const used = curFacet.type === 'single' ? (entry.value ? [entry.value] : []) : (entry.values ?? [])
-        for (const v of removed) if (used.includes(v)) counts.set(v, (counts.get(v) ?? 0) + 1)
+        for (const { def, removed } of candidates) {
+          const entry = e.value.facets[def.key]
+          if (!entry || !entryFitsFacet(def, entry)) continue
+          const used = def.type === 'single' ? (entry.value ? [entry.value] : []) : (entry.values ?? [])
+          if (!used.length) continue
+          const perValue = counts.get(def.key) ?? new Map<string, number>()
+          for (const v of removed) if (used.includes(v)) perValue.set(v, (perValue.get(v) ?? 0) + 1)
+          counts.set(def.key, perValue)
+        }
       }
+    }
+
+    const removedValuesInUse: FormImpact['removedValuesInUse'] = []
+    for (const { def, removed } of candidates) {
       for (const v of removed) {
-        const papers = counts.get(v) ?? 0
-        if (papers > 0) removedValuesInUse.push({ facet: curFacet.key, value: v, papers })
+        const papers = counts.get(def.key)?.get(v) ?? 0
+        if (papers > 0) removedValuesInUse.push({ facet: def.key, value: v, papers })
       }
     }
     return { staleCount, removedValuesInUse }

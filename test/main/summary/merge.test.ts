@@ -11,6 +11,7 @@ import {
   mapProposed,
   mergeExtraction,
   mergeSummary,
+  setFacetStatus,
   setFieldStatus,
   setThesisStatus,
   summarySearchText,
@@ -96,6 +97,21 @@ describe('status changes and edits', () => {
     expect(editFacet(e, form, 'technique', { values: ['ner'] }).facets.technique).toMatchObject({ values: ['ner'], status: 'edited' })
     expect(() => editFacet(e, form, 'technique', { values: ['unknown'] })).toThrow(InvalidEdit)
     expect(() => editFacet(e, form, 'relevance', { score: 7, justification: 'x' })).toThrow(InvalidEdit)
+  })
+
+  it('editFacet treats a stored entry that no longer fits its facet as absent, dropping its old fields', () => {
+    // "relevance" is a scale facet in `form`, but the stored entry is a leftover `text` one (facet recreated with a different type).
+    const e = sampleExtraction({ relevance: { text: 'old text value', proposed: [], status: 'verified', evidence: [] } })
+    const edited = editFacet(e, form, 'relevance', { score: 4, justification: 'because' })
+    expect(edited.facets.relevance).toEqual({ score: 4, justification: 'because', proposed: [], status: 'edited', evidence: [] })
+  })
+
+  it('setFacetStatus rejects changing the status of an entry that no longer fits the given facet def', () => {
+    const e = sampleExtraction({ relevance: { text: 'old text value', proposed: [], status: 'generated', evidence: [] } })
+    const relevanceDef = form.facets.find((f) => f.key === 'relevance')!
+    expect(() => setFacetStatus(e, 'relevance', 'verified', relevanceDef)).toThrow(InvalidEdit)
+    // Without a def to check against, the call behaves as before (unrelated call sites stay unaffected).
+    expect(setFacetStatus(e, 'relevance', 'verified').facets.relevance.status).toBe('verified')
   })
 
   it('verifies everything that is still generated', () => {

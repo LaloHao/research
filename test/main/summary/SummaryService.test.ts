@@ -216,6 +216,22 @@ describe('SummaryService', () => {
       await s.close()
     })
 
+    it('formImpact: a same-key type change is not reported as a removed value, even if the old values look dropped', async () => {
+      const out = llmOutputFor(DEFAULT_EXTRACTION_FORM)
+      out.facets.data_type = { values: ['logs'], proposed: [], evidence: [] }
+      const s = await session([{ value: out, costUsd: 0.01, model: 'm' }])
+      await s.summaries.request('he2017drain')
+      await s.queue.whenIdle()
+      // "data_type" (multi, with "logs" among its values) is recreated under the same key as a text facet.
+      const retyped = {
+        ...DEFAULT_EXTRACTION_FORM,
+        facets: DEFAULT_EXTRACTION_FORM.facets.map((f) => (f.key === 'data_type' ? { key: 'data_type', type: 'text' as const, description: 'd' } : f))
+      }
+      const impact = await s.summaries.formImpact(retyped)
+      expect(impact.removedValuesInUse).toEqual([])
+      await s.close()
+    })
+
     it('updateForm rejects an invalid form with invalid_form and does not change project.yaml', async () => {
       const s = await session()
       const before = structuredClone(s.store.config.extraction_form)
@@ -285,6 +301,10 @@ describe('SummaryService', () => {
       // The stored scale entry (score/justification) no longer fits the text facet: treated as absent.
       expect((await s.summaries.reviewQueue()).some((i) => i.key === 'rigor')).toBe(false)
       expect(s.library.list()[0].summary_status).toBe('stale')
+      // The paper detail (and so FacetCard) must not render or expose the stale entry at all.
+      expect((await s.detail('he2017drain')).extraction?.facets.rigor).toBeUndefined()
+      // Nor can it be verified: the stored entry is effectively a different facet now.
+      await expect(s.summaries.setStatus('he2017drain', 'facets', 'rigor', 'verified')).rejects.toMatchObject({ name: 'InvalidEdit' })
 
       await s.summaries.request('he2017drain')
       await s.queue.whenIdle()

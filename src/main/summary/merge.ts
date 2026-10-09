@@ -82,9 +82,11 @@ export function setFieldStatus(summary: SummaryFile, key: SummaryFieldKey, statu
   return { ...summary, fields: { ...summary.fields, [key]: { ...field, status: nextStatus(field.status, status) } } }
 }
 
-export function setFacetStatus(extraction: ExtractionFile, key: string, status: 'verified' | 'generated'): ExtractionFile {
+/** `def`, when given, rejects changing the status of an entry whose shape no longer fits it (see entryFitsFacet): it is effectively a different facet. */
+export function setFacetStatus(extraction: ExtractionFile, key: string, status: 'verified' | 'generated', def?: FacetDef): ExtractionFile {
   const facet = extraction.facets[key]
   if (!facet) throw new InvalidEdit(`Unknown facet ${key}`)
+  if (def && !entryFitsFacet(def, facet)) throw new InvalidEdit(`Unknown facet ${key}`)
   return { ...extraction, facets: { ...extraction.facets, [key]: { ...facet, status: nextStatus(facet.status, status) } } }
 }
 
@@ -117,8 +119,11 @@ export function editField(summary: SummaryFile, key: SummaryFieldKey, value: unk
 
 export function editFacet(extraction: ExtractionFile, form: ExtractionForm, key: string, patch: FacetPatch): ExtractionFile {
   const def = form.facets.find((f) => f.key === key)
-  const current = extraction.facets[key] ?? { proposed: [], status: 'generated' as const, evidence: [] }
   if (!def) throw new InvalidEdit(`Unknown facet ${key}`)
+  const stored = extraction.facets[key]
+  // A stored entry whose shape no longer fits this facet (it was removed and recreated with a different type) is
+  // treated as absent: its old score/justification/text/etc. must not leak into the edited entry.
+  const current = stored && entryFitsFacet(def, stored) ? stored : { proposed: [], status: 'generated' as const, evidence: [] }
   let next: FacetEntry
   switch (def.type) {
     case 'single':
