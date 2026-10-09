@@ -106,6 +106,7 @@ export function SummaryTab({ detail, onOpenEvidence }: { detail: PaperDetail; on
           </select>
           <button onClick={() => void run(() => window.research.summary.verifyAll(detail.id))}>{t('summary.verify_all')}</button>
           {availability !== 'ready' && <span className="muted small">{t(`summary.unavailable.${availability}`)}</span>}
+          {availability === 'too_long' && <button onClick={() => summarize({ force: true })}>{t('summary.force')}</button>}
         </div>
         {lastError}
         {actionError}

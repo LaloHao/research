@@ -60,7 +60,8 @@ export function summarizeAvailability(detail: PaperDetail, jobs: JobRecord[]): A
   )
   if (active) return 'running'
   if (detail.textStatus !== 'ok') return 'no_text'
-  if (detail.summaryStatus === 'too_long') return 'too_long'
+  // With a summary the state is never too_long: a regeneration refused for the length shows up as its last error.
+  if (detail.summaryStatus === 'too_long' || (detail.summary && detail.summaryError === 'too_long')) return 'too_long'
   return 'ready'
 }
 

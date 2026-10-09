@@ -134,6 +134,10 @@ describe('summarizeAvailability', () => {
   it('reports a text over the limit', () => {
     expect(summarizeAvailability(detail({ summaryStatus: 'too_long' }), [])).toBe('too_long')
   })
+  it('reports a text over the limit when regenerating an existing summary failed for that reason', () => {
+    expect(summarizeAvailability(detail({ summary, summaryStatus: 'failed', summaryError: 'too_long' }), [])).toBe('too_long')
+    expect(summarizeAvailability(detail({ summary, summaryStatus: 'failed', summaryError: 'llm_quota' }), [])).toBe('ready')
+  })
   it('is running while a summarize job for the paper is queued or running', () => {
     expect(summarizeAvailability(detail({}), [job({ state: 'queued' })])).toBe('running')
     expect(summarizeAvailability(detail({}), [job({ state: 'running' })])).toBe('running')
