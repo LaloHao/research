@@ -8,6 +8,7 @@ import {
   type ExtractionForm,
   type FacetDef,
   type FacetEntry,
+  type Provenance,
   type SummaryFieldKey,
   type SummaryFile
 } from '../../shared/summary'
@@ -104,21 +105,21 @@ function toEvidence(list: LlmEvidence[]): Evidence[] {
     .map((e) => ({ quote: e.quote.trim(), page: e.page !== null && e.page > 0 ? e.page : null, found: false }))
 }
 
-function facetEntry(form: ExtractionForm, f: FacetDef, out: LlmFacet): FacetEntry {
+function facetEntry(form: ExtractionForm, f: FacetDef, out: LlmFacet, origin: Provenance): FacetEntry {
   const evidence = toEvidence(out.evidence ?? [])
   switch (f.type) {
     case 'single': {
       const { known, proposed } = applyAliases(form, f.key, [out.value ?? '', ...(out.proposed ?? [])].filter(Boolean))
-      return { value: known[0] ?? null, proposed, status: 'generated', evidence }
+      return { value: known[0] ?? null, proposed, status: 'generated', evidence, origin }
     }
     case 'multi': {
       const { known, proposed } = applyAliases(form, f.key, [...(out.values ?? []), ...(out.proposed ?? [])])
-      return { values: known, proposed, status: 'generated', evidence }
+      return { values: known, proposed, status: 'generated', evidence, origin }
     }
     case 'text':
-      return { text: out.text ?? '', proposed: [], status: 'generated', evidence }
+      return { text: out.text ?? '', proposed: [], status: 'generated', evidence, origin }
     case 'scale':
-      return { score: out.score, justification: out.justification ?? '', proposed: [], status: 'generated', evidence }
+      return { score: out.score, justification: out.justification ?? '', proposed: [], status: 'generated', evidence, origin }
   }
 }
 
@@ -128,10 +129,11 @@ export function toGeneratedFiles(
   formHash: string,
   meta: SummaryFile['generated']
 ): { summary: SummaryFile; extraction: ExtractionFile } {
+  const origin: Provenance = { model: meta.model, at: meta.at, prompt_version: meta.prompt_version }
   const fields = Object.fromEntries(
-    Object.entries(out.fields).map(([k, v]) => [k, { value: v.value, status: 'generated', evidence: toEvidence(v.evidence) }])
+    Object.entries(out.fields).map(([k, v]) => [k, { value: v.value, status: 'generated', evidence: toEvidence(v.evidence), origin }])
   )
-  const facets = Object.fromEntries(form.facets.map((f) => [f.key, facetEntry(form, f, out.facets[f.key] ?? { evidence: [] })]))
+  const facets = Object.fromEntries(form.facets.map((f) => [f.key, facetEntry(form, f, out.facets[f.key] ?? { evidence: [] }, origin)]))
   return {
     summary: { schema_version: 1, generated: meta, fields } as SummaryFile,
     extraction: { schema_version: 1, form_hash: formHash, facets }

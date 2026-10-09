@@ -22,7 +22,7 @@ export interface JobRow {
   updated_at: string
 }
 
-const SCHEMA_VERSION = 2
+const SCHEMA_VERSION = 3
 const TOKENIZER = "tokenize='unicode61 remove_diacritics 2'"
 const DDL = `
 CREATE TABLE papers (
@@ -44,7 +44,8 @@ CREATE TABLE papers (
   text_chars INTEGER NOT NULL DEFAULT 0,
   summary_status TEXT NOT NULL DEFAULT 'none',
   pending_review INTEGER NOT NULL DEFAULT 0,
-  summary_error TEXT
+  summary_error TEXT,
+  summary_model TEXT
 );
 CREATE VIRTUAL TABLE papers_fts USING fts5(id UNINDEXED, title, authors, venue, abstract, ${TOKENIZER});
 CREATE VIRTUAL TABLE chunks_fts USING fts5(paper_id UNINDEXED, chunk_index UNINDEXED, page UNINDEXED, text, ${TOKENIZER});
@@ -61,7 +62,7 @@ CREATE TABLE jobs (
 `
 
 const PAPER_COLUMNS =
-  'id, title, authors_label, year, venue, kind, doi, arxiv, metadata_status, has_pdf, problem, added_at, text_status, summary_status, pending_review'
+  'id, title, authors_label, year, venue, kind, doi, arxiv, metadata_status, has_pdf, problem, added_at, text_status, summary_status, pending_review, summary_model'
 
 /** Rebuildable per-device index. Anything here can be recomputed from the project files. */
 export class IndexCache {
@@ -168,9 +169,9 @@ export class IndexCache {
     ).map((r) => ({ page: r.page === null ? null : Number(r.page), text: r.text }))
   }
 
-  setSummaryState(id: string, status: SummaryStatus, pending: number, text: string): void {
+  setSummaryState(id: string, status: SummaryStatus, pending: number, text: string, model: string | null): void {
     this.tx(() => {
-      this.db.prepare('UPDATE papers SET summary_status = ?, pending_review = ? WHERE id = ?').run(status, pending, id)
+      this.db.prepare('UPDATE papers SET summary_status = ?, pending_review = ?, summary_model = ? WHERE id = ?').run(status, pending, model, id)
       this.db.prepare('DELETE FROM summaries_fts WHERE paper_id = ?').run(id)
       if (text) this.db.prepare('INSERT INTO summaries_fts (paper_id, text) VALUES (?, ?)').run(id, text)
     })
@@ -312,6 +313,7 @@ function toPaperRow(r: Record<string, unknown>): PaperRow {
     added_at: (r.added_at as string | null) ?? null,
     text_status: r.text_status as TextStatus,
     summary_status: (r.summary_status as SummaryStatus) ?? 'none',
-    pending_review: Number(r.pending_review ?? 0)
+    pending_review: Number(r.pending_review ?? 0),
+    summary_model: (r.summary_model as string | null) ?? null
   }
 }

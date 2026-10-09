@@ -35,6 +35,20 @@ describe('SummaryService', () => {
     const detail = await s.detail('he2017drain')
     expect(detail.summaryStatus).toBe('generated')
     expect(detail.summary?.fields.tldr.value).toBe('tldr text')
+    expect(s.library.list()[0].summary_model).toBe('claude-sonnet-5')
+    await s.close()
+  })
+
+  it('requestBatch with ids queues only those papers, even if already summarized, with the given model', async () => {
+    const s = await session([ok(), ok()], ['a2020x', 'b2020x'])
+    await s.summaries.request('a2020x')
+    await s.queue.whenIdle()
+    expect(s.library.list().find((r) => r.id === 'a2020x')?.summary_status).not.toBe('none')
+    const { count } = await s.summaries.requestBatch({ ids: ['a2020x'], model: 'opus' })
+    expect(count).toBe(1)
+    expect(s.queue.list().filter((j) => j.state === 'queued' || j.state === 'running' || j.state === 'done').map((j) => j.spec)).toContainEqual(
+      expect.objectContaining({ type: 'summarize', paperId: 'a2020x', model: 'opus' })
+    )
     await s.close()
   })
 
@@ -108,6 +122,7 @@ describe('SummaryService', () => {
     const form = s.summaries.formInfo()
     const facet = form.status === 'ok' ? form.form.facets.find((f) => f.key === 'sanitization_technique') : undefined
     expect(facet && 'values' in facet && facet.values).toContain('tokenization')
+    for (const row of s.library.list()) expect(row.summary_status).not.toBe('stale')
     await s.close()
   })
 

@@ -20,8 +20,11 @@ export const EvidenceSchema = z.object({
 })
 export type Evidence = z.infer<typeof EvidenceSchema>
 
+export const ProvenanceSchema = z.object({ model: z.string(), at: z.string(), prompt_version: z.number().int() })
+export type Provenance = z.infer<typeof ProvenanceSchema>
+
 const fieldOf = <T extends z.ZodType>(value: T) =>
-  z.object({ value, status: z.enum(FIELD_STATUSES), evidence: z.array(EvidenceSchema).default([]) })
+  z.object({ value, status: z.enum(FIELD_STATUSES), evidence: z.array(EvidenceSchema).default([]), origin: ProvenanceSchema.optional() })
 
 export const LimitationsSchema = z.object({ stated: z.array(z.string()), inferred: z.array(z.string()) })
 
@@ -77,7 +80,8 @@ export const FacetEntrySchema = z.object({
   justification: z.string().optional(),
   proposed: z.array(z.string()).default([]),
   status: z.enum(FIELD_STATUSES),
-  evidence: z.array(EvidenceSchema).default([])
+  evidence: z.array(EvidenceSchema).default([]),
+  origin: ProvenanceSchema.optional()
 })
 export type FacetEntry = z.infer<typeof FacetEntrySchema>
 
@@ -89,6 +93,7 @@ export const ExtractionFileSchema = z.looseObject({
 export type ExtractionFile = z.infer<typeof ExtractionFileSchema>
 
 export const LLM_MODELS = ['sonnet', 'haiku', 'opus'] as const
+export type LlmModel = (typeof LLM_MODELS)[number]
 
 export const DEFAULT_LLM_CONFIG = {
   model: 'sonnet' as const,

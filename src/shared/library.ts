@@ -23,6 +23,8 @@ export interface PaperRow {
   summary_status: SummaryStatus
   /** Fields and facets still `generated` (not yet verified or edited). */
   pending_review: number
+  /** `generated.model` of the last summary, or `null` when there is none. */
+  summary_model: string | null
 }
 
 /** Error codes the main process hands to the UI; each has a translation under `errors.<code>`. */

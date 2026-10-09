@@ -147,7 +147,7 @@ export class ProjectSession {
 }
 
 export async function runJob(library: LibraryService, summaries: SummaryService, spec: JobSpec, signal: AbortSignal): Promise<{ paperId?: string; message?: string }> {
-  if (spec.type === 'summarize') return summaries.run(spec.paperId, { force: spec.force, batchId: spec.batchId, signal })
+  if (spec.type === 'summarize') return summaries.run(spec.paperId, { force: spec.force, batchId: spec.batchId, model: spec.model, signal })
   const outcome =
     spec.type === 'ingest_identifier'
       ? await library.ingestIdentifier(spec.input, signal)
