@@ -1,11 +1,12 @@
 import { existsSync } from 'node:fs'
-import { mkdir, readdir, readFile } from 'node:fs/promises'
+import { appendFile, mkdir, readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PaperSchema, ProjectConfigSchema, type Paper, type ProjectConfig } from '../../shared/schemas'
+import { ExtractionFileSchema, SummaryFileSchema, type CostEntry, type ExtractionFile, type SummaryFile } from '../../shared/summary'
 import { atomicWrite, sha256 } from './atomicWrite'
 import { ConflictError, ProjectError, type ReadResult } from './errors'
 import { gitattributesLines, gitignoreLines, withManagedBlock } from './gitFiles'
-import { parseYamlFile, toYaml } from './yamlFile'
+import { parseFrontmatterFile, parseYamlFile, toFrontmatter, toYaml } from './yamlFile'
 
 export const PROJECT_FILE = 'project.yaml'
 
@@ -37,7 +38,7 @@ export class ProjectStore {
     return this.cfg
   }
 
-  async updateConfig(patch: Partial<Pick<ProjectConfig, 'name' | 'content_language' | 'pdfs'>>): Promise<ProjectConfig> {
+  async updateConfig(patch: Partial<Pick<ProjectConfig, 'name' | 'content_language' | 'pdfs' | 'llm' | 'extraction_form'>>): Promise<ProjectConfig> {
     const next = ProjectConfigSchema.parse({ ...this.cfg, ...patch })
     this.cfgHash = await this.writeChecked(join(this.root, PROJECT_FILE), toYaml(next), this.cfgHash)
     this.cfg = next
@@ -130,6 +131,53 @@ export class ProjectStore {
 
   readContent(id: string): Promise<string | null> {
     return readOptional(join(this.paperDir(id), 'content.md'))
+  }
+
+  async readSummary(id: string): Promise<ReadResult<SummaryFile> | null> {
+    const text = await readOptional(join(this.paperDir(id), 'summary.md'))
+    return text === null ? null : parseFrontmatterFile(text, SummaryFileSchema)
+  }
+
+  async writeSummary(id: string, summary: SummaryFile, body: string, expectedHash: string | null): Promise<string> {
+    const valid = SummaryFileSchema.parse(summary)
+    return this.writeChecked(join(this.paperDir(id), 'summary.md'), toFrontmatter(valid, body), expectedHash)
+  }
+
+  async readExtraction(id: string): Promise<ReadResult<ExtractionFile> | null> {
+    const text = await readOptional(join(this.paperDir(id), 'extraction.yaml'))
+    return text === null ? null : parseYamlFile(text, ExtractionFileSchema)
+  }
+
+  async writeExtraction(id: string, file: ExtractionFile, expectedHash: string | null): Promise<string> {
+    const valid = ExtractionFileSchema.parse(file)
+    return this.writeChecked(join(this.paperDir(id), 'extraction.yaml'), toYaml(valid), expectedHash)
+  }
+
+  /** Append-only, one file per device, so synced folders never conflict. */
+  async appendCost(deviceId: string, entry: CostEntry): Promise<void> {
+    if (!/^[A-Za-z0-9-]+$/.test(deviceId)) throw new Error(`Invalid device id: ${deviceId}`)
+    const dir = join(this.root, 'costs')
+    await mkdir(dir, { recursive: true })
+    await appendFile(join(dir, `${deviceId}.jsonl`), `${JSON.stringify(entry)}\n`)
+  }
+
+  async readCosts(): Promise<CostEntry[]> {
+    const dir = join(this.root, 'costs')
+    const files = await readdir(dir).catch(() => [] as string[])
+    const entries: CostEntry[] = []
+    for (const file of files.filter((f) => f.endsWith('.jsonl'))) {
+      const text = await readFile(join(dir, file), 'utf8')
+      for (const line of text.split('\n')) {
+        if (!line.trim()) continue
+        try {
+          const e = JSON.parse(line) as CostEntry
+          if (typeof e.cost_usd === 'number' && typeof e.at === 'string') entries.push(e)
+        } catch {
+          // A corrupt line (e.g. a sync glitch) is skipped, never fatal.
+        }
+      }
+    }
+    return entries
   }
 
   private async writeChecked(path: string, text: string, expectedHash: string | null): Promise<string> {
