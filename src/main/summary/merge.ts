@@ -145,9 +145,11 @@ export function addAlias(form: ExtractionForm, facetKey: string, from: string, t
   return { ...form, value_aliases: { ...form.value_aliases, [facetKey]: { ...(form.value_aliases[facetKey] ?? {}), [from]: to } } }
 }
 
-export function countPending(summary: SummaryFile | null, extraction: ExtractionFile | null): number {
+/** `facetKeys` are the facets of the current form (null when there is no valid form): removed facets stay in the file but are not reviewed. */
+export function countPending(summary: SummaryFile | null, extraction: ExtractionFile | null, facetKeys: string[] | null = null): number {
   const fields = summary ? Object.values(summary.fields).filter((f) => f.status === 'generated').length : 0
-  const facets = extraction ? Object.values(extraction.facets).filter((f) => f.status === 'generated').length : 0
+  const shown = extraction ? (facetKeys ? facetKeys.flatMap((k) => extraction.facets[k] ?? []) : Object.values(extraction.facets)) : []
+  const facets = shown.filter((f) => f.status === 'generated').length
   const relation = extraction?.thesis_relation?.status === 'generated' ? 1 : 0
   return fields + facets + relation
 }
@@ -161,12 +163,14 @@ export function summaryState(i: {
   textChars: number
   maxChars: number
   error: string | null
+  /** Facet keys of the current form; see countPending. */
+  facetKeys?: string[] | null
 }): SummaryStatus {
   if (i.error) return 'failed'
   if (!i.summary) return i.textChars > i.maxChars ? 'too_long' : 'none'
   if (i.formHash && i.extraction && i.extraction.form_hash !== i.formHash) return 'stale'
   if (i.thesisHash && i.extraction?.thesis_hash !== i.thesisHash) return 'stale'
-  return countPending(i.summary, i.extraction) > 0 ? 'generated' : 'reviewed'
+  return countPending(i.summary, i.extraction, i.facetKeys ?? null) > 0 ? 'generated' : 'reviewed'
 }
 
 export function summarySearchText(summary: SummaryFile | null, extraction: ExtractionFile | null): string {

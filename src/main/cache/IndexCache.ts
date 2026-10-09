@@ -9,6 +9,7 @@ import type { SummaryStatus } from '../../shared/summary'
 import type { Chunk } from '../extract/chunker'
 import type { DedupeEntry } from '../library/dedupe'
 import type { FileProblem } from '../project/errors'
+import { buildPaperText } from '../summary/paperText'
 
 export type { PaperRow, TextStatus }
 
@@ -22,7 +23,8 @@ export interface JobRow {
   updated_at: string
 }
 
-const SCHEMA_VERSION = 3
+// 4: text_chars measures the text as the too-long check does.
+const SCHEMA_VERSION = 4
 const TOKENIZER = "tokenize='unicode61 remove_diacritics 2'"
 const DDL = `
 CREATE TABLE papers (
@@ -146,7 +148,8 @@ export class IndexCache {
 
   setText(id: string, textHash: string | null, status: TextStatus, chunks: Chunk[]): void {
     this.tx(() => {
-      const textChars = chunks.reduce((n, c) => n + c.text.length, 0)
+      // The size the too-long check compares with max_input_chars: without the reference list, with page markers.
+      const textChars = chunks.length ? buildPaperText(chunks, { maxChars: Infinity }).chars : 0
       this.db.prepare('UPDATE papers SET text_hash = ?, text_status = ?, text_chars = ? WHERE id = ?').run(textHash, status, textChars, id)
       this.db.prepare('DELETE FROM chunks_fts WHERE paper_id = ?').run(id)
       const insert = this.db.prepare('INSERT INTO chunks_fts (paper_id, chunk_index, page, text) VALUES (?, ?, ?, ?)')

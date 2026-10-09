@@ -55,7 +55,9 @@ export async function indexSummary(store: ProjectStore, cache: IndexCache, id: s
   const summary = s?.ok ? s.value : null
   const extraction = e?.ok ? e.value : null
   const form = loadForm(store.config.extraction_form)
+  const facetKeys = form.status === 'ok' ? form.form.facets.map((f) => f.key) : null
   const status = summaryState({
+    facetKeys,
     summary,
     extraction,
     formHash: form.status === 'ok' ? form.hash : null,
@@ -64,7 +66,7 @@ export async function indexSummary(store: ProjectStore, cache: IndexCache, id: s
     maxChars: store.config.llm.max_input_chars,
     error: cache.summaryError(id)
   })
-  cache.setSummaryState(id, status, countPending(summary, extraction), summarySearchText(summary, extraction), summary?.generated.model ?? null)
+  cache.setSummaryState(id, status, countPending(summary, extraction, facetKeys), summarySearchText(summary, extraction), summary?.generated.model ?? null)
 }
 
 export interface SummaryServiceDeps {

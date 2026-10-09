@@ -1,3 +1,4 @@
+import { buildPaperText } from '../../../src/main/summary/paperText'
 import { describe, expect, it } from 'vitest'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -96,6 +97,20 @@ describe('IndexCache jobs', () => {
 })
 
 describe('IndexCache v2: summaries', () => {
+  it('measures the text without its reference list, as the too-long check does', async () => {
+    const { cache } = await openCache()
+    cache.upsertPaper(samplePaper(), 'h', true)
+    const body = 'Body text of the paper. '.repeat(40)
+    const chunks = [
+      { index: 0, page: 1, text: body },
+      { index: 1, page: 2, text: `${body} References` },
+      { index: 2, page: 3, text: '[1] A. Author. Some paper. 2020. '.repeat(5) }
+    ]
+    cache.setText('he2017drain', 't', 'ok', chunks)
+    expect(cache.textChars('he2017drain')).toBe(buildPaperText(chunks, { maxChars: Infinity }).chars)
+    expect(cache.textChars('he2017drain')).toBeLessThan(body.length * 2 + 30)
+  })
+
   it('stores text size, chunks in order and summary state', async () => {
     const { cache } = await openCache()
     cache.upsertPaper(samplePaper(), 'h', true)
@@ -103,7 +118,8 @@ describe('IndexCache v2: summaries', () => {
       { index: 0, page: 1, text: 'first' },
       { index: 1, page: 2, text: 'second part' }
     ])
-    expect(cache.textChars('he2017drain')).toBe(16)
+    // The size the too-long check uses: the text as sent, with page markers.
+    expect(cache.textChars('he2017drain')).toBe('[p.1]\nfirst\n\n[p.2]\nsecond part'.length)
     expect(cache.chunksFor('he2017drain')).toEqual([
       { page: 1, text: 'first' },
       { page: 2, text: 'second part' }

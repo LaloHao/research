@@ -146,6 +146,15 @@ describe('summaryState', () => {
     expect(countPending(v.summary, v.extraction)).toBe(0)
     expect(countPending(sampleSummary(), sampleExtraction())).toBe(10)
   })
+
+  it('ignores pending facets that are no longer in the form', () => {
+    const v = verifyAll(sampleSummary(), sampleExtraction({}, 'h'))
+    const removed = { score: 3, justification: 'j', proposed: [], status: 'generated' as const, evidence: [] }
+    const e = { ...v.extraction!, facets: { ...v.extraction!.facets, old_facet: removed } }
+    expect(countPending(v.summary, e)).toBe(1)
+    expect(countPending(v.summary, e, ['relevance'])).toBe(0)
+    expect(summaryState({ ...base, summary: v.summary, extraction: e, facetKeys: ['relevance'] })).toBe('reviewed')
+  })
 })
 
 describe('summarySearchText', () => {
