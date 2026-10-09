@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { ThesisContext } from '../../../shared/summary'
 import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
-import { renumberRQs } from '../../lib/thesis'
+import { nextRqId } from '../../lib/thesis'
 
 const EMPTY: ThesisContext = { title: '', description: '', research_questions: [] }
 
@@ -32,12 +32,12 @@ export function ThesisSection(): React.JSX.Element {
     setThesis({ ...thesis, research_questions: thesis.research_questions.map((q, i) => (i === index ? { ...q, text } : q)) })
   }
   const removeRq = (index: number): void => {
-    const next = { ...thesis, research_questions: renumberRQs(thesis.research_questions.filter((_, i) => i !== index)) }
+    const next = { ...thesis, research_questions: thesis.research_questions.filter((_, i) => i !== index) }
     setThesis(next)
     save(next)
   }
   const addRq = (): void => {
-    setThesis({ ...thesis, research_questions: renumberRQs([...thesis.research_questions, { id: '', text: '' }]) })
+    setThesis({ ...thesis, research_questions: [...thesis.research_questions, { id: nextRqId(thesis.research_questions), text: '' }] })
   }
 
   return (

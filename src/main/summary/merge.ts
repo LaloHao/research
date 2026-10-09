@@ -33,14 +33,18 @@ export function mergeExtraction(existing: ExtractionFile | null, generated: Extr
     const old = existing.facets[k]
     if (!old || old.status === 'generated') facets[k] = entry
   }
-  const { thesis_relation: oldRelation, thesis_hash: _oldHash, ...rest } = existing
-  const relation = oldRelation && oldRelation.status !== 'generated' ? oldRelation : generated.thesis_relation
+  const { thesis_relation: oldRelation, thesis_hash: oldHash, ...rest } = existing
+  // A relation the user reviewed keeps the hash of the thesis it was reviewed against: if the thesis changed since,
+  // the paper stays stale until the user verifies or edits the relation again.
+  const keep = Boolean(oldRelation && oldRelation.status !== 'generated')
+  const relation = keep ? oldRelation : generated.thesis_relation
+  const hash = keep ? oldHash : generated.thesis_hash
   return {
     ...rest,
     form_hash: generated.form_hash,
     facets,
     ...(relation ? { thesis_relation: relation } : {}),
-    ...(generated.thesis_hash !== undefined ? { thesis_hash: generated.thesis_hash } : {})
+    ...(hash !== undefined ? { thesis_hash: hash } : {})
   }
 }
 

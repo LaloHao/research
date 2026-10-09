@@ -3,7 +3,7 @@ import type { TFunction } from 'i18next'
 import { filterByModel, filterBySummary, rowBadges } from '../../src/renderer/lib/badges'
 import { errorText } from '../../src/renderer/lib/errorText'
 import { jobDetail, jobLabel, visibleJobs } from '../../src/renderer/lib/jobLabel'
-import { renumberRQs } from '../../src/renderer/lib/thesis'
+import { nextRqId } from '../../src/renderer/lib/thesis'
 import type { JobRecord } from '../../src/shared/jobs'
 import type { PaperRow } from '../../src/shared/library'
 
@@ -129,24 +129,11 @@ describe('filterByModel', () => {
   })
 })
 
-describe('renumberRQs', () => {
-  it('reassigns ids RQ1..n in order, keeping the text', () => {
-    expect(renumberRQs([{ id: 'RQ1', text: 'a' }, { id: 'RQ2', text: 'b' }])).toEqual([
-      { id: 'RQ1', text: 'a' },
-      { id: 'RQ2', text: 'b' }
-    ])
-  })
-
-  it('fixes duplicate or stale ids after a removal followed by an addition', () => {
-    // RQ1, RQ2 removed, then a new one added with a placeholder id: RQ2 would collide with the old RQ2's slot.
-    const afterRemoveThenAdd = [{ id: 'RQ1', text: 'a' }, { id: '', text: 'c' }]
-    expect(renumberRQs(afterRemoveThenAdd)).toEqual([
-      { id: 'RQ1', text: 'a' },
-      { id: 'RQ2', text: 'c' }
-    ])
-  })
-
-  it('returns an empty list unchanged', () => {
-    expect(renumberRQs([])).toEqual([])
+describe('nextRqId', () => {
+  it('gives the next number after the highest id, never reusing a gap', () => {
+    expect(nextRqId([])).toBe('RQ1')
+    expect(nextRqId([{ id: 'RQ1', text: 'a' }, { id: 'RQ2', text: 'b' }])).toBe('RQ3')
+    expect(nextRqId([{ id: 'RQ1', text: 'a' }, { id: 'RQ4', text: 'd' }])).toBe('RQ5')
+    expect(nextRqId([{ id: 'RQ10', text: 'j' }, { id: 'RQ9', text: 'i' }])).toBe('RQ11')
   })
 })

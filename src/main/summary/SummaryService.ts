@@ -178,7 +178,8 @@ export class SummaryService {
       await this.save(paperId, files, { summary: setFieldStatus(summary, fieldKey(key), status) })
     } else if (section === 'thesis') {
       thesisKey(key)
-      await this.save(paperId, files, { extraction: setThesisStatus(requireExtraction(files), status) })
+      const next = setThesisStatus(requireExtraction(files), status)
+      await this.save(paperId, files, { extraction: status === 'verified' ? this.stampThesis(next) : next })
     } else {
       const extraction = requireExtraction(files)
       await this.save(paperId, files, { extraction: setFacetStatus(extraction, key, status) })
@@ -194,7 +195,8 @@ export class SummaryService {
       thesisKey(key)
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new InvalidEdit('Invalid value for the thesis relation')
       const files = await this.read(paperId)
-      await this.save(paperId, files, { extraction: editThesisRelation(requireExtraction(files), this.deps.store.config.thesis, value as ThesisPatch) })
+      const next = editThesisRelation(requireExtraction(files), this.deps.store.config.thesis, value as ThesisPatch)
+      await this.save(paperId, files, { extraction: this.stampThesis(next) })
     } else {
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new InvalidEdit(`Invalid value for ${key}`)
       const form = await this.ensureForm()
@@ -207,7 +209,8 @@ export class SummaryService {
   async verifyAll(paperId: string): Promise<void> {
     const files = await this.read(paperId)
     const next = verifyAll(files.summary?.value ?? null, files.extraction?.value ?? null)
-    await this.save(paperId, files, { ...(next.summary ? { summary: next.summary } : {}), ...(next.extraction ? { extraction: next.extraction } : {}) })
+    const extraction = next.extraction?.thesis_relation ? this.stampThesis(next.extraction) : next.extraction
+    await this.save(paperId, files, { ...(next.summary ? { summary: next.summary } : {}), ...(extraction ? { extraction } : {}) })
     await this.changed([paperId])
   }
 
@@ -277,14 +280,15 @@ export class SummaryService {
     return this.deps.store.config.thesis
   }
 
-  /** Saves the thesis context with questions renumbered RQ1..n in order, and recomputes every paper's state. */
+  /**
+   * Saves the thesis context and recomputes every paper's state. Question ids are never renumbered (relations refer to
+   * them): they must be unique and of the form RQn.
+   */
   async updateThesis(ctx: ThesisContext): Promise<void> {
-    const renumbered =
-      ctx && typeof ctx === 'object' && Array.isArray(ctx.research_questions)
-        ? { ...ctx, research_questions: ctx.research_questions.map((q, i) => ({ ...q, id: `RQ${i + 1}` })) }
-        : ctx
-    const parsed = ThesisContextSchema.safeParse(renumbered)
+    const parsed = ThesisContextSchema.safeParse(ctx)
     if (!parsed.success) throw new InvalidEdit('Invalid thesis context')
+    const ids = parsed.data.research_questions.map((q) => q.id)
+    if (new Set(ids).size !== ids.length) throw new InvalidEdit('Duplicated research question ids')
     await this.deps.store.updateConfig({ thesis: parsed.data })
     await this.refreshStates()
   }
@@ -297,6 +301,12 @@ export class SummaryService {
     await this.deps.store.updateConfig({ llm: parsed.data })
     await this.refreshStates()
     return this.deps.store.config.llm
+  }
+
+  /** The user reviewed the relation against the current thesis: it is no longer stale. */
+  private stampThesis(extraction: ExtractionFile): ExtractionFile {
+    const thesis = this.deps.store.config.thesis
+    return hasThesisContext(thesis) ? { ...extraction, thesis_hash: thesisHash(thesis) } : extraction
   }
 
   /** Recomputes every paper's summary state after a change of project.yaml (form, thesis or max_input_chars), then notifies once. */

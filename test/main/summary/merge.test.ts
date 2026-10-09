@@ -157,20 +157,24 @@ describe('summarySearchText', () => {
 })
 
 describe('thesis relation', () => {
-  it('mergeExtraction keeps a verified relation and always takes the new thesis hash', () => {
+  it('mergeExtraction keeps a verified or edited relation with the thesis hash it was reviewed against', () => {
     const existing = { ...sampleExtraction(), thesis_relation: relation('verified', 'mine'), thesis_hash: 'old' }
     const generated = { ...sampleExtraction(), thesis_relation: relation('generated', 'new'), thesis_hash: 'new' }
     const merged = mergeExtraction(existing, generated)
     expect(merged.thesis_relation?.text).toBe('mine')
-    expect(merged.thesis_hash).toBe('new')
+    expect(merged.thesis_hash).toBe('old')
     const edited = mergeExtraction({ ...existing, thesis_relation: relation('edited', 'mine') }, generated)
     expect(edited.thesis_relation?.text).toBe('mine')
+    expect(edited.thesis_hash).toBe('old')
   })
 
-  it('mergeExtraction replaces a generated relation', () => {
+  it('mergeExtraction replaces a generated relation and takes the new thesis hash', () => {
     const existing = { ...sampleExtraction(), thesis_relation: relation('generated', 'old'), thesis_hash: 'old' }
     const generated = { ...sampleExtraction(), thesis_relation: relation('generated', 'new'), thesis_hash: 'new' }
-    expect(mergeExtraction(existing, generated).thesis_relation?.text).toBe('new')
+    const merged = mergeExtraction(existing, generated)
+    expect(merged.thesis_relation?.text).toBe('new')
+    expect(merged.thesis_hash).toBe('new')
+    expect(mergeExtraction(sampleExtraction(), generated).thesis_hash).toBe('new')
   })
 
   it('counts, verifies and indexes the relation', () => {

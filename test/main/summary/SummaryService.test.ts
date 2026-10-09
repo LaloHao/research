@@ -5,6 +5,7 @@ import { LlmError } from '../../../src/main/llm/LlmProvider'
 import { ProjectSession } from '../../../src/main/library/ProjectSession'
 import { DEFAULT_EXTRACTION_FORM } from '../../../src/main/summary/extractionForm'
 import { toYaml } from '../../../src/main/project/yamlFile'
+import { thesisHash } from '../../../src/main/summary/thesis'
 import { FakeLlmProvider, llmOutputFor, PAPER_TEXT } from '../../helpers/llm'
 import { samplePaper } from '../../helpers/papers'
 import { tmpDir } from '../../helpers/tmp'
@@ -166,26 +167,58 @@ describe('SummaryService', () => {
     await s.close()
   })
 
-  it('updateThesis renumbers the questions, saves project.yaml and marks summarized papers stale', async () => {
+  it('updateThesis keeps the question ids, saves project.yaml and marks summarized papers stale', async () => {
     const s = await session()
     expect(s.summaries.thesis()).toEqual({ title: '', description: '', research_questions: [] })
     await s.summaries.request('he2017drain')
     await s.queue.whenIdle()
     expect(s.library.list()[0].summary_status).toBe('generated')
-    await s.summaries.updateThesis({
+    const expected = {
       title: 'Privacy-preserving log analysis',
       description: 'd',
       research_questions: [
-        { id: 'RQ7', text: 'First?' },
-        { id: 'RQ3', text: 'Second?' }
+        { id: 'RQ1', text: 'First?' },
+        { id: 'RQ3', text: 'Third, after RQ2 was removed?' }
       ]
-    })
-    const expected = { title: 'Privacy-preserving log analysis', description: 'd', research_questions: [{ id: 'RQ1', text: 'First?' }, { id: 'RQ2', text: 'Second?' }] }
+    }
+    await s.summaries.updateThesis(expected)
     expect(s.summaries.thesis()).toEqual(expected)
     expect(parse(await readFile(join(s.store.root, 'project.yaml'), 'utf8')).thesis).toEqual(expected)
     expect(s.library.list()[0].summary_status).toBe('stale')
     await expect(s.summaries.updateThesis({ ...expected, research_questions: [{ id: 'RQ1', text: '' }] })).rejects.toMatchObject({ name: 'InvalidEdit' })
+    await expect(
+      s.summaries.updateThesis({ ...expected, research_questions: [{ id: 'RQ1', text: 'a' }, { id: 'RQ1', text: 'b' }] })
+    ).rejects.toMatchObject({ name: 'InvalidEdit' })
+    await expect(s.summaries.updateThesis({ ...expected, research_questions: [{ id: 'Q1', text: 'a' }] })).rejects.toMatchObject({ name: 'InvalidEdit' })
     expect(s.summaries.thesis()).toEqual(expected)
+    await s.close()
+  })
+
+  it('a reviewed relation stays stale after the thesis changes until the user verifies or edits it again', async () => {
+    const answer = () => ({ value: llmOutputFor(DEFAULT_EXTRACTION_FORM, undefined, sampleThesis), costUsd: 0.03, model: 'claude-sonnet-5' })
+    const s = await session([answer])
+    await s.summaries.updateThesis(sampleThesis)
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    await s.summaries.verifyAll('he2017drain')
+    expect(s.library.list()[0].summary_status).toBe('reviewed')
+
+    const changed = { ...sampleThesis, research_questions: [...sampleThesis.research_questions, { id: 'RQ3', text: 'A new question?' }] }
+    await s.summaries.updateThesis(changed)
+    expect(s.library.list()[0].summary_status).toBe('stale')
+    // Regenerating keeps the verified relation, which was reviewed against the old thesis.
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    expect(s.library.list()[0].summary_status).toBe('stale')
+    await s.summaries.setStatus('he2017drain', 'thesis', 'relation', 'verified')
+    expect(s.library.list()[0].summary_status).not.toBe('stale')
+
+    await s.summaries.updateThesis(sampleThesis)
+    expect(s.library.list()[0].summary_status).toBe('stale')
+    await s.summaries.edit('he2017drain', 'thesis', 'relation', { score: 2 })
+    expect(s.library.list()[0].summary_status).not.toBe('stale')
+    const e = await s.store.readExtraction('he2017drain')
+    expect(e?.ok && e.value.thesis_hash).toBe(thesisHash(sampleThesis))
     await s.close()
   })
 

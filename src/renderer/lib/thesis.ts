@@ -1,6 +1,7 @@
 import type { ThesisContext } from '../../shared/summary'
 
-/** Reassigns `id` to `RQ1..n` in order; the server does the same on save, but the UI needs stable, unique ids before that round-trip (e.g. for list keys right after an add or a remove). */
-export function renumberRQs(questions: ThesisContext['research_questions']): ThesisContext['research_questions'] {
-  return questions.map((q, i) => ({ ...q, id: `RQ${i + 1}` }))
+/** Id for a new research question: one more than the highest id in use. Existing ids never change, since relations refer to them. */
+export function nextRqId(questions: ThesisContext['research_questions']): string {
+  const max = questions.reduce((n, q) => Math.max(n, Number(/^RQ(\d+)$/.exec(q.id)?.[1] ?? 0)), 0)
+  return `RQ${max + 1}`
 }
