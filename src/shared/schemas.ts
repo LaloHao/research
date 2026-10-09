@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { LlmConfigSchema } from './summary'
 
 export const PDF_POLICIES = ['track', 'lfs', 'untracked', 'download_on_demand'] as const
 export type PdfPolicy = (typeof PDF_POLICIES)[number]
@@ -9,7 +10,10 @@ export const ProjectConfigSchema = z.looseObject({
   schema_version: z.literal(1),
   name: z.string().min(1),
   content_language: z.string().min(2).default('en'),
-  pdfs: z.object({ policy: z.enum(PDF_POLICIES) }).default({ policy: 'track' })
+  pdfs: z.object({ policy: z.enum(PDF_POLICIES) }).default({ policy: 'track' }),
+  llm: LlmConfigSchema.prefault({}),
+  /** Validated separately (summary/extractionForm.ts): a mistake in the form must not stop the project from opening. */
+  extraction_form: z.unknown().optional()
 })
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>
 

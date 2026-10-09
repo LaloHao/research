@@ -9,7 +9,7 @@ import { ProjectError } from './project/errors'
 
 /** App-level state: settings plus the one open project. Electron-free so it can be tested. */
 export class AppController {
-  private settings: AppSettings = { ...DEFAULT_SETTINGS }
+  private settings: AppSettings = { ...DEFAULT_SETTINGS, deviceId: '' }
   private session: ProjectSession | null = null
 
   constructor(
@@ -20,6 +20,8 @@ export class AppController {
 
   async init(): Promise<void> {
     this.settings = await loadSettings(this.settingsFile)
+    // Idempotent: persists a freshly generated deviceId when the settings file didn't have one yet.
+    await saveSettings(this.settingsFile, this.settings)
     const last = this.settings.lastProjectPath
     if (!last) return
     if (!existsSync(join(last, 'project.yaml'))) {

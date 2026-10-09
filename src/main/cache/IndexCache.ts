@@ -251,6 +251,9 @@ function toPaperRow(r: Record<string, unknown>): PaperRow {
     has_pdf: Boolean(r.has_pdf),
     problem: (r.problem as string | null) ?? null,
     added_at: (r.added_at as string | null) ?? null,
-    text_status: r.text_status as TextStatus
+    text_status: r.text_status as TextStatus,
+    // The cache schema doesn't persist these yet (summarization lands in a later stage).
+    summary_status: 'none',
+    pending_review: 0
   }
 }
