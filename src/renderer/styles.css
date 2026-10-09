@@ -74,9 +74,13 @@ code { font-family: ui-monospace, 'JetBrains Mono', monospace; font-size: 12px; 
 .welcome { max-width: 420px; margin: 12vh auto; display: flex; flex-direction: column; gap: 14px; padding: 0 16px; }
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; }
 .field > span { font-weight: 600; font-size: 13px; }
+.field.checkbox { flex-direction: row; align-items: center; gap: 8px; }
+.field.checkbox > span { font-weight: normal; }
 
 .settings { max-width: 640px; padding: 20px 28px; overflow: auto; height: 100%; }
 .settings section { margin-bottom: 28px; }
+.extraction-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.extraction-table th, .extraction-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); }
 
 .library { display: flex; height: 100%; position: relative; }
 .library-list { width: 380px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: var(--surface); }
@@ -91,6 +95,11 @@ code { font-family: ui-monospace, 'JetBrains Mono', monospace; font-size: 12px; 
 .badge { font-size: 11px; padding: 0 6px; border-radius: 10px; background: var(--border); }
 .badge-problem { background: var(--error-soft); color: var(--error); }
 .badge-incomplete { background: var(--warning-soft); }
+.badge-summary_failed { background: var(--error-soft); color: var(--error); }
+.badge-stale { background: var(--warning-soft); }
+.badge-to_review { background: var(--accent-soft); }
+.summary-toolbar { display: flex; flex-direction: column; gap: 6px; padding: 0 12px 8px; border-bottom: 1px solid var(--border); }
+.summary-toolbar select { min-width: 0; }
 .jobs { border-top: 1px solid var(--border); max-height: 34%; overflow: auto; padding: 6px 12px; }
 .jobs h4 { margin: 4px 0; font-size: 12px; text-transform: uppercase; color: var(--muted); }
 .jobs ul { list-style: none; margin: 0; padding: 0; }

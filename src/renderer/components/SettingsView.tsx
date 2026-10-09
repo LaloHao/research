@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ProjectInfo } from '../../shared/ipc'
 import { PDF_POLICIES, type PdfPolicy } from '../../shared/schemas'
+import { ClaudeSection } from './settings/ClaudeSection'
+import { ExtractionFormView } from './settings/ExtractionFormView'
+import { ThesisSection } from './settings/ThesisSection'
 
 const CONTENT_LANGUAGES = ['en', 'es'] as const
 
@@ -68,6 +71,9 @@ export function SettingsView({ project }: { project: ProjectInfo }): React.JSX.E
           <small className="muted">{t('settings.pdf_policy_help')}</small>
         </label>
       </section>
+      <ClaudeSection />
+      <ThesisSection />
+      <ExtractionFormView />
       <section>
         <h3>{t('settings.app_section')}</h3>
         <label className="field">

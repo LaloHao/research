@@ -1,16 +1,21 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PaperRow } from '../../../shared/library'
+import type { LlmModel } from '../../../shared/summary'
 import { useEvent } from '../../hooks/useEvent'
+import { filterByModel, filterBySummary, type SummaryFilter } from '../../lib/badges'
 import { PaperDetail } from '../paper/PaperDetail'
 import { AddPaperBar } from './AddPaperBar'
 import { JobsPanel } from './JobsPanel'
 import { PaperList } from './PaperList'
+import { SummaryToolbar } from './SummaryToolbar'
 
 export function LibraryView(): React.JSX.Element {
   const { t } = useTranslation()
   const [query, setQuery] = useState('')
   const [rows, setRows] = useState<PaperRow[]>([])
+  const [summaryFilter, setSummaryFilter] = useState<SummaryFilter>('all')
+  const [modelFilter, setModelFilter] = useState<LlmModel | 'any'>('any')
   const [selected, setSelected] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
 
@@ -33,6 +38,8 @@ export function LibraryView(): React.JSX.Element {
     if (paths.length) window.research.library.addPdfs(paths).catch((error: unknown) => console.error('add pdfs', error))
   }
 
+  const visibleRows = filterByModel(filterBySummary(rows, summaryFilter), modelFilter)
+
   return (
     <div
       className={`library${dragging ? ' dragging' : ''}`}
@@ -48,7 +55,8 @@ export function LibraryView(): React.JSX.Element {
       <aside className="library-list">
         <input className="search" type="search" value={query} placeholder={t('library.search_placeholder')} onChange={(e) => setQuery(e.target.value)} />
         <AddPaperBar />
-        <PaperList rows={rows} query={query} selected={selected} onSelect={setSelected} />
+        <SummaryToolbar filter={summaryFilter} onFilterChange={setSummaryFilter} model={modelFilter} onModelChange={setModelFilter} visibleRows={visibleRows} />
+        <PaperList rows={visibleRows} query={query} selected={selected} onSelect={setSelected} />
         <JobsPanel onSelectPaper={setSelected} />
       </aside>
       <section className="library-detail">
