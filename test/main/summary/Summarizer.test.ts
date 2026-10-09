@@ -5,6 +5,8 @@ import { LlmError } from '../../../src/main/llm/LlmProvider'
 import { DEFAULT_EXTRACTION_FORM } from '../../../src/main/summary/extractionForm'
 import { PROMPT_VERSION } from '../../../src/main/summary/prompt'
 import { llmOutputFor, setupSummaries } from '../../helpers/llm'
+import { sampleThesis } from '../../helpers/summaries'
+import { thesisHash } from '../../../src/main/summary/thesis'
 
 const answer = (costUsd: number, change?: (o: ReturnType<typeof llmOutputFor>) => void) => {
   const value = llmOutputFor(DEFAULT_EXTRACTION_FORM)
@@ -30,6 +32,33 @@ describe('Summarizer', () => {
     expect(call.model).toBe('sonnet')
     expect(call.maxUsd).toBe(0.5)
     expect(call.system).toContain('sanitization_technique')
+    expect(call.system).not.toContain('thesis_relation')
+    expect((call.schema as any).properties.thesis_relation).toBeUndefined()
+    const extraction = await store.readExtraction('he2017drain')
+    expect(extraction?.ok && extraction.value).not.toHaveProperty('thesis_relation')
+    expect(extraction?.ok && extraction.value).not.toHaveProperty('thesis_hash')
+  })
+
+  it('with a thesis context in project.yaml, sends the thesis block and writes the relation', async () => {
+    const { store, summarizer, provider } = await setupSummaries({ thesis: sampleThesis })
+    const r = await summarizer.summarize({ paperId: 'he2017drain' })
+    const call = provider.calls[0]
+    expect(call.system).toContain(sampleThesis.title)
+    expect(call.system).toContain('RQ1: Which sanitization techniques preserve utility?')
+    expect((call.schema as any).properties.thesis_relation.properties.research_questions.items.enum).toEqual(['RQ1', 'RQ2'])
+    const extraction = await store.readExtraction('he2017drain')
+    if (!extraction?.ok) throw new Error('no extraction')
+    expect(extraction.value.thesis_hash).toBe(thesisHash(sampleThesis))
+    expect(extraction.value.thesis_relation).toMatchObject({
+      text: 'relation text',
+      research_questions: ['RQ1'],
+      score: 4,
+      status: 'generated',
+      origin: { model: 'claude-sonnet-5', prompt_version: PROMPT_VERSION }
+    })
+    expect(extraction.value.thesis_relation?.evidence[0]).toMatchObject({ page: 1, found: true })
+    expect(r.evidenceFound).toBe(r.evidenceTotal)
+    expect(await readFile(join(store.paperDir('he2017drain'), 'summary.md'), 'utf8')).toContain('## Relation to the thesis')
   })
 
   it('uses a model given per run instead of the project default, and records the resolved id as origin', async () => {

@@ -10,9 +10,12 @@ import {
   type FacetEntry,
   type Provenance,
   type SummaryFieldKey,
-  type SummaryFile
+  type SummaryFile,
+  type ThesisContext,
+  type ThesisRelation
 } from '../../shared/summary'
 import { applyAliases } from './extractionForm'
+import { hasThesisContext, thesisHash } from './thesis'
 
 export interface LlmEvidence {
   quote: string
@@ -29,10 +32,23 @@ export interface LlmFacet {
   evidence: LlmEvidence[]
 }
 
+export interface LlmThesisRelation {
+  text: string
+  research_questions: string[]
+  score: number
+  justification: string
+  evidence: LlmEvidence[]
+}
+
 export interface LlmOutput {
   fields: Record<SummaryFieldKey, { value: unknown; evidence: LlmEvidence[] }>
   facets: Record<string, LlmFacet>
+  /** Only asked for when the project has a thesis context. */
+  thesis_relation?: LlmThesisRelation
 }
+
+/** The thesis context, or null when there is none worth asking about. */
+const activeThesis = (thesis: ThesisContext | null | undefined): ThesisContext | null => (thesis && hasThesisContext(thesis) ? thesis : null)
 
 function obj(properties: Record<string, object>): object {
   return { type: 'object', additionalProperties: false, required: Object.keys(properties), properties }
@@ -60,11 +76,27 @@ function facetJson(f: FacetDef): object {
   }
 }
 
-export function outputJsonSchema(form: ExtractionForm): object {
+function thesisJson(t: ThesisContext): object {
+  const ids = t.research_questions.map((q) => q.id)
+  return obj({
+    text: str,
+    research_questions: ids.length ? { type: 'array', items: { type: 'string', enum: ids } } : strArr,
+    score: { type: 'integer', enum: range(1, 5) },
+    justification: str,
+    evidence: evidenceJson
+  })
+}
+
+export function outputJsonSchema(form: ExtractionForm, thesis?: ThesisContext | null): object {
   const fields: Record<string, object> = Object.fromEntries(SUMMARY_TEXT_FIELDS.map((k) => [k, obj({ value: str, evidence: evidenceJson })]))
   fields.limitations = obj({ value: obj({ stated: strArr, inferred: strArr }), evidence: evidenceJson })
   fields.research_type = obj({ value: { type: 'string', enum: [...RESEARCH_TYPES] }, evidence: evidenceJson })
-  return obj({ fields: obj(fields), facets: obj(Object.fromEntries(form.facets.map((f) => [f.key, facetJson(f)]))) })
+  const t = activeThesis(thesis)
+  return obj({
+    fields: obj(fields),
+    facets: obj(Object.fromEntries(form.facets.map((f) => [f.key, facetJson(f)]))),
+    ...(t ? { thesis_relation: thesisJson(t) } : {})
+  })
 }
 
 const evidenceZod = z.array(z.object({ quote: z.string(), page: z.number().int().nullable() }))
@@ -82,9 +114,18 @@ function facetZod(f: FacetDef): z.ZodType {
   }
 }
 
-function outputZod(form: ExtractionForm): z.ZodType {
+const thesisZod = z.object({
+  text: z.string(),
+  research_questions: z.array(z.string()),
+  score: z.number().int().min(1).max(5),
+  justification: z.string(),
+  evidence: evidenceZod
+})
+
+function outputZod(form: ExtractionForm, thesis: ThesisContext | null): z.ZodType {
   const textField = z.object({ value: z.string(), evidence: evidenceZod })
   return z.object({
+    ...(thesis ? { thesis_relation: thesisZod } : {}),
     fields: z.object({
       ...Object.fromEntries(SUMMARY_TEXT_FIELDS.map((k) => [k, textField])),
       limitations: z.object({ value: LimitationsSchema, evidence: evidenceZod }),
@@ -94,8 +135,12 @@ function outputZod(form: ExtractionForm): z.ZodType {
   })
 }
 
-export function parseLlmOutput(raw: unknown, form: ExtractionForm): { ok: true; value: LlmOutput } | { ok: false; error: string } {
-  const result = outputZod(form).safeParse(raw)
+export function parseLlmOutput(
+  raw: unknown,
+  form: ExtractionForm,
+  thesis?: ThesisContext | null
+): { ok: true; value: LlmOutput } | { ok: false; error: string } {
+  const result = outputZod(form, activeThesis(thesis)).safeParse(raw)
   return result.success ? { ok: true, value: result.data as LlmOutput } : { ok: false, error: z.prettifyError(result.error) }
 }
 
@@ -123,19 +168,37 @@ function facetEntry(form: ExtractionForm, f: FacetDef, out: LlmFacet, origin: Pr
   }
 }
 
+/** Keeps only questions that exist in the thesis, once each (none when the thesis has no questions). */
+function thesisRelation(out: LlmThesisRelation, t: ThesisContext, origin: Provenance): ThesisRelation {
+  const ids = new Set(t.research_questions.map((q) => q.id))
+  return {
+    text: out.text,
+    research_questions: [...new Set(out.research_questions.filter((q) => ids.has(q)))],
+    score: out.score,
+    justification: out.justification,
+    status: 'generated',
+    evidence: toEvidence(out.evidence ?? []),
+    origin
+  }
+}
+
 export function toGeneratedFiles(
   out: LlmOutput,
   form: ExtractionForm,
   formHash: string,
-  meta: SummaryFile['generated']
+  meta: SummaryFile['generated'],
+  thesis?: ThesisContext | null
 ): { summary: SummaryFile; extraction: ExtractionFile } {
   const origin: Provenance = { model: meta.model, at: meta.at, prompt_version: meta.prompt_version }
   const fields = Object.fromEntries(
     Object.entries(out.fields).map(([k, v]) => [k, { value: v.value, status: 'generated', evidence: toEvidence(v.evidence), origin }])
   )
   const facets = Object.fromEntries(form.facets.map((f) => [f.key, facetEntry(form, f, out.facets[f.key] ?? { evidence: [] }, origin)]))
-  return {
-    summary: { schema_version: 1, generated: meta, fields } as SummaryFile,
-    extraction: { schema_version: 1, form_hash: formHash, facets }
+  const extraction: ExtractionFile = { schema_version: 1, form_hash: formHash, facets }
+  const t = activeThesis(thesis)
+  if (t && out.thesis_relation) {
+    extraction.thesis_relation = thesisRelation(out.thesis_relation, t, origin)
+    extraction.thesis_hash = thesisHash(t)
   }
+  return { summary: { schema_version: 1, generated: meta, fields } as SummaryFile, extraction }
 }

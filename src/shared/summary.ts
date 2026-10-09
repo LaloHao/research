@@ -85,10 +85,32 @@ export const FacetEntrySchema = z.object({
 })
 export type FacetEntry = z.infer<typeof FacetEntrySchema>
 
+export const ThesisContextSchema = z.object({
+  title: z.string().default(''),
+  description: z.string().default(''),
+  research_questions: z.array(z.object({ id: z.string().regex(/^RQ[1-9][0-9]*$/), text: z.string().min(1) })).default([])
+})
+export type ThesisContext = z.infer<typeof ThesisContextSchema>
+
+/** How one paper relates to the thesis in project.yaml. */
+export const ThesisRelationSchema = z.object({
+  text: z.string(),
+  research_questions: z.array(z.string()),
+  score: z.number().int().min(1).max(5),
+  justification: z.string(),
+  status: z.enum(FIELD_STATUSES),
+  evidence: z.array(EvidenceSchema).default([]),
+  origin: ProvenanceSchema.optional()
+})
+export type ThesisRelation = z.infer<typeof ThesisRelationSchema>
+
 export const ExtractionFileSchema = z.looseObject({
   schema_version: z.literal(1),
   form_hash: z.string(),
-  facets: z.record(z.string(), FacetEntrySchema)
+  facets: z.record(z.string(), FacetEntrySchema),
+  thesis_relation: ThesisRelationSchema.optional(),
+  /** Hash of the thesis context the relation was generated against. */
+  thesis_hash: z.string().optional()
 })
 export type ExtractionFile = z.infer<typeof ExtractionFileSchema>
 
@@ -133,9 +155,10 @@ export interface CostEntry {
   operation: 'summarize'
 }
 
-export type Section = 'fields' | 'facets'
+/** The `thesis` section has a single key, `relation`. */
+export type Section = 'fields' | 'facets' | 'thesis'
 
-/** One field or facet still waiting for the user's review. */
+/** One field, facet or thesis relation still waiting for the user's review. */
 export interface ReviewItem {
   paperId: string
   title: string

@@ -13,6 +13,7 @@ import { renderSummaryMarkdown } from './markdown'
 import { mergeExtraction, mergeSummary } from './merge'
 import { buildPaperText } from './paperText'
 import { PROMPT_VERSION, retryNote, systemPrompt, userInput } from './prompt'
+import { hasThesisContext } from './thesis'
 
 export interface SummarizerDeps {
   store: ProjectStore
@@ -58,14 +59,16 @@ export class Summarizer {
     await this.assertFilesReadable(id)
     req.signal?.throwIfAborted()
 
+    const thesis = hasThesisContext(store.config.thesis) ? store.config.thesis : null
+
     const reservation = await budget.admit(req.batchId)
     let spent = 0
     let model: string = req.model ?? llm.model
     try {
       const base = {
-        system: systemPrompt(form.form, store.config.content_language),
+        system: systemPrompt(form.form, store.config.content_language, thesis),
         input: userInput(paper.value.title, text.input),
-        schema: outputJsonSchema(form.form),
+        schema: outputJsonSchema(form.form, thesis),
         model: req.model ?? llm.model,
         maxUsd: llm.budget.per_operation_usd,
         signal: req.signal
@@ -87,13 +90,13 @@ export class Summarizer {
         spent += result.costUsd
         model = result.model
         await ledger.append({ paperId: id, batchId: req.batchId, model: result.model, costUsd: result.costUsd })
-        const parsed = parseLlmOutput(result.value, form.form)
+        const parsed = parseLlmOutput(result.value, form.form, thesis)
         if (parsed.ok) out = parsed.value
         else lastError = parsed.error
       }
       if (!out) throw new LlmError('llm_invalid_output', spent)
       const meta = { model, at: (this.deps.now ?? (() => new Date()))().toISOString(), cost_usd_est: round(spent), prompt_version: PROMPT_VERSION, language: store.config.content_language }
-      const generated = toGeneratedFiles(out, form.form, form.hash, meta)
+      const generated = toGeneratedFiles(out, form.form, form.hash, meta, thesis)
       const checked = checkEvidence(generated.summary, generated.extraction, text.pages)
       await this.write(id, paper.value.title, checked.summary, checked.extraction)
       return { costUsd: spent, evidenceFound: checked.found, evidenceTotal: checked.total }

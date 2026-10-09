@@ -38,7 +38,7 @@ export class ProjectStore {
     return this.cfg
   }
 
-  async updateConfig(patch: Partial<Pick<ProjectConfig, 'name' | 'content_language' | 'pdfs' | 'llm' | 'extraction_form'>>): Promise<ProjectConfig> {
+  async updateConfig(patch: Partial<Pick<ProjectConfig, 'name' | 'content_language' | 'pdfs' | 'llm' | 'extraction_form' | 'thesis'>>): Promise<ProjectConfig> {
     const next = ProjectConfigSchema.parse({ ...this.cfg, ...patch })
     this.cfgHash = await this.writeChecked(join(this.root, PROJECT_FILE), toYaml(next), this.cfgHash)
     this.cfg = next

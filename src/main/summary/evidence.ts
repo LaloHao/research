@@ -11,7 +11,7 @@ export function locateQuote(quote: string, pages: PageText[], hintPage: number |
   return { page: hintPage, found: false }
 }
 
-/** Fills `found` (and fixes `page`) on the evidence of generated fields and facets. */
+/** Fills `found` (and fixes `page`) on the evidence of generated fields, facets and thesis relation. */
 export function checkEvidence(
   summary: SummaryFile,
   extraction: ExtractionFile,
@@ -32,5 +32,7 @@ export function checkEvidence(
   const facets = Object.fromEntries(
     Object.entries(extraction.facets).map(([k, f]) => [k, f.status === 'generated' ? { ...f, evidence: check(f.evidence) } : f])
   )
-  return { summary: { ...summary, fields }, extraction: { ...extraction, facets }, found, total }
+  const relation = extraction.thesis_relation
+  const thesis = relation?.status === 'generated' ? { thesis_relation: { ...relation, evidence: check(relation.evidence) } } : {}
+  return { summary: { ...summary, fields }, extraction: { ...extraction, facets, ...thesis }, found, total }
 }

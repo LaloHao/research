@@ -1,4 +1,5 @@
-import type { ExtractionForm, FacetDef } from '../../shared/summary'
+import type { ExtractionForm, FacetDef, ThesisContext } from '../../shared/summary'
+import { hasThesisContext, thesisPromptBlock } from './thesis'
 
 export const PROMPT_VERSION = 1
 
@@ -17,7 +18,17 @@ function facetLine(f: FacetDef): string {
   }
 }
 
-export function systemPrompt(form: ExtractionForm, language: string): string {
+function thesisLines(t: ThesisContext): string[] {
+  return [
+    '',
+    thesisPromptBlock(t),
+    'In thesis_relation, explain how this paper relates to that thesis (text) and list the ids of the research questions it informs (research_questions).',
+    'Score the relation from 1 to 5: 1 = unrelated to the thesis, 5 = directly addresses a research question. Justify the score in one or two sentences, citing the research questions by id.',
+    'Give evidence quotes for thesis_relation just like for the facets.'
+  ]
+}
+
+export function systemPrompt(form: ExtractionForm, language: string, thesis?: ThesisContext | null): string {
   const lang = LANGUAGES[language] ?? language
   return [
     'You analyze one academic paper (or technical article) for a systematic literature review.',
@@ -33,6 +44,7 @@ export function systemPrompt(form: ExtractionForm, language: string): string {
     'Classify the paper with these facets:',
     ...form.facets.map(facetLine),
     'When no allowed value fits, leave it out of the values and put a new snake_case English value in "proposed".',
+    ...(thesis && hasThesisContext(thesis) ? thesisLines(thesis) : []),
     '',
     'Evidence: for each field and facet give 1–3 quotes copied verbatim from the document (no paraphrasing, no ellipses), each with the page number of the nearest preceding [p.N] marker, or null when there are no markers. If the document does not report something, say so briefly and give no evidence.',
     `Write all prose values in ${lang}. Keep facet keys and values in English. Quotes stay in the document's original language.`

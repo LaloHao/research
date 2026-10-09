@@ -21,7 +21,7 @@ export const DEFAULT_EXTRACTION_FORM: ExtractionForm = {
     },
     { key: 'traceability', type: 'text', description: 'Whether and how outputs are linked back to their source evidence' },
     { key: 'privacy_evaluation', type: 'text', description: 'How privacy or leakage is evaluated (metrics, datasets)' },
-    { key: 'relevance', type: 'scale', min: 1, max: 5, description: 'Relevance to the thesis research questions, with justification' }
+    { key: 'rigor', type: 'scale', min: 1, max: 5, description: 'Methodological soundness: evaluation design, datasets, baselines and reproducibility' }
   ],
   value_aliases: {}
 }
@@ -75,7 +75,7 @@ export function applyAliases(form: ExtractionForm, facetKey: string, values: str
   return { known, proposed }
 }
 
-function sortKeys(value: unknown): unknown {
+export function sortKeys(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortKeys)
   if (value && typeof value === 'object') {
     return Object.fromEntries(

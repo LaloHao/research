@@ -42,6 +42,15 @@ export function renderSummaryMarkdown(title: string, summary: SummaryFile, extra
       const proposed = f.proposed.length ? ` (proposed: ${f.proposed.join(', ')})` : ''
       out.push(`- **${key}**: ${value}${proposed}`)
     }
+    const relation = extraction.thesis_relation
+    if (relation) {
+      out.push('', '## Relation to the thesis', '', relation.text, '')
+      if (relation.research_questions.length) out.push(`Research questions: ${relation.research_questions.join(', ')}`, '')
+      out.push(`Score: ${relation.score}/5 — ${relation.justification}`)
+      if (relation.evidence.length) out.push('', ...relation.evidence.map(quote))
+      const generated = generatedBy(relation.origin)
+      if (generated) out.push('', generated)
+    }
   }
   return out.join('\n')
 }

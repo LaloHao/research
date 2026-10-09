@@ -11,12 +11,23 @@ import {
   mergeExtraction,
   mergeSummary,
   setFieldStatus,
+  setThesisStatus,
   summarySearchText,
   summaryState,
   verifyAll
 } from '../../../src/main/summary/merge'
 import type { ExtractionForm } from '../../../src/shared/summary'
 import { sampleExtraction, sampleSummary } from '../../helpers/summaries'
+import type { ThesisRelation } from '../../../src/shared/summary'
+
+const relation = (status: ThesisRelation['status'], text = 'rel'): ThesisRelation => ({
+  text,
+  research_questions: ['RQ1'],
+  score: 3,
+  justification: 'because RQ1',
+  status,
+  evidence: []
+})
 
 const form: ExtractionForm = {
   facets: [
@@ -117,7 +128,7 @@ describe('proposed values', () => {
 })
 
 describe('summaryState', () => {
-  const base = { summary: null, extraction: null, formHash: 'h', textChars: 100, maxChars: 1000, error: null }
+  const base = { summary: null, extraction: null, formHash: 'h', thesisHash: null, textChars: 100, maxChars: 1000, error: null }
 
   it.each([
     [{}, 'none'],
@@ -142,5 +153,49 @@ describe('summarySearchText', () => {
     const text = summarySearchText(sampleSummary({ method: { value: 'pseudonymization', status: 'generated', evidence: [] } }), sampleExtraction())
     expect(text).toContain('pseudonymization')
     expect(text).toContain('j')
+  })
+})
+
+describe('thesis relation', () => {
+  it('mergeExtraction keeps a verified relation and always takes the new thesis hash', () => {
+    const existing = { ...sampleExtraction(), thesis_relation: relation('verified', 'mine'), thesis_hash: 'old' }
+    const generated = { ...sampleExtraction(), thesis_relation: relation('generated', 'new'), thesis_hash: 'new' }
+    const merged = mergeExtraction(existing, generated)
+    expect(merged.thesis_relation?.text).toBe('mine')
+    expect(merged.thesis_hash).toBe('new')
+    const edited = mergeExtraction({ ...existing, thesis_relation: relation('edited', 'mine') }, generated)
+    expect(edited.thesis_relation?.text).toBe('mine')
+  })
+
+  it('mergeExtraction replaces a generated relation', () => {
+    const existing = { ...sampleExtraction(), thesis_relation: relation('generated', 'old'), thesis_hash: 'old' }
+    const generated = { ...sampleExtraction(), thesis_relation: relation('generated', 'new'), thesis_hash: 'new' }
+    expect(mergeExtraction(existing, generated).thesis_relation?.text).toBe('new')
+  })
+
+  it('counts, verifies and indexes the relation', () => {
+    const e = { ...sampleExtraction(), thesis_relation: relation('generated', 'sanitization matters') }
+    expect(countPending(null, e)).toBe(2)
+    expect(verifyAll(null, e).extraction!.thesis_relation?.status).toBe('verified')
+    expect(summarySearchText(null, e)).toContain('sanitization matters')
+    expect(summarySearchText(null, e)).toContain('because RQ1')
+  })
+
+  it('setThesisStatus verifies and reopens, but never un-edits', () => {
+    const e = { ...sampleExtraction(), thesis_relation: relation('generated') }
+    const v = setThesisStatus(e, 'verified')
+    expect(v.thesis_relation?.status).toBe('verified')
+    expect(setThesisStatus(v, 'generated').thesis_relation?.status).toBe('generated')
+    expect(setThesisStatus({ ...e, thesis_relation: relation('edited') }, 'generated').thesis_relation?.status).toBe('edited')
+    expect(() => setThesisStatus(sampleExtraction(), 'verified')).toThrow(InvalidEdit)
+  })
+
+  it('summaryState is stale when the thesis hash changes, and ignores it without a context', () => {
+    const base = { summary: sampleSummary(), formHash: 'h', textChars: 100, maxChars: 1000, error: null }
+    const e = { ...sampleExtraction({}, 'h'), thesis_hash: 't1' }
+    expect(summaryState({ ...base, extraction: e, thesisHash: 't1' })).toBe('generated')
+    expect(summaryState({ ...base, extraction: e, thesisHash: 't2' })).toBe('stale')
+    expect(summaryState({ ...base, extraction: sampleExtraction({}, 'h'), thesisHash: 't1' })).toBe('stale')
+    expect(summaryState({ ...base, extraction: sampleExtraction({}, 'h'), thesisHash: null })).toBe('generated')
   })
 })

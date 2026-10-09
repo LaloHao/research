@@ -33,7 +33,15 @@ export function mergeExtraction(existing: ExtractionFile | null, generated: Extr
     const old = existing.facets[k]
     if (!old || old.status === 'generated') facets[k] = entry
   }
-  return { ...existing, form_hash: generated.form_hash, facets }
+  const { thesis_relation: oldRelation, thesis_hash: _oldHash, ...rest } = existing
+  const relation = oldRelation && oldRelation.status !== 'generated' ? oldRelation : generated.thesis_relation
+  return {
+    ...rest,
+    form_hash: generated.form_hash,
+    facets,
+    ...(relation ? { thesis_relation: relation } : {}),
+    ...(generated.thesis_hash !== undefined ? { thesis_hash: generated.thesis_hash } : {})
+  }
 }
 
 /** `generated` is only reachable from `verified`: an edited value stays the user's. */
@@ -53,14 +61,22 @@ export function setFacetStatus(extraction: ExtractionFile, key: string, status: 
   return { ...extraction, facets: { ...extraction.facets, [key]: { ...facet, status: nextStatus(facet.status, status) } } }
 }
 
+export function setThesisStatus(extraction: ExtractionFile, status: 'verified' | 'generated'): ExtractionFile {
+  const relation = extraction.thesis_relation
+  if (!relation) throw new InvalidEdit('The paper has no relation to the thesis')
+  return { ...extraction, thesis_relation: { ...relation, status: nextStatus(relation.status, status) } }
+}
+
 export function verifyAll(summary: SummaryFile | null, extraction: ExtractionFile | null): { summary: SummaryFile | null; extraction: ExtractionFile | null } {
   const s = summary && {
     ...summary,
     fields: Object.fromEntries(Object.entries(summary.fields).map(([k, f]) => [k, f.status === 'generated' ? { ...f, status: 'verified' } : f])) as SummaryFile['fields']
   }
+  const relation = extraction?.thesis_relation
   const e = extraction && {
     ...extraction,
-    facets: Object.fromEntries(Object.entries(extraction.facets).map(([k, f]) => [k, f.status === 'generated' ? { ...f, status: 'verified' as const } : f]))
+    facets: Object.fromEntries(Object.entries(extraction.facets).map(([k, f]) => [k, f.status === 'generated' ? { ...f, status: 'verified' as const } : f])),
+    ...(relation ? { thesis_relation: relation.status === 'generated' ? { ...relation, status: 'verified' as const } : relation } : {})
   }
   return { summary: s, extraction: e }
 }
@@ -128,13 +144,16 @@ export function addAlias(form: ExtractionForm, facetKey: string, from: string, t
 export function countPending(summary: SummaryFile | null, extraction: ExtractionFile | null): number {
   const fields = summary ? Object.values(summary.fields).filter((f) => f.status === 'generated').length : 0
   const facets = extraction ? Object.values(extraction.facets).filter((f) => f.status === 'generated').length : 0
-  return fields + facets
+  const relation = extraction?.thesis_relation?.status === 'generated' ? 1 : 0
+  return fields + facets + relation
 }
 
 export function summaryState(i: {
   summary: SummaryFile | null
   extraction: ExtractionFile | null
   formHash: string | null
+  /** Hash of the project's thesis context; null when there is none. */
+  thesisHash: string | null
   textChars: number
   maxChars: number
   error: string | null
@@ -142,6 +161,7 @@ export function summaryState(i: {
   if (i.error) return 'failed'
   if (!i.summary) return i.textChars > i.maxChars ? 'too_long' : 'none'
   if (i.formHash && i.extraction && i.extraction.form_hash !== i.formHash) return 'stale'
+  if (i.thesisHash && i.extraction?.thesis_hash !== i.thesisHash) return 'stale'
   return countPending(i.summary, i.extraction) > 0 ? 'generated' : 'reviewed'
 }
 
@@ -155,5 +175,7 @@ export function summarySearchText(summary: SummaryFile | null, extraction: Extra
   }
   if (summary) for (const f of Object.values(summary.fields)) add(f.value)
   if (extraction) for (const f of Object.values(extraction.facets)) add([f.value, f.values, f.text, f.justification, f.proposed])
+  const relation = extraction?.thesis_relation
+  if (relation) add([relation.text, relation.research_questions, relation.justification])
   return parts.join(' ')
 }

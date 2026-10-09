@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { LlmConfigSchema } from './summary'
+import { LlmConfigSchema, ThesisContextSchema } from './summary'
 
 export const PDF_POLICIES = ['track', 'lfs', 'untracked', 'download_on_demand'] as const
 export type PdfPolicy = (typeof PDF_POLICIES)[number]
@@ -12,6 +12,8 @@ export const ProjectConfigSchema = z.looseObject({
   content_language: z.string().min(2).default('en'),
   pdfs: z.object({ policy: z.enum(PDF_POLICIES) }).default({ policy: 'track' }),
   llm: LlmConfigSchema.prefault({}),
+  /** An invalid thesis block falls back to an empty context instead of making project.yaml unreadable. */
+  thesis: ThesisContextSchema.catch(() => ({ title: '', description: '', research_questions: [] })).prefault({}),
   /** Validated separately (summary/extractionForm.ts): a mistake in the form must not stop the project from opening. */
   extraction_form: z.unknown().optional()
 })

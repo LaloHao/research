@@ -13,7 +13,9 @@ import {
   type Section,
   type SummaryFieldKey,
   type SummaryFile,
-  type SummaryPlan
+  type SummaryPlan,
+  type ThesisContext,
+  ThesisContextSchema
 } from '../../shared/summary'
 import type { IndexCache } from '../cache/IndexCache'
 import type { BudgetGuard } from '../llm/BudgetGuard'
@@ -33,6 +35,7 @@ import {
   mapProposed,
   setFacetStatus,
   setFieldStatus,
+  setThesisStatus,
   summarySearchText,
   summaryState,
   verifyAll,
@@ -40,6 +43,7 @@ import {
 } from './merge'
 import { pagesFromChunks } from './paperText'
 import type { Summarizer } from './Summarizer'
+import { editThesisRelation, hasThesisContext, thesisHash, type ThesisPatch } from './thesis'
 
 const BATCH_STOPPERS = new Set(['llm_quota', 'budget_exceeded'])
 const ELIGIBLE = new Set(['none', 'stale', 'failed'])
@@ -55,6 +59,7 @@ export async function indexSummary(store: ProjectStore, cache: IndexCache, id: s
     summary,
     extraction,
     formHash: form.status === 'ok' ? form.hash : null,
+    thesisHash: hasThesisContext(store.config.thesis) ? thesisHash(store.config.thesis) : null,
     textChars: cache.textChars(id),
     maxChars: store.config.llm.max_input_chars,
     error: cache.summaryError(id)
@@ -154,6 +159,9 @@ export class SummaryService {
     if (section === 'fields') {
       const summary = requireSummary(files)
       await this.save(paperId, files, { summary: setFieldStatus(summary, fieldKey(key), status) })
+    } else if (section === 'thesis') {
+      thesisKey(key)
+      await this.save(paperId, files, { extraction: setThesisStatus(requireExtraction(files), status) })
     } else {
       const extraction = requireExtraction(files)
       await this.save(paperId, files, { extraction: setFacetStatus(extraction, key, status) })
@@ -165,6 +173,11 @@ export class SummaryService {
     if (section === 'fields') {
       const files = await this.read(paperId)
       await this.save(paperId, files, { summary: editField(requireSummary(files), fieldKey(key), value) })
+    } else if (section === 'thesis') {
+      thesisKey(key)
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new InvalidEdit('Invalid value for the thesis relation')
+      const files = await this.read(paperId)
+      await this.save(paperId, files, { extraction: editThesisRelation(requireExtraction(files), this.deps.store.config.thesis, value as ThesisPatch) })
     } else {
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new InvalidEdit(`Invalid value for ${key}`)
       const form = await this.ensureForm()
@@ -216,6 +229,7 @@ export class SummaryService {
         // Facets removed from the form stay in the file but are not shown.
         const keys = form.status === 'ok' ? form.form.facets.map((f) => f.key) : Object.keys(extraction.facets)
         for (const key of keys) if (extraction.facets[key]?.status === 'generated') items.push({ ...base, section: 'facets', key })
+        if (extraction.thesis_relation?.status === 'generated') items.push({ ...base, section: 'thesis', key: 'relation' })
       }
     }
     return items
@@ -240,6 +254,22 @@ export class SummaryService {
   /** Estimated cost of one summary. */
   estimate(): number {
     return this.deps.budget.currentEstimate()
+  }
+
+  thesis(): ThesisContext {
+    return this.deps.store.config.thesis
+  }
+
+  /** Saves the thesis context with questions renumbered RQ1..n in order, and recomputes every paper's state. */
+  async updateThesis(ctx: ThesisContext): Promise<void> {
+    const renumbered =
+      ctx && typeof ctx === 'object' && Array.isArray(ctx.research_questions)
+        ? { ...ctx, research_questions: ctx.research_questions.map((q, i) => ({ ...q, id: `RQ${i + 1}` })) }
+        : ctx
+    const parsed = ThesisContextSchema.safeParse(renumbered)
+    if (!parsed.success) throw new InvalidEdit('Invalid thesis context')
+    await this.deps.store.updateConfig({ thesis: parsed.data })
+    await this.changed(await this.deps.store.listPaperIds())
   }
 
   async updateLlm(patch: Partial<LlmConfig>): Promise<LlmConfig> {
@@ -315,6 +345,10 @@ export class SummaryService {
 function fieldKey(key: string): SummaryFieldKey {
   if (!(SUMMARY_FIELD_KEYS as readonly string[]).includes(key)) throw new InvalidEdit(`Unknown field ${key}`)
   return key as SummaryFieldKey
+}
+
+function thesisKey(key: string): void {
+  if (key !== 'relation') throw new InvalidEdit(`Unknown thesis key ${key}`)
 }
 
 function requireSummary(files: PaperFiles): SummaryFile {

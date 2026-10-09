@@ -8,6 +8,8 @@ import { toYaml } from '../../../src/main/project/yamlFile'
 import { FakeLlmProvider, llmOutputFor, PAPER_TEXT } from '../../helpers/llm'
 import { samplePaper } from '../../helpers/papers'
 import { tmpDir } from '../../helpers/tmp'
+import { sampleThesis } from '../../helpers/summaries'
+import { parse } from 'yaml'
 
 const ok = (form = DEFAULT_EXTRACTION_FORM) => ({ value: llmOutputFor(form), costUsd: 0.03, model: 'claude-sonnet-5' })
 
@@ -82,7 +84,7 @@ describe('SummaryService', () => {
     const before = await s.summaries.reviewQueue()
     expect(before[0]).toMatchObject({ paperId: 'he2017drain', section: 'fields', key: 'tldr' })
     await s.summaries.edit('he2017drain', 'fields', 'tldr', 'my own words')
-    await s.summaries.setStatus('he2017drain', 'facets', 'relevance', 'verified')
+    await s.summaries.setStatus('he2017drain', 'facets', 'rigor', 'verified')
     const after = await s.summaries.reviewQueue()
     expect(after).toHaveLength(before.length - 2)
     await expect(s.summaries.edit('he2017drain', 'fields', 'research_type', 'essay')).rejects.toMatchObject({ name: 'InvalidEdit' })
@@ -161,6 +163,67 @@ describe('SummaryService', () => {
     await s.store.reloadConfig()
     expect(s.summaries.formInfo().status).toBe('invalid')
     await expect(s.summaries.request('he2017drain')).rejects.toMatchObject({ code: 'invalid_form' })
+    await s.close()
+  })
+
+  it('updateThesis renumbers the questions, saves project.yaml and marks summarized papers stale', async () => {
+    const s = await session()
+    expect(s.summaries.thesis()).toEqual({ title: '', description: '', research_questions: [] })
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    expect(s.library.list()[0].summary_status).toBe('generated')
+    await s.summaries.updateThesis({
+      title: 'Privacy-preserving log analysis',
+      description: 'd',
+      research_questions: [
+        { id: 'RQ7', text: 'First?' },
+        { id: 'RQ3', text: 'Second?' }
+      ]
+    })
+    const expected = { title: 'Privacy-preserving log analysis', description: 'd', research_questions: [{ id: 'RQ1', text: 'First?' }, { id: 'RQ2', text: 'Second?' }] }
+    expect(s.summaries.thesis()).toEqual(expected)
+    expect(parse(await readFile(join(s.store.root, 'project.yaml'), 'utf8')).thesis).toEqual(expected)
+    expect(s.library.list()[0].summary_status).toBe('stale')
+    await expect(s.summaries.updateThesis({ ...expected, research_questions: [{ id: 'RQ1', text: '' }] })).rejects.toMatchObject({ name: 'InvalidEdit' })
+    expect(s.summaries.thesis()).toEqual(expected)
+    await s.close()
+  })
+
+  it('reviews and edits the relation to the thesis after the facets', async () => {
+    const withThesis = { value: llmOutputFor(DEFAULT_EXTRACTION_FORM, undefined, sampleThesis), costUsd: 0.03, model: 'claude-sonnet-5' }
+    const s = await session([withThesis])
+    await s.summaries.updateThesis(sampleThesis)
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    expect(s.library.list()[0].summary_status).toBe('generated')
+    const queue = await s.summaries.reviewQueue()
+    expect(queue.at(-1)).toMatchObject({ paperId: 'he2017drain', section: 'thesis', key: 'relation' })
+    expect(queue.at(-2)).toMatchObject({ section: 'facets', key: 'rigor' })
+
+    await expect(s.summaries.edit('he2017drain', 'thesis', 'relation', { research_questions: ['RQ9'] })).rejects.toMatchObject({ name: 'InvalidEdit' })
+    await expect(s.summaries.edit('he2017drain', 'thesis', 'relation', { score: 9 })).rejects.toMatchObject({ name: 'InvalidEdit' })
+    await s.summaries.edit('he2017drain', 'thesis', 'relation', { research_questions: ['RQ2'], score: 5, justification: 'answers RQ2' })
+    const e = await s.store.readExtraction('he2017drain')
+    expect(e?.ok && e.value.thesis_relation).toMatchObject({ research_questions: ['RQ2'], score: 5, justification: 'answers RQ2', status: 'edited' })
+    expect(await readFile(join(s.store.paperDir('he2017drain'), 'summary.md'), 'utf8')).toContain('Score: 5/5 — answers RQ2')
+    expect((await s.summaries.reviewQueue()).some((i) => i.section === 'thesis')).toBe(false)
+
+    await expect(s.summaries.setStatus('he2017drain', 'thesis', 'other', 'verified')).rejects.toMatchObject({ name: 'InvalidEdit' })
+    await s.summaries.verifyAll('he2017drain')
+    expect(s.library.list()[0].summary_status).toBe('reviewed')
+    await s.close()
+  })
+
+  it('verifies the relation through setStatus', async () => {
+    const withThesis = { value: llmOutputFor(DEFAULT_EXTRACTION_FORM, undefined, sampleThesis), costUsd: 0.03, model: 'claude-sonnet-5' }
+    const s = await session([withThesis])
+    await s.summaries.updateThesis(sampleThesis)
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    await s.summaries.setStatus('he2017drain', 'thesis', 'relation', 'verified')
+    const e = await s.store.readExtraction('he2017drain')
+    expect(e?.ok && e.value.thesis_relation?.status).toBe('verified')
+    expect((await s.summaries.reviewQueue()).some((i) => i.section === 'thesis')).toBe(false)
     await s.close()
   })
 })

@@ -1,4 +1,4 @@
-import type { ExtractionFile, FieldStatus, SummaryFile } from '../../src/shared/summary'
+import type { ExtractionFile, FieldStatus, SummaryFile, ThesisContext } from '../../src/shared/summary'
 
 const f = <T>(value: T, status: FieldStatus = 'generated') => ({ value, status, evidence: [] })
 
@@ -27,4 +27,13 @@ export function sampleExtraction(facets: ExtractionFile['facets'] = {}, formHash
     form_hash: formHash,
     facets: { relevance: { score: 4, justification: 'j', proposed: [], status: 'generated', evidence: [] }, ...facets }
   }
+}
+
+export const sampleThesis: ThesisContext = {
+  title: 'Privacy-preserving log analysis',
+  description: 'Sanitizing operational logs before sending them to cloud LLMs',
+  research_questions: [
+    { id: 'RQ1', text: 'Which sanitization techniques preserve utility?' },
+    { id: 'RQ2', text: 'How can outputs be traced back to evidence?' }
+  ]
 }
