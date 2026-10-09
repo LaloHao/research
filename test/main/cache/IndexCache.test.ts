@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { IndexCache } from '../../../src/main/cache/IndexCache'
 import { samplePaper } from '../../helpers/papers'
 import { tmpDir } from '../../helpers/tmp'
@@ -91,5 +92,58 @@ describe('IndexCache jobs', () => {
     cache.updateJob(a, { state: 'done', paper_id: 'he2017drain', message: 'added' }, 't3')
     expect(cache.listJobs().map((j) => j.id)).toEqual([b, a])
     expect(cache.getJob(a)).toMatchObject({ state: 'done', paper_id: 'he2017drain', message: 'added' })
+  })
+})
+
+describe('IndexCache v2: summaries', () => {
+  it('stores text size, chunks in order and summary state', async () => {
+    const { cache } = await openCache()
+    cache.upsertPaper(samplePaper(), 'h', true)
+    cache.setText('he2017drain', 't', 'ok', [
+      { index: 0, page: 1, text: 'first' },
+      { index: 1, page: 2, text: 'second part' }
+    ])
+    expect(cache.textChars('he2017drain')).toBe(16)
+    expect(cache.chunksFor('he2017drain')).toEqual([
+      { page: 1, text: 'first' },
+      { page: 2, text: 'second part' }
+    ])
+    cache.setSummaryState('he2017drain', 'generated', 7, 'differential privacy keeps referential integrity')
+    expect(cache.getPaper('he2017drain')).toMatchObject({ summary_status: 'generated', pending_review: 7 })
+    expect(cache.search('referential')).toEqual(['he2017drain'])
+  })
+
+  it('remembers the last summary error until cleared', async () => {
+    const { cache } = await openCache()
+    cache.upsertPaper(samplePaper(), 'h', true)
+    cache.setSummaryError('he2017drain', 'llm_quota')
+    expect(cache.summaryError('he2017drain')).toBe('llm_quota')
+    cache.setSummaryError('he2017drain', null)
+    expect(cache.summaryError('he2017drain')).toBeNull()
+  })
+
+  it('rebuilds a v1 cache', async () => {
+    const file = join(await tmpDir(), 'index.sqlite')
+    const db = new DatabaseSync(file)
+    db.exec('CREATE TABLE papers (id TEXT PRIMARY KEY); PRAGMA user_version = 1')
+    db.close()
+    const cache = IndexCache.open(file)
+    cache.upsertPaper(samplePaper(), 'h', false)
+    expect(cache.getPaper('he2017drain')?.summary_status).toBe('none')
+  })
+})
+
+describe('IndexCache jobs by type', () => {
+  it('skips excluded job types, cancels a queued batch and finds active jobs', async () => {
+    const { cache } = await openCache()
+    const a = cache.insertJob(JSON.stringify({ type: 'summarize', paperId: 'p1', batchId: 'b1' }), 't')
+    const b = cache.insertJob(JSON.stringify({ type: 'ingest_identifier', input: 'x' }), 't')
+    cache.insertJob(JSON.stringify({ type: 'summarize', paperId: 'p2', batchId: 'b1' }), 't')
+    expect(cache.nextQueuedJob(['summarize'])?.id).toBe(b)
+    expect(cache.hasActiveJob('summarize', 'p1')).toBe(true)
+    cache.updateJob(a, { state: 'running' }, 't')
+    expect(cache.cancelQueuedBatch('b1', 't2')).toBe(1)
+    expect(cache.getJob(a)?.state).toBe('running')
+    expect(cache.hasActiveJob('summarize', 'p2')).toBe(false)
   })
 })

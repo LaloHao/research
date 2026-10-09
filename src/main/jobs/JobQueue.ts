@@ -1,22 +1,30 @@
-import type { JobRecord, JobSpec } from '../../shared/jobs'
+import type { JobRecord, JobSpec, JobType } from '../../shared/jobs'
 import type { IndexCache, JobRow } from '../cache/IndexCache'
 
 export type JobHandler = (spec: JobSpec, signal: AbortSignal) => Promise<{ paperId?: string; message?: string }>
 
+export interface QueueLimits {
+  total: number
+  byType?: Partial<Record<JobType, number>>
+}
+
 /** Background work persisted in the cache, so a quit or crash resumes where it stopped. */
 export class JobQueue {
-  private readonly running = new Map<number, AbortController>()
+  private readonly running = new Map<number, { controller: AbortController; type: JobType }>()
   private readonly listeners = new Set<() => void>()
   private idleWaiters: (() => void)[] = []
   private started = false
   private stopping = false
+  private readonly limits: QueueLimits
 
   constructor(
     private readonly cache: IndexCache,
     private readonly handler: JobHandler,
-    private readonly concurrency = 2,
+    limits: number | QueueLimits = 2,
     private readonly now: () => string = () => new Date().toISOString()
-  ) {}
+  ) {
+    this.limits = typeof limits === 'number' ? { total: limits } : limits
+  }
 
   start(): void {
     this.cache.requeueRunningJobs(this.now())
@@ -28,7 +36,7 @@ export class JobQueue {
   async stop(): Promise<void> {
     this.started = false
     this.stopping = true
-    for (const controller of this.running.values()) controller.abort()
+    for (const { controller } of this.running.values()) controller.abort()
     while (this.running.size > 0) await new Promise((resolve) => setTimeout(resolve, 10))
     this.stopping = false
   }
@@ -41,9 +49,9 @@ export class JobQueue {
   }
 
   cancel(id: number): void {
-    const controller = this.running.get(id)
-    if (controller) {
-      controller.abort()
+    const entry = this.running.get(id)
+    if (entry) {
+      entry.controller.abort()
       return
     }
     if (this.cache.getJob(id)?.state === 'queued') {
@@ -69,11 +77,12 @@ export class JobQueue {
 
   private pump(): void {
     if (!this.started) return
-    while (this.running.size < this.concurrency) {
-      const job = this.cache.nextQueuedJob()
+    while (this.running.size < this.limits.total) {
+      const job = this.cache.nextQueuedJob(this.fullTypes())
       if (!job) break
+      const type = (JSON.parse(job.spec) as JobSpec).type
       const controller = new AbortController()
-      this.running.set(job.id, controller)
+      this.running.set(job.id, { controller, type })
       this.cache.updateJob(job.id, { state: 'running' }, this.now())
       this.emit()
       void this.run(job, controller)
@@ -83,6 +92,21 @@ export class JobQueue {
       this.idleWaiters = []
       for (const resolve of waiters) resolve()
     }
+  }
+
+  /** Job types that already use all their slots. */
+  private fullTypes(): string[] {
+    const counts = new Map<JobType, number>()
+    for (const { type } of this.running.values()) counts.set(type, (counts.get(type) ?? 0) + 1)
+    return Object.entries(this.limits.byType ?? {})
+      .filter(([type, cap]) => (counts.get(type as JobType) ?? 0) >= (cap ?? Infinity))
+      .map(([type]) => type)
+  }
+
+  cancelBatch(batchId: string): number {
+    const n = this.cache.cancelQueuedBatch(batchId, this.now())
+    if (n) this.emit()
+    return n
   }
 
   private async run(job: JobRow, controller: AbortController): Promise<void> {
