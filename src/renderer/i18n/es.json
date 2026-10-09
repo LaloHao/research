@@ -23,7 +23,7 @@
     "project_name": "Nombre",
     "project_folder": "Carpeta",
     "content_language": "Idioma del contenido generado",
-    "content_language_help": "Lo usarán las etapas siguientes para resúmenes y respuestas.",
+    "content_language_help": "Idioma en que Claude escribe los resúmenes (y, más adelante, las respuestas). Cambiarlo no desactualiza los resúmenes existentes; aplica a los nuevos.",
     "languages": { "en": "Inglés", "es": "Español" },
     "pdf_policy_label": "PDFs",
     "pdf_policy": {
