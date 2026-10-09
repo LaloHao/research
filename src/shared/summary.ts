@@ -93,9 +93,17 @@ export type FacetEntry = z.infer<typeof FacetEntrySchema>
 export const ThesisContextSchema = z.object({
   title: z.string().default(''),
   description: z.string().default(''),
-  research_questions: z.array(z.object({ id: z.string().regex(/^RQ[1-9][0-9]*$/), text: z.string().min(1) })).default([])
+  research_questions: z.array(z.object({ id: z.string().regex(/^RQ[1-9][0-9]*$/), text: z.string().min(1) })).default([]),
+  /**
+   * Highest research-question id ever assigned, so a new question never reuses the id of one that
+   * was deleted (existing relations still refer to it by id). Never decreases. Excluded from
+   * thesisHash: bumping it alone must not make summaries stale.
+   */
+  last_rq: z.number().int().min(0).default(0)
 })
-export type ThesisContext = z.infer<typeof ThesisContextSchema>
+// `last_rq` is optional here (unlike the schema's own parsed output) so callers that only care about
+// title/description/research_questions can build a ThesisContext literal without it.
+export type ThesisContext = Omit<z.infer<typeof ThesisContextSchema>, 'last_rq'> & { last_rq?: number }
 
 /** How one paper relates to the thesis in project.yaml. */
 export const ThesisRelationSchema = z.object({

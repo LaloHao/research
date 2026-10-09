@@ -105,10 +105,10 @@ describe('ProjectConfigSchema', () => {
 
 describe('thesis context in project.yaml', () => {
   it('defaults to an empty context and falls back to it when invalid', () => {
-    const empty = { title: '', description: '', research_questions: [] }
+    const empty = { title: '', description: '', research_questions: [], last_rq: 0 }
     expect(ProjectConfigSchema.parse({ schema_version: 1, name: 'T' }).thesis).toEqual(empty)
     expect(ProjectConfigSchema.parse({ schema_version: 1, name: 'T', thesis: { research_questions: [{ id: 'Q1', text: 'x' }] } }).thesis).toEqual(empty)
-    const ok = { title: 'T', description: '', research_questions: [{ id: 'RQ1', text: 'x' }] }
+    const ok = { title: 'T', description: '', research_questions: [{ id: 'RQ1', text: 'x' }], last_rq: 0 }
     expect(ProjectConfigSchema.parse({ schema_version: 1, name: 'T', thesis: ok }).thesis).toEqual(ok)
   })
 })

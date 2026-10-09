@@ -10,7 +10,8 @@ import {
   ThesisContextSchema,
   type CostEntry,
   type ExtractionFile,
-  type SummaryFile
+  type SummaryFile,
+  type ThesisContext
 } from '../../shared/summary'
 import { atomicWrite, sha256 } from './atomicWrite'
 import { ConflictError, ProjectError, type ReadResult } from './errors'
@@ -54,7 +55,9 @@ export class ProjectStore {
     return this.cfg
   }
 
-  async updateConfig(patch: Partial<Pick<ProjectConfig, 'name' | 'content_language' | 'pdfs' | 'llm' | 'extraction_form' | 'thesis'>>): Promise<ProjectConfig> {
+  async updateConfig(
+    patch: Partial<Pick<ProjectConfig, 'name' | 'content_language' | 'pdfs' | 'llm' | 'extraction_form'>> & { thesis?: ThesisContext }
+  ): Promise<ProjectConfig> {
     const next = ProjectConfigSchema.parse({ ...this.cfg, ...patch })
     // An invalid llm/thesis block stays as the user wrote it unless this write replaces that block on purpose.
     const invalid = Object.fromEntries(Object.entries(this.invalidBlocks).filter(([k]) => !(k in patch))) as InvalidBlocks

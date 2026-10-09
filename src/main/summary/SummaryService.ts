@@ -394,7 +394,11 @@ export class SummaryService {
     if (!parsed.success) throw new InvalidEdit('Invalid thesis context')
     const ids = parsed.data.research_questions.map((q) => q.id)
     if (new Set(ids).size !== ids.length) throw new InvalidEdit('Duplicated research question ids')
-    await this.deps.store.updateConfig({ thesis: parsed.data })
+    // The counter never decreases, so a question id already handed out (and possibly still referenced
+    // by a relation) is never reused, even if the question that used it was deleted.
+    const maxId = ids.reduce((n, id) => Math.max(n, Number(/^RQ(\d+)$/.exec(id)?.[1] ?? 0)), 0)
+    const lastRq = Math.max(this.deps.store.config.thesis.last_rq ?? 0, maxId)
+    await this.deps.store.updateConfig({ thesis: { ...parsed.data, last_rq: lastRq } })
     await this.refreshStates()
   }
 

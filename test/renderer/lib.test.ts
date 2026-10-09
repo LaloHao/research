@@ -137,4 +137,11 @@ describe('nextRqId', () => {
     expect(nextRqId([{ id: 'RQ1', text: 'a' }, { id: 'RQ4', text: 'd' }])).toBe('RQ5')
     expect(nextRqId([{ id: 'RQ10', text: 'j' }, { id: 'RQ9', text: 'i' }])).toBe('RQ11')
   })
+
+  it('never reuses an id below the stored counter, even after the question that used it was deleted', () => {
+    // RQ3 was deleted (the highest id currently in use is RQ1), but the counter still remembers it was handed out.
+    expect(nextRqId([{ id: 'RQ1', text: 'a' }], 3)).toBe('RQ4')
+    // The counter itself can lag behind the current questions (e.g. right after loading); the higher of the two wins.
+    expect(nextRqId([{ id: 'RQ1', text: 'a' }, { id: 'RQ5', text: 'e' }], 2)).toBe('RQ6')
+  })
 })

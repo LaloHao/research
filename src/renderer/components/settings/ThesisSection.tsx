@@ -37,7 +37,7 @@ export function ThesisSection(): React.JSX.Element {
     save(next)
   }
   const addRq = (): void => {
-    setThesis({ ...thesis, research_questions: [...thesis.research_questions, { id: nextRqId(thesis.research_questions), text: '' }] })
+    setThesis({ ...thesis, research_questions: [...thesis.research_questions, { id: nextRqId(thesis.research_questions, thesis.last_rq), text: '' }] })
   }
 
   return (

@@ -10,8 +10,10 @@ export function hasThesisContext(t: ThesisContext): boolean {
   return Boolean(t.title.trim() || t.description.trim())
 }
 
+// `last_rq` is a bookkeeping counter, not thesis content: bumping it alone must not stale summaries.
 export function thesisHash(t: ThesisContext): string {
-  return sha256(JSON.stringify(sortKeys(t)))
+  const { title, description, research_questions } = t
+  return sha256(JSON.stringify(sortKeys({ title, description, research_questions })))
 }
 
 export function thesisPromptBlock(t: ThesisContext): string {

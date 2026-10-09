@@ -26,6 +26,10 @@ describe('thesisHash', () => {
     const changed = { ...thesis, research_questions: [thesis.research_questions[0], { id: 'RQ2', text: 'Something else?' }] }
     expect(thesisHash(changed)).not.toBe(thesisHash(thesis))
   })
+
+  it('does not depend on last_rq: bumping the id counter alone must not stale existing summaries', () => {
+    expect(thesisHash({ ...thesis, last_rq: 2 })).toBe(thesisHash({ ...thesis, last_rq: 99 }))
+  })
 })
 
 describe('thesisPromptBlock', () => {

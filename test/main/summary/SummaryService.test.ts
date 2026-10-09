@@ -339,7 +339,7 @@ describe('SummaryService', () => {
 
   it('updateThesis keeps the question ids, saves project.yaml and marks summarized papers stale', async () => {
     const s = await session()
-    expect(s.summaries.thesis()).toEqual({ title: '', description: '', research_questions: [] })
+    expect(s.summaries.thesis()).toEqual({ title: '', description: '', research_questions: [], last_rq: 0 })
     await s.summaries.request('he2017drain')
     await s.queue.whenIdle()
     expect(s.library.list()[0].summary_status).toBe('generated')
@@ -351,16 +351,23 @@ describe('SummaryService', () => {
         { id: 'RQ3', text: 'Third, after RQ2 was removed?' }
       ]
     }
+    // last_rq is bumped to the highest id in use (RQ3), not just the count of questions (2).
+    const saved = { ...expected, last_rq: 3 }
     await s.summaries.updateThesis(expected)
-    expect(s.summaries.thesis()).toEqual(expected)
-    expect(parse(await readFile(join(s.store.root, 'project.yaml'), 'utf8')).thesis).toEqual(expected)
+    expect(s.summaries.thesis()).toEqual(saved)
+    expect(parse(await readFile(join(s.store.root, 'project.yaml'), 'utf8')).thesis).toEqual(saved)
     expect(s.library.list()[0].summary_status).toBe('stale')
     await expect(s.summaries.updateThesis({ ...expected, research_questions: [{ id: 'RQ1', text: '' }] })).rejects.toMatchObject({ name: 'InvalidEdit' })
     await expect(
       s.summaries.updateThesis({ ...expected, research_questions: [{ id: 'RQ1', text: 'a' }, { id: 'RQ1', text: 'b' }] })
     ).rejects.toMatchObject({ name: 'InvalidEdit' })
     await expect(s.summaries.updateThesis({ ...expected, research_questions: [{ id: 'Q1', text: 'a' }] })).rejects.toMatchObject({ name: 'InvalidEdit' })
-    expect(s.summaries.thesis()).toEqual(expected)
+    expect(s.summaries.thesis()).toEqual(saved)
+
+    // Deleting RQ3 and adding a new question must not reuse the id RQ3: the counter never decreases.
+    await s.summaries.updateThesis({ ...expected, research_questions: [expected.research_questions[0]] })
+    await s.summaries.updateThesis({ ...expected, research_questions: [expected.research_questions[0], { id: 'RQ4', text: 'Fourth?' }] })
+    expect(s.summaries.thesis().last_rq).toBe(4)
     await s.close()
   })
 

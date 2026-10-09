@@ -89,7 +89,7 @@ describe('ProjectStore config blocks', () => {
     await writeFile(path, toYaml(raw))
     await s.reloadConfig()
     expect(s.config.llm).toMatchObject({ model: 'sonnet', max_input_chars: 1000 })
-    expect(s.config.thesis).toEqual({ title: '', description: '', research_questions: [] })
+    expect(s.config.thesis).toEqual({ title: '', description: '', research_questions: [], last_rq: 0 })
 
     await s.updateConfig({ name: 'Renamed' })
     const after = parse(await readFile(path, 'utf8'))
@@ -103,7 +103,7 @@ describe('ProjectStore config blocks', () => {
     expect(fixed.llm).toMatchObject({ model: 'haiku', max_input_chars: 1000 })
     expect(fixed.thesis).toEqual(raw.thesis)
     await s.updateConfig({ thesis: { title: 'New', description: '', research_questions: [] } })
-    expect(parse(await readFile(path, 'utf8')).thesis).toEqual({ title: 'New', description: '', research_questions: [] })
+    expect(parse(await readFile(path, 'utf8')).thesis).toEqual({ title: 'New', description: '', research_questions: [], last_rq: 0 })
     await s.updateConfig({ name: 'Again' })
     expect(parse(await readFile(path, 'utf8')).llm).toMatchObject({ model: 'haiku' })
   })
