@@ -1,36 +1,38 @@
 # Research
 
-App de escritorio personal para la investigación de una tesis: biblioteca de papers con BibTeX, búsqueda de texto completo, resúmenes con Claude y, en etapas siguientes, relaciones, chat y mapeo sistemático.
+*[Versión en español](./README.es.md)*
 
-## Requisitos
+A personal desktop app for thesis research: a paper library with BibTeX, full-text search, Claude-generated summaries, and, in later stages, relations, chat, and systematic mapping.
 
-- Node.js 24 o superior y pnpm 12 (`corepack enable`)
-- Para resumir papers: la CLI `claude` instalada y con sesión iniciada (`claude login`)
+## Requirements
 
-## Uso
+- Node.js 24 or later and pnpm (`corepack enable`)
+- To summarize papers: the `claude` CLI installed and signed in (`claude login`)
+
+## Run
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-Guía completa de uso (qué hace la app, cómo agregar papers, resúmenes, modo revisar, cada ajuste, archivos del proyecto): [`docs/guia.md`](docs/guia.md).
+Full user guide (what the app does, how to add papers, summaries, review mode, each setting, project files): [`docs/guide.md`](docs/guide.md).
 
-## Desarrollo
+## Development
 
 ```bash
-pnpm test        # pruebas (sin red)
+pnpm test        # tests (no network)
 pnpm typecheck
-pnpm check       # ambas
-./scripts/record-fixtures.sh   # vuelve a grabar las respuestas HTTP de las pruebas
+pnpm check       # both
+./scripts/record-fixtures.sh   # re-record the tests' HTTP fixtures
 ```
 
-### Evaluación con Claude real
+### Evaluation against real Claude
 
-`pnpm eval:summaries` corre una evaluación opcional contra la CLI real de Claude, sobre una copia temporal y descartable de un proyecto real (nunca escribe en el proyecto original):
+`pnpm eval:summaries` runs an optional evaluation against the real Claude CLI, over a temporary, disposable copy of a real project (it never writes to the original project):
 
 ```bash
-EVAL_PROJECT=~/ruta/a/mi/proyecto pnpm eval:summaries
+EVAL_PROJECT=~/path/to/my/project pnpm eval:summaries
 ```
 
-**Consume cuota real de Claude.** Variables opcionales: `EVAL_MODEL` (modelo a usar, por defecto `sonnet`) y `EVAL_LIMIT` (cuántos papers resumir como máximo, por defecto 5). Sin `EVAL_PROJECT` la prueba aparece como omitida y `pnpm test`/`pnpm check` nunca la incluyen.
+**Uses real Claude quota.** Optional variables: `EVAL_MODEL` (model to use, default `sonnet`) and `EVAL_LIMIT` (maximum number of papers to summarize, default 5). Without `EVAL_PROJECT`, the test shows as skipped, and `pnpm test`/`pnpm check` never include it.
