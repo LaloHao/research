@@ -141,6 +141,8 @@ mark { background: rgba(250, 204, 21, 0.45); }
 .chip-verified { background: var(--accent-soft); color: var(--accent); }
 .chip-edited { background: var(--accent-soft); }
 .chip-evidence_missing, .chip-proposed { background: var(--warning-soft); }
+.chip-list { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip-remove { background: none; border: none; padding: 0; margin-left: 2px; cursor: pointer; font-size: 11px; line-height: 1; }
 .evidence { list-style: none; padding-left: 0 !important; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
 .evidence q { color: var(--muted); font-style: italic; }
 .evidence li.not-found q { text-decoration: underline wavy var(--warning); }
