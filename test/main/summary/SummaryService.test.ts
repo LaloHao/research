@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { LlmError } from '../../../src/main/llm/LlmProvider'
 import { ProjectSession } from '../../../src/main/library/ProjectSession'
@@ -91,6 +91,40 @@ describe('SummaryService', () => {
     }
     const form = s.summaries.formInfo()
     expect(form.status === 'ok' && form.form.value_aliases).toEqual({ sanitization_technique: { tokenization: 'pseudonymization' } })
+    await s.close()
+  })
+
+  it('accepts a proposed value in every paper and adds it to the form', async () => {
+    const out = llmOutputFor(DEFAULT_EXTRACTION_FORM)
+    out.facets.sanitization_technique = { values: ['ner'], proposed: ['tokenization'], evidence: [] }
+    const s = await session([{ value: out, costUsd: 0.01, model: 'm' }], ['a2020x', 'b2020x'])
+    await s.summaries.requestBatch()
+    await s.queue.whenIdle()
+    await s.summaries.acceptProposed('sanitization_technique', 'tokenization')
+    for (const id of ['a2020x', 'b2020x']) {
+      const e = await s.store.readExtraction(id)
+      expect(e?.ok && e.value.facets.sanitization_technique).toMatchObject({ values: ['ner', 'tokenization'], proposed: [] })
+    }
+    const form = s.summaries.formInfo()
+    const facet = form.status === 'ok' ? form.form.facets.find((f) => f.key === 'sanitization_technique') : undefined
+    expect(facet && 'values' in facet && facet.values).toContain('tokenization')
+    await s.close()
+  })
+
+  it('changes no paper and not the form when one affected paper cannot be read', async () => {
+    const out = llmOutputFor(DEFAULT_EXTRACTION_FORM)
+    out.facets.sanitization_technique = { values: [], proposed: ['tokenization'], evidence: [] }
+    const s = await session([{ value: out, costUsd: 0.01, model: 'm' }], ['a2020x', 'b2020x'])
+    await s.summaries.requestBatch()
+    await s.queue.whenIdle()
+    await writeFile(join(s.store.paperDir('b2020x'), 'summary.md'), '<<<<<<< HEAD\nbroken\n=======\nother\n>>>>>>> theirs\n')
+    const extractions = async () => Promise.all(['a2020x', 'b2020x'].map((id) => readFile(join(s.store.paperDir(id), 'extraction.yaml'), 'utf8')))
+    const before = await extractions()
+    const formBefore = structuredClone(s.store.config.extraction_form)
+    await expect(s.summaries.acceptProposed('sanitization_technique', 'tokenization')).rejects.toMatchObject({ code: 'file_problem' })
+    await expect(s.summaries.mapProposed('sanitization_technique', 'tokenization', 'ner')).rejects.toMatchObject({ code: 'file_problem' })
+    expect(await extractions()).toEqual(before)
+    expect(s.store.config.extraction_form).toEqual(formBefore)
     await s.close()
   })
 

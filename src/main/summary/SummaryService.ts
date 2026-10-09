@@ -107,7 +107,8 @@ export class SummaryService {
       throw toUserFacing(error)
     } finally {
       if (!opts.signal?.aborted) {
-        await this.deps.reindex(paperId)
+        // A failing reindex must not replace the summary's own outcome.
+        await this.deps.reindex(paperId).catch((error: unknown) => console.error('reindex', paperId, error))
         this.deps.emit()
       }
     }
@@ -249,28 +250,49 @@ export class SummaryService {
     return this.deps.store.config.llm
   }
 
+  /**
+   * All or nothing up front: every affected paper is read once and checked before anything is written.
+   * If a write still fails midway, the form and the index are updated for what was written, so a retry finishes the rest.
+   */
   private async replaceProposals(apply: (e: ExtractionFile) => ExtractionFile | null, form: ExtractionForm): Promise<void> {
-    const changed: string[] = []
+    const pending: { id: string; files: PaperFiles; next: ExtractionFile }[] = []
     for (const id of await this.deps.store.listPaperIds()) {
-      const e = await this.deps.store.readExtraction(id)
-      if (!e?.ok) continue
-      const next = apply(e.value)
+      const raw = await this.readRaw(id)
+      // An unreadable extraction.yaml cannot tell whether the paper proposed the value; it is left alone.
+      if (!raw.extraction?.ok) continue
+      const next = apply(raw.extraction.value)
       if (!next) continue
-      await this.save(id, await this.read(id), { extraction: next })
-      changed.push(id)
+      if (raw.summary && !raw.summary.ok) throw new UserFacingError('file_problem')
+      pending.push({ id, files: { title: raw.title, summary: raw.summary, extraction: raw.extraction }, next })
     }
-    await this.deps.store.updateConfig({ extraction_form: form })
-    await this.changed(changed)
+    const touched: string[] = []
+    try {
+      for (const p of pending) {
+        touched.push(p.id)
+        await this.save(p.id, p.files, { extraction: p.next })
+      }
+    } finally {
+      try {
+        await this.deps.store.updateConfig({ extraction_form: form })
+      } finally {
+        await this.changed(touched)
+      }
+    }
+  }
+
+  private async readRaw(paperId: string) {
+    const { store, cache } = this.deps
+    const summary = await store.readSummary(paperId)
+    const extraction = await store.readExtraction(paperId)
+    const paper = await store.readPaper(paperId)
+    const title = paper.ok ? paper.value.title : (cache.getPaper(paperId)?.title ?? paperId)
+    return { title, summary, extraction }
   }
 
   private async read(paperId: string): Promise<PaperFiles> {
-    const { store, cache } = this.deps
-    if (!store.paperExists(paperId)) throw new UserFacingError('file_problem')
-    const s = await store.readSummary(paperId)
-    const e = await store.readExtraction(paperId)
+    if (!this.deps.store.paperExists(paperId)) throw new UserFacingError('file_problem')
+    const { title, summary: s, extraction: e } = await this.readRaw(paperId)
     if ((s && !s.ok) || (e && !e.ok)) throw new UserFacingError('file_problem')
-    const paper = await store.readPaper(paperId)
-    const title = paper.ok ? paper.value.title : (cache.getPaper(paperId)?.title ?? paperId)
     return { title, summary: s?.ok ? s : null, extraction: e?.ok ? e : null }
   }
 
