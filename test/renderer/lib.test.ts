@@ -3,6 +3,7 @@ import type { TFunction } from 'i18next'
 import { filterByModel, filterBySummary, rowBadges } from '../../src/renderer/lib/badges'
 import { errorText } from '../../src/renderer/lib/errorText'
 import { jobDetail, jobLabel, visibleJobs } from '../../src/renderer/lib/jobLabel'
+import { renumberRQs } from '../../src/renderer/lib/thesis'
 import type { JobRecord } from '../../src/shared/jobs'
 import type { PaperRow } from '../../src/shared/library'
 
@@ -125,5 +126,27 @@ describe('filterByModel', () => {
     expect(filterByModel(rows, 'sonnet').map((r) => r.id)).toEqual(['a'])
     expect(filterByModel(rows, 'haiku').map((r) => r.id)).toEqual(['b'])
     expect(filterByModel(rows, 'opus').map((r) => r.id)).toEqual([])
+  })
+})
+
+describe('renumberRQs', () => {
+  it('reassigns ids RQ1..n in order, keeping the text', () => {
+    expect(renumberRQs([{ id: 'RQ1', text: 'a' }, { id: 'RQ2', text: 'b' }])).toEqual([
+      { id: 'RQ1', text: 'a' },
+      { id: 'RQ2', text: 'b' }
+    ])
+  })
+
+  it('fixes duplicate or stale ids after a removal followed by an addition', () => {
+    // RQ1, RQ2 removed, then a new one added with a placeholder id: RQ2 would collide with the old RQ2's slot.
+    const afterRemoveThenAdd = [{ id: 'RQ1', text: 'a' }, { id: '', text: 'c' }]
+    expect(renumberRQs(afterRemoveThenAdd)).toEqual([
+      { id: 'RQ1', text: 'a' },
+      { id: 'RQ2', text: 'c' }
+    ])
+  })
+
+  it('returns an empty list unchanged', () => {
+    expect(renumberRQs([])).toEqual([])
   })
 })

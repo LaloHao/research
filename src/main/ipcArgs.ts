@@ -32,9 +32,9 @@ export const ipcArgs = {
     max_input_chars: z.number().int().positive().optional(),
     budget: z
       .strictObject({
-        per_operation_usd: z.number().positive(),
-        per_batch_usd: z.number().positive(),
-        per_month_usd: z.number().positive().nullable()
+        per_operation_usd: z.number().positive().optional(),
+        per_batch_usd: z.number().positive().optional(),
+        per_month_usd: z.number().positive().nullable().optional()
       })
       .optional()
   }),

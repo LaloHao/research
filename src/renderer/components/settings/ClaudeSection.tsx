@@ -30,7 +30,7 @@ export function ClaudeSection(): React.JSX.Element {
   useEffect(load, [load])
   useEvent('project-changed', load)
 
-  const save = (patch: Partial<LlmConfig>): void => {
+  const save = (patch: Partial<Omit<LlmConfig, 'budget'>> & { budget?: Partial<LlmConfig['budget']> }): void => {
     setError(null)
     window.research.llm.update(patch).then(
       (result) => {
@@ -40,16 +40,10 @@ export function ClaudeSection(): React.JSX.Element {
     )
   }
 
-  const saveBudget = (patch: Partial<LlmConfig['budget']>): void => {
-    save({
-      budget: {
-        per_operation_usd: Number(perOperation),
-        per_batch_usd: Number(perBatch),
-        per_month_usd: perMonth.trim() === '' ? null : Number(perMonth),
-        ...patch
-      }
-    })
-  }
+  /** Sends only the changed budget field; the main process deep-merges it into the current budget. */
+  const saveBudget = (patch: Partial<LlmConfig['budget']>): void => save({ budget: patch })
+
+  const invalid = (): void => setError(errorText(t, 'invalid_edit'))
 
   return (
     <section className="claude-section">
@@ -95,6 +89,7 @@ export function ClaudeSection(): React.JSX.Element {
           onBlur={() => {
             const value = Number(perOperation)
             if (Number.isFinite(value) && value > 0) saveBudget({ per_operation_usd: value })
+            else invalid()
           }}
         />
       </label>
@@ -109,6 +104,7 @@ export function ClaudeSection(): React.JSX.Element {
           onBlur={() => {
             const value = Number(perBatch)
             if (Number.isFinite(value) && value > 0) saveBudget({ per_batch_usd: value })
+            else invalid()
           }}
         />
       </label>
@@ -127,6 +123,7 @@ export function ClaudeSection(): React.JSX.Element {
             }
             const value = Number(perMonth)
             if (Number.isFinite(value) && value > 0) saveBudget({ per_month_usd: value })
+            else invalid()
           }}
         />
       </label>
@@ -141,6 +138,7 @@ export function ClaudeSection(): React.JSX.Element {
           onBlur={() => {
             const value = Number(maxInput)
             if (Number.isInteger(value) && value > 0) save({ max_input_chars: value })
+            else invalid()
           }}
         />
       </label>

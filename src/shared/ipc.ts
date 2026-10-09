@@ -114,7 +114,8 @@ export interface ResearchApi {
   }
   llm: {
     info(): Promise<LlmInfo>
-    update(patch: Partial<LlmConfig>): Promise<ActionResult>
+    /** The main process deep-merges `budget`, so a partial budget patch only touches the fields given. */
+    update(patch: Partial<Omit<LlmConfig, 'budget'>> & { budget?: Partial<LlmConfig['budget']> }): Promise<ActionResult>
     createForm(): Promise<ActionResult>
     showProjectFile(): Promise<void>
   }

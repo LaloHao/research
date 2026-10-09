@@ -272,7 +272,7 @@ export class SummaryService {
     await this.changed(await this.deps.store.listPaperIds())
   }
 
-  async updateLlm(patch: Partial<LlmConfig>): Promise<LlmConfig> {
+  async updateLlm(patch: Partial<Omit<LlmConfig, 'budget'>> & { budget?: Partial<LlmConfig['budget']> }): Promise<LlmConfig> {
     const current = this.deps.store.config.llm
     const merged = { ...current, ...patch, budget: { ...current.budget, ...(patch.budget ?? {}) } }
     const parsed = LlmConfigShape.safeParse(merged)
