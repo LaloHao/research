@@ -103,9 +103,7 @@ export class ProjectSession {
             .catch((error) => console.error('reindex', id, error))
         },
         onConfig: () => {
-          void session
-            .track(store.reloadConfig().then(() => session.emit('project')))
-            .catch((error) => console.error('project.yaml', error))
+          void session.track(session.reloadConfig()).catch((error) => console.error('project.yaml', error))
         }
       })
     }
@@ -123,6 +121,13 @@ export class ProjectSession {
     const done = (): void => void this.inFlight.delete(promise)
     promise.then(done, done)
     return promise
+  }
+
+  /** Picks up an edit of project.yaml made outside the app; the form, the thesis or max_input_chars may change every summary state. */
+  async reloadConfig(): Promise<void> {
+    // Our own writes come through the watcher too; only a real external change needs the states recomputed.
+    if (await this.store.reloadConfig()) await this.summaries.refreshStates()
+    this.emit('project')
   }
 
   readPdf(id: string): Promise<Uint8Array | null> {

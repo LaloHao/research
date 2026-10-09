@@ -96,6 +96,7 @@ export class SummaryService {
     if (load.status === 'ok') return load.form
     if (load.status === 'invalid') throw new UserFacingError('invalid_form')
     await this.deps.store.updateConfig({ extraction_form: DEFAULT_EXTRACTION_FORM })
+    await this.refreshStates()
     return DEFAULT_EXTRACTION_FORM
   }
 
@@ -285,7 +286,7 @@ export class SummaryService {
     const parsed = ThesisContextSchema.safeParse(renumbered)
     if (!parsed.success) throw new InvalidEdit('Invalid thesis context')
     await this.deps.store.updateConfig({ thesis: parsed.data })
-    await this.changed(await this.deps.store.listPaperIds())
+    await this.refreshStates()
   }
 
   async updateLlm(patch: Partial<Omit<LlmConfig, 'budget'>> & { budget?: Partial<LlmConfig['budget']> }): Promise<LlmConfig> {
@@ -294,7 +295,17 @@ export class SummaryService {
     const parsed = LlmConfigShape.safeParse(merged)
     if (!parsed.success) throw new InvalidEdit('Invalid Claude settings')
     await this.deps.store.updateConfig({ llm: parsed.data })
+    await this.refreshStates()
     return this.deps.store.config.llm
+  }
+
+  /** Recomputes every paper's summary state after a change of project.yaml (form, thesis or max_input_chars), then notifies once. */
+  async refreshStates(): Promise<void> {
+    const { store, cache } = this.deps
+    for (const id of cache.paperIds()) {
+      if (store.paperExists(id)) await indexSummary(store, cache, id).catch((error: unknown) => console.error('summary state', id, error))
+    }
+    this.deps.emit()
   }
 
   /**
@@ -312,17 +323,13 @@ export class SummaryService {
       if (raw.summary && !raw.summary.ok) throw new UserFacingError('file_problem')
       pending.push({ id, files: { title: raw.title, summary: raw.summary, extraction: raw.extraction }, next })
     }
-    const touched: string[] = []
     try {
-      for (const p of pending) {
-        touched.push(p.id)
-        await this.save(p.id, p.files, { extraction: p.next })
-      }
+      for (const p of pending) await this.save(p.id, p.files, { extraction: p.next })
     } finally {
       try {
         await this.deps.store.updateConfig({ extraction_form: form })
       } finally {
-        await this.changed(touched)
+        await this.refreshStates()
       }
     }
   }

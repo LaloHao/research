@@ -289,3 +289,35 @@ describe('SummaryService: papers longer than max_input_chars', () => {
     await s.close()
   })
 })
+
+describe('SummaryService: config changes refresh every summary state', () => {
+  it('an external edit of project.yaml (e.g. a git pull) recomputes the states', async () => {
+    const s = await session()
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    expect(s.library.list()[0].summary_status).toBe('generated')
+    let libraryEvents = 0
+    s.on('library', () => libraryEvents++)
+    const raw = parse(await readFile(join(s.store.root, 'project.yaml'), 'utf8'))
+    raw.extraction_form.facets.push({ key: 'venue_type', type: 'text', description: 'Kind of venue' })
+    await writeFile(join(s.store.root, 'project.yaml'), toYaml(raw))
+    // What the watcher calls on a change of project.yaml.
+    await s.reloadConfig()
+    expect(s.library.list()[0].summary_status).toBe('stale')
+    expect(libraryEvents).toBe(1)
+    // Our own writes also reach the watcher: an unchanged file recomputes nothing.
+    await s.reloadConfig()
+    expect(libraryEvents).toBe(1)
+    await s.close()
+  })
+
+  it('updateLlm recomputes the states (max_input_chars decides too_long)', async () => {
+    const s = await session([ok()], ['a2020x'])
+    expect(s.library.list()[0].summary_status).toBe('none')
+    await s.summaries.updateLlm({ max_input_chars: 50 })
+    expect(s.library.list()[0].summary_status).toBe('too_long')
+    await s.summaries.updateLlm({ max_input_chars: 400000 })
+    expect(s.library.list()[0].summary_status).toBe('none')
+    await s.close()
+  })
+})

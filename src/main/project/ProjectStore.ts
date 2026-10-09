@@ -46,11 +46,13 @@ export class ProjectStore {
     return next
   }
 
-  /** Picks up an external edit of project.yaml (e.g. after a git pull). */
-  async reloadConfig(): Promise<void> {
+  /** Picks up an external edit of project.yaml (e.g. after a git pull). Returns false when the file is what we last wrote or read. */
+  async reloadConfig(): Promise<boolean> {
     const { cfg, hash } = await readConfig(this.root)
+    const changed = hash !== this.cfgHash
     this.cfg = cfg
     this.cfgHash = hash
+    return changed
   }
 
   paperDir(id: string): string {
