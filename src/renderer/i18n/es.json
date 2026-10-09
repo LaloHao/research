@@ -204,7 +204,8 @@
     "shortcuts": "V verificar · E editar · U desverificar · → siguiente · ← anterior · Esc salir",
     "passage": "Texto extraído de la página {{page}}",
     "passage_web": "Texto extraído",
-    "quote_not_in_pdf": "No se encontró la cita en el PDF; se muestra el texto extraído."
+    "quote_not_in_pdf": "No se encontró la cita en el PDF; se muestra el texto extraído.",
+    "item_unavailable": "Este elemento ya no está disponible. Usa → para continuar."
   },
   "notes": {
     "placeholder": "Escribe tus notas en Markdown…",

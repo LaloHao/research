@@ -16,4 +16,9 @@ describe('matchSpans', () => {
     const spans = ['The quick brown fox jumps over the lazy dog.']
     expect(matchSpans(spans, 'a completely unrelated invented sentence')).toEqual([])
   })
+
+  it('skips an empty span between quote parts and never includes it in the result', () => {
+    const spans = ['quick brown ', '', 'fox jumps']
+    expect(matchSpans(spans, 'quick brown fox jumps')).toEqual([0, 2])
+  })
 })

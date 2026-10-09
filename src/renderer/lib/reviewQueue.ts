@@ -21,10 +21,17 @@ export function current(c: ReviewCursor): ReviewItem | null {
 
 const sameItem = (a: ReviewItem, b: ReviewItem): boolean => a.paperId === b.paperId && a.section === b.section && a.key === b.key
 
-/** Removes the resolved item; the index then points at what became the next item, or the new last one. */
+/**
+ * Removes the resolved item; the index then points at what became the next item, or the new last
+ * one. When the resolved item sat before the current index, the index is shifted down first so
+ * the item that was current stays current. A no-op when the resolved item is not in the queue.
+ */
 export function afterResolve(c: ReviewCursor, resolved: ReviewItem): ReviewCursor {
-  const items = c.items.filter((it) => !sameItem(it, resolved))
-  return { items, index: clamp(c.index, items) }
+  const removedIndex = c.items.findIndex((it) => sameItem(it, resolved))
+  if (removedIndex < 0) return c
+  const items = c.items.filter((_, i) => i !== removedIndex)
+  const index = removedIndex < c.index ? c.index - 1 : c.index
+  return { items, index: clamp(index, items) }
 }
 
 export function progressLabel(c: ReviewCursor): { position: number; total: number } {

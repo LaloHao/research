@@ -55,6 +55,20 @@ describe('reviewQueue', () => {
     expect(current(result)).toBeNull()
   })
 
+  it('afterResolve decrements the index when the resolved item sat before it, so nothing is skipped', () => {
+    const c: ReviewCursor = { items, index: 1 } // current is items[1] (B)
+    const result = afterResolve(c, items[0]) // resolve A, which is before the current index
+    expect(result.items).toEqual([items[1], items[2]])
+    expect(result.index).toBe(0)
+    expect(current(result)).toEqual(items[1])
+  })
+
+  it('afterResolve is a no-op when the resolved item is not in the queue', () => {
+    const c: ReviewCursor = { items, index: 1 }
+    const foreign: ReviewItem = { paperId: 'other', title: 'Other', section: 'fields', key: 'tldr' }
+    expect(afterResolve(c, foreign)).toEqual(c)
+  })
+
   it('progressLabel reports a 1-based position and the total', () => {
     expect(progressLabel({ items, index: 0 })).toEqual({ position: 1, total: 3 })
     expect(progressLabel({ items, index: 2 })).toEqual({ position: 3, total: 3 })
