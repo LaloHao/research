@@ -4,6 +4,7 @@
 
 - Reorder facets in the extraction form editor.
 - Have Claude suggest facets (and values) from the thesis's context.
+- Git sync from the app: a "Sincronizar" button that pulls, commits and pushes the project folder (git or git LFS for PDFs), shows the last sync time, warns when there are unpushed changes before closing, and reports conflicts clearly (the app already refuses to overwrite files with conflict markers). Today syncing between computers is done by hand with `git pull` / `git commit` / `git push`.
 
 ## Upcoming stages
 
