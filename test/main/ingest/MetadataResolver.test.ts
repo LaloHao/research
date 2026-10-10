@@ -68,6 +68,35 @@ describe('MetadataResolver', () => {
   })
 })
 
+describe('MetadataResolver.byOpenAlex', () => {
+  it('builds the metadata from OpenAlex for a work without a DOI', async () => {
+    const meta = await resolver([{ url: /api\.openalex\.org\/works\/W2132031035\?select=/, body: fx('consolelogs.openalex.json') }]).byOpenAlex('W2132031035')
+    expect(meta).toEqual({
+      kind: 'article',
+      title: 'System problem detection by mining console logs',
+      authors: [
+        { family: 'Patterson', given: 'David A.' },
+        { family: 'Xu', given: 'Wei' }
+      ],
+      year: 2010,
+      abstract: 'Surprisingly, console logs rarely help operators detect problems',
+      identifiers: { openalex: 'W2132031035' },
+      complete: true
+    })
+  })
+
+  it('goes through the DOI when the OpenAlex work has one', async () => {
+    const meta = await resolver([
+      ...routes('drain', '10.1109/icws.2017.13'),
+      { url: /api\.openalex\.org\/works\/W2754665629\?select=/, body: fx('drain.openalex.json') }
+    ]).byOpenAlex('W2754665629')
+    expect(meta).toMatchObject({
+      title: 'Drain: An Online Log Parsing Approach with Fixed Depth Tree',
+      identifiers: { doi: '10.1109/icws.2017.13', openalex: 'W2754665629' }
+    })
+  })
+})
+
 describe('invertedIndexToText', () => {
   it('rebuilds the abstract word order', () => {
     expect(invertedIndexToText({ logs: [1], parsing: [2], Online: [0], logs2: [] })).toBe('Online logs parsing')

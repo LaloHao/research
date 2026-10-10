@@ -1,6 +1,7 @@
 export type ParsedInput =
   | { kind: 'doi'; doi: string }
   | { kind: 'arxiv'; arxiv: string }
+  | { kind: 'openalex'; openalex: string }
   | { kind: 'url'; url: string }
   | { kind: 'invalid' }
 
@@ -8,6 +9,7 @@ const DOI_IN_TEXT = /\b(10\.\d{4,9}\/[^\s"'<>]+)/i
 const ARXIV_NEW = /^(\d{4}\.\d{4,5})(?:v\d+)?$/
 const ARXIV_OLD = /^([a-z-]+(?:\.[a-z]{2})?\/\d{7})(?:v\d+)?$/i
 const ARXIV_IN_TEXT = /arXiv:\s*(\d{4}\.\d{4,5})(?:v\d+)?/i
+const OPENALEX = /^(?:https?:\/\/(?:api\.)?openalex\.org\/(?:works\/)?)?(W\d+)$/i
 
 /** DOIs are case-insensitive; they are stored lowercase. */
 export function normalizeDoi(raw: string): string {
@@ -38,6 +40,8 @@ export function arxivFromDoi(doi: string): string | null {
 export function parseInput(input: string): ParsedInput {
   const s = input.trim()
   if (!s) return { kind: 'invalid' }
+  const openalex = s.match(OPENALEX)
+  if (openalex) return { kind: 'openalex', openalex: openalex[1].toUpperCase() }
   const arxiv = normalizeArxiv(s)
   if (arxiv) return { kind: 'arxiv', arxiv }
   if (/^https?:\/\//i.test(s)) {
