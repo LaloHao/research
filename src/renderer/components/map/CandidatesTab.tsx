@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CANDIDATE_DIRECTIONS, type Candidate, type CandidateDirection, type CandidateList } from '../../../shared/relations'
 import { useDebouncedCallback } from '../../hooks/useDebouncedCallback'
@@ -13,29 +13,29 @@ export function CandidatesTab({ paperId, onClearPaper }: { paperId: string | nul
   const [list, setList] = useState<CandidateList | null>(null)
   const [loading, setLoading] = useState(false)
   const [notice, setNotice] = useState<{ error: boolean; text: string } | null>(null)
+  const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(new Set())
+  const [fetchingCitedBy, setFetchingCitedBy] = useState(false)
+  // Shared by the effect-driven refresh and the manual one after a dismiss: only the latest request may apply its result.
+  const requestToken = useRef(0)
 
   useEffect(() => setMinCount(defaultMinCount(paperId)), [paperId])
 
   const refresh = useCallback(() => {
+    const token = ++requestToken.current
     setLoading(true)
     setNotice(null)
-    let stale = false
-    const cleanup = (): void => {
-      stale = true
-    }
     window.research.citations.candidates({ direction, minCount, ...(paperId ? { paperId } : {}) }).then(
       (next) => {
-        if (stale) return
+        if (requestToken.current !== token) return
         setList(next)
         setLoading(false)
       },
       () => {
-        if (stale) return
+        if (requestToken.current !== token) return
         setLoading(false)
         setNotice({ error: true, text: errorText(t, 'unknown') })
       }
     )
-    return cleanup
   }, [direction, minCount, paperId, t])
   useEffect(refresh, [refresh])
   // A batch of jobs emits many library-changed events; refreshing once after them avoids repeated work.
@@ -44,26 +44,38 @@ export function CandidatesTab({ paperId, onClearPaper }: { paperId: string | nul
   const report = (result: { ok: true } | { ok: false; error: string }, success: string): void => {
     setNotice(result.ok ? { error: false, text: success } : { error: true, text: errorText(t, result.error) })
   }
+  const withPending = (id: string, run: () => Promise<void>): void => {
+    setPendingIds((prev) => new Set(prev).add(id))
+    void run().finally(() => setPendingIds((prev) => (prev.has(id) ? new Set([...prev].filter((x) => x !== id)) : prev)))
+  }
   const add = (c: Candidate): void => {
-    void window.research.citations.add(c.openalexId).then(
-      (r) => report(r, t('map.candidates.added', { title: candidateTitle(c) })),
-      () => report({ ok: false, error: 'unknown' }, '')
+    withPending(c.openalexId, () =>
+      window.research.citations.add(c.openalexId).then(
+        (r) => report(r, t('map.candidates.added', { title: candidateTitle(c) })),
+        () => report({ ok: false, error: 'unknown' }, '')
+      )
     )
   }
   const dismiss = (c: Candidate): void => {
-    void window.research.citations.dismiss(c.openalexId).then(
-      (r) => {
-        if (r.ok) refresh()
-        else report(r, '')
-      },
-      () => report({ ok: false, error: 'unknown' }, '')
+    withPending(c.openalexId, () =>
+      window.research.citations.dismiss(c.openalexId).then(
+        (r) => {
+          if (r.ok) refresh()
+          else report(r, '')
+        },
+        () => report({ ok: false, error: 'unknown' }, '')
+      )
     )
   }
   const fetchCitedBy = (): void => {
-    void window.research.citations.fetchCitedBy().then(
-      (r) => (r.ok ? report({ ok: true }, t('map.candidates.cited_by_queued', { count: r.count })) : report(r, '')),
-      () => report({ ok: false, error: 'unknown' }, '')
-    )
+    setFetchingCitedBy(true)
+    void window.research.citations
+      .fetchCitedBy()
+      .then(
+        (r) => (r.ok ? report({ ok: true }, t('map.candidates.cited_by_queued', { count: r.count })) : report(r, '')),
+        () => report({ ok: false, error: 'unknown' }, '')
+      )
+      .finally(() => setFetchingCitedBy(false))
   }
 
   const rows = list?.candidates.slice(0, MAX_ROWS) ?? []
@@ -94,7 +106,9 @@ export function CandidatesTab({ paperId, onClearPaper }: { paperId: string | nul
             </button>
           </span>
         )}
-        <button onClick={fetchCitedBy}>{t('map.candidates.fetch_cited_by')}</button>
+        <button onClick={fetchCitedBy} disabled={fetchingCitedBy}>
+          {t('map.candidates.fetch_cited_by')}
+        </button>
       </div>
       {notice && <div className={`banner${notice.error ? ' error' : ''}`}>{notice.text}</div>}
       {list?.metadataError && <div className="banner warning">{t('map.candidates.metadata_error', { error: errorText(t, list.metadataError) })}</div>}
@@ -129,10 +143,10 @@ export function CandidatesTab({ paperId, onClearPaper }: { paperId: string | nul
                 <td>{c.work?.citedByCount ?? none}</td>
                 <td>
                   <div className="row">
-                    <button className="small primary" onClick={() => add(c)}>
+                    <button className="small primary" onClick={() => add(c)} disabled={pendingIds.has(c.openalexId)}>
                       {t('map.candidates.add')}
                     </button>
-                    <button className="small" onClick={() => dismiss(c)}>
+                    <button className="small" onClick={() => dismiss(c)} disabled={pendingIds.has(c.openalexId)}>
                       {t('map.candidates.dismiss')}
                     </button>
                   </div>
