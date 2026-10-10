@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { CitationsSchema, SnowballSchema } from './relations'
 import { DEFAULT_LLM_CONFIG, LlmConfigSchema, ThesisContextSchema } from './summary'
 
 export const PDF_POLICIES = ['track', 'lfs', 'untracked', 'download_on_demand'] as const
@@ -14,6 +15,8 @@ export const ProjectConfigSchema = z.looseObject({
   llm: LlmConfigSchema.default(() => structuredClone(DEFAULT_LLM_CONFIG)),
   /** An invalid thesis block falls back to an empty context instead of making project.yaml unreadable. */
   thesis: ThesisContextSchema.catch(() => ({ title: '', description: '', research_questions: [], last_rq: 0 })).prefault({}),
+  /** Candidates the user dismissed; an invalid block falls back to none instead of making project.yaml unreadable. */
+  snowball: SnowballSchema.catch(() => ({ dismissed: [] })).prefault({}),
   /** Validated separately (summary/extractionForm.ts): a mistake in the form must not stop the project from opening. */
   extraction_form: z.unknown().optional()
 })
@@ -48,6 +51,8 @@ export const PaperSchema = z.looseObject({
   identifiers: IdentifiersSchema.default({}),
   oa_pdf_url: z.string().optional(),
   pdf_sha256: z.string().optional(),
+  /** Rebuildable from OpenAlex: an invalid block reads as absent (and is dropped on the next write). */
+  citations: CitationsSchema.optional().catch(undefined),
   bibtex: z.string().min(1),
   metadata_status: z.enum(['complete', 'incomplete']),
   added_at: z.string(),

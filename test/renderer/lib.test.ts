@@ -15,6 +15,7 @@ const job = (over: Partial<JobRecord>): JobRecord => ({
   spec: { type: 'ingest_identifier', input: '10.1/x' },
   state: 'queued',
   message: null,
+  progress: null,
   paperId: null,
   createdAt: 't',
   updatedAt: 't',
@@ -38,6 +39,7 @@ const row = (over: Partial<PaperRow>): PaperRow => ({
   summary_status: 'none',
   pending_review: 0,
   summary_model: null,
+  citations_status: 'none',
   ...over
 })
 
@@ -47,6 +49,10 @@ describe('jobLabel', () => {
     expect(jobLabel(t, job({ spec: { type: 'ingest_pdf', path: '/home/me/Downloads/paper.pdf' } }))).toBe('jobs.ingest_pdf {"file":"paper.pdf"}')
     expect(jobLabel(t, job({ spec: { type: 'update_metadata', paperId: 'he2017drain' } }))).toBe('jobs.update_metadata {"id":"he2017drain"}')
     expect(jobLabel(t, job({ spec: { type: 'summarize', paperId: 'he2017drain' } }))).toBe('jobs.summarize {"id":"he2017drain"}')
+    expect(jobLabel(t, job({ spec: { type: 'citations', paperId: 'he2017drain' } }))).toBe('jobs.citations {"id":"he2017drain"}')
+    expect(jobLabel(t, job({ spec: { type: 'cited_by', paperId: 'he2017drain' } }))).toBe('jobs.cited_by {"id":"he2017drain"}')
+    expect(jobLabel(t, job({ spec: { type: 'embed', paperId: 'he2017drain' } }))).toBe('jobs.embed {"id":"he2017drain"}')
+    expect(jobLabel(t, job({ spec: { type: 'model_download' } }))).toBe('jobs.model_download')
   })
 })
 

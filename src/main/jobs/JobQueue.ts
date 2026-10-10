@@ -142,6 +142,7 @@ function toRecord(row: JobRow): JobRecord {
     spec: JSON.parse(row.spec) as JobSpec,
     state: row.state,
     message: row.message,
+    progress: null,
     paperId: row.paper_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at

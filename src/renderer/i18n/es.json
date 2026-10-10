@@ -148,6 +148,10 @@
     "ingest_pdf": "Agregar {{file}}",
     "update_metadata": "Completar metadatos de {{id}}",
     "summarize": "Resumir {{id}}",
+    "citations": "Citas de {{id}}",
+    "cited_by": "Quién cita a {{id}}",
+    "embed": "Similitud de {{id}}",
+    "model_download": "Descargar el modelo de similitud",
     "state": {
       "queued": "En cola",
       "running": "En curso",
@@ -159,7 +163,12 @@
       "added": "agregado",
       "merged": "actualizado",
       "duplicate": "ya estaba en la biblioteca",
-      "summarized": "resumido"
+      "summarized": "resumido",
+      "citations_updated": "citas actualizadas",
+      "citations_unresolved": "no se encontró en OpenAlex",
+      "cited_by_updated": "citas entrantes actualizadas",
+      "embedded": "listo",
+      "model_downloaded": "modelo descargado"
     }
   },
   "errors": {
@@ -184,6 +193,9 @@
     "too_long": "El texto supera el tamaño máximo configurado.",
     "invalid_form": "El formulario de extracción en project.yaml tiene errores.",
     "invalid_edit": "El valor no es válido para este campo.",
+    "openalex_limit": "Se alcanzó el límite diario de OpenAlex. Reintenta mañana o agrega una clave de API en Ajustes.",
+    "model_missing": "El modelo local de similitud no está descargado. Descárgalo en Ajustes → Aplicación.",
+    "model_error": "No se pudo cargar el modelo local de similitud. Bórralo y vuelve a descargarlo en Ajustes → Aplicación.",
     "unknown": "Ocurrió un error inesperado."
   },
   "paper": {

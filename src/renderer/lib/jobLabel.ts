@@ -12,6 +12,14 @@ export function jobLabel(t: TFunction, job: JobRecord): string {
       return t('jobs.update_metadata', { id: job.spec.paperId })
     case 'summarize':
       return t('jobs.summarize', { id: job.spec.paperId })
+    case 'citations':
+      return t('jobs.citations', { id: job.spec.paperId })
+    case 'cited_by':
+      return t('jobs.cited_by', { id: job.spec.paperId })
+    case 'embed':
+      return t('jobs.embed', { id: job.spec.paperId })
+    case 'model_download':
+      return t('jobs.model_download')
   }
 }
 

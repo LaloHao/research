@@ -152,13 +152,22 @@ export class ProjectSession {
 }
 
 export async function runJob(library: LibraryService, summaries: SummaryService, spec: JobSpec, signal: AbortSignal): Promise<{ paperId?: string; message?: string }> {
-  if (spec.type === 'summarize') return summaries.run(spec.paperId, { force: spec.force, batchId: spec.batchId, model: spec.model, signal })
-  const outcome =
-    spec.type === 'ingest_identifier'
-      ? await library.ingestIdentifier(spec.input, signal)
-      : spec.type === 'ingest_pdf'
-        ? await library.ingestPdf(spec.path, signal)
-        : await library.updateMetadata(spec.paperId, spec.input, signal)
-  if (outcome.status !== 'duplicate') await summaries.autoAfterIngest(outcome.paperId).catch((error) => console.error('auto summarize', error))
-  return { paperId: outcome.paperId, message: outcome.status }
+  switch (spec.type) {
+    case 'summarize':
+      return summaries.run(spec.paperId, { force: spec.force, batchId: spec.batchId, model: spec.model, signal })
+    case 'ingest_identifier':
+    case 'ingest_pdf':
+    case 'update_metadata': {
+      const outcome =
+        spec.type === 'ingest_identifier'
+          ? await library.ingestIdentifier(spec.input, signal)
+          : spec.type === 'ingest_pdf'
+            ? await library.ingestPdf(spec.path, signal)
+            : await library.updateMetadata(spec.paperId, spec.input, signal)
+      if (outcome.status !== 'duplicate') await summaries.autoAfterIngest(outcome.paperId).catch((error) => console.error('auto summarize', error))
+      return { paperId: outcome.paperId, message: outcome.status }
+    }
+    default:
+      throw new Error(`No handler for ${spec.type} jobs`)
+  }
 }

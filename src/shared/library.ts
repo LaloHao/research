@@ -1,3 +1,4 @@
+import type { CitationsStatus } from './relations'
 import type { Paper } from './schemas'
 import type { ExtractionFile, ExtractionForm, SummaryFile, SummaryStatus } from './summary'
 
@@ -25,6 +26,8 @@ export interface PaperRow {
   pending_review: number
   /** `generated.model` of the last summary, or `null` when there is none. */
   summary_model: string | null
+  /** Whether citations were fetched from OpenAlex ('none' until the first try). */
+  citations_status: CitationsStatus
 }
 
 /** Error codes the main process hands to the UI; each has a translation under `errors.<code>`. */
@@ -50,6 +53,9 @@ export const USER_ERROR_CODES = [
   'too_long',
   'invalid_form',
   'invalid_edit',
+  'openalex_limit',
+  'model_missing',
+  'model_error',
   'unknown'
 ] as const
 export type UserErrorCode = (typeof USER_ERROR_CODES)[number]
@@ -62,7 +68,15 @@ export const INGEST_STATUSES = ['added', 'merged', 'duplicate'] as const
 export type IngestStatus = (typeof INGEST_STATUSES)[number]
 
 /** What a finished job reports in `message`; each has a translation under `jobs.outcome.<value>`. */
-export const JOB_OUTCOMES = [...INGEST_STATUSES, 'summarized'] as const
+export const JOB_OUTCOMES = [
+  ...INGEST_STATUSES,
+  'summarized',
+  'citations_updated',
+  'citations_unresolved',
+  'cited_by_updated',
+  'embedded',
+  'model_downloaded'
+] as const
 
 export interface PaperDetail {
   id: string

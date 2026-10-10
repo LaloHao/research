@@ -18,7 +18,7 @@ describe('app settings', () => {
 
   it('round-trips and drops fields of the wrong type', async () => {
     const file = join(await tmpDir(), 'settings.json')
-    await saveSettings(file, { contactEmail: 'me@uni.test', lastProjectPath: '/tmp/thesis', deviceId: 'd0d0d0d0-0000-0000-0000-000000000000' })
+    await saveSettings(file, { contactEmail: 'me@uni.test', openalexApiKey: '', lastProjectPath: '/tmp/thesis', deviceId: 'd0d0d0d0-0000-0000-0000-000000000000' })
     expect(await loadSettings(file)).toMatchObject({ contactEmail: 'me@uni.test', lastProjectPath: '/tmp/thesis' })
     await writeFile(file, JSON.stringify({ contactEmail: 42, lastProjectPath: '/x', extra: true }))
     expect(await loadSettings(file)).toMatchObject({ contactEmail: '', lastProjectPath: '/x' })
@@ -32,5 +32,14 @@ describe('app settings', () => {
     expect(first.deviceId).toMatch(/^[0-9a-f-]{36}$/)
     await saveSettings(file, first)
     expect((await loadSettings(file)).deviceId).toBe(first.deviceId)
+  })
+
+  it('keeps the OpenAlex API key and defaults it to empty', async () => {
+    const file = join(await tmpDir(), 'settings.json')
+    expect((await loadSettings(file)).openalexApiKey).toBe('')
+    await writeFile(file, JSON.stringify({ openalexApiKey: 'k-123' }))
+    expect((await loadSettings(file)).openalexApiKey).toBe('k-123')
+    await writeFile(file, JSON.stringify({ openalexApiKey: 7 }))
+    expect((await loadSettings(file)).openalexApiKey).toBe('')
   })
 })

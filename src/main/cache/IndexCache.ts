@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { authorsLabel } from '../../shared/format'
 import type { JobState } from '../../shared/jobs'
 import type { PaperRow, TextStatus } from '../../shared/library'
+import type { CitationsStatus } from '../../shared/relations'
 import type { Paper } from '../../shared/schemas'
 import type { SummaryStatus } from '../../shared/summary'
 import type { Chunk } from '../extract/chunker'
@@ -317,6 +318,7 @@ function toPaperRow(r: Record<string, unknown>): PaperRow {
     text_status: r.text_status as TextStatus,
     summary_status: (r.summary_status as SummaryStatus) ?? 'none',
     pending_review: Number(r.pending_review ?? 0),
-    summary_model: (r.summary_model as string | null) ?? null
+    summary_model: (r.summary_model as string | null) ?? null,
+    citations_status: (r.citations_status as CitationsStatus | undefined) ?? 'none'
   }
 }

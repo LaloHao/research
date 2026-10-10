@@ -28,6 +28,7 @@ describe('es.json covers every code the UI can receive', () => {
     ...LLM_MODELS.map((m) => `settings.models.${m}`),
     ...SUMMARY_FILTERS.map((f) => `library.summary_filter.${f}`),
     ...SETTINGS_TABS.map((tab) => `settings.tabs.${tab}`),
+    ...['citations', 'cited_by', 'embed', 'model_download'].map((type) => `jobs.${type}`),
     'paper.tabs.summary',
     'summary.thesis_missing',
     'summary.thesis_pending',
