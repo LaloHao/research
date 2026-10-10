@@ -1,7 +1,9 @@
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { CountResult } from '../shared/relations'
 import type { FormImpact } from '../shared/summary'
-import { IPC, type ActionResult, type LlmInfo, type ProjectInfo, type ProjectOpenResult, type RunBatchResult } from '../shared/ipc'
+import { IPC, type ActionResult, type LlmInfo, type ProjectInfo, type ProjectOpenResult, type RunBatchResult, type SaveResult } from '../shared/ipc'
 import type { AppController } from './AppController'
 import { arg, ipcArgs } from './ipcArgs'
 import { toUserFacing } from './library/UserFacingError'
@@ -180,5 +182,60 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
       await app.requireSession().summaries.updateThesis(ctx)
       app.notifyProjectChanged()
     })
+  })
+
+  const count = (action: () => number): CountResult => {
+    try {
+      return { ok: true, count: action() }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).code }
+    }
+  }
+  ipcMain.handle(IPC.citationsUpdate, (_e, rawIds: unknown): CountResult => {
+    const ids = arg(ipcArgs.paperIds, rawIds, 'ids')
+    return count(() => app.requireSession().citations.requestUpdate(ids))
+  })
+  ipcMain.handle(IPC.citationsFetchCitedBy, (): CountResult => count(() => app.requireSession().citations.requestCitedBy()))
+  ipcMain.handle(IPC.citationsCandidates, (_e, rawQuery: unknown) => {
+    const query = arg(ipcArgs.candidateQuery, rawQuery, 'query')
+    const session = app.requireSession()
+    return session.track(session.citations.candidates(query))
+  })
+  ipcMain.handle(IPC.citationsDismiss, (_e, rawId: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.openalexId, rawId, 'id')
+    return actionResult(() => app.requireSession().citations.dismiss(id))
+  })
+  ipcMain.handle(IPC.citationsAdd, (_e, rawId: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.openalexId, rawId, 'id')
+    return actionResult(async () => app.requireSession().citations.add(id))
+  })
+
+  ipcMain.handle(IPC.mapGraph, () => app.requireSession().map.graph())
+  ipcMain.handle(IPC.mapRelations, (_e, rawId: unknown) => {
+    const session = app.requireSession()
+    return session.track(session.map.relations(arg(ipcArgs.paperId, rawId, 'id')))
+  })
+  ipcMain.handle(IPC.mapFacets, () => app.requireSession().map.facetOptions())
+  ipcMain.handle(IPC.mapChart, (_e, rawQuery: unknown) => app.requireSession().map.chart(arg(ipcArgs.chartQuery, rawQuery, 'query')))
+  ipcMain.handle(IPC.mapFacetPaperIds, (_e, rawFilters: unknown) => app.requireSession().map.facetPaperIds(arg(ipcArgs.facetFilters, rawFilters, 'filters')))
+
+  ipcMain.handle(IPC.modelsInfo, () => app.modelInfo())
+  ipcMain.handle(IPC.modelsDownload, (): Promise<ActionResult> => actionResult(() => app.requireSession().similarity.requestModelDownload()))
+  ipcMain.handle(IPC.modelsRemove, (): Promise<ActionResult> => actionResult(() => app.removeModel()))
+
+  // A file the user chose to save (a chart, the graph, CSV data), wherever they picked; never written into the project on our own.
+  ipcMain.handle(IPC.exportSave, async (_e, rawName: unknown, rawData: unknown): Promise<SaveResult> => {
+    const name = arg(ipcArgs.exportName, rawName, 'name')
+    const data = arg(ipcArgs.exportData, rawData, 'data')
+    const window = getWindow()
+    const options: Electron.SaveDialogOptions = { defaultPath: name }
+    const result = window ? await dialog.showSaveDialog(window, options) : await dialog.showSaveDialog(options)
+    if (result.canceled || !result.filePath) return { ok: false }
+    try {
+      await writeFile(result.filePath, data)
+      return { ok: true, path: result.filePath }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).code }
+    }
   })
 }

@@ -53,6 +53,28 @@ const api: ResearchApi = {
     get: () => ipcRenderer.invoke(IPC.thesisGet),
     update: (ctx) => ipcRenderer.invoke(IPC.thesisUpdate, ctx)
   },
+  citations: {
+    update: (ids) => ipcRenderer.invoke(IPC.citationsUpdate, ids),
+    fetchCitedBy: () => ipcRenderer.invoke(IPC.citationsFetchCitedBy),
+    candidates: (query) => ipcRenderer.invoke(IPC.citationsCandidates, query),
+    dismiss: (openalexId) => ipcRenderer.invoke(IPC.citationsDismiss, openalexId),
+    add: (openalexId) => ipcRenderer.invoke(IPC.citationsAdd, openalexId)
+  },
+  map: {
+    graph: () => ipcRenderer.invoke(IPC.mapGraph),
+    relations: (id) => ipcRenderer.invoke(IPC.mapRelations, id),
+    facets: () => ipcRenderer.invoke(IPC.mapFacets),
+    chart: (query) => ipcRenderer.invoke(IPC.mapChart, query),
+    facetPaperIds: (filters) => ipcRenderer.invoke(IPC.mapFacetPaperIds, filters)
+  },
+  models: {
+    info: () => ipcRenderer.invoke(IPC.modelsInfo),
+    download: () => ipcRenderer.invoke(IPC.modelsDownload),
+    remove: () => ipcRenderer.invoke(IPC.modelsRemove)
+  },
+  exports: {
+    save: (defaultName, data) => ipcRenderer.invoke(IPC.exportSave, defaultName, data)
+  },
   on: (event, callback) => {
     const channel = eventChannel(event)
     const handler = (): void => callback()

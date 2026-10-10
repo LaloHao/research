@@ -1,5 +1,17 @@
 import type { JobRecord } from './jobs'
 import type { PaperDetail, PaperRow, UserErrorCode } from './library'
+import type {
+  CandidateList,
+  CandidateQuery,
+  ChartData,
+  ChartQuery,
+  CountResult,
+  FacetFilter,
+  FacetOption,
+  GraphData,
+  ModelInfo,
+  RelationsDetail
+} from './relations'
 import type { PdfPolicy } from './schemas'
 import type { AppSettings } from './settings'
 import type { ExtractionForm, FormImpact, FormInfo, LlmConfig, LlmModel, ReviewItem, Section, SummaryPlan, ThesisContext } from './summary'
@@ -42,6 +54,20 @@ export const IPC = {
   llmShowProjectFile: 'llm:show-project-file',
   thesisGet: 'thesis:get',
   thesisUpdate: 'thesis:update',
+  citationsUpdate: 'citations:update',
+  citationsFetchCitedBy: 'citations:fetch-cited-by',
+  citationsCandidates: 'citations:candidates',
+  citationsDismiss: 'citations:dismiss',
+  citationsAdd: 'citations:add',
+  mapGraph: 'map:graph',
+  mapRelations: 'map:relations',
+  mapFacets: 'map:facets',
+  mapChart: 'map:chart',
+  mapFacetPaperIds: 'map:facet-paper-ids',
+  modelsInfo: 'models:info',
+  modelsDownload: 'models:download',
+  modelsRemove: 'models:remove',
+  exportSave: 'export:save',
   flushDone: 'window:flush-done'
 } as const
 
@@ -64,6 +90,7 @@ export type PdfReadResult = { ok: true; data: Uint8Array | null } | { ok: false;
 /** Any action that only signals success or failure; errors travel as a `UserErrorCode`. */
 export type ActionResult = { ok: true } | { ok: false; error: string }
 export type RunBatchResult = { ok: true; batchId: string; count: number } | { ok: false; error: string }
+export type SaveResult = { ok: true; path: string } | { ok: false; error?: string }
 
 export interface LlmInfo {
   config: LlmConfig
@@ -129,6 +156,31 @@ export interface ResearchApi {
   thesis: {
     get(): Promise<ThesisContext>
     update(ctx: ThesisContext): Promise<ActionResult>
+  }
+  citations: {
+    /** Queues citation jobs for these papers, or for all of them. */
+    update(ids?: string[]): Promise<CountResult>
+    /** "Buscar quién cita a mis papers": one cited_by job per paper with an OpenAlex work. */
+    fetchCitedBy(): Promise<CountResult>
+    candidates(query: CandidateQuery): Promise<CandidateList>
+    dismiss(openalexId: string): Promise<ActionResult>
+    add(openalexId: string): Promise<ActionResult>
+  }
+  map: {
+    graph(): Promise<GraphData>
+    relations(id: string): Promise<RelationsDetail>
+    facets(): Promise<FacetOption[]>
+    chart(query: ChartQuery): Promise<ChartData>
+    facetPaperIds(filters: FacetFilter[]): Promise<string[]>
+  }
+  models: {
+    info(): Promise<ModelInfo>
+    download(): Promise<ActionResult>
+    remove(): Promise<ActionResult>
+  }
+  exports: {
+    /** Asks where to save, then writes the file there. */
+    save(defaultName: string, data: string | Uint8Array): Promise<SaveResult>
   }
   on(event: ResearchEvent, callback: () => void): () => void
   /** Acknowledges a 'flush-request' once pending saves have finished. */

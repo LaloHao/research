@@ -1,8 +1,10 @@
 import { z } from 'zod'
+import { CANDIDATE_DIRECTIONS, OPENALEX_ID } from '../shared/relations'
 import { PDF_POLICIES } from '../shared/schemas'
 import { ExtractionFormSchema, LLM_MODELS, ThesisContextSchema } from '../shared/summary'
 
 const paperIdSchema = z.string().regex(/^[a-z][a-z0-9]*$/)
+const facetKeySchema = z.string().regex(/^[a-z][a-z0-9_]*$/)
 
 /** Validators for arguments arriving from the renderer: anything unexpected is rejected before it reaches the app. */
 export const ipcArgs = {
@@ -43,7 +45,22 @@ export const ipcArgs = {
     .strictObject({ model: z.enum(LLM_MODELS).optional(), ids: z.array(paperIdSchema).optional() })
     .optional(),
   thesisContext: ThesisContextSchema.strict(),
-  extractionForm: ExtractionFormSchema.strict()
+  extractionForm: ExtractionFormSchema.strict(),
+  openalexId: z.string().regex(OPENALEX_ID),
+  candidateQuery: z.strictObject({
+    direction: z.enum(CANDIDATE_DIRECTIONS),
+    minCount: z.number().int().min(1).max(1000),
+    paperId: paperIdSchema.optional()
+  }),
+  chartQuery: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('bars'), facet: facetKeySchema, onlyReviewed: z.boolean() }),
+    z.strictObject({ kind: z.literal('bubbles'), facet: facetKeySchema, facetY: facetKeySchema, onlyReviewed: z.boolean() }),
+    z.strictObject({ kind: z.literal('years'), facet: facetKeySchema, onlyReviewed: z.boolean() })
+  ]),
+  facetFilters: z.array(z.strictObject({ facet: facetKeySchema, value: z.string().min(1) })).max(4),
+  /** A bare file name for the save dialog's default: never a path. */
+  exportName: z.string().regex(/^[\w.-]{1,100}\.(png|svg|csv)$/),
+  exportData: z.union([z.string(), z.custom<Uint8Array>((v) => v instanceof Uint8Array)])
 }
 
 export class InvalidIpcArgument extends Error {
