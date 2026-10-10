@@ -90,13 +90,18 @@ La lista de la izquierda muestra todos los papers que coinciden con la búsqueda
 
 Al seleccionar un paper se abren sus pestañas (solo las que apliquen):
 
-Aparecen en este orden: Resumen, Contenido, PDF, Relaciones, Notas.
+Aparecen en este orden: Resumen, Contenido, PDF, Texto, Relaciones, Notas.
 
 - **Resumen**: ver «Resúmenes con Claude» abajo.
-- **Contenido**: el texto legible extraído, siempre que haya (típicamente páginas web sin PDF).
+- **Contenido**: el texto legible extraído, siempre que haya (típicamente páginas web sin PDF), mostrado como un documento legible (encabezados, párrafos, listas, tablas, citas en bloque, código). Los enlaces abren en el navegador del sistema; las imágenes no se cargan, se muestran como una pequeña ficha que enlaza a la imagen. Seguir un enlace de evidencia en un paper web abre esta pestaña con la cita resaltada y centrada en la vista; si el texto exacto no se encuentra, se muestra un pequeño aviso.
 - **PDF**: el visor del PDF. Aparece para todo paper que no sea una página web, aunque todavía no tenga PDF adjunto: en ese caso muestra «Este paper no tiene PDF. Arrastra el archivo a la biblioteca para adjuntarlo.» en vez del visor.
+- **Texto**: el texto extraído del PDF, página a página, dispuesto para leer. Aparece cuando el paper tiene PDF y su texto está indexado (ver «Leer el texto» abajo).
 - **Relaciones**: el estado de las citas (sin consultar, consultadas en tal fecha con N citas en OpenAlex, o *Sin citas*) con el botón «Actualizar citas»; «Cita a (en tu biblioteca)» y «Citado por (en tu biblioteca)» (solo papers de tu biblioteca; un clic los abre); cuántas referencias no están en tu biblioteca, con «Ver candidatos», que abre la pestaña Candidatos filtrada por este paper; y «Similares»: los 10 papers más parecidos, con su puntuación y sus razones (por ejemplo «6 referencias en común · citados juntos por 3 papers · technique: ner · similitud de contenido 0.82»).
 - **Notas**: notas propias en Markdown, con guardado automático (`notes.md`). Si el archivo cambió por fuera de la app mientras había cambios sin guardar, avisa el conflicto y deja elegir entre recargar (descarta lo propio) o sobrescribir con la versión propia.
+
+### Leer el texto
+
+La pestaña Texto muestra una página a la vez, con «Página N de M», «Anterior» / «Siguiente» y un campo para ir a una página. El texto se rearma para leerlo: las palabras cortadas con guion al final de una línea se unen, las líneas de un mismo párrafo se juntan, las líneas cortas con forma de título (como «1 Introduction», «2.3 Results» o líneas en mayúsculas) se ven como encabezados, y los encabezados, pies y números de página que se repiten entre páginas se atenúan. El buscador busca en todas las páginas, sin distinguir mayúsculas ni acentos, y muestra cuántos resultados hay; las flechas pasan de un resultado a otro, cambiando de página si hace falta, con cada coincidencia resaltada.
 
 Arriba del detalle: la clave de cita (con botón para copiarla), el enlace al DOI o la URL original, «Mostrar en carpeta» (abre `papers/<clave>/` en el explorador de archivos) y el estado del texto indexado (indexando, texto indexado, PDF sin texto/escaneado, sin texto, error al extraer).
 
@@ -106,7 +111,7 @@ Un resumen (`summary.md`) tiene estos campos: en pocas palabras, problema, contr
 
 Cada campo, faceta y la relación con la tesis llevan:
 
-- **Evidencia**: una o más citas textuales, con el número de página cuando aplica. Cada cita con página muestra un enlace «p. N ↗» que abre la pestaña PDF en esa página con la cita resaltada (en una página web, abre la pestaña Contenido en su lugar). Si el texto exacto no se encuentra, no hay enlace; el pasaje extraído alrededor de esa cita solo se ve en Modo Revisar (ver abajo).
+- **Evidencia**: una o más citas textuales, con el número de página cuando aplica. Cada cita con página muestra un enlace «p. N ↗» que abre la pestaña PDF en esa página con la cita resaltada (en una página web, abre la pestaña Contenido en su lugar, con la cita resaltada ahí también). Si el texto exacto no se encuentra, no hay enlace; el pasaje extraído alrededor de esa cita solo se ve en Modo Revisar (ver abajo).
 - **Estado**: *generado* (recién creado por Claude, sin revisar), *verificado* (confirmaste que está bien), *editado* (lo corregiste a mano) o *evidencia no encontrada* (Claude generó el campo con una cita que no se encuentra en el texto: revísalo con cuidado). Un valor editado ya se considera tuyo y no vuelve a *generado* salvo que lo desverifiques desde *verificado*.
 - **Procedencia**: el modelo y la fecha con que se generó ese campo en particular, o los del resumen completo si el campo no tiene los suyos propios.
 
@@ -134,7 +139,7 @@ Atajos de teclado (se muestran en pantalla como «V verificar · E editar · U d
 - **→ / ←**: siguiente / anterior.
 - **Esc**: si hay un editor abierto, no hace nada (cierra el editor con su propio botón «Cancelar»); si no hay ninguno abierto, sale del modo revisar.
 
-El panel derecho muestra el PDF con la cita resaltada cuando el paper tiene uno y la cita se encuentra en el texto; si no (sin PDF, PDF no disponible, o la cita no aparece en el PDF), muestra el pasaje de texto extraído de esa página en su lugar.
+El panel derecho muestra el PDF con la cita resaltada cuando el paper tiene uno y la cita se encuentra en el texto. Si no, muestra el pasaje, dispuesto para leer: en una página web, su contenido como en la pestaña **Contenido**, con la cita resaltada (o un pequeño aviso si el texto exacto no se encuentra); si la cita no aparece en el PDF, el texto de esa página como en la pestaña **Texto** (encabezados, párrafos, encabezados y pies de página atenuados), con la cita marcada donde aún se pueda ubicar. Si el PDF no se puede cargar (o no hay contenido que mostrar), se muestra el texto extraído de esa página tal cual.
 
 ## Citas y candidatos
 

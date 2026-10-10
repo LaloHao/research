@@ -219,7 +219,7 @@
     "unknown": "Ocurrió un error inesperado."
   },
   "paper": {
-    "tabs": { "summary": "Resumen", "pdf": "PDF", "content": "Contenido", "relations": "Relaciones", "notes": "Notas" },
+    "tabs": { "summary": "Resumen", "pdf": "PDF", "text": "Texto", "content": "Contenido", "relations": "Relaciones", "notes": "Notas" },
     "cite_key": "Clave de cita",
     "copy_key": "Copiar",
     "copied": "Copiado",
@@ -232,6 +232,29 @@
       "invalid_schema": "Al archivo le faltan campos o tiene valores no válidos."
     },
     "problem_details": "Detalles técnicos",
+    "content": {
+      "image": "Imagen: {{label}}",
+      "image_unavailable": "imagen",
+      "quote_not_found": "No se encontró la cita en el texto."
+    },
+    "text": {
+      "loading": "Cargando texto…",
+      "error": "No se pudo cargar el texto: {{message}}",
+      "page": "Página {{page}} de {{total}}",
+      "previous": "Anterior",
+      "next": "Siguiente",
+      "go_to": "Ir a la página",
+      "search_placeholder": "Buscar en el texto",
+      "search": "Buscar",
+      "searching": "Buscando… (página {{page}} de {{total}})",
+      "results_one": "{{count}} resultado",
+      "results_other": "{{count}} resultados",
+      "result_position": "{{current}} de {{count}}",
+      "no_results": "Sin resultados",
+      "previous_result": "Resultado anterior",
+      "next_result": "Resultado siguiente",
+      "empty_page": "Esta página no tiene texto."
+    },
     "no_pdf": "Este paper no tiene PDF. Arrastra el archivo a la biblioteca para adjuntarlo.",
     "pdf_loading": "Cargando PDF…",
     "pdf_error": "No se pudo cargar el PDF: {{message}}",
@@ -288,6 +311,10 @@
     "shortcuts": "V verificar · E editar · U desverificar · → siguiente · ← anterior · Esc salir",
     "passage": "Texto extraído de la página {{page}}",
     "passage_web": "Texto extraído",
+    "quote_not_in_pdf_reflow": "La cita no se resaltó en el PDF; se muestra el texto de la página.",
+    "passage_pdf": "Texto de la página {{page}} del PDF",
+    "passage_content": "Contenido de la página web",
+    "passage_loading": "Cargando el texto…",
     "quote_not_in_pdf": "No se encontró la cita en el PDF; se muestra el texto extraído.",
     "item_unavailable": "Este elemento ya no está disponible. Usa → para continuar."
   },
