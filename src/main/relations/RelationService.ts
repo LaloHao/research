@@ -223,16 +223,22 @@ export class RelationService {
     return this.decide(id, (r) => withJustification(r, text, this.now()))
   }
 
-  /** Each token undoes its decision once, and only while the relation is still what that decision left. */
+  /**
+   * Each token undoes its decision once, and only while the relation is still what that decision left.
+   * A refused undo (the entry changed since) spends the token; a transient failure (a conflicted file,
+   * a concurrent write) keeps it, so the undo can be retried.
+   */
   async revert(undoToken: string): Promise<void> {
     const change = this.undo.get(undoToken)
     if (!change) throw new InvalidEdit('Nothing to undo')
     try {
       // Undoing a confirm or a rejection leaves a suggestion the user chose to keep.
       await this.mutate((list) => revertChange(list, change, this.now()).map((r) => (r.id === change.before.id ? userKept(r) : r)))
-    } finally {
-      this.undo.delete(undoToken)
+    } catch (error) {
+      if (error instanceof InvalidEdit) this.undo.delete(undoToken)
+      throw error
     }
+    this.undo.delete(undoToken)
     this.deps.emit()
   }
 

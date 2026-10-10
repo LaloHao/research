@@ -57,6 +57,8 @@ export function ReviewView({ ids, onExit }: { ids?: string[]; onExit: () => void
   const [undo, setUndo] = useState<{ token: string; item: ReviewItem } | null>(null)
   const [undoing, setUndoing] = useState(false)
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // The token of the notice currently shown, so a late undo result never clears a newer notice or its timer.
+  const undoTokenRef = useRef<string | null>(null)
   useEffect(
     () => () => {
       if (undoTimer.current) clearTimeout(undoTimer.current)
@@ -144,6 +146,7 @@ export function ReviewView({ ids, onExit }: { ids?: string[]; onExit: () => void
   const clearUndo = (): void => {
     if (undoTimer.current) clearTimeout(undoTimer.current)
     undoTimer.current = null
+    undoTokenRef.current = null
     setUndo(null)
   }
 
@@ -155,7 +158,12 @@ export function ReviewView({ ids, onExit }: { ids?: string[]; onExit: () => void
       setError(null)
       clearUndo()
       setUndo({ token, item: decidedItem })
-      undoTimer.current = setTimeout(() => setUndo(null), UNDO_MS)
+      undoTokenRef.current = token
+      undoTimer.current = setTimeout(() => {
+        undoTimer.current = null
+        undoTokenRef.current = null
+        setUndo(null)
+      }, UNDO_MS)
     }
 
   /** Undoes the last relation decision while its notice is shown; false when there is none. */
@@ -170,9 +178,7 @@ export function ReviewView({ ids, onExit }: { ids?: string[]; onExit: () => void
       (r) => {
         setUndoing(false)
         if (r.ok) {
-          setUndo((u) => (u?.token === last.token ? null : u))
-          if (undoTimer.current) clearTimeout(undoTimer.current)
-          undoTimer.current = null
+          if (undoTokenRef.current === last.token) clearUndo()
           setCursor((c) => (c ? reinsert(c, last.item) : c))
         } else setError(errorText(t, r.error))
       },
@@ -196,7 +202,8 @@ export function ReviewView({ ids, onExit }: { ids?: string[]; onExit: () => void
     }
   }
 
-  const editing = (): boolean => cardRef.current?.querySelector('.editor') !== null
+  // No card mounted (a relation item, a loading or empty view) means no editor is open.
+  const editing = (): boolean => !!cardRef.current?.querySelector('.editor')
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {

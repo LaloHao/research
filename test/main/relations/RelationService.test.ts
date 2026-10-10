@@ -224,6 +224,22 @@ describe('RelationService', () => {
     await expect(service.revert(token)).rejects.toBeInstanceOf(InvalidEdit)
   })
 
+  it('keeps the undo token when the undo fails for a transient reason, so it can be retried', async () => {
+    const { service, store, cache } = await setupRelations()
+    await service.run(LOGHUB_ID, {})
+    const token = await service.setStatus(ID, 'confirmed')
+    const path = join(store.root, 'relations.yaml')
+    const clean = await readFile(path, 'utf8')
+    await writeFile(path, `<<<<<<< HEAD\n${clean}=======\n${clean}>>>>>>> origin/main\n`)
+    await service.reindex()
+    await expect(service.revert(token)).rejects.toMatchObject({ code: 'relations_conflict' })
+    await writeFile(path, clean)
+    await service.reindex()
+    await service.revert(token)
+    expect(cache.typedRelations(LOGHUB_ID)[0].status).toBe('suggested')
+    await expect(service.revert(token)).rejects.toBeInstanceOf(InvalidEdit)
+  })
+
   it('resolves only the conflicted text it last read, never a newer one', async () => {
     const { service, store } = await setupRelations()
     const ours = typedRelation({ status: 'confirmed', updated_at: '2026-10-10T13:00:00.000Z' })
