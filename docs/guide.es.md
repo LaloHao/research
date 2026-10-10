@@ -10,8 +10,11 @@ Esta app es una biblioteca de papers para la tesis *Método computacional para l
 - Buscar en títulos, autores y el texto completo de los papers (incluida la literatura gris: páginas web sin PDF).
 - Generar, con Claude, un resumen de cada paper: sus campos (problema, contribución, método, evaluación…), una clasificación según el formulario de extracción de la tesis, y su relación con la tesis, todo con evidencia (citas textuales con página) y un estado de revisión por campo.
 - Un modo de revisión rápido para repasar uno por uno todos los campos y facetas que Claude generó.
+- Traer de OpenAlex las referencias de cada paper y proponer **candidatos por citas** (*snowballing*): trabajos que tus papers citan, o que los citan, y que todavía no están en tu biblioteca.
+- Encontrar **papers similares** combinando referencias en común, citas compartidas, facetas en común y un modelo local de contenido, con las razones de cada parecido.
+- Ver el área en la vista **Mapa**: un grafo de papers con dos lentes (área y tesis) y gráficas por faceta.
 
-Próximamente (no implementado todavía): relaciones entre papers y grafo, chat sobre la biblioteca, y mapeo sistemático de literatura.
+Próximamente (no implementado todavía): relaciones tipadas entre papers sugeridas por Claude (extiende, usa el método de, compara con, contradice…), chat sobre la biblioteca y mapeo sistemático de literatura.
 
 ## Primeros pasos
 
@@ -46,10 +49,12 @@ La carpeta del proyecto es texto plano (YAML, Markdown) pensado para versionarse
 
 En la barra de arriba de la biblioteca puedes:
 
-- **Pegar un DOI, un ID de arXiv o una URL** y tocar «Agregar». Con una URL que no sea DOI ni arXiv, la app mira qué hay detrás: si sirve un PDF, se agrega como PDF; si la página tiene un DOI o un ID de arXiv, se usa ese identificador; si no, se guarda como página web (literatura gris), con su texto legible si lo encuentra, y si no, avisa que «La página no tiene un artículo legible.».
+- **Pegar un DOI, un ID de arXiv o una URL** y tocar «Agregar». También acepta un id de OpenAlex (`W2741809807` o `https://openalex.org/W2741809807`); es lo que usa «Agregar» en Candidatos para los trabajos sin DOI. Con una URL que no sea DOI ni arXiv, la app mira qué hay detrás: si sirve un PDF, se agrega como PDF; si la página tiene un DOI o un ID de arXiv, se usa ese identificador; si no, se guarda como página web (literatura gris), con su texto legible si lo encuentra, y si no, avisa que «La página no tiene un artículo legible.».
 - **Arrastrar uno o varios PDFs** a la biblioteca.
 
 La app completa los metadatos automáticamente a partir del identificador. Si el paper queda con «Los metadatos están incompletos.», puedes pegar un DOI o ID de arXiv en el aviso y tocar «Completar», o tocar «Reintentar» si ya tenía uno.
+
+Al agregar un paper (o completar sus metadatos), la app consulta en segundo plano sus referencias en OpenAlex (ver «Citas y candidatos»); no consume cuota de Claude.
 
 Agregar un identificador o PDF que ya está en la biblioteca actualiza el paper existente en vez de duplicarlo («ya estaba en la biblioteca» / «actualizado» en el panel de actividad).
 
@@ -72,21 +77,25 @@ La lista de la izquierda muestra todos los papers que coinciden con la búsqueda
   - *Revisado*: todo lo generado ya fue verificado o editado.
   - *Desactualizado*: el resumen quedó desactualizado porque cambió el formulario de extracción, o porque cambió la tesis y la relación con ella seguía en *generado* (ver «Resúmenes con Claude»).
   - *Resumen falló*: el último intento de resumir terminó en error.
+  - *Sin citas*: no se encontró el paper en OpenAlex (no tiene DOI y no hubo una coincidencia exacta por título y año), así que no tiene citas ni candidatos.
 - **Filtros**: por estado del resumen (todos, sin resumen, por revisar, revisados, desactualizados, con error) y por modelo con el que se generó (el selector se llama «Resumido con» para lectores de pantalla; sus opciones visibles son «Cualquier modelo», Sonnet, Haiku y Opus).
+- **Filtro por faceta**: al hacer clic en una barra o una burbuja de las gráficas (vista Mapa), la biblioteca se abre filtrada por ese valor (o ese par de valores), con una etiqueta `faceta = valor` que se quita con ✕.
+- **Actualizar citas**: vuelve a consultar en OpenAlex las referencias de todos los papers o, si hay una búsqueda o algún filtro activo, solo de los que se ven. Los trabajos aparecen en el panel de actividad.
 - **Acciones por lotes**: encolan de una sola vez todos los papers elegibles visibles con la búsqueda y los filtros activos (los demasiado largos se omiten salvo que ya tuvieran un resumen forzado); ambas piden confirmación antes de encolar. Todos los trabajos del lote se encolan de entrada; si se llega al tope del lote (o a la cuota de Claude) mientras corre, los trabajos que todavía estaban en cola para ese lote se cancelan.
   - *Resumir pendientes*: encola los papers sin resumen (o con resumen desactualizado o fallido) dentro del presupuesto por lote, usando el modelo elegido en el selector «Modelo del lote». La confirmación muestra la cantidad de papers, el costo estimado y el tope del lote; si no hay ninguno pendiente, avisa «No hay papers pendientes de resumir.».
   - *Regenerar filtrados con…*: con un filtro de estado activo (no «Todos»), regenera con el modelo elegido en su propio selector todos los papers visibles que tengan texto indexado.
-- **Panel de actividad**: lista los trabajos en curso y recientes (agregar un identificador o PDF, completar metadatos, resumir), con su estado (en cola, en curso, listo, falló, cancelado) y, si corresponde, el resultado (agregado, actualizado, ya estaba en la biblioteca, resumido). Un trabajo en cola o en curso se puede cancelar. Tocar el nombre de un trabajo abre su paper.
+- **Panel de actividad**: lista los trabajos en curso y recientes (agregar un identificador o PDF, completar metadatos, resumir, citas, quién cita a un paper, similitud de un paper, descargar el modelo de similitud), con su estado (en cola, en curso, listo, falló, cancelado) y, si corresponde, el resultado (agregado, actualizado, ya estaba en la biblioteca, resumido, citas actualizadas, no se encontró en OpenAlex, citas entrantes actualizadas, modelo descargado). La descarga del modelo muestra su avance en porcentaje. Un trabajo en cola o en curso se puede cancelar. Tocar el nombre de un trabajo abre su paper.
 
 ## Detalle del paper
 
 Al seleccionar un paper se abren sus pestañas (solo las que apliquen):
 
-Aparecen en este orden: Resumen, Contenido, PDF, Notas.
+Aparecen en este orden: Resumen, Contenido, PDF, Relaciones, Notas.
 
 - **Resumen**: ver «Resúmenes con Claude» abajo.
 - **Contenido**: el texto legible extraído, siempre que haya (típicamente páginas web sin PDF).
 - **PDF**: el visor del PDF. Aparece para todo paper que no sea una página web, aunque todavía no tenga PDF adjunto: en ese caso muestra «Este paper no tiene PDF. Arrastra el archivo a la biblioteca para adjuntarlo.» en vez del visor.
+- **Relaciones**: el estado de las citas (sin consultar, consultadas en tal fecha con N citas en OpenAlex, o *Sin citas*) con el botón «Actualizar citas»; «Cita a (en tu biblioteca)» y «Citado por (en tu biblioteca)» (solo papers de tu biblioteca; un clic los abre); cuántas referencias no están en tu biblioteca, con «Ver candidatos», que abre la pestaña Candidatos filtrada por este paper; y «Similares»: los 10 papers más parecidos, con su puntuación y sus razones (por ejemplo «6 referencias en común · citados juntos por 3 papers · technique: ner · similitud de contenido 0.82»).
 - **Notas**: notas propias en Markdown, con guardado automático (`notes.md`). Si el archivo cambió por fuera de la app mientras había cambios sin guardar, avisa el conflicto y deja elegir entre recargar (descarta lo propio) o sobrescribir con la versión propia.
 
 Arriba del detalle: la clave de cita (con botón para copiarla), el enlace al DOI o la URL original, «Mostrar en carpeta» (abre `papers/<clave>/` en el explorador de archivos) y el estado del texto indexado (indexando, texto indexado, PDF sin texto/escaneado, sin texto, error al extraer).
@@ -126,6 +135,41 @@ Atajos de teclado (se muestran en pantalla como «V verificar · E editar · U d
 - **Esc**: si hay un editor abierto, no hace nada (cierra el editor con su propio botón «Cancelar»); si no hay ninguno abierto, sale del modo revisar.
 
 El panel derecho muestra el PDF con la cita resaltada cuando el paper tiene uno y la cita se encuentra en el texto; si no (sin PDF, PDF no disponible, o la cita no aparece en el PDF), muestra el pasaje de texto extraído de esa página en su lugar.
+
+## Citas y candidatos
+
+Las citas vienen de [OpenAlex](https://openalex.org), sin usar Claude. Para cada paper, la app busca su obra en OpenAlex por su id de OpenAlex, si no por su DOI y, si no tiene DOI, por su título exacto y año (solo si hay una coincidencia inequívoca; nunca para páginas web). Guarda en `paper.yaml` la lista completa de lo que cita, esté o no en tu biblioteca, y el total de citas que tiene en OpenAlex. Si no la encuentra, el paper queda con la insignia *Sin citas*.
+
+OpenAlex limita las consultas por día. Sin clave alcanza de sobra para unos cientos de papers; si llegas al límite, los trabajos de citas pendientes se cancelan y aparece «Se alcanzó el límite diario de OpenAlex. Reintenta mañana o agrega una clave de API en Ajustes.». Una clave gratuita (Ajustes → Aplicación) da un presupuesto mayor.
+
+**Candidatos** (vista Mapa → Candidatos) son trabajos que no están en tu biblioteca y que:
+
+- **Referencias de tus papers**: son citados por al menos N de tus papers.
+- **Trabajos que citan a tus papers**: citan al menos N de tus papers. Para verlos, primero toca «Buscar quién cita a mis papers», que consulta en OpenAlex quién cita cada paper (un trabajo por paper, en el panel de actividad).
+
+La tabla muestra título (enlace al DOI o a OpenAlex), año, autores, «Citado por tus papers», «Cita a tus papers» y «Citas en OpenAlex». **Agregar** lo ingresa como cualquier DOI (o por su id de OpenAlex si no tiene DOI); **Descartar** lo guarda en `project.yaml` y no vuelve a aparecer (en ningún equipo). Los que ya están en tu biblioteca (por id de OpenAlex o DOI) nunca aparecen.
+
+## Similitud
+
+Cada par de papers recibe una puntuación entre 0 y 1 que combina:
+
+| Señal | Qué mide | Razón que se muestra |
+|---|---|---|
+| Contenido | parecido del título, el abstract y (si hay resumen) el problema, la contribución y el método, según un modelo local | «similitud de contenido 0.82» |
+| Acoplamiento bibliográfico | referencias en común | «6 referencias en común» |
+| Facetas | valores en común en las facetas de opción única o múltiple | «technique: ner · task: anonymization» |
+| Co-citación | papers de tu biblioteca que citan a ambos | «citados juntos por 3 papers» |
+| Cita directa | uno cita al otro | «zhu2020loghub cita a he2017drain» |
+
+La razón de cita directa muestra las claves de cita de ambos papers (las de la columna «Clave de cita»). Se guardan los 10 más parecidos de cada paper. Sin el modelo local, la puntuación usa solo las demás señales. Todo se actualiza solo cuando cambian las citas, los resúmenes o el texto de un paper: un cambio suelto actualiza solo lo que toca a ese paper, y un lote (por ejemplo «Actualizar citas» de toda la biblioteca) recalcula todo al terminar. Si un lote se cancela a mitad de camino, el recálculo completo queda pendiente y se hace con el próximo cambio de un paper.
+
+## Mapa
+
+La vista **Mapa** (barra lateral) tiene tres pestañas:
+
+- **Grafo**: un nodo por paper (más grande cuantas más citas tiene en OpenAlex) y dos tipos de aristas: citas (flecha sólida) y similitud (punteada, más gruesa cuanto más parecidos). Pasa el cursor por una arista punteada para ver sus razones; haz clic en un nodo para abrir su detalle al costado. Controles: **Lente** «Área» (color por la faceta que elijas; un paper con varios valores toma el más frecuente en la biblioteca) o «Tesis» (color por la relevancia 1–5 de la relación con la tesis; gris sin relación); mostrar u ocultar citas y similitud; «Umbral de similitud»; «Aplicar los filtros de la biblioteca» (usa los papers visibles la última vez que abriste la biblioteca); «Exportar PNG» (el grafo solo se exporta a PNG).
+- **Gráficas**: «Barras por valor», «Burbujas faceta × faceta» (las celdas vacías se ven como huecos) y «Papers por año». Con «Solo revisadas» apagado cuentan todas las facetas y lo no revisado se dibuja más tenue; encendido, solo las verificadas o editadas. Las entradas que ya no encajan con el tipo actual de su faceta no cuentan. Un clic en una barra o burbuja abre la biblioteca filtrada. Se exportan a SVG, PNG y CSV.
+- **Candidatos**: ver «Citas y candidatos».
 
 ## Ajustes
 
@@ -195,15 +239,17 @@ Si el formulario cambió por fuera de este editor (otro equipo, un `git pull`) m
 
 ### Aplicación
 
-- **Correo de contacto para Crossref y OpenAlex**: opcional. Si lo completas, esos servicios atienden tus consultas de metadatos con prioridad. Solo se envía a ellos, a nadie más. Es un ajuste de la app por dispositivo, no se guarda en `project.yaml` y por lo tanto no se sincroniza entre equipos.
+- **Correo de contacto para Crossref y OpenAlex**: opcional. Crossref atiende con prioridad las consultas que lo incluyen (OpenAlex ya no lo usa). Solo se envía a esos servicios. Es un ajuste de la app por dispositivo, no se guarda en `project.yaml` y por lo tanto no se sincroniza entre equipos.
+- **Clave de API de OpenAlex**: opcional y gratuita. Sin clave, OpenAlex permite unas 1000 consultas al día; con ella, más. Se guarda solo en este equipo y solo se envía a OpenAlex.
+- **Modelos locales**: el modelo de similitud de contenido (multilingual-e5-small, unos 470 MB) corre en tu equipo. Muestra si está descargado y cuánto ocupa, con «Descargar» (el avance se ve en Actividad) y «Borrar». Se guarda en la carpeta de datos de la app, nunca en el proyecto, así que cada equipo lo descarga una vez. La descarga corre como un trabajo del proyecto abierto (hace falta tener uno abierto); si cierras el proyecto o la app a mitad de camino, se retoma la próxima vez que abras ese proyecto. «Borrar» cancela los cálculos de similitud que estaban en cola.
 - **Cerrar proyecto**: vuelve a la pantalla de bienvenida para crear o abrir otro proyecto.
 
 ## Archivos del proyecto
 
 ```
-project.yaml               configuración del proyecto (nombre, idioma, política de PDFs, Claude, tesis, formulario de extracción)
+project.yaml               configuración del proyecto (nombre, idioma, política de PDFs, Claude, tesis, formulario de extracción, candidatos descartados)
 papers/<clave>/            un paper por carpeta; <clave> es su clave de cita y nunca cambia
-  paper.yaml               metadatos y BibTeX
+  paper.yaml               metadatos, BibTeX y citas (OpenAlex)
   summary.md               campos del resumen, con evidencia y estado por campo
   extraction.yaml          clasificación según el formulario, y relación con la tesis
   notes.md                 tus notas
@@ -211,7 +257,7 @@ papers/<clave>/            un paper por carpeta; <clave> es su clave de cita y n
   paper.pdf                el PDF, según la política configurada
 costs/<dispositivo>.jsonl  costos estimados de cada llamada a Claude, uno por dispositivo (para que sincronizar entre equipos nunca choque)
 exports/library.bib        BibTeX de toda la biblioteca; generado, no lo edites
-.cache/                    índice local de búsqueda y PDFs descargados bajo demanda; se puede borrar sin perder nada, se reconstruye solo
+.cache/                    índice local de búsqueda, PDFs descargados bajo demanda, citas entrantes, datos de candidatos, vectores y similares; se puede borrar sin perder nada, se reconstruye solo
 ```
 
 Todo lo de arriba, salvo `.cache/`, está pensado para versionarse con git o sincronizarse entre equipos. `notes.md` y `project.yaml` (fuera de `extraction_form`) se pueden editar a mano con confianza; `paper.yaml`, `summary.md` y `extraction.yaml` también, pero con cuidado de no romper su formato. Un archivo editado por fuera de la app (o actualizado por una sincronización) se recarga solo, sin reiniciar la app.
@@ -253,3 +299,15 @@ Es el aviso general de conflicto: otro equipo o una sincronización cambió un a
 
 **Conflictos cuando dos equipos editan**
 Si `notes.md`, `paper.yaml`, `summary.md` o `extraction.yaml` cambiaron en disco entre que la app los leyó y los quiso guardar (por ejemplo, dos equipos sincronizando a la vez), la app avisa el conflicto en vez de pisar el cambio ajeno: en notas, deja elegir entre recargar o sobrescribir con tu versión; en el resto, revisa el archivo a mano (busca marcas de conflicto de git si usas git) antes de reintentar.
+
+**«Se alcanzó el límite diario de OpenAlex. Reintenta mañana o agrega una clave de API en Ajustes.»**
+OpenAlex limita cuántas consultas se pueden hacer por día. Los trabajos de citas pendientes se cancelan; vuelve a tocar «Actualizar citas» al día siguiente, o agrega una clave gratuita en Ajustes → Aplicación.
+
+**Un paper tiene la insignia «Sin citas»**
+No se encontró en OpenAlex: no tiene DOI y la búsqueda por título y año no dio una coincidencia exacta. Completa su DOI (aviso de metadatos o «Completar») y toca «Actualizar citas» en su pestaña Relaciones.
+
+**«El modelo local de similitud no está descargado. Descárgalo en Ajustes → Aplicación.»**
+La similitud de contenido necesita el modelo local. Mientras no esté, la similitud usa solo citas y facetas.
+
+**«No se pudo cargar el modelo local de similitud. Bórralo y vuelve a descargarlo en Ajustes → Aplicación.»**
+Los archivos del modelo están incompletos o dañados (por ejemplo, una descarga interrumpida). Usa «Borrar» y luego «Descargar».

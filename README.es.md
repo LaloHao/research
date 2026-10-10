@@ -2,7 +2,7 @@
 
 *[English version](./README.md)*
 
-App de escritorio personal para la investigación de una tesis: biblioteca de papers con BibTeX, búsqueda de texto completo, resúmenes con Claude y, en etapas siguientes, relaciones, chat y mapeo sistemático.
+App de escritorio personal para la investigación de una tesis: biblioteca de papers con BibTeX, búsqueda de texto completo, resúmenes con Claude, citas desde OpenAlex, papers similares y un mapa del área y, en etapas siguientes, relaciones tipadas, chat y mapeo sistemático.
 
 ## Requisitos
 
@@ -36,3 +36,13 @@ EVAL_PROJECT=~/ruta/a/mi/proyecto pnpm eval:summaries
 ```
 
 **Consume cuota real de Claude.** Variables opcionales: `EVAL_MODEL` (modelo a usar, por defecto `sonnet`) y `EVAL_LIMIT` (cuántos papers resumir como máximo, por defecto 5). Sin `EVAL_PROJECT` la prueba aparece como omitida y `pnpm test`/`pnpm check` nunca la incluyen.
+
+### Evaluación de la similitud con el modelo real
+
+`pnpm eval:similarity` calcula los vectores de una copia temporal y descartable de un proyecto real con el modelo local real y muestra cuántos papers quedaron con vector, cuánto tardó, con qué frecuencia un paper citado de la biblioteca aparece entre los 10 más parecidos del que lo cita (con varias ponderaciones) y los papers más parecidos de algunos papers con sus razones:
+
+```bash
+EVAL_PROJECT=~/ruta/a/mi/proyecto pnpm eval:similarity
+```
+
+La primera vez descarga el modelo (unos 470 MB) en `EVAL_MODELS_DIR` (por defecto `~/.cache/research-eval-models`). `EVAL_FETCH_CITATIONS=1` actualiza antes las citas desde OpenAlex (usa parte del presupuesto diario de OpenAlex). Sin `EVAL_PROJECT` la prueba aparece como omitida; `pnpm test`/`pnpm check` nunca la incluyen.

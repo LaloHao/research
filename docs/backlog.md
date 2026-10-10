@@ -7,7 +7,8 @@
 
 ## Upcoming stages
 
-- Stage 3: relations between papers and a graph.
+- Stage 3b: typed relations between papers suggested by Claude (`extends`, `uses_method_of`, `compares_with`, `contradicts`, `replicates`, `same_problem`) over stage 3a's candidates (citations and similar pairs), with a review flow like summaries.
+- Principle for every future LLM use (3b, chat): Claude gets **read-only tools** over the library (full-text search, semantic search, grep over the project files, reading a paper's pages, reading a summary and its facets, querying citations and neighbours) and never write tools; in 3b the relation suggester uses them to look for evidence.
 - Stage 4: chat (per paper and global) over the library.
 - Stage 5: formal systematic mapping.
 
@@ -29,3 +30,23 @@
 - Unknown keys inside `llm:` in project.yaml are silently dropped on write.
 - Eval (`pnpm eval:summaries`): doesn't clean up its temp folders; `vitest.eval.config` isn't in the tsconfig's `include`.
 - Watcher test: fixed 700 ms wait before the external edit.
+
+## Stage 3a technical minutiae
+
+- The full neighbour recompute (end of a batch, project open) is brute force on the main process, yielding every 50 rows; single changes are incremental. Beyond a few thousand papers, move the full pass to a worker.
+- The incremental update keeps an in-memory snapshot of each paper's signals; after a restart the first change waits for the startup full recompute.
+- The graph keeps node positions while the set of papers is the same; adding or removing papers re-runs fcose from the current positions.
+- The local model is downloaded through the open project's job queue (a project must be open); an app-level download would not need one.
+- The embeddings utility process stays alive once started; shut it down after a period without embed jobs to free its memory.
+- The graph exports PNG only (no maintained SVG exporter for cytoscape); charts export SVG, PNG and CSV.
+- Packaging is out of scope: a packaged build would need `asarUnpack` for `onnxruntime-node` and the embeddings worker.
+- Works OpenAlex did not return are stored as empty rows in `external_works` and never requested again until the cache is rebuilt.
+- A citations job and a metadata update writing the same paper.yaml at once: the later one fails with `conflict` and has to be retried.
+- The OpenAlex citation fixtures are committed trimmed; re-recording them means updating the citation tests' expectations.
+- "Aplicar los filtros de la biblioteca" uses the rows visible the last time the library was shown, not live filters.
+- `CONTENT_FLOOR` (0.75) and `WEIGHTS` are first guesses until `pnpm eval:similarity` runs on the real project.
+- Candidates' metadata is cached in `external_works`; a refresh only fetches ids still missing from the cache, not the whole candidate list.
+- If a similarity batch is cancelled partway through, the full recompute it would have ended with is skipped; it runs instead on the next single paper change.
+- Model download cancellation is only checked before and after the whole download, not mid-transfer, so cancelling can take a while to take effect.
+- Changing a paper's DOI during a metadata update doesn't refresh its OpenAlex citations automatically; use "Actualizar citas" on it by hand afterwards.
+- The local-model Download/Delete buttons in Settings aren't disabled while a download or delete is in flight (repeated clicks are harmless but can look unresponsive).

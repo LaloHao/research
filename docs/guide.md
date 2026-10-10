@@ -10,8 +10,11 @@ This app is a paper library for the thesis *Método computacional para la desens
 - Search titles, authors and the full text of the papers (including grey literature: web pages without a PDF).
 - Generate, with Claude, a summary of each paper: its fields (problem, contribution, method, evaluation…), a classification according to the thesis's extraction form, and its relation to the thesis, all with evidence (verbatim quotes with page) and a per-field review status.
 - A quick review mode to go through every field and facet Claude generated, one by one.
+- Fetch each paper's references from OpenAlex and suggest **citation candidates** (*snowballing*): works your papers cite, or that cite them, which aren't in your library yet.
+- Find **similar papers** by combining shared references, shared citers, shared facet values and a local content model, with the reasons for each match.
+- See the field in the **Mapa** (Map) view: a graph of papers with two lenses (field and thesis) and per-facet charts.
 
-Coming soon (not implemented yet): relations between papers and a graph, chat over the library, and formal systematic literature mapping.
+Coming soon (not implemented yet): typed relations between papers suggested by Claude (extends, uses the method of, compares with, contradicts…), chat over the library, and formal systematic literature mapping.
 
 ## Getting started
 
@@ -46,10 +49,12 @@ The project folder is plain text (YAML, Markdown), meant to be versioned with gi
 
 In the library's top bar you can:
 
-- **Paste a DOI, an arXiv id or a URL** and tap «Agregar» (Add). For a URL that isn't a DOI or arXiv id, the app looks at what's behind it: if it serves a PDF, it's added as a PDF; if the page has a DOI or an arXiv id, that identifier is used; otherwise it's saved as a web page (grey literature), with its readable text if found, and if not, it warns that «La página no tiene un artículo legible.» (The page has no readable article.).
+- **Paste a DOI, an arXiv id or a URL** and tap «Agregar» (Add). It also accepts an OpenAlex id (`W2741809807` or `https://openalex.org/W2741809807`); that's what «Agregar» (Add) in Candidates uses for works without a DOI. For a URL that isn't a DOI or arXiv id, the app looks at what's behind it: if it serves a PDF, it's added as a PDF; if the page has a DOI or an arXiv id, that identifier is used; otherwise it's saved as a web page (grey literature), with its readable text if found, and if not, it warns that «La página no tiene un artículo legible.» (The page has no readable article.).
 - **Drag one or more PDFs** onto the library.
 
 The app fills in metadata automatically from the identifier. If the paper ends up with «Los metadatos están incompletos.» (Metadata is incomplete.), you can paste a DOI or arXiv id in the notice and tap «Completar» (Complete), or tap «Reintentar» (Retry) if it already had one.
+
+When a paper is added (or its metadata completed), the app looks up its references in OpenAlex in the background (see "Citations and candidates"); this uses no Claude quota.
 
 Adding an identifier or PDF that's already in the library updates the existing paper instead of duplicating it («ya estaba en la biblioteca» (was already in the library) / «actualizado» (updated) in the activity panel).
 
@@ -72,21 +77,25 @@ The list on the left shows every paper matching the active search and filters.
   - *Revisado* (Reviewed): everything generated has already been verified or edited.
   - *Desactualizado* (Stale): the summary went stale because the extraction form changed, or because the thesis changed and the relation to it was still in *generado* (generated) (see "Summaries with Claude").
   - *Resumen falló* (Summary failed): the last summarize attempt ended in an error.
+  - *Sin citas* (No citations): the paper wasn't found in OpenAlex (it has no DOI and there was no exact title-and-year match), so it has no citations or candidates.
 - **Filters**: by summary status (all, no summary, to review, reviewed, stale, with error) and by the model it was generated with (the selector is labeled «Resumido con» (Summarized with) for screen readers; its visible options are «Cualquier modelo» (Any model), Sonnet, Haiku and Opus).
+- **Facet filter**: clicking a bar or a bubble in the charts (Map view) opens the library filtered by that value (or a pair of values), shown as a `facet = value` tag you can remove with ✕.
+- **«Actualizar citas»** (Update citations): looks up the references of every paper again in OpenAlex or, when a search or any filter is active, only of the visible ones. The jobs show up in the activity panel.
 - **Batch actions**: both queue, in one go, every eligible paper visible under the current search and filters (over-long ones are skipped unless they already have a forced summary); both ask for confirmation before queuing. All of a batch's jobs are queued upfront; if the batch cap (or Claude's quota) is hit while it runs, that batch's jobs still queued are cancelled.
   - *Resumir pendientes* (Summarize pending): queues papers with no summary (or a stale or failed one) within the batch budget, using the model chosen in the «Modelo del lote» (Batch model) selector. The confirmation shows the number of papers, the estimated cost and the batch cap; if none are pending, it warns «No hay papers pendientes de resumir.» (There are no papers pending summarization.).
   - *Regenerar filtrados con…* (Regenerate filtered with…): with an active status filter (not «Todos» (All)), regenerates with the model chosen in its own selector every visible paper that has indexed text.
-- **Activity panel**: lists running and recent jobs (adding an identifier or PDF, completing metadata, summarizing), with their status (queued, running, done, failed, cancelled) and, when applicable, the outcome (added, updated, was already in the library, summarized). A queued or running job can be cancelled. Tapping a job's name opens its paper.
+- **Activity panel**: lists running and recent jobs (adding an identifier or PDF, completing metadata, summarizing, citations, who cites a paper, a paper's similarity, downloading the similarity model), with their status (queued, running, done, failed, cancelled) and, when applicable, the outcome (added, updated, was already in the library, summarized, citations updated, not found in OpenAlex, incoming citations updated, model downloaded). The model download shows its progress as a percentage. A queued or running job can be cancelled. Tapping a job's name opens its paper.
 
 ## Paper detail
 
 Selecting a paper opens its tabs (only the ones that apply):
 
-They appear in this order: Resumen, Contenido, PDF, Notas.
+They appear in this order: Resumen, Contenido, PDF, Relaciones, Notas.
 
 - **Resumen** (Summary): see "Summaries with Claude" below.
 - **Contenido** (Content): the extracted readable text, whenever there is one (typically web pages without a PDF).
 - **PDF**: the PDF viewer. Shown for any paper that isn't a web page, even before it has an attached PDF: in that case it shows «Este paper no tiene PDF. Arrastra el archivo a la biblioteca para adjuntarlo.» (This paper has no PDF. Drag the file onto the library to attach it.) instead of the viewer.
+- **Relaciones** (Relations): the citation status (not fetched yet, fetched on a date with N citations in OpenAlex, or *Sin citas* (No citations)) with an «Actualizar citas» (Update citations) button; «Cita a (en tu biblioteca)» (Cites, in your library) and «Citado por (en tu biblioteca)» (Cited by, in your library), library papers only, each opening on click; how many references aren't in your library, with «Ver candidatos» (See candidates), which opens the Candidates tab filtered by this paper; and «Similares» (Similar): the 10 most similar papers with their score and reasons (e.g. «6 referencias en común · citados juntos por 3 papers · technique: ner · similitud de contenido 0.82» (6 shared references · cited together by 3 papers · technique: ner · content similarity 0.82)).
 - **Notas** (Notes): your own notes in Markdown, with autosave (`notes.md`). If the file changed from outside the app while there were unsaved changes, it warns of the conflict and lets you choose between reloading (discards your own) or overwriting with your own version.
 
 Above the detail: the citation key (with a button to copy it), the link to the original DOI or URL, «Mostrar en carpeta» (Show in folder) (opens `papers/<key>/` in the file explorer), and the indexed-text status (indexing, text indexed, PDF without text/scanned, no text, extraction error).
@@ -126,6 +135,41 @@ Keyboard shortcuts (shown on screen as «V verificar · E editar · U desverific
 - **Esc**: if an editor is open, it does nothing (close the editor with its own «Cancelar» (Cancel) button); if none is open, exits review mode.
 
 The right-hand panel shows the PDF with the quote highlighted when the paper has one and the quote is found in the text; otherwise (no PDF, PDF unavailable, or the quote doesn't appear in the PDF), it shows the extracted text passage from that page instead.
+
+## Citations and candidates
+
+Citations come from [OpenAlex](https://openalex.org), without Claude. For each paper the app finds its OpenAlex work by OpenAlex id, otherwise by DOI and, without a DOI, by exact title and year (only on an unambiguous match; never for web pages). It stores in `paper.yaml` the full list of what the paper cites, in your library or not, and its total citation count in OpenAlex. If nothing is found, the paper gets the *Sin citas* (No citations) badge.
+
+OpenAlex limits requests per day. Without a key it's plenty for a few hundred papers; if you hit the limit, pending citation jobs are cancelled and «Se alcanzó el límite diario de OpenAlex. Reintenta mañana o agrega una clave de API en Ajustes.» (OpenAlex's daily limit was reached. Try again tomorrow or add an API key in Settings.) appears. A free key (Settings → App) raises the budget.
+
+**Candidates** (Map view → «Candidatos») are works not in your library that:
+
+- **«Referencias de tus papers»** (References of your papers): are cited by at least N of your papers.
+- **«Trabajos que citan a tus papers»** (Works citing your papers): cite at least N of your papers. To see them, first tap «Buscar quién cita a mis papers» (Find who cites my papers), which asks OpenAlex who cites each paper (one job per paper, in the activity panel).
+
+The table shows title (linking to the DOI or OpenAlex), year, authors, «Citado por tus papers» (Cited by your papers), «Cita a tus papers» (Cites your papers) and «Citas en OpenAlex» (Citations in OpenAlex). **«Agregar»** (Add) ingests it like any DOI (or by OpenAlex id when it has no DOI); **«Descartar»** (Dismiss) stores it in `project.yaml` so it never shows up again (on any machine). Works already in your library (by OpenAlex id or DOI) never show up.
+
+## Similarity
+
+Each pair of papers gets a score between 0 and 1 that combines:
+
+| Signal | What it measures | Reason shown |
+|---|---|---|
+| Content | how alike the title, abstract and (when summarized) problem, contribution and method are, according to a local model | «similitud de contenido 0.82» (content similarity 0.82) |
+| Bibliographic coupling | shared references | «6 referencias en común» (6 shared references) |
+| Facets | shared values in single- or multiple-choice facets | «technique: ner · task: anonymization» |
+| Co-citation | library papers that cite both | «citados juntos por 3 papers» (cited together by 3 papers) |
+| Direct citation | one cites the other | «zhu2020loghub cita a he2017drain» (zhu2020loghub cites he2017drain) |
+
+The direct-citation reason shows both papers' citation keys. The 10 most similar papers of each paper are kept. Without the local model, the score uses the other signals only. Everything updates on its own when a paper's citations, summary or text change: a single change updates only what involves that paper, and a batch (for example «Actualizar citas» (Update citations) for the whole library) recomputes everything when it ends. If a batch is cancelled partway through, the full recompute is left pending and runs on the next paper change.
+
+## Map
+
+The **Mapa** (Map) view (side rail) has three tabs:
+
+- **Grafo** (Graph): one node per paper (larger the more citations it has in OpenAlex) and two kinds of edges: citations (solid arrow) and similarity (dashed, thicker the more alike). Hover a dashed edge to see its reasons; click a node to open its detail on the side. Controls: **«Lente»** (Lens) «Área» (Field; colored by the facet you pick; a paper with several values takes the one most frequent in the library) or «Tesis» (Thesis; colored by the 1–5 relevance of the thesis relation, gray without one); show or hide citations and similarity; «Umbral de similitud» (Similarity threshold); «Aplicar los filtros de la biblioteca» (Apply the library's filters; uses the papers visible the last time you opened the library); «Exportar PNG» (Export PNG; the graph exports to PNG only).
+- **Gráficas** (Charts): «Barras por valor» (Bars per value), «Burbujas faceta × faceta» (Facet × facet bubbles; empty cells show as gaps) and «Papers por año» (Papers per year). With «Solo revisadas» (Reviewed only) off, every facet value counts and unreviewed ones are drawn fainter; on, only verified or edited ones. Entries that no longer fit their facet's current type don't count. Clicking a bar or bubble opens the library filtered. They export to SVG, PNG and CSV.
+- **Candidatos** (Candidates): see "Citations and candidates".
 
 ## Settings
 
@@ -197,15 +241,17 @@ If the form changed from outside this editor (another machine, a `git pull`) whi
 
 ### App
 
-- **Correo de contacto para Crossref y OpenAlex** (Contact email for Crossref and OpenAlex): optional. If you fill it in, those services give your metadata queries priority. It's sent only to them, no one else. It's a per-device app setting, not stored in `project.yaml`, and therefore not synced between machines.
+- **Correo de contacto para Crossref y OpenAlex** (Contact email for Crossref and OpenAlex): optional. Crossref gives priority to requests that include it (OpenAlex no longer uses it). It's sent only to those services. It's a per-device app setting, not stored in `project.yaml`, and therefore not synced between machines.
+- **Clave de API de OpenAlex** (OpenAlex API key): optional and free. Without a key OpenAlex allows about 1000 requests a day; with one, more. Stored on this machine only and sent only to OpenAlex.
+- **Modelos locales** (Local models): the content-similarity model (multilingual-e5-small, about 470 MB) runs on your machine. Shows whether it's downloaded and how much space it takes, with «Descargar» (Download; progress shows in Activity) and «Borrar» (Delete). It's stored in the app's data folder, never in the project, so each machine downloads it once. The download runs as a job of the open project (one must be open); if you close the project or the app midway, it resumes the next time you open that project. «Borrar» (Delete) cancels the similarity computations still queued.
 - **Cerrar proyecto** (Close project): returns to the welcome screen to create or open another project.
 
 ## Project files
 
 ```
-project.yaml               project config (name, language, PDF policy, Claude, thesis, extraction form)
+project.yaml               project config (name, language, PDF policy, Claude, thesis, extraction form, dismissed candidates)
 papers/<key>/              one paper per folder; <key> is its citation key and never changes
-  paper.yaml               metadata and BibTeX
+  paper.yaml               metadata, BibTeX and citations (OpenAlex)
   summary.md               summary fields, with evidence and per-field status
   extraction.yaml          classification per the form, and the relation to the thesis
   notes.md                 your notes
@@ -213,7 +259,7 @@ papers/<key>/              one paper per folder; <key> is its citation key and n
   paper.pdf                the PDF, per the configured policy
 costs/<device>.jsonl       estimated costs of each call to Claude, one per device (so syncing between machines never conflicts)
 exports/library.bib        BibTeX for the whole library; generated, don't edit it
-.cache/                    local search index and PDFs downloaded on demand; can be deleted without losing anything, rebuilds itself
+.cache/                    local search index, PDFs downloaded on demand, incoming citations, candidate data, vectors and similar papers; can be deleted without losing anything, rebuilds itself
 ```
 
 Everything above, except `.cache/`, is meant to be versioned with git or synced between machines. `notes.md` and `project.yaml` (outside `extraction_form`) can be edited by hand with confidence; `paper.yaml`, `summary.md` and `extraction.yaml` too, but carefully, so as not to break their format. A file edited from outside the app (or updated by a sync) reloads on its own, without restarting the app.
@@ -255,3 +301,15 @@ This is the general conflict notice: another machine or a sync changed a paper's
 
 **Conflicts when two machines edit**
 If `notes.md`, `paper.yaml`, `summary.md` or `extraction.yaml` changed on disk between the app reading them and trying to save them (for example, two machines syncing at once), the app warns of the conflict instead of overwriting the other change: for notes, it lets you choose between reloading or overwriting with your version; for the rest, check the file by hand (look for git conflict markers if you use git) before retrying.
+
+**«Se alcanzó el límite diario de OpenAlex. Reintenta mañana o agrega una clave de API en Ajustes.»** (OpenAlex's daily limit was reached. Try again tomorrow or add an API key in Settings.)
+OpenAlex limits how many requests can be made per day. Pending citation jobs are cancelled; tap «Actualizar citas» (Update citations) again the next day, or add a free key under Settings → App.
+
+**A paper shows the «Sin citas» (No citations) badge**
+It wasn't found in OpenAlex: it has no DOI and the title-and-year search gave no exact match. Complete its DOI (metadata notice or «Completar» (Complete)) and tap «Actualizar citas» (Update citations) in its Relations tab.
+
+**«El modelo local de similitud no está descargado. Descárgalo en Ajustes → Aplicación.»** (The local similarity model isn't downloaded. Download it in Settings → App.)
+Content similarity needs the local model. Until it's there, similarity uses citations and facets only.
+
+**«No se pudo cargar el modelo local de similitud. Bórralo y vuelve a descargarlo en Ajustes → Aplicación.»** (The local similarity model couldn't be loaded. Delete it and download it again in Settings → App.)
+The model files are incomplete or damaged (for example, an interrupted download). Use «Borrar» (Delete) and then «Descargar» (Download).
