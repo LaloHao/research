@@ -45,4 +45,30 @@ describe('ProjectStore relations.yaml', () => {
     expect(await store.resolveRelationsConflict()).toBeNull()
     expect(await readFile(join(store.root, 'relations.yaml'), 'utf8')).toBe(text)
   })
+
+  it('refuses to resolve a conflict that changed on disk since the hash the caller saw, without writing anything', async () => {
+    const store = await ProjectStore.create(await tmpDir(), 'Thesis')
+    const ours = rel('zhu2020loghub', 'he2017drain', 'extends')
+    const other = rel('am2019x', 'he2017drain', 'same_problem')
+    const text = `<<<<<<< HEAD\n${toYaml({ schema_version: 1, relations: [ours] })}=======\n${toYaml({ schema_version: 1, relations: [other] })}>>>>>>> origin/main\n`
+    const path = join(store.root, 'relations.yaml')
+    await writeFile(path, text)
+    const seenHash = (await store.readRelations())!.hash
+    // The file changes on disk after the user saw `seenHash` (e.g. the other side of the conflict was rebased).
+    const otherUpdated = { ...other, status: 'rejected' as const }
+    const changed = `<<<<<<< HEAD\n${toYaml({ schema_version: 1, relations: [ours] })}=======\n${toYaml({ schema_version: 1, relations: [otherUpdated] })}>>>>>>> origin/main\n`
+    await writeFile(path, changed)
+    await expect(store.resolveRelationsConflict(seenHash)).rejects.toBeInstanceOf(ConflictError)
+    expect(await readFile(path, 'utf8')).toBe(changed)
+    // The same hash, now matching, resolves normally.
+    await expect(store.resolveRelationsConflict((await store.readRelations())!.hash)).resolves.toEqual({ dropped: 0 })
+  })
+
+  it('keeps unknown top-level keys of relations.yaml through a write/read round trip', async () => {
+    const store = await ProjectStore.create(await tmpDir(), 'Thesis')
+    const r = rel('zhu2020loghub', 'he2017drain', 'extends')
+    await store.writeRelations({ schema_version: 1, relations: [r], analyzed: {}, future_key: 'kept' } as never, null)
+    const read = await store.readRelations()
+    expect(read?.ok && (read.value as Record<string, unknown>).future_key).toBe('kept')
+  })
 })

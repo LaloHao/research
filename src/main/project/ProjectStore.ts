@@ -199,16 +199,23 @@ export class ProjectStore {
 
   /**
    * Rewrites a relations.yaml with git conflict markers as the union of both sides (unknown keys kept);
-   * null (file untouched) when that is not possible. `dropped` counts the invalid entries left out.
+   * null (file untouched) when that is not possible — see `resolveConflictText`. `dropped` counts the
+   * invalid entries left out.
+   *
+   * `expectedHash`, when given, is the hash of the conflicted text the caller showed the user (e.g. from
+   * `readRelations()`'s `problem`); if the file changed on disk since then, this throws `ConflictError`
+   * instead of resolving content the user never saw. Omit it to resolve whatever is on disk right now.
    */
-  async resolveRelationsConflict(): Promise<{ dropped: number } | null> {
+  async resolveRelationsConflict(expectedHash: string | null = null): Promise<{ dropped: number } | null> {
     const path = join(this.root, RELATIONS_FILE)
     const text = await readOptional(path)
     if (text === null) return null
+    const currentHash = sha256(text)
+    if (expectedHash !== null && currentHash !== expectedHash) throw new ConflictError(path)
     const merged = resolveConflictText(text)
     if (!merged) return null
     const valid = RelationsFileSchema.parse({ ...merged.file, relations: sortRelations(merged.file.relations) })
-    await this.writeChecked(path, toYaml(valid), sha256(text))
+    await this.writeChecked(path, toYaml(valid), currentHash)
     return { dropped: merged.dropped }
   }
 

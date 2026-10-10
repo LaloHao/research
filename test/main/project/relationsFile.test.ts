@@ -24,6 +24,18 @@ describe('splitConflict', () => {
     expect(splitConflict('<<<<<<< HEAD\nx\n=======\ny')).toBeNull()
     expect(splitConflict('=======\ny')).toBeNull()
   })
+
+  it('rebuilds two separate hunks in the same file', () => {
+    const text = ['a', '<<<<<<< HEAD', 'x-ours', '=======', 'x-theirs', '>>>>>>> other', 'b', '<<<<<<< HEAD', 'y-ours', '=======', 'y-theirs', '>>>>>>> other', 'c'].join('\n')
+    expect(splitConflict(text)).toEqual({ ours: 'a\nx-ours\nb\ny-ours\nc', theirs: 'a\nx-theirs\nb\ny-theirs\nc' })
+  })
+
+  it('does not mistake a marker-like line inside quoted or block scalar content for a real conflict marker', () => {
+    const quoted = 'relations:\n  - justification: "see <<<<<<< HEAD for context"\n'
+    expect(splitConflict(quoted)).toEqual({ ours: quoted, theirs: quoted })
+    const blockScalar = 'notes: |\n  <<<<<<< HEAD indented inside a block scalar\n  not a real marker\n'
+    expect(splitConflict(blockScalar)).toEqual({ ours: blockScalar, theirs: blockScalar })
+  })
 })
 
 describe('mergeRelations / mergeAnalyzed', () => {
@@ -41,6 +53,19 @@ describe('mergeRelations / mergeAnalyzed', () => {
     const old = { candidates: ['a1'], at: '2026-10-09T00:00:00.000Z' }
     const recent = { candidates: ['a1', 'b1'], at: '2026-10-10T00:00:00.000Z' }
     expect(mergeAnalyzed({ p1: old, p2: old }, { p1: recent, p3: old })).toEqual({ p1: recent, p2: old, p3: old })
+  })
+
+  it('compares updated_at by Date.parse: an unparseable timestamp always loses, and a tie (including two unparseable ones) keeps ours', () => {
+    const valid = rel('zhu2020loghub', 'he2017drain', 'extends', { updated_at: '2026-10-10T10:00:00.000Z' })
+    const invalidOurs = { ...valid, updated_at: 'not-a-date' }
+    const invalidTheirs = { ...valid, updated_at: 'also-not-a-date' }
+    // theirs has an unparseable timestamp: it loses even though string comparison would have picked it.
+    expect(mergeRelations([valid], [{ ...valid, status: 'rejected', updated_at: 'zzz-unparseable' }])).toEqual([valid])
+    // ours has an unparseable timestamp and theirs is valid: theirs (parseable) wins.
+    const theirsValid = { ...valid, status: 'confirmed' as const }
+    expect(mergeRelations([invalidOurs], [theirsValid])).toEqual([theirsValid])
+    // both unparseable: a tie keeps ours.
+    expect(mergeRelations([invalidOurs], [invalidTheirs])).toEqual([invalidOurs])
   })
 })
 
@@ -63,5 +88,20 @@ describe('lenientSide / resolveConflictText', () => {
       dropped: 1
     })
     expect(resolveConflictText('<<<<<<< HEAD\nrelations: [\n=======\nx\n>>>>>>> b\n')).toBeNull()
+  })
+
+  it('refuses a file with no conflict markers at all: there is nothing to resolve, so it must never be rewritten', () => {
+    const clean = side([rel('zhu2020loghub', 'he2017drain', 'extends')])
+    expect(resolveConflictText(clean)).toBeNull()
+    expect(resolveConflictText('')).toBeNull()
+  })
+
+  it('refuses to resolve when either side declares a schema_version other than 1', () => {
+    const ours = rel('zhu2020loghub', 'he2017drain', 'extends')
+    const theirs = rel('am2019x', 'he2017drain', 'same_problem')
+    const futureOurs = conflict(side([ours], { schema_version: 2 }), side([theirs]))
+    expect(resolveConflictText(futureOurs)).toBeNull()
+    const futureTheirs = conflict(side([ours]), side([theirs], { schema_version: 2 }))
+    expect(resolveConflictText(futureTheirs)).toBeNull()
   })
 })
