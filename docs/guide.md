@@ -138,14 +138,14 @@ The right-hand panel shows the PDF with the quote highlighted when the paper has
 
 ## Citations and candidates
 
-Citations come from [OpenAlex](https://openalex.org), without Claude. For each paper the app finds its OpenAlex work by OpenAlex id, otherwise by DOI and, without a DOI, by exact title and year (only on an unambiguous match; never for web pages). It stores in `paper.yaml` the full list of what the paper cites, in your library or not, and its total citation count in OpenAlex. If nothing is found, the paper gets the *Sin citas* (No citations) badge.
+Citations come from [OpenAlex](https://openalex.org), without Claude. For each paper the app finds its OpenAlex work by OpenAlex id, otherwise by DOI and, without a DOI, by exact title and year (only on an unambiguous match; never for web pages). It stores in `paper.yaml` the full list of what the paper cites, in your library or not, and its total citation count in OpenAlex. If nothing is found, the paper gets the *Sin citas* (No citations) badge. When the OpenAlex work found by id has a different DOI than the paper, the paper's DOI wins. Completing or changing a paper's DOI («Completar» (Complete) or «Reintentar» (Retry)) discards the citations of the old work and fetches them again on their own.
 
-OpenAlex limits requests per day. Without a key it's plenty for a few hundred papers; if you hit the limit, pending citation jobs are cancelled and «Se alcanzó el límite diario de OpenAlex. Reintenta mañana o agrega una clave de API en Ajustes.» (OpenAlex's daily limit was reached. Try again tomorrow or add an API key in Settings.) appears. A free key (Settings → App) raises the budget.
+OpenAlex limits requests per day. Without a key it's plenty for a few hundred papers; if you hit the limit (in a citations job or while loading the candidates' data), pending citation jobs are cancelled and «Se alcanzó el límite diario de OpenAlex. Reintenta mañana o agrega una clave de API en Ajustes.» (OpenAlex's daily limit was reached. Try again tomorrow or add an API key in Settings.) appears. A free key (Settings → App) raises the budget.
 
 **Candidates** (Map view → «Candidatos») are works not in your library that:
 
 - **«Referencias de tus papers»** (References of your papers): are cited by at least N of your papers.
-- **«Trabajos que citan a tus papers»** (Works citing your papers): cite at least N of your papers. To see them, first tap «Buscar quién cita a mis papers» (Find who cites my papers), which asks OpenAlex who cites each paper (one job per paper, in the activity panel).
+- **«Trabajos que citan a tus papers»** (Works citing your papers): cite at least N of your papers. To see them, first tap «Buscar quién cita a mis papers» (Find who cites my papers), which asks OpenAlex who cites each paper (one job per paper, in the activity panel). Papers looked up in the last 7 days are skipped, so tapping it again doesn't spend the daily budget twice; after that week it looks them up again.
 
 The table shows title (linking to the DOI or OpenAlex), year, authors, «Citado por tus papers» (Cited by your papers), «Cita a tus papers» (Cites your papers) and «Citas en OpenAlex» (Citations in OpenAlex). **«Agregar»** (Add) ingests it like any DOI (or by OpenAlex id when it has no DOI); **«Descartar»** (Dismiss) stores it in `project.yaml` so it never shows up again (on any machine). Works already in your library (by OpenAlex id or DOI) never show up.
 
@@ -161,7 +161,7 @@ Each pair of papers gets a score between 0 and 1 that combines:
 | Co-citation | library papers that cite both | «citados juntos por 3 papers» (cited together by 3 papers) |
 | Direct citation | one cites the other | «zhu2020loghub cita a he2017drain» (zhu2020loghub cites he2017drain) |
 
-The direct-citation reason shows both papers' citation keys. The 10 most similar papers of each paper are kept. Without the local model, the score uses the other signals only. Everything updates on its own when a paper's citations, summary or text change: a single change updates only what involves that paper, and a batch (for example «Actualizar citas» (Update citations) for the whole library) recomputes everything when it ends. If a batch is cancelled partway through, the full recompute is left pending and runs on the next paper change.
+The direct-citation reason shows both papers' citation keys. The 10 most similar papers of each paper are kept. Without the local model, the score uses the other signals only. Everything updates on its own when a paper's citations, summary or text change: a single change updates only what involves that paper, and a batch (for example «Actualizar citas» (Update citations) for the whole library) recomputes everything when it ends. If a batch is cancelled partway through, the full recompute is left pending and runs on the next paper change. Changing the extraction form (which changes every paper's facets) also recomputes everything, only if some facet value actually changed.
 
 ## Map
 
@@ -306,7 +306,7 @@ If `notes.md`, `paper.yaml`, `summary.md` or `extraction.yaml` changed on disk b
 OpenAlex limits how many requests can be made per day. Pending citation jobs are cancelled; tap «Actualizar citas» (Update citations) again the next day, or add a free key under Settings → App.
 
 **A paper shows the «Sin citas» (No citations) badge**
-It wasn't found in OpenAlex: it has no DOI and the title-and-year search gave no exact match. Complete its DOI (metadata notice or «Completar» (Complete)) and tap «Actualizar citas» (Update citations) in its Relations tab.
+It wasn't found in OpenAlex: it has no DOI and the title-and-year search gave no exact match. Complete its DOI (metadata notice or «Completar» (Complete)): its citations are fetched again on their own.
 
 **«El modelo local de similitud no está descargado. Descárgalo en Ajustes → Aplicación.»** (The local similarity model isn't downloaded. Download it in Settings → App.)
 Content similarity needs the local model. Until it's there, similarity uses citations and facets only.

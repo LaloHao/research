@@ -138,14 +138,14 @@ El panel derecho muestra el PDF con la cita resaltada cuando el paper tiene uno 
 
 ## Citas y candidatos
 
-Las citas vienen de [OpenAlex](https://openalex.org), sin usar Claude. Para cada paper, la app busca su obra en OpenAlex por su id de OpenAlex, si no por su DOI y, si no tiene DOI, por su título exacto y año (solo si hay una coincidencia inequívoca; nunca para páginas web). Guarda en `paper.yaml` la lista completa de lo que cita, esté o no en tu biblioteca, y el total de citas que tiene en OpenAlex. Si no la encuentra, el paper queda con la insignia *Sin citas*.
+Las citas vienen de [OpenAlex](https://openalex.org), sin usar Claude. Para cada paper, la app busca su obra en OpenAlex por su id de OpenAlex, si no por su DOI y, si no tiene DOI, por su título exacto y año (solo si hay una coincidencia inequívoca; nunca para páginas web). Guarda en `paper.yaml` la lista completa de lo que cita, esté o no en tu biblioteca, y el total de citas que tiene en OpenAlex. Si no la encuentra, el paper queda con la insignia *Sin citas*. Si la obra que encuentra por id tiene otro DOI que el paper, manda el DOI del paper. Al completar o cambiar el DOI de un paper («Completar» o «Reintentar»), se descartan las citas de la obra anterior y se vuelven a buscar solas.
 
-OpenAlex limita las consultas por día. Sin clave alcanza de sobra para unos cientos de papers; si llegas al límite, los trabajos de citas pendientes se cancelan y aparece «Se alcanzó el límite diario de OpenAlex. Reintenta mañana o agrega una clave de API en Ajustes.». Una clave gratuita (Ajustes → Aplicación) da un presupuesto mayor.
+OpenAlex limita las consultas por día. Sin clave alcanza de sobra para unos cientos de papers; si llegas al límite (en un trabajo de citas o al cargar los datos de los candidatos), los trabajos de citas pendientes se cancelan y aparece «Se alcanzó el límite diario de OpenAlex. Reintenta mañana o agrega una clave de API en Ajustes.». Una clave gratuita (Ajustes → Aplicación) da un presupuesto mayor.
 
 **Candidatos** (vista Mapa → Candidatos) son trabajos que no están en tu biblioteca y que:
 
 - **Referencias de tus papers**: son citados por al menos N de tus papers.
-- **Trabajos que citan a tus papers**: citan al menos N de tus papers. Para verlos, primero toca «Buscar quién cita a mis papers», que consulta en OpenAlex quién cita cada paper (un trabajo por paper, en el panel de actividad).
+- **Trabajos que citan a tus papers**: citan al menos N de tus papers. Para verlos, primero toca «Buscar quién cita a mis papers», que consulta en OpenAlex quién cita cada paper (un trabajo por paper, en el panel de actividad). Se saltan los papers consultados en los últimos 7 días, así que volver a tocarlo no gasta dos veces el presupuesto diario; pasada esa semana los vuelve a consultar.
 
 La tabla muestra título (enlace al DOI o a OpenAlex), año, autores, «Citado por tus papers», «Cita a tus papers» y «Citas en OpenAlex». **Agregar** lo ingresa como cualquier DOI (o por su id de OpenAlex si no tiene DOI); **Descartar** lo guarda en `project.yaml` y no vuelve a aparecer (en ningún equipo). Los que ya están en tu biblioteca (por id de OpenAlex o DOI) nunca aparecen.
 
@@ -161,7 +161,7 @@ Cada par de papers recibe una puntuación entre 0 y 1 que combina:
 | Co-citación | papers de tu biblioteca que citan a ambos | «citados juntos por 3 papers» |
 | Cita directa | uno cita al otro | «zhu2020loghub cita a he2017drain» |
 
-La razón de cita directa muestra las claves de cita de ambos papers (las de la columna «Clave de cita»). Se guardan los 10 más parecidos de cada paper. Sin el modelo local, la puntuación usa solo las demás señales. Todo se actualiza solo cuando cambian las citas, los resúmenes o el texto de un paper: un cambio suelto actualiza solo lo que toca a ese paper, y un lote (por ejemplo «Actualizar citas» de toda la biblioteca) recalcula todo al terminar. Si un lote se cancela a mitad de camino, el recálculo completo queda pendiente y se hace con el próximo cambio de un paper.
+La razón de cita directa muestra las claves de cita de ambos papers (las de la columna «Clave de cita»). Se guardan los 10 más parecidos de cada paper. Sin el modelo local, la puntuación usa solo las demás señales. Todo se actualiza solo cuando cambian las citas, los resúmenes o el texto de un paper: un cambio suelto actualiza solo lo que toca a ese paper, y un lote (por ejemplo «Actualizar citas» de toda la biblioteca) recalcula todo al terminar. Si un lote se cancela a mitad de camino, el recálculo completo queda pendiente y se hace con el próximo cambio de un paper. Cambiar el formulario de extracción (que cambia las facetas de todos los papers) también recalcula todo, solo si de verdad cambió algún valor de faceta.
 
 ## Mapa
 
@@ -304,7 +304,7 @@ Si `notes.md`, `paper.yaml`, `summary.md` o `extraction.yaml` cambiaron en disco
 OpenAlex limita cuántas consultas se pueden hacer por día. Los trabajos de citas pendientes se cancelan; vuelve a tocar «Actualizar citas» al día siguiente, o agrega una clave gratuita en Ajustes → Aplicación.
 
 **Un paper tiene la insignia «Sin citas»**
-No se encontró en OpenAlex: no tiene DOI y la búsqueda por título y año no dio una coincidencia exacta. Completa su DOI (aviso de metadatos o «Completar») y toca «Actualizar citas» en su pestaña Relaciones.
+No se encontró en OpenAlex: no tiene DOI y la búsqueda por título y año no dio una coincidencia exacta. Completa su DOI (aviso de metadatos o «Completar»): sus citas se vuelven a buscar solas.
 
 **«El modelo local de similitud no está descargado. Descárgalo en Ajustes → Aplicación.»**
 La similitud de contenido necesita el modelo local. Mientras no esté, la similitud usa solo citas y facetas.

@@ -48,5 +48,9 @@
 - Candidates' metadata is cached in `external_works`; a refresh only fetches ids still missing from the cache, not the whole candidate list.
 - If a similarity batch is cancelled partway through, the full recompute it would have ended with is skipped; it runs instead on the next single paper change.
 - Model download cancellation is only checked before and after the whole download, not mid-transfer, so cancelling can take a while to take effect.
-- Changing a paper's DOI during a metadata update doesn't refresh its OpenAlex citations automatically; use "Actualizar citas" on it by hand afterwards.
+- An embed request that arrives while the model is downloading and no embedder is loaded yet can leave an orphan ONNX session in the embeddings worker (`worker.ts`, the lazy embedder load).
+- Two library papers sharing one OpenAlex id (e.g. a preprint and its published version) make their neighbours depend on the order the papers are processed in.
+- A candidates run (its metadata batches) cannot be aborted when the project closes; closing waits for the current request.
+- Two different candidate queries running at once can fetch the same missing ids twice.
+- A cancelled model download leaves its `.tmp` files behind, and they count in the model's size on disk until the next download.
 - The local-model Download/Delete buttons in Settings aren't disabled while a download or delete is in flight (repeated clicks are harmless but can look unresponsive).
