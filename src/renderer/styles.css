@@ -168,6 +168,8 @@ mark { background: rgba(250, 204, 21, 0.45); }
 .review-empty { flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
 .review-passage { padding: 16px 20px; max-width: 80ch; }
 .review-passage mark { background: rgba(250, 204, 21, 0.45); }
+.passage-paragraph { white-space: pre-line; margin: 0 0 1em; }
+.passage-paragraph:last-child { margin-bottom: 0; }
 .proposals { display: flex; flex-direction: column; gap: 4px; }
 .field input.invalid, .field textarea.invalid { border-color: var(--error); }
 .field-error { color: var(--error); font-size: 12px; }

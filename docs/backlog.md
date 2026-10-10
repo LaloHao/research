@@ -14,7 +14,6 @@
 
 ## Stage 2 technical minutiae
 
-- Review mode: the fallback passage (when the quote isn't found in the PDF) is shown normalized, lowercased.
 - The PDF viewer reloads the whole document every time focus changes within the same paper.
 - Library bar: the "Modelo del lote" and "Regenerar filtrados con…" selectors use the first option as their label; review visually.
 - Evidence: a single-word quote counts as found if that word appears anywhere; consider a minimum length.
