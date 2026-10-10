@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PaperRow } from '../../../shared/library'
 import type { FacetFilter } from '../../../shared/relations'
@@ -36,14 +36,20 @@ export function LibraryView({
   const [citationsNotice, setCitationsNotice] = useState<{ error: boolean; text: string } | null>(null)
   const [updatingCitations, setUpdatingCitations] = useState(false)
 
+  const facetIdsRequest = useRef(0)
   const loadFacetIds = useCallback(() => {
+    const token = ++facetIdsRequest.current
     if (facetFilters.length === 0) {
       setFacetIds(null)
       return
     }
     window.research.map.facetPaperIds(facetFilters).then(
-      (ids) => setFacetIds(new Set(ids)),
-      () => setFacetIds(new Set())
+      (ids) => {
+        if (token === facetIdsRequest.current) setFacetIds(new Set(ids))
+      },
+      () => {
+        if (token === facetIdsRequest.current) setFacetIds(new Set())
+      }
     )
   }, [facetFilters])
   useEffect(loadFacetIds, [loadFacetIds])

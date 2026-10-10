@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { LinkedPaper, RelationsDetail } from '../../../shared/relations'
 import { useEvent } from '../../hooks/useEvent'
@@ -43,8 +43,15 @@ export function RelationsTab({
   const [notice, setNotice] = useState<{ error: boolean; text: string } | null>(null)
   const [updating, setUpdating] = useState(false)
 
+  const request = useRef(0)
   const refresh = useCallback(() => {
-    window.research.map.relations(paperId).then(setDetail, () => undefined)
+    const token = ++request.current
+    window.research.map.relations(paperId).then(
+      (next) => {
+        if (token === request.current) setDetail(next)
+      },
+      () => undefined
+    )
   }, [paperId])
   useEffect(refresh, [refresh])
   useEvent('library-changed', refresh)
