@@ -76,8 +76,8 @@ export interface LlmInfo {
 export interface ResearchApi {
   settings: {
     get(): Promise<AppSettings>
-    /** Only the contact email; the last project path is managed by the main process. */
-    set(patch: Pick<Partial<AppSettings>, 'contactEmail'>): Promise<AppSettings>
+    /** Contact email and OpenAlex API key; the last project path is managed by the main process. */
+    set(patch: Pick<Partial<AppSettings>, 'contactEmail' | 'openalexApiKey'>): Promise<AppSettings>
   }
   project: {
     current(): Promise<ProjectInfo | null>

@@ -24,6 +24,11 @@ describe('IPC argument validation', () => {
     expect(() => arg(ipcArgs.settingsPatch, { contactEmail: 1 }, 'patch')).toThrow()
   })
 
+  it('accepts the OpenAlex API key in the settings patch', () => {
+    expect(arg(ipcArgs.settingsPatch, { openalexApiKey: 'k' }, 'patch')).toEqual({ openalexApiKey: 'k' })
+    expect(() => arg(ipcArgs.settingsPatch, { openalexApiKey: 3 }, 'patch')).toThrow()
+  })
+
   it('accepts only known project keys and policies', () => {
     expect(arg(ipcArgs.projectPatch, { pdfPolicy: 'lfs', name: 'Tesis' }, 'patch')).toEqual({ pdfPolicy: 'lfs', name: 'Tesis' })
     expect(() => arg(ipcArgs.projectPatch, { pdfPolicy: 'everywhere' }, 'patch')).toThrow()

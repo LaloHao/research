@@ -18,6 +18,8 @@ import { LibraryService } from './LibraryService'
 
 export interface SessionOptions {
   contactEmail: string
+  /** Sent only to api.openalex.org. */
+  openalexApiKey?: string
   fetch?: FetchFn
   extractor?: PdfExtractor
   /** Defaults to true; tests turn it off. */
@@ -60,7 +62,7 @@ export class ProjectSession {
 
   private static async start(store: ProjectStore, opts: SessionOptions): Promise<ProjectSession> {
     const cache = IndexCache.open(join(store.cacheDir, 'index.sqlite'))
-    const http = new HttpClient({ fetch: opts.fetch, contactEmail: opts.contactEmail })
+    const http = new HttpClient({ fetch: opts.fetch, contactEmail: opts.contactEmail, openalexApiKey: opts.openalexApiKey })
     const library = new LibraryService({ store, cache, resolver: new MetadataResolver(http), http, extractor: opts.extractor ?? new PdfjsExtractor() })
     const ledger = new CostLedger(store, opts.deviceId ?? DEFAULT_DEVICE_ID)
     const budget = new BudgetGuard(

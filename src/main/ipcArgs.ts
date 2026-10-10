@@ -14,7 +14,7 @@ export const ipcArgs = {
   paths: z.array(z.string().min(1)),
   jobId: z.number().int().nonnegative(),
   /** `lastProjectPath` is managed by the main process only. */
-  settingsPatch: z.strictObject({ contactEmail: z.string().optional() }),
+  settingsPatch: z.strictObject({ contactEmail: z.string().optional(), openalexApiKey: z.string().optional() }),
   projectPatch: z.strictObject({
     name: z.string().trim().min(1).optional(),
     contentLanguage: z.string().min(2).optional(),
