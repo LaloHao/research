@@ -157,6 +157,7 @@ export interface ResearchApi {
     verifyAll(id: string): Promise<ActionResult>
     acceptProposed(facetKey: string, value: string): Promise<ActionResult>
     mapProposed(facetKey: string, from: string, to: string): Promise<ActionResult>
+    /** Summary entries and suggested typed relations still to review, paper by paper. */
     reviewQueue(ids?: string[]): Promise<ReviewItem[]>
     pageText(id: string, page: number | null): Promise<string>
   }

@@ -140,9 +140,11 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     const to = arg(ipcArgs.text, rawTo, 'to')
     return actionResult(() => app.requireSession().summaries.mapProposed(facetKey, from, to))
   })
-  ipcMain.handle(IPC.summaryReviewQueue, (_e, rawIds: unknown) =>
-    app.requireSession().summaries.reviewQueue(arg(ipcArgs.paperIds, rawIds, 'ids'))
-  )
+  ipcMain.handle(IPC.summaryReviewQueue, (_e, rawIds: unknown) => {
+    const ids = arg(ipcArgs.paperIds, rawIds, 'ids')
+    const session = app.requireSession()
+    return session.track(session.reviewQueue(ids))
+  })
   ipcMain.handle(IPC.summaryPageText, (_e, rawId: unknown, rawPage: unknown) => {
     const id = arg(ipcArgs.paperId, rawId, 'id')
     const page = arg(ipcArgs.pageNumber, rawPage, 'page')

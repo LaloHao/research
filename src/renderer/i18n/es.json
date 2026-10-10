@@ -322,7 +322,9 @@
     "passage_content": "Contenido de la página web",
     "passage_loading": "Cargando el texto…",
     "quote_not_in_pdf": "No se encontró la cita en el PDF; se muestra el texto extraído.",
-    "item_unavailable": "Este elemento ya no está disponible. Usa → para continuar."
+    "item_unavailable": "Este elemento ya no está disponible. Usa → para continuar.",
+    "relation_shortcuts": "V confirmar · R rechazar · E elegir otro tipo · U deshacer · → siguiente · ← anterior · Esc cerrar la lista o salir",
+    "decided": "Decisión guardada."
   },
   "notes": {
     "placeholder": "Escribe tus notas en Markdown…",

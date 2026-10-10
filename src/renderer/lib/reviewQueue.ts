@@ -37,3 +37,11 @@ export function afterResolve(c: ReviewCursor, resolved: ReviewItem): ReviewCurso
 export function progressLabel(c: ReviewCursor): { position: number; total: number } {
   return { position: c.items.length === 0 ? 0 : c.index + 1, total: c.items.length }
 }
+
+/** Puts an undone item back where the user is (or moves to it if it is still queued), so it is reviewed again. */
+export function reinsert(c: ReviewCursor, item: ReviewItem): ReviewCursor {
+  const at = c.items.findIndex((it) => sameItem(it, item))
+  if (at >= 0) return { items: c.items, index: at }
+  const index = Math.min(c.index, c.items.length)
+  return { items: [...c.items.slice(0, index), item, ...c.items.slice(index)], index }
+}

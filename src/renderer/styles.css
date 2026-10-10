@@ -231,3 +231,8 @@ mark { background: rgba(250, 204, 21, 0.45); }
 .typed-card textarea { width: 100%; }
 .typed-rejected { opacity: 0.75; }
 .shell > .relations-file-banner { grid-column: 2; margin: 8px 12px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); }
+.review-split { display: flex; }
+.review-pane { flex: 1; min-width: 0; overflow: auto; border-right: 1px solid var(--border); }
+.review-pane:last-child { border-right: none; }
+.review-pane-title { padding: 8px 12px 0; margin: 0; }
+.type-picker { flex-wrap: wrap; gap: 6px; }
