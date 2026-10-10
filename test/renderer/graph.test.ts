@@ -25,7 +25,8 @@ const data: GraphData = {
   similarities: [
     { source: 'a', target: 'c', score: 0.2, reasons: [] },
     { source: 'b', target: 'c', score: 0.6, reasons: [{ kind: 'coupling', shared: 2 }] }
-  ]
+  ],
+  typed: []
 }
 
 describe('graph lenses', () => {

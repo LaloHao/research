@@ -61,6 +61,18 @@ describe('RelationService', () => {
     expect(input).not.toContain('am2019x')
   })
 
+  it('reindexes for the watcher only when relations.yaml changed since its own last write or reindex', async () => {
+    const { service, store, cache } = await setupRelations()
+    expect(await service.reindexIfChanged()).toBe(false)
+    await service.run(LOGHUB_ID, {})
+    // Our own write was already reindexed.
+    expect(await service.reindexIfChanged()).toBe(false)
+    await writeFile(join(store.root, 'relations.yaml'), toYaml({ schema_version: 1, relations: [typedRelation({ status: 'confirmed' })] }))
+    expect(await service.reindexIfChanged()).toBe(true)
+    expect(cache.typedRelations(LOGHUB_ID)[0].status).toBe('confirmed')
+    expect(await service.reindexIfChanged()).toBe(false)
+  })
+
   it('confirms, rejects and undoes through one-use tokens; an undo after a later change is refused', async () => {
     const { service, cache } = await setupRelations()
     await service.run(LOGHUB_ID, {})

@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import type { JobSpec } from '../../shared/jobs'
 import type { PaperDetail } from '../../shared/library'
+import type { ReviewItem } from '../../shared/summary'
 import { IndexCache } from '../cache/IndexCache'
 import { CitationService } from '../citations/CitationService'
 import { OpenAlexCitations } from '../citations/OpenAlexCitations'
@@ -14,8 +15,13 @@ import { ClaudeCliProvider } from '../llm/ClaudeCliProvider'
 import { CostLedger } from '../llm/CostLedger'
 import type { LlmProvider } from '../llm/LlmProvider'
 import { MapService } from '../map/MapService'
+import { startLibraryMcpServer } from '../mcp/LibraryMcpServer'
+import { libraryTools } from '../mcp/libraryTools'
 import { ProjectStore } from '../project/ProjectStore'
 import { PAPER_FOLDER, watchProject } from '../project/watcher'
+import { interleaveReview } from '../relations/relationMerge'
+import { RelationService } from '../relations/RelationService'
+import { RelationSuggester } from '../relations/RelationSuggester'
 import { SimilarityService } from '../relations/SimilarityService'
 import { Summarizer } from '../summary/Summarizer'
 import { SummaryService } from '../summary/SummaryService'
@@ -61,7 +67,8 @@ export class ProjectSession {
     readonly summaries: SummaryService,
     readonly citations: CitationService,
     readonly similarity: SimilarityService,
-    readonly map: MapService
+    readonly map: MapService,
+    readonly relations: RelationService
   ) {}
 
   static async create(root: string, name: string, opts: SessionOptions): Promise<ProjectSession> {
@@ -77,15 +84,20 @@ export class ProjectSession {
     const http = new HttpClient({ fetch: opts.fetch, contactEmail: opts.contactEmail, openalexApiKey: opts.openalexApiKey })
     const library = new LibraryService({ store, cache, resolver: new MetadataResolver(http), http, extractor: opts.extractor ?? new PdfjsExtractor() })
     const ledger = new CostLedger(store, opts.deviceId ?? DEFAULT_DEVICE_ID)
+    // Agent runs cost more than a summary: their estimate starts higher and grows on its own.
     const budget = new BudgetGuard(
       () => limitsFromConfig(store.config.llm),
-      () => ledger.monthTotal()
+      () => ledger.monthTotal(),
+      0.05,
+      { suggest_relations: 0.25 }
     )
-    const summarizer = new Summarizer({ store, cache, provider: opts.llm ?? new ClaudeCliProvider(), budget, ledger })
+    const llm = opts.llm ?? new ClaudeCliProvider()
+    const summarizer = new Summarizer({ store, cache, provider: llm, budget, ledger })
     // The handler reads the services when a job runs: the queue has to exist before them.
+    // One analysis at a time: skipping pairs already analyzed from the other paper relies on runs being sequential.
     const queue = new JobQueue(cache, (spec, signal, report) => runJob(session.services(), spec, signal, report), {
       total: 4,
-      byType: { summarize: 1, citations: 1, cited_by: 1, embed: 1, model_download: 1 }
+      byType: { summarize: 1, citations: 1, cited_by: 1, embed: 1, model_download: 1, suggest_relations: 1 }
     })
     const summaries = new SummaryService({
       store,
@@ -118,8 +130,28 @@ export class ProjectSession {
       cancelQueued: (types) => queue.cancelTypes(types),
       emit: () => session.emit('library')
     })
-    const session: ProjectSession = new ProjectSession(store, cache, http, library, queue, summaries, citations, similarity, new MapService({ store, cache }))
+    const map = new MapService({ store, cache })
+    const suggester = new RelationSuggester({
+      store,
+      cache,
+      provider: llm,
+      budget,
+      ledger,
+      // A fresh read-only MCP server per agent run, closed when the run ends.
+      startTools: (o) => startLibraryMcpServer(libraryTools({ store, cache, map, embeddings: opts.embeddings ?? null }), o)
+    })
+    const relations = new RelationService({
+      store,
+      cache,
+      suggester,
+      budget,
+      emit: () => session.emit('library'),
+      enqueue: (spec) => queue.enqueue(spec),
+      cancelBatch: (batchId) => queue.cancelBatch(batchId)
+    })
+    const session: ProjectSession = new ProjectSession(store, cache, http, library, queue, summaries, citations, similarity, map, relations)
     await library.reindexAll()
+    await relations.reindex()
     library.onChange(() => session.emit('library'))
     queue.onChange(() => session.emit('jobs'))
     queue.start()
@@ -148,6 +180,16 @@ export class ProjectSession {
         },
         onConfig: () => {
           void session.track(session.reloadConfig()).catch((error) => console.error('project.yaml', error))
+        },
+        onRelations: () => {
+          // Our own writes come through the watcher too and are already indexed: only a real external change reindexes.
+          void session
+            .track(
+              relations.reindexIfChanged().then((changed) => {
+                if (changed) session.emit('library')
+              })
+            )
+            .catch((error) => console.error('relations.yaml', error))
         }
       })
     }
@@ -175,7 +217,19 @@ export class ProjectSession {
   }
 
   services(): JobServices {
-    return { library: this.library, summaries: this.summaries, citations: this.citations, similarity: this.similarity }
+    return { library: this.library, summaries: this.summaries, citations: this.citations, similarity: this.similarity, relations: this.relations }
+  }
+
+  /** Summary entries and suggested relations still to review, paper by paper (in `ids` order when given, otherwise in list order). */
+  async reviewQueue(ids?: string[]): Promise<ReviewItem[]> {
+    const unique = ids ? [...new Set(ids)] : undefined
+    const rows = unique ? unique.flatMap((id) => this.cache.getPaper(id) ?? []) : this.cache.listPapers()
+    const summary = await this.summaries.reviewQueue(unique)
+    return interleaveReview(
+      rows.map((r) => r.id),
+      summary,
+      this.relations.reviewItems(rows)
+    )
   }
 
   readPdf(id: string): Promise<Uint8Array | null> {
@@ -204,6 +258,7 @@ export interface JobServices {
   summaries: SummaryService
   citations: CitationService
   similarity: SimilarityService
+  relations: RelationService
 }
 
 const logged =
@@ -223,26 +278,36 @@ export async function runJob(
       // Problem, contribution and method feed the embedding input; the facets feed the similarity directly.
       await s.similarity.enqueueStale([spec.paperId]).catch(logged('embeddings'))
       await s.similarity.paperChanged(spec.paperId).catch(logged('neighbours'))
+      await s.relations.autoAfter(spec.paperId).catch(logged('auto relations'))
       return result
     }
-    case 'citations':
+    case 'citations': {
+      let result: { paperId?: string; message?: string }
       try {
-        return await s.citations.fetch(spec.paperId, signal)
+        result = await s.citations.fetch(spec.paperId, signal)
       } finally {
         if (!signal.aborted) await s.similarity.afterJob(spec.paperId).catch(logged('neighbours'))
       }
+      // After the neighbours are updated, so the candidates it looks at are current.
+      await s.relations.autoAfter(spec.paperId).catch(logged('auto relations'))
+      return result
+    }
     case 'cited_by':
       return s.citations.fetchCitedBy(spec.paperId, signal)
-    case 'embed':
+    case 'embed': {
+      let result: { paperId?: string; message?: string }
       try {
-        return await s.similarity.embed(spec.paperId, signal)
+        result = await s.similarity.embed(spec.paperId, signal)
       } finally {
         if (!signal.aborted) await s.similarity.afterJob(spec.paperId).catch(logged('neighbours'))
       }
+      await s.relations.autoAfter(spec.paperId).catch(logged('auto relations'))
+      return result
+    }
     case 'model_download':
       return s.similarity.downloadModel(signal, report)
     case 'suggest_relations':
-      throw new Error('No handler for suggest_relations jobs')
+      return s.relations.run(spec.paperId, { force: spec.force, batchId: spec.batchId, model: spec.model, signal })
     case 'ingest_identifier':
     case 'ingest_pdf':
     case 'update_metadata': {

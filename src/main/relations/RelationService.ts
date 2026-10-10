@@ -57,6 +57,8 @@ export class RelationService {
   private analyzed: Record<string, PaperAnalysis> = {}
   /** Hash of the conflicted relations.yaml the last reindex read: the text the user is shown and may resolve. */
   private conflictHash: string | null = null
+  /** Hash of relations.yaml as of the last reindex (null: missing; undefined: never read). */
+  private indexedHash: string | null | undefined = undefined
   /** Undo token → decision; tokens never leave the main process with the relation data. */
   private readonly undo = new Map<string, RelationChange>()
   /** Writes of relations.yaml run one after another. */
@@ -70,7 +72,24 @@ export class RelationService {
 
   /** Mirrors relations.yaml into the index; an unreadable file keeps the previous rows and is reported by fileState(). */
   async reindex(): Promise<void> {
-    const read = await this.deps.store.readRelations()
+    this.apply(await this.deps.store.readRelations())
+  }
+
+  /**
+   * For the watcher: reindexes only when relations.yaml differs from what the last reindex read, so our own
+   * writes (already reindexed) do nothing. Waits for a write in progress. True when it reindexed.
+   */
+  reindexIfChanged(): Promise<boolean> {
+    return this.serialized(async () => {
+      const read = await this.deps.store.readRelations()
+      if (this.indexedHash !== undefined && (read?.hash ?? null) === this.indexedHash) return false
+      this.apply(read)
+      return true
+    })
+  }
+
+  private apply(read: Awaited<ReturnType<ProjectStore['readRelations']>>): void {
+    this.indexedHash = read?.hash ?? null
     this.conflictHash = read && !read.ok && read.problem.kind === 'conflict_markers' ? read.hash : null
     if (read === null) {
       this.file = { status: 'missing' }
