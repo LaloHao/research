@@ -4,6 +4,7 @@ import type { PaperDetail as Detail } from '../../../shared/library'
 import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
 import { paperTabs, type Tab } from '../../lib/paperTabs'
+import { ContentView } from './ContentView'
 import { MetadataCompletion } from './MetadataCompletion'
 import { NotesEditor } from './NotesEditor'
 import { PdfViewer, type PdfFocus } from './PdfViewer'
@@ -59,6 +60,8 @@ export function PaperDetail({
   const [tab, setTab] = useState<Tab>('summary')
   // The quote to show in the PDF after following an evidence link.
   const [focus, setFocus] = useState<PdfFocus | null>(null)
+  // The quote to highlight in the Contenido tab after following an evidence link (web papers).
+  const [contentQuote, setContentQuote] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
   const refresh = useCallback(() => {
@@ -71,7 +74,10 @@ export function PaperDetail({
     )
   }, [id])
   useEffect(refresh, [refresh])
-  useEffect(() => setFocus(null), [id])
+  useEffect(() => {
+    setFocus(null)
+    setContentQuote(null)
+  }, [id])
   useEvent('library-changed', refresh)
   useEvent('jobs-changed', refresh)
 
@@ -102,7 +108,10 @@ export function PaperDetail({
     if (tabs.includes('pdf')) {
       setFocus({ page, quote })
       setTab('pdf')
-    } else if (tabs.includes('content')) setTab('content')
+    } else if (tabs.includes('content')) {
+      setContentQuote(quote)
+      setTab('content')
+    }
   }
   const copyKey = (): void => {
     void navigator.clipboard.writeText(paper.id).then(() => {
@@ -146,7 +155,7 @@ export function PaperDetail({
       <div className="tab-body">
         {active === 'summary' && <SummaryTab key={detail.id} detail={detail} onOpenEvidence={openEvidence} />}
         {active === 'pdf' && <PdfTab key={id} id={id} hasPdf={detail.hasPdf} focus={focus} />}
-        {active === 'content' && <pre className="content">{detail.content}</pre>}
+        {active === 'content' && <ContentView key={id} content={detail.content ?? ''} quote={contentQuote} />}
         {active === 'relations' && <RelationsTab key={id} paperId={id} onOpenCandidates={onOpenCandidates} onSelectPaper={onSelectPaper} />}
         {active === 'notes' && <NotesEditor key={id} paperId={id} />}
       </div>

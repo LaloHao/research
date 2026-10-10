@@ -232,6 +232,11 @@
       "invalid_schema": "Al archivo le faltan campos o tiene valores no válidos."
     },
     "problem_details": "Detalles técnicos",
+    "content": {
+      "image": "Imagen: {{label}}",
+      "image_unavailable": "imagen",
+      "quote_not_found": "No se encontró la cita en el texto."
+    },
     "no_pdf": "Este paper no tiene PDF. Arrastra el archivo a la biblioteca para adjuntarlo.",
     "pdf_loading": "Cargando PDF…",
     "pdf_error": "No se pudo cargar el PDF: {{message}}",
