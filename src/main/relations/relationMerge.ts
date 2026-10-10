@@ -56,6 +56,16 @@ export function withStatus(r: TypedRelation, status: RelationStatus, now: string
   return { ...r, status, updated_at: now }
 }
 
+/**
+ * A suggestion the user put back on purpose (restored after rejecting, or un-confirmed): no longer owned by its
+ * paper's analysis, so a later analysis of that paper keeps it (see mergeSuggestions). Other entries are returned as is.
+ */
+export function userKept(r: TypedRelation): TypedRelation {
+  if (r.status !== 'suggested' || r.origin?.paper === undefined) return r
+  const { paper: _paper, ...origin } = r.origin
+  return { ...r, origin }
+}
+
 /** The user's own type: confirmed, edited, and every id it had before is never suggested again. */
 export function retype(r: TypedRelation, type: RelationType, now: string): TypedRelation {
   const ends = orient(r.from, r.to, type)
@@ -88,10 +98,22 @@ export function applyChange(list: TypedRelation[], change: RelationChange): Type
 /** Same instant, whatever its spelling (a hand-edited or re-serialized timestamp still matches). */
 const sameInstant = (a: string, b: string): boolean => a === b || Date.parse(a) === Date.parse(b)
 
+/** Key-order independent, `undefined` keys ignored (as after a YAML round trip). */
+function canonical(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) =>
+    v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : v
+  )
+}
+
+/** The same entry: every field equal, the timestamp compared as an instant. */
+function sameEntry(a: TypedRelation, b: TypedRelation): boolean {
+  return sameInstant(a.updated_at, b.updated_at) && canonical({ ...a, updated_at: '' }) === canonical({ ...b, updated_at: '' })
+}
+
 /** Puts `before` back (stamped now) only if the entry is still exactly what the change left. */
 export function revertChange(list: TypedRelation[], change: RelationChange, now: string): TypedRelation[] {
   const current = list.find((r) => r.id === change.after.id)
-  if (!current || current.status !== change.after.status || !sameInstant(current.updated_at, change.after.updated_at)) {
+  if (!current || !sameEntry(current, change.after)) {
     throw new InvalidEdit(`Relation ${change.after.id} changed since`)
   }
   const without = list.filter((r) => r.id !== change.after.id)
@@ -120,7 +142,11 @@ export function viewsFor(
 
 /** Each suggestion once, under whichever of its two papers comes first in `rows`. */
 export function relationReviewItems(list: TypedRelation[], rows: { id: string; title: string }[]): ReviewItem[] {
-  const position = new Map(rows.map((r, i) => [r.id, i]))
+  const position = new Map<string, number>()
+  // A paper listed twice counts where it first appears.
+  rows.forEach((r, i) => {
+    if (!position.has(r.id)) position.set(r.id, i)
+  })
   return list.flatMap((r) => {
     if (r.status !== 'suggested') return []
     const at = [r.from, r.to].filter((id) => position.has(id)).sort((a, b) => position.get(a)! - position.get(b)!)[0]
@@ -137,7 +163,7 @@ export function interleaveReview(order: string[], summary: ReviewItem[], relatio
   }
   const s = byPaper(summary)
   const r = byPaper(relation)
-  return order.flatMap((id) => [...(s.get(id) ?? []), ...(r.get(id) ?? [])])
+  return [...new Set(order)].flatMap((id) => [...(s.get(id) ?? []), ...(r.get(id) ?? [])])
 }
 
 export function typedEdges(list: TypedRelation[]): TypedEdge[] {

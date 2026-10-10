@@ -107,6 +107,18 @@ describe('status, type, direction and justification changes', () => {
     const later = applyChange(list, { before: change.after, after: withStatus(change.after, 'rejected', NOW) })
     expect(() => revertChange(later, change, NOW)).toThrow(InvalidEdit)
   })
+
+  it('refuses an undo when anything else in the entry changed, even with the same status and timestamp', () => {
+    const a = typedRelation()
+    const change = { before: a, after: withStatus(a, 'confirmed', NOW) }
+    const list = applyChange([a], change)
+    const touched = [{ ...change.after, justification: 'Changed by hand.' }]
+    expect(() => revertChange(touched, change, NOW)).toThrow(InvalidEdit)
+    // The same instant spelled differently is still the same entry.
+    const respelled = [{ ...change.after, updated_at: '2026-10-10T12:00:00Z' }]
+    expect(revertChange(respelled, change, NOW)).toHaveLength(1)
+    expect(revertChange(list, change, NOW)).toEqual([{ ...a, updated_at: NOW }])
+  })
 })
 
 describe('views, review items and edges', () => {
