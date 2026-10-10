@@ -53,6 +53,42 @@ describe('reflowPage', () => {
     expect(reflowPage(raw)).toHaveLength(1)
   })
 
+  it('measures "short" against a typical line, not a single very long one (two-column pages)', () => {
+    const raw = [
+      'Figure 1: a caption that runs across the full width of both columns of the page',
+      '',
+      'Column text of a regular width',
+      'ends a sentence here today.',
+      'Then it goes on in the same',
+      'paragraph of the column.'
+    ].join('\n')
+    expect(reflowPage(raw)[1]).toEqual({
+      kind: 'paragraph',
+      text: 'Column text of a regular width ends a sentence here today. Then it goes on in the same paragraph of the column.'
+    })
+  })
+
+  it('keeps the line-end hyphen of a word that already has hyphens', () => {
+    expect(reflowPage('a state-of-the-\nart model')).toEqual([{ kind: 'paragraph', text: 'a state-of-the-art model' }])
+  })
+
+  it('does not take numbered list items or a numbered line mid-paragraph as headings', () => {
+    expect(reflowPage('We follow these steps:\n1 Collect the data\n2 Clean the data')).toEqual([
+      { kind: 'paragraph', text: 'We follow these steps: 1 Collect the data 2 Clean the data' }
+    ])
+    expect(reflowPage('This ends a sentence.\n3 Results of the\nexperiment follow.')).toEqual([
+      { kind: 'paragraph', text: 'This ends a sentence. 3 Results of the experiment follow.' }
+    ])
+  })
+
+  it('accepts a numbered heading after a blank line, a sentence end or another heading', () => {
+    expect(reflowPage('3 Method\n3.1 Data\nWe use a corpus.\n\n4 Results\nGood.').filter((b) => b.kind === 'heading')).toEqual([
+      { kind: 'heading', text: '3 Method' },
+      { kind: 'heading', text: '3.1 Data' },
+      { kind: 'heading', text: '4 Results' }
+    ])
+  })
+
   it('detects numbered section headings', () => {
     expect(reflowPage('1 Introduction\nText of the intro.\n2.3 Results and Discussion\nMore text.')).toEqual([
       { kind: 'heading', text: '1 Introduction' },

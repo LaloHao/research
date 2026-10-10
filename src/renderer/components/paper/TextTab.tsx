@@ -17,7 +17,7 @@ interface SearchResult extends TextMatch {
   page: number
 }
 
-type SearchState = { status: 'running'; query: string } | { status: 'done'; query: string; results: SearchResult[] } | { status: 'error'; message: string }
+type SearchState = { status: 'running'; query: string; page: number } | { status: 'done'; query: string; results: SearchResult[] } | { status: 'error'; message: string }
 
 /** Pages sampled (from the start) to find running headers and footers. */
 const SAMPLE_PAGES = 10
@@ -101,8 +101,16 @@ export function TextTab({ id }: { id: string }): React.JSX.Element {
         const key = `${id}:${opened.fingerprints[0]}`
         let repeated = repeatedCache.get(key)
         if (!repeated) {
-          const sample = await Promise.all(Array.from({ length: Math.min(SAMPLE_PAGES, opened.numPages) }, (_, i) => readPage(opened, i + 1)))
-          repeated = repeatedLines(sample)
+          // A page that fails to read is left out of the sample (and read again when shown).
+          const sample = await Promise.allSettled(Array.from({ length: Math.min(SAMPLE_PAGES, opened.numPages) }, (_, i) => readPage(opened, i + 1)))
+          if (!alive) return
+          const read: string[] = []
+          sample.forEach((r, i) => {
+            if (r.status !== 'fulfilled') return
+            read.push(r.value)
+            pageCache.current.set(i + 1, Promise.resolve(r.value))
+          })
+          repeated = repeatedLines(read)
           repeatedCache.set(key, repeated)
         }
         if (alive) setDoc({ status: 'ready', doc: opened, repeated })
@@ -176,9 +184,10 @@ export function TextTab({ id }: { id: string }): React.JSX.Element {
     return byBlock
   }, [results, page])
 
+  // Also on `pageMatches`, so a new search whose first match is on the current page still scrolls to it.
   useEffect(() => {
     activeRef.current?.scrollIntoView({ block: 'center' })
-  }, [active, blocks])
+  }, [active, blocks, pageMatches])
 
   const goTo = useCallback((n: number) => setPage(Math.min(Math.max(1, n), Math.max(1, total))), [total])
 
@@ -186,10 +195,10 @@ export function TextTab({ id }: { id: string }): React.JSX.Element {
     async (q: string) => {
       const seq = ++searchSeq.current
       if (!ready || !q.trim()) return setSearch(null)
-      setSearch({ status: 'running', query: q })
       try {
         const found: SearchResult[] = []
         for (let n = 1; n <= ready.doc.numPages; n++) {
+          setSearch({ status: 'running', query: q, page: n })
           const text = await loadPage(n)
           if (seq !== searchSeq.current) return
           const pageBlocks = reflowPage(text, ready.repeated)
@@ -259,13 +268,14 @@ export function TextTab({ id }: { id: string }): React.JSX.Element {
             value={query}
             onChange={(e) => {
               setQuery(e.target.value)
-              if (!e.target.value.trim()) void runSearch('')
+              // Editing the query drops the results (and their highlights) until it is searched again.
+              if (search) void runSearch('')
             }}
           />
           <button className="small" type="submit">
             {t('paper.text.search')}
           </button>
-          {search?.status === 'running' && <span className="muted">{t('paper.text.searching')}</span>}
+          {search?.status === 'running' && <span className="muted">{t('paper.text.searching', { page: search.page, total })}</span>}
           {search?.status === 'error' && <span className="error">{t('paper.text.error', { message: search.message })}</span>}
           {search?.status === 'done' &&
             (results.length ? (

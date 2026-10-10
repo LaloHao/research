@@ -246,7 +246,7 @@
       "go_to": "Ir a la página",
       "search_placeholder": "Buscar en el texto",
       "search": "Buscar",
-      "searching": "Buscando…",
+      "searching": "Buscando… (página {{page}} de {{total}})",
       "results_one": "{{count}} resultado",
       "results_other": "{{count}} resultados",
       "result_position": "{{current}} de {{count}}",
