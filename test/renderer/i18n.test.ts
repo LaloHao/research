@@ -58,6 +58,7 @@ describe('es.json covers every code the UI can receive', () => {
     'relations.external_one',
     'relations.external_other',
     'library.citations_queued',
+    ...['suggest_relations', 'suggest_relations_all', 'suggest_relations_filtered', 'relations_none', 'relations_queued'].map((k) => `library.${k}`),
     'settings.local_models.state.missing',
     'settings.local_models.state.ready',
     'settings.openalex_key',

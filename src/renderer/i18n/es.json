@@ -127,7 +127,15 @@
     "no_results": "Sin resultados para «{{query}}».",
     "count": "{{count}} papers",
     "select_hint": "Selecciona un paper para verlo.",
-    "summary_filter": { "all": "Todos", "none": "Sin resumen", "to_review": "Por revisar", "reviewed": "Revisados", "stale": "Desactualizados", "failed": "Con error" },
+    "summary_filter": {
+      "all": "Todos",
+      "none": "Sin resumen",
+      "to_review": "Por revisar",
+      "reviewed": "Revisados",
+      "stale": "Desactualizados",
+      "failed": "Con error",
+      "relations_to_review": "Con relaciones por revisar"
+    },
     "model_filter": { "label": "Resumido con", "any": "Cualquier modelo" },
     "summarize_pending": "Resumir pendientes",
     "batch_model": "Modelo del lote",
@@ -140,7 +148,12 @@
     "update_citations": "Actualizar citas",
     "update_citations_all": "Consulta en OpenAlex las citas de todos los papers.",
     "update_citations_filtered": "Consulta en OpenAlex las citas de los papers que se ven con la búsqueda y los filtros actuales.",
-    "citations_queued": "{{count}} papers en cola para actualizar sus citas."
+    "citations_queued": "{{count}} papers en cola para actualizar sus citas.",
+    "suggest_relations": "Sugerir relaciones",
+    "suggest_relations_all": "Pide a Claude relaciones tipadas para los papers cuyos candidatos cambiaron desde su último análisis.",
+    "suggest_relations_filtered": "Pide a Claude relaciones tipadas para los papers que se ven con la búsqueda y los filtros actuales, si sus candidatos cambiaron desde su último análisis.",
+    "relations_none": "No hay papers con candidatos nuevos por analizar.",
+    "relations_queued": "{{count}} papers en cola para sugerir relaciones."
   },
   "badges": {
     "problem": "Error en archivo",

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { PaperRow } from '../../../shared/library'
 import type { FacetFilter } from '../../../shared/relations'
 import type { LlmModel } from '../../../shared/summary'
+import type { RelationPlan } from '../../../shared/typedRelations'
 import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
 import { filterByIds, filterByModel, filterBySummary, type SummaryFilter } from '../../lib/badges'
@@ -35,6 +36,9 @@ export function LibraryView({
   const [facetIds, setFacetIds] = useState<Set<string> | null>(null)
   const [citationsNotice, setCitationsNotice] = useState<{ error: boolean; text: string } | null>(null)
   const [updatingCitations, setUpdatingCitations] = useState(false)
+  const [relationsConfirm, setRelationsConfirm] = useState<{ ids: string[] | undefined; plan: RelationPlan } | null>(null)
+  const [relationsBusy, setRelationsBusy] = useState(false)
+  const [relationsNotice, setRelationsNotice] = useState<{ error: boolean; text: string } | null>(null)
 
   const facetIdsRequest = useRef(0)
   const loadFacetIds = useCallback(() => {
@@ -95,6 +99,42 @@ export function LibraryView({
     )
   }
 
+  /** With a search or filter active, only the visible papers; otherwise every paper with candidates its last analysis did not see. */
+  const planRelations = (): void => {
+    if (relationsBusy) return
+    const ids = anyFilter ? visibleRows.map((row) => row.id) : undefined
+    setRelationsBusy(true)
+    setRelationsNotice(null)
+    setRelationsConfirm(null)
+    window.research.relations.plan(ids).then(
+      (plan) => {
+        setRelationsBusy(false)
+        if (plan.count === 0) setRelationsNotice({ error: false, text: t('library.relations_none') })
+        else setRelationsConfirm({ ids, plan })
+      },
+      () => {
+        setRelationsBusy(false)
+        setRelationsNotice({ error: true, text: errorText(t, 'unknown') })
+      }
+    )
+  }
+
+  const runRelations = (): void => {
+    if (!relationsConfirm || relationsBusy) return
+    setRelationsBusy(true)
+    window.research.relations.suggestBatch(relationsConfirm.ids).then(
+      (r) => {
+        setRelationsBusy(false)
+        setRelationsConfirm(null)
+        setRelationsNotice(r.ok ? { error: false, text: t('library.relations_queued', { count: r.count }) } : { error: true, text: errorText(t, r.error) })
+      },
+      () => {
+        setRelationsBusy(false)
+        setRelationsNotice({ error: true, text: errorText(t, 'unknown') })
+      }
+    )
+  }
+
   return (
     <div
       className={`library${dragging ? ' dragging' : ''}`}
@@ -135,8 +175,32 @@ export function LibraryView({
           >
             {t('library.update_citations')}
           </button>
+          <button
+            className="small"
+            disabled={relationsBusy}
+            onClick={planRelations}
+            title={t(anyFilter ? 'library.suggest_relations_filtered' : 'library.suggest_relations_all')}
+          >
+            {t('library.suggest_relations')}
+          </button>
         </div>
         {citationsNotice && <div className={`banner${citationsNotice.error ? ' error' : ''}`}>{citationsNotice.text}</div>}
+        {relationsConfirm && (
+          <div className="banner">
+            <span>
+              {t('library.batch_confirm', {
+                count: relationsConfirm.plan.count,
+                cost: relationsConfirm.plan.estimateUsd.toFixed(2),
+                limit: relationsConfirm.plan.batchLimitUsd.toFixed(2)
+              })}
+            </span>
+            <button className="primary" disabled={relationsBusy} onClick={runRelations}>
+              {t('library.confirm')}
+            </button>
+            <button onClick={() => setRelationsConfirm(null)}>{t('jobs.cancel')}</button>
+          </div>
+        )}
+        {relationsNotice && <div className={`banner${relationsNotice.error ? ' error' : ''}`}>{relationsNotice.text}</div>}
         {reviewIds === null && <PaperList rows={visibleRows} query={query} selected={selected} onSelect={setSelected} />}
         <JobsPanel onSelectPaper={setSelected} />
       </aside>

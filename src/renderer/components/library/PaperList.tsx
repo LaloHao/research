@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import type { PaperRow } from '../../../shared/library'
-import { rowBadges } from '../../lib/badges'
+import { reviewCount, rowBadges } from '../../lib/badges'
 
 export function PaperList({
   rows,
@@ -29,7 +29,7 @@ export function PaperList({
               <span className="badges">
                 {rowBadges(row).map((badge) => (
                   <span key={badge} className={`badge badge-${badge}`}>
-                    {t(`badges.${badge}`, badge === 'to_review' ? { count: row.pending_review } : undefined)}
+                    {t(`badges.${badge}`, badge === 'to_review' ? { count: reviewCount(row) } : undefined)}
                   </span>
                 ))}
               </span>

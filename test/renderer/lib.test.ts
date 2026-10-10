@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { TFunction } from 'i18next'
-import { filterByIds, filterByModel, filterBySummary, rowBadges } from '../../src/renderer/lib/badges'
+import { filterByIds, filterByModel, filterBySummary, reviewCount, rowBadges } from '../../src/renderer/lib/badges'
 import { errorText } from '../../src/renderer/lib/errorText'
 import { jobDetail, jobLabel, jobProgress, visibleJobs } from '../../src/renderer/lib/jobLabel'
 import { nextRqId } from '../../src/renderer/lib/thesis'
@@ -120,6 +120,19 @@ describe('filterBySummary', () => {
     expect(filterBySummary(rows, 'reviewed').map((r) => r.id)).toEqual(['c'])
     expect(filterBySummary(rows, 'stale').map((r) => r.id)).toEqual(['d'])
     expect(filterBySummary(rows, 'failed').map((r) => r.id)).toEqual(['e'])
+  })
+})
+
+describe('relations to review', () => {
+  it('counts suggested relations in "Por revisar" and shows the badge for them too', () => {
+    expect(reviewCount(row({ pending_review: 3, relations_pending: 2 }))).toBe(5)
+    expect(rowBadges(row({ summary_status: 'reviewed', relations_pending: 1 }))).toEqual(['reviewed', 'to_review'])
+    expect(rowBadges(row({ summary_status: 'generated', relations_pending: 1 }))).toEqual(['to_review'])
+  })
+
+  it('filters the papers with relations to review', () => {
+    const rows = [row({ id: 'a', relations_pending: 0 }), row({ id: 'b', relations_pending: 2 })]
+    expect(filterBySummary(rows, 'relations_to_review').map((r) => r.id)).toEqual(['b'])
   })
 })
 

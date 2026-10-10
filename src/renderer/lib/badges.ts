@@ -29,13 +29,20 @@ export function rowBadges(row: PaperRow): Badge[] {
       break
   }
   if (row.citations_status === 'unresolved') badges.push('no_citations')
+  // "Por revisar" also covers suggested typed relations, whatever the state of the summary.
+  if (row.relations_pending > 0 && !badges.includes('to_review')) badges.push('to_review')
   return badges
 }
 
-export type SummaryFilter = 'all' | 'none' | 'to_review' | 'reviewed' | 'stale' | 'failed'
-export const SUMMARY_FILTERS: SummaryFilter[] = ['all', 'none', 'to_review', 'reviewed', 'stale', 'failed']
+/** The N of "Por revisar (N)": summary entries plus suggested typed relations. */
+export function reviewCount(row: PaperRow): number {
+  return row.pending_review + row.relations_pending
+}
 
-const SUMMARY_FILTER_STATUS: Record<Exclude<SummaryFilter, 'all'>, PaperRow['summary_status']> = {
+export type SummaryFilter = 'all' | 'none' | 'to_review' | 'reviewed' | 'stale' | 'failed' | 'relations_to_review'
+export const SUMMARY_FILTERS: SummaryFilter[] = ['all', 'none', 'to_review', 'reviewed', 'stale', 'failed', 'relations_to_review']
+
+const SUMMARY_FILTER_STATUS: Record<Exclude<SummaryFilter, 'all' | 'relations_to_review'>, PaperRow['summary_status']> = {
   none: 'none',
   to_review: 'generated',
   reviewed: 'reviewed',
@@ -45,6 +52,7 @@ const SUMMARY_FILTER_STATUS: Record<Exclude<SummaryFilter, 'all'>, PaperRow['sum
 
 export function filterBySummary(rows: PaperRow[], filter: SummaryFilter): PaperRow[] {
   if (filter === 'all') return rows
+  if (filter === 'relations_to_review') return rows.filter((row) => row.relations_pending > 0)
   const status = SUMMARY_FILTER_STATUS[filter]
   return rows.filter((row) => row.summary_status === status)
 }
