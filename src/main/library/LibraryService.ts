@@ -9,7 +9,7 @@ import { chunkSegments } from '../extract/chunker'
 import { isTextless, type PdfExtractor, type PdfText } from '../extract/PdfExtractor'
 import { baseCitekey, uniqueCitekey } from '../ingest/citekey'
 import type { HttpClient } from '../ingest/http'
-import { findIdentifiersInText, parseInput } from '../ingest/identifiers'
+import { findIdentifiersInText, normalizeDoi, parseInput } from '../ingest/identifiers'
 import type { MetadataSource } from '../ingest/MetadataResolver'
 import type { ResolvedMetadata } from '../ingest/types'
 import { captureWebPage, findScholarlyIds, webMetadata } from '../ingest/web'
@@ -160,6 +160,14 @@ export class LibraryService {
       const meta = doi ? await resolver.byDoi(doi, signal) : arxiv ? await resolver.byArxiv(arxiv, signal) : null
       if (!meta) throw new UserFacingError('no_identifier')
       const fresh = buildPaper(meta, id, this.now())
+      const before = read.value.identifiers
+      const identifiers = { ...compact(before), ...compact(fresh.identifiers) }
+      const doiChanged = (before.doi ? normalizeDoi(before.doi) : null) !== (identifiers.doi ? normalizeDoi(identifiers.doi) : null)
+      // An OpenAlex id kept from the old DOI would point at another work: it goes unless the new metadata brought its own.
+      if (doiChanged && !fresh.identifiers.openalex) delete identifiers.openalex
+      // Citations of another work go too, so the citations job that follows a metadata update fetches them again.
+      const fetchedId = read.value.citations?.openalex_id
+      const stale = doiChanged || (!!fetchedId && !!identifiers.openalex && fetchedId !== identifiers.openalex)
       const updated: Paper = {
         ...read.value,
         kind: fresh.kind,
@@ -171,9 +179,10 @@ export class LibraryService {
         oa_pdf_url: fresh.oa_pdf_url ?? read.value.oa_pdf_url,
         bibtex: fresh.bibtex,
         metadata_status: fresh.metadata_status,
-        identifiers: { ...compact(read.value.identifiers), ...compact(fresh.identifiers) },
+        identifiers,
         updated_at: fresh.updated_at
       }
+      if (stale) delete updated.citations
       await store.writePaper(compact(updated) as Paper, read.hash)
       await this.afterWrite(id)
       return { status: 'merged', paperId: id }

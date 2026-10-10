@@ -4,6 +4,7 @@ import { OPENALEX_ID, type CandidateList, type CandidateQuery, type Citations } 
 import type { Paper } from '../../shared/schemas'
 import type { IndexCache } from '../cache/IndexCache'
 import { toUserFacing, UserFacingError } from '../library/UserFacingError'
+import { normalizeDoi } from '../ingest/identifiers'
 import type { ProjectStore } from '../project/ProjectStore'
 import { computeCandidates, type CandidateInput } from './candidates'
 import type { OpenAlexCitations, WorkCitations } from './OpenAlexCitations'
@@ -13,6 +14,8 @@ const MAX_CITING_PAGES = 20
 /** Metadata fetched per candidates request (10 batches). */
 const METADATA_LIMIT = 1000
 const DEFAULT_PAUSE_MS = 150
+/** "Buscar quién cita a mis papers" skips papers whose citing works were fetched more recently than this. */
+const CITED_BY_FRESH_MS = 7 * 24 * 60 * 60 * 1000
 
 export interface CitationServiceDeps {
   store: ProjectStore
@@ -31,6 +34,8 @@ export interface CitationServiceDeps {
 /** Citations from OpenAlex: references in paper.yaml, incoming citations and candidate metadata in the cache. */
 export class CitationService {
   private readonly candidateRuns = new Map<string, Promise<CandidateList>>()
+  /** Dismissals run one after another: each one reads the config the previous one wrote. */
+  private dismissals: Promise<void> = Promise.resolve()
 
   constructor(private readonly deps: CitationServiceDeps) {}
 
@@ -90,20 +95,27 @@ export class CitationService {
     return count
   }
 
-  /** "Buscar quién cita a mis papers": one cited_by job per paper with an OpenAlex work. */
-  requestCitedBy(): number {
+  /**
+   * "Buscar quién cita a mis papers": one cited_by job per paper with an OpenAlex work, except papers whose citing works
+   * were fetched in the last 7 days (unless `force`), so pressing it again does not spend the daily budget twice.
+   */
+  requestCitedBy(opts: { force?: boolean } = {}): number {
     const { cache } = this.deps
     const batchId = randomUUID()
+    const fetched = cache.incomingFetchedAt()
+    const freshSince = (this.deps.now?.() ?? new Date()).getTime() - CITED_BY_FRESH_MS
     let count = 0
     for (const row of cache.relationRows()) {
       if (row.citations_status !== 'ok' || !row.openalex_id || cache.hasActiveJob('cited_by', row.id)) continue
+      const at = fetched.get(row.id)
+      if (!opts.force && at && Date.parse(at) > freshSince) continue
       this.deps.enqueue({ type: 'cited_by', paperId: row.id, batchId })
       count++
     }
     return count
   }
 
-  /** After an ingest or a metadata update: fetch citations unless they are already there. */
+  /** After an ingest or a metadata update: fetch citations unless they are already there (a DOI change drops them). */
   autoAfterIngest(paperId: string): void {
     const { cache } = this.deps
     const row = cache.getPaper(paperId)
@@ -131,28 +143,37 @@ export class CitationService {
     let metadataError: string | null = null
     if (missing.length) {
       try {
-        const fetched = await openalex.worksByIds(missing, signal)
-        const returned = new Set(fetched.map((w) => w.openalexId))
-        // Works OpenAlex no longer returns (deleted or merged) are stored empty so they are not requested on every refresh.
-        const gone = missing
-          .filter((id) => !returned.has(id))
-          .map((openalexId) => ({ openalexId, title: null, year: null, authors: '', doi: null, citedByCount: null }))
-        cache.upsertExternalWorks([...fetched, ...gone], this.now())
+        // Each batch is stored as it arrives: a later batch failing (e.g. the daily limit) keeps the earlier ones.
+        await openalex.worksByIds(missing, signal, (requested, fetched) => {
+          const returned = new Set(fetched.map((w) => w.openalexId))
+          // Works OpenAlex no longer returns (deleted or merged) are stored empty so they are not requested on every refresh.
+          const gone = requested
+            .filter((id) => !returned.has(id))
+            .map((openalexId) => ({ openalexId, title: null, year: null, authors: '', doi: null, citedByCount: null }))
+          cache.upsertExternalWorks([...fetched, ...gone], this.now())
+        })
       } catch (error) {
         metadataError = toUserFacing(error).code
+        // The daily limit also stops the queued citation jobs, as when a job hits it.
+        if (metadataError === 'openalex_limit' && !signal?.aborted) this.deps.cancelQueued(['citations', 'cited_by'])
       }
     }
     // With the metadata, a candidate's DOI may reveal it is already in the library.
     return { candidates: computeCandidates({ ...base, works: cache.externalWorks(ids) }, query), metadataError }
   }
 
-  async dismiss(openalexId: string): Promise<void> {
-    if (!OPENALEX_ID.test(openalexId)) throw new UserFacingError('invalid_identifier')
-    const { store } = this.deps
-    const dismissed = store.config.snowball.dismissed
-    if (dismissed.includes(openalexId)) return
-    await store.updateConfig({ snowball: { dismissed: [...dismissed, openalexId].sort() } })
-    this.deps.emit()
+  dismiss(openalexId: string): Promise<void> {
+    if (!OPENALEX_ID.test(openalexId)) return Promise.reject(new UserFacingError('invalid_identifier'))
+    const run = this.dismissals.then(async () => {
+      const { store } = this.deps
+      const dismissed = store.config.snowball.dismissed
+      if (dismissed.includes(openalexId)) return
+      await store.updateConfig({ snowball: { dismissed: [...dismissed, openalexId].sort() } })
+      this.deps.emit()
+    })
+    // A failed dismissal must not block the next ones.
+    this.dismissals = run.catch(() => undefined)
+    return run
   }
 
   /** "Agregar": a regular ingest, by DOI when the candidate has one. */
@@ -179,15 +200,17 @@ export class CitationService {
 
   private async resolve(paper: Paper, signal?: AbortSignal): Promise<WorkCitations | null> {
     const { openalex } = this.deps
-    const known = paper.citations?.openalex_id ?? paper.identifiers.openalex
+    const { doi } = paper.identifiers
+    // identifiers.openalex follows the current metadata; the id of an earlier fetch may belong to a DOI since replaced.
+    const known = paper.identifiers.openalex ?? paper.citations?.openalex_id
     if (known) {
       await this.pause()
       const work = await openalex.work(known, signal)
-      if (work) return work
+      if (work && !(doi && work.doi && normalizeDoi(work.doi) !== normalizeDoi(doi))) return work
     }
-    if (paper.identifiers.doi) {
+    if (doi) {
       await this.pause()
-      return openalex.workByDoi(paper.identifiers.doi, signal)
+      return openalex.workByDoi(doi, signal)
     }
     // Web pages are not in OpenAlex: a paid search would only find false matches.
     if (paper.kind === 'web') return null

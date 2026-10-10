@@ -65,13 +65,18 @@ export class OpenAlexCitations {
     return { ids: (list.results ?? []).flatMap((r) => (r.id ? [bareOpenAlexId(r.id)] : [])), next: list.meta?.next_cursor ?? null }
   }
 
-  /** Metadata of many works, one request per 100 ids. Ids OpenAlex does not know are simply missing from the result. */
-  async worksByIds(ids: string[], signal?: AbortSignal): Promise<ExternalWork[]> {
+  /**
+   * Metadata of many works, one request per 100 ids. Ids OpenAlex does not know are simply missing from the result.
+   * `onBatch` gets each batch (the ids asked and the works returned) as it arrives, so a later failure keeps the earlier ones.
+   */
+  async worksByIds(ids: string[], signal?: AbortSignal, onBatch?: (requested: string[], works: ExternalWork[]) => void): Promise<ExternalWork[]> {
     const works: ExternalWork[] = []
     for (let i = 0; i < ids.length; i += BATCH_SIZE) {
       const chunk = ids.slice(i, i + BATCH_SIZE)
       const list = await this.list('/works', { filter: `ids.openalex:${chunk.join('|')}`, select: WORK_FIELDS, 'per-page': String(BATCH_SIZE) }, signal)
-      for (const raw of list.results ?? []) if (raw.id) works.push(toExternalWork(raw, raw.id))
+      const batch = (list.results ?? []).flatMap((raw) => (raw.id ? [toExternalWork(raw, raw.id)] : []))
+      onBatch?.(chunk, batch)
+      works.push(...batch)
     }
     return works
   }

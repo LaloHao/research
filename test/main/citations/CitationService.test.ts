@@ -86,6 +86,21 @@ describe('CitationService.fetch', () => {
     expect(fetch.calls.length).toBe(before)
   })
 
+  it('prefers the OpenAlex id in identifiers over the one of a previous fetch', async () => {
+    const stale = { source: 'openalex' as const, fetched_at: '2026-01-01T00:00:00.000Z', openalex_id: 'W1', references: [], cited_by_count: 0 }
+    const { service, fetch } = await setup([{ url: /\/works\/W2754665629\?/, body: fx('drain.refs.openalex.json') }], [samplePaper({ identifiers: { doi: '10.1109/icws.2017.13', openalex: 'W2754665629' }, citations: stale })])
+    expect((await service.fetch('he2017drain')).message).toBe('citations_updated')
+    expect(fetch.calls.map((c) => new URL(c.url).pathname)).toEqual(['/works/W2754665629'])
+  })
+
+  it('falls back to the DOI when the known OpenAlex work has another DOI', async () => {
+    const stale = { source: 'openalex' as const, fetched_at: '2026-01-01T00:00:00.000Z', openalex_id: 'W2754665629', references: ['W1'], cited_by_count: 1 }
+    const { store, service } = await setup([{ url: /\/works\/W2754665629\?/, body: fx('drain.refs.openalex.json') }, LOGHUB_REFS], [{ ...LOGHUB, citations: stale }])
+    expect((await service.fetch('zhu2020loghub')).message).toBe('citations_updated')
+    const read = await store.readPaper('zhu2020loghub')
+    expect(read.ok && read.value.citations?.openalex_id).toBe('W3049160591')
+  })
+
   it('fails with openalex_limit and cancels the pending citation jobs', async () => {
     const { service, cancelled } = await setup([{ url: /\/works\/doi:/, status: 429, headers: { 'x-ratelimit-remaining': '0' } }])
     await expect(service.fetch('he2017drain')).rejects.toMatchObject({ code: 'openalex_limit' })
@@ -146,6 +161,39 @@ describe('CitationService candidates', () => {
     expect(list.candidates.map((c) => c.work)).toEqual([null, null])
   })
 
+  it('keeps the metadata of the batches fetched before one fails', async () => {
+    const ids = Array.from({ length: 150 }, (_, i) => `W${1000000 + i}`)
+    const refs = { source: 'openalex' as const, fetched_at: '2026-01-01T00:00:00.000Z', openalex_id: 'W2754665629', references: ids, cited_by_count: 0 }
+    const first = JSON.stringify({ results: [{ id: 'https://openalex.org/W1000000', title: 'First', publication_year: 2020, authorships: [], cited_by_count: 3 }] })
+    const { cache, service } = await setup(
+      [
+        { url: /ids\.openalex.*W1000100/, status: 429, headers: { 'x-ratelimit-remaining': '0' } },
+        { url: /ids\.openalex/, body: first }
+      ],
+      [samplePaper({ citations: refs })]
+    )
+    const list = await service.candidates({ direction: 'references', minCount: 1 })
+    expect(list.metadataError).toBe('openalex_limit')
+    const works = cache.externalWorks(ids)
+    expect(works.get('W1000000')?.title).toBe('First')
+    expect(works.get('W1000099')).toMatchObject({ title: null })
+    expect(works.has('W1000100')).toBe(false)
+  })
+
+  it('also cancels the pending citation jobs when the metadata hits the daily limit', async () => {
+    const { service, cancelled } = await setup([DRAIN_REFS, LOGHUB_REFS, { url: /\/works\?filter=ids\.openalex/, status: 429, headers: { 'x-ratelimit-remaining': '0' } }], [samplePaper(), LOGHUB])
+    await service.fetch('he2017drain')
+    await service.fetch('zhu2020loghub')
+    await service.candidates({ direction: 'references', minCount: 2 })
+    expect(cancelled).toEqual([['citations', 'cited_by']])
+  })
+
+  it('records simultaneous dismissals without a conflict', async () => {
+    const { store, service } = await setup([])
+    await Promise.all([service.dismiss('W1532325895'), service.dismiss('W2153470728')])
+    expect(store.config.snowball.dismissed).toEqual(['W1532325895', 'W2153470728'])
+  })
+
   it('adds a candidate by DOI, or by its OpenAlex id when it has none', async () => {
     const { service, enqueued } = await setup([DRAIN_REFS, LOGHUB_REFS, BATCH], [samplePaper(), LOGHUB])
     await service.fetch('he2017drain')
@@ -187,5 +235,16 @@ describe('CitationService requests', () => {
     expect(enqueued.at(-1)).toEqual({ type: 'citations', paperId: 'he2017drain' })
     expect(service.requestCitedBy()).toBe(0)
     expect(enqueued.filter((s) => s.type === 'citations' && s.batchId)).toHaveLength(3)
+  })
+
+  it('skips papers whose citing works were fetched in the last 7 days', async () => {
+    const { service, cache, enqueued } = await setup([DRAIN_REFS, LOGHUB_REFS], [samplePaper(), LOGHUB])
+    await service.fetch('he2017drain')
+    await service.fetch('zhu2020loghub')
+    cache.setIncoming('he2017drain', [], '2026-10-05T12:00:00.000Z')
+    cache.setIncoming('zhu2020loghub', ['W1'], '2026-09-30T12:00:00.000Z')
+    expect(service.requestCitedBy()).toBe(1)
+    expect(enqueued.at(-1)).toMatchObject({ type: 'cited_by', paperId: 'zhu2020loghub' })
+    expect(service.requestCitedBy({ force: true })).toBe(2)
   })
 })

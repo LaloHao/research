@@ -25,8 +25,8 @@ export interface JobRow {
   updated_at: string
 }
 
-// 5: citations, external works, vectors, neighbours and facet values (stage 3a).
-const SCHEMA_VERSION = 5
+// 5: citations, external works, vectors, neighbours and facet values (stage 3a). 6: when citing works were fetched.
+const SCHEMA_VERSION = 6
 const TOKENIZER = "tokenize='unicode61 remove_diacritics 2'"
 const DDL = `
 CREATE TABLE papers (
@@ -71,6 +71,7 @@ CREATE TABLE jobs (
 CREATE TABLE citation_edges (citing_id TEXT NOT NULL, cited_openalex_id TEXT NOT NULL, PRIMARY KEY (citing_id, cited_openalex_id));
 CREATE INDEX citation_edges_cited ON citation_edges (cited_openalex_id);
 CREATE TABLE incoming_citations (cited_paper_id TEXT NOT NULL, citing_openalex_id TEXT NOT NULL, fetched_at TEXT NOT NULL, PRIMARY KEY (cited_paper_id, citing_openalex_id));
+CREATE TABLE incoming_fetches (paper_id TEXT PRIMARY KEY, fetched_at TEXT NOT NULL);
 CREATE TABLE external_works (openalex_id TEXT PRIMARY KEY, title TEXT, year INTEGER, authors TEXT NOT NULL DEFAULT '', doi TEXT, cited_by_count INTEGER, fetched_at TEXT NOT NULL);
 CREATE TABLE paper_vectors (paper_id TEXT PRIMARY KEY, input_hash TEXT NOT NULL, model TEXT NOT NULL, dims INTEGER NOT NULL, vector BLOB NOT NULL);
 CREATE TABLE similar_pairs (a TEXT NOT NULL, b TEXT NOT NULL, score REAL NOT NULL, reasons TEXT NOT NULL, PRIMARY KEY (a, b));
@@ -176,6 +177,7 @@ export class IndexCache {
       this.db.prepare('DELETE FROM summaries_fts WHERE paper_id = ?').run(id)
       this.db.prepare('DELETE FROM citation_edges WHERE citing_id = ?').run(id)
       this.db.prepare('DELETE FROM incoming_citations WHERE cited_paper_id = ?').run(id)
+      this.db.prepare('DELETE FROM incoming_fetches WHERE paper_id = ?').run(id)
       this.db.prepare('DELETE FROM paper_vectors WHERE paper_id = ?').run(id)
       this.db.prepare('DELETE FROM similar_pairs WHERE a = ? OR b = ?').run(id, id)
       this.db.prepare('DELETE FROM paper_facets WHERE paper_id = ?').run(id)
@@ -299,7 +301,17 @@ export class IndexCache {
       this.db.prepare('DELETE FROM incoming_citations WHERE cited_paper_id = ?').run(paperId)
       const insert = this.db.prepare('INSERT OR IGNORE INTO incoming_citations (cited_paper_id, citing_openalex_id, fetched_at) VALUES (?, ?, ?)')
       for (const id of citing) insert.run(paperId, id, fetchedAt)
+      // Recorded apart from the edges: a paper nobody cites has none but was still looked up.
+      this.db
+        .prepare('INSERT INTO incoming_fetches (paper_id, fetched_at) VALUES (?, ?) ON CONFLICT(paper_id) DO UPDATE SET fetched_at = excluded.fetched_at')
+        .run(paperId, fetchedAt)
     })
+  }
+
+  /** When the citing works of each paper were last fetched. */
+  incomingFetchedAt(): Map<string, string> {
+    const rows = this.db.prepare('SELECT paper_id, fetched_at FROM incoming_fetches').all() as { paper_id: string; fetched_at: string }[]
+    return new Map(rows.map((r) => [r.paper_id, r.fetched_at]))
   }
 
   incomingEdges(): { paperId: string; citing: string }[] {
