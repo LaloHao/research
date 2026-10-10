@@ -78,6 +78,8 @@ code { font-family: ui-monospace, 'JetBrains Mono', monospace; font-size: 12px; 
 .field > span { font-weight: 600; font-size: 13px; }
 .field.checkbox { flex-direction: row; align-items: center; gap: 8px; }
 .field.checkbox > span { font-weight: normal; }
+.models { margin: 8px 0 18px; padding-top: 8px; border-top: 1px solid var(--border); }
+.models h3 { margin: 0 0 4px; font-size: 15px; }
 
 .settings { display: flex; flex-direction: column; height: 100%; }
 .settings-header { padding: 20px 28px 0; flex-shrink: 0; }
