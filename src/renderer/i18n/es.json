@@ -313,6 +313,24 @@
       "model_missing": "Sin el modelo local, la similitud usa solo citas y facetas.",
       "download_model": "Descargar modelo",
       "hover_hint": "Pasa el cursor por una arista punteada para ver por qué esos papers se parecen."
+    },
+    "charts": {
+      "kind": "Gráfica",
+      "kinds": { "bars": "Barras por valor", "bubbles": "Burbujas faceta × faceta", "years": "Papers por año" },
+      "facet": "Faceta",
+      "facet_y": "Faceta del eje vertical",
+      "only_reviewed": "Solo revisadas",
+      "dim_note": "Lo no revisado se dibuja más tenue.",
+      "click_hint": "Haz clic en una barra o una burbuja para ver esos papers en la biblioteca.",
+      "papers": "Papers",
+      "year": "Año",
+      "tip": "{{label}}: {{count}} papers",
+      "tip_unreviewed": "{{label}}: {{count}} papers sin revisar",
+      "export_svg": "Exportar SVG",
+      "export_png": "Exportar PNG",
+      "export_csv": "Exportar CSV",
+      "empty": "Todavía no hay valores para esta faceta.",
+      "no_facets": "No hay facetas de opción única o múltiple: créalas en Ajustes → Formulario."
     }
   }
 }

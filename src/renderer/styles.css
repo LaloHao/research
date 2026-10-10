@@ -174,3 +174,6 @@ mark { background: rgba(250, 204, 21, 0.45); }
 .graph-side > .paper-detail { flex: 1; min-height: 0; }
 .legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+.charts { padding: 8px 16px 24px; display: flex; flex-direction: column; gap: 8px; overflow: auto; height: 100%; }
+.chart-holder { cursor: pointer; }
+.chart-holder svg { max-width: 100%; height: auto; }

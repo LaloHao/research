@@ -3,6 +3,7 @@ import es from '../../src/renderer/i18n/es.json'
 import type { JobState } from '../../src/shared/jobs'
 import { FILE_PROBLEM_KINDS, JOB_OUTCOMES, TEXT_STATUSES, USER_ERROR_CODES } from '../../src/shared/library'
 import { PDF_POLICIES } from '../../src/shared/schemas'
+import { CHART_KINDS } from '../../src/shared/relations'
 import { LLM_MODELS, RESEARCH_TYPES, SUMMARY_FIELD_KEYS } from '../../src/shared/summary'
 import type { CardStatus } from '../../src/renderer/lib/summaryView'
 import { SUMMARY_FILTERS } from '../../src/renderer/lib/badges'
@@ -31,6 +32,8 @@ describe('es.json covers every code the UI can receive', () => {
     ...['citations', 'cited_by', 'embed', 'model_download'].map((type) => `jobs.${type}`),
     ...['coupling_one', 'coupling_other', 'cocitation_one', 'cocitation_other', 'direct', 'content'].map((k) => `relations.reasons.${k}`),
     ...['score', 'no_value', 'no_relation', 'other_values', 'legend_count', 'model_missing', 'export_png', 'exported'].map((k) => `map.graph.${k}`),
+    ...CHART_KINDS.map((k) => `map.charts.kinds.${k}`),
+    ...['tip', 'tip_unreviewed', 'only_reviewed', 'empty', 'no_facets'].map((k) => `map.charts.${k}`),
     'paper.tabs.summary',
     'summary.thesis_missing',
     'summary.thesis_pending',
