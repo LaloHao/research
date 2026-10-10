@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { EmbeddingError } from '../../../src/main/embeddings/Embedder'
 import { HttpError } from '../../../src/main/ingest/http'
 import { toUserFacing, UserFacingError } from '../../../src/main/library/UserFacingError'
 import { ConflictError, ProjectError } from '../../../src/main/project/errors'
@@ -17,5 +18,20 @@ describe('toUserFacing', () => {
     expect(toUserFacing(named('InvalidPDFException')).code).toBe('unreadable_pdf')
     expect(toUserFacing(named('PasswordException')).code).toBe('unreadable_pdf')
     expect(toUserFacing(new InvalidEdit('x')).code).toBe('invalid_edit')
+  })
+
+  it('maps an OpenAlex 429 to openalex_limit only when it is the daily limit', () => {
+    const oa = 'https://api.openalex.org/works/W1'
+    const h = (headers: Record<string, string>): Headers => new Headers(headers)
+    expect(toUserFacing(new HttpError(429, oa, h({ 'x-ratelimit-remaining': '0', 'retry-after': '5' }))).code).toBe('openalex_limit')
+    expect(toUserFacing(new HttpError(429, oa, h({ 'x-ratelimit-remaining-usd': '0.0', 'retry-after': '5' }))).code).toBe('openalex_limit')
+    expect(toUserFacing(new HttpError(429, oa, h({ 'x-ratelimit-remaining': '40', 'retry-after': '3600' }))).code).toBe('openalex_limit')
+    expect(toUserFacing(new HttpError(429, oa)).code).toBe('openalex_limit')
+    expect(toUserFacing(new HttpError(429, oa, h({ 'x-ratelimit-remaining': '40', 'retry-after': '2' }))).code).toBe('network')
+    expect(toUserFacing(new HttpError(429, 'https://api.crossref.org/works/x')).code).toBe('network')
+  })
+
+  it('maps embedding failures to model_error', () => {
+    expect(toUserFacing(new EmbeddingError('could not load')).code).toBe('model_error')
   })
 })

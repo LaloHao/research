@@ -1,5 +1,6 @@
 import type { UserErrorCode } from '../../shared/library'
-import { HttpError } from '../ingest/http'
+import { EmbeddingError } from '../embeddings/Embedder'
+import { HttpError, isOpenAlexDailyLimit } from '../ingest/http'
 import { LlmError } from '../llm/LlmProvider'
 import { ConflictError, ProjectError } from '../project/errors'
 import { InvalidEdit } from '../summary/merge'
@@ -21,7 +22,11 @@ export function toUserFacing(error: unknown): UserFacingError {
   if (error instanceof UserFacingError) return error
   if (error instanceof InvalidEdit) return new UserFacingError('invalid_edit', { cause: error })
   if (error instanceof LlmError) return new UserFacingError(error.code, { cause: error })
-  if (error instanceof HttpError) return new UserFacingError(error.status === 404 ? 'not_found' : 'network', { cause: error })
+  if (error instanceof EmbeddingError) return new UserFacingError('model_error', { cause: error })
+  if (error instanceof HttpError) {
+    const code: UserErrorCode = error.status === 404 ? 'not_found' : isOpenAlexDailyLimit(error) ? 'openalex_limit' : 'network'
+    return new UserFacingError(code, { cause: error })
+  }
   if (error instanceof ConflictError) return new UserFacingError('conflict', { cause: error })
   if (error instanceof ProjectError && error.code) return new UserFacingError(error.code, { cause: error })
   // pdf.js rejects corrupt, truncated or password-protected files with these.

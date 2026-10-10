@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ProjectInfo, ResearchEvent } from '../shared/ipc'
+import type { ModelInfo } from '../shared/relations'
 import type { PdfPolicy } from '../shared/schemas'
 import { DEFAULT_SETTINGS, type AppSettings } from '../shared/settings'
 import { loadSettings, saveSettings } from './appSettings'
@@ -15,7 +16,7 @@ export class AppController {
   constructor(
     private readonly settingsFile: string,
     private readonly emit: (event: ResearchEvent) => void,
-    private readonly sessionDefaults: Omit<SessionOptions, 'contactEmail'> = {}
+    private readonly sessionDefaults: Omit<SessionOptions, 'contactEmail' | 'openalexApiKey'> = {}
   ) {}
 
   async init(): Promise<void> {
@@ -42,6 +43,7 @@ export class AppController {
     this.settings = { ...this.settings, ...patch }
     await saveSettings(this.settingsFile, this.settings)
     this.session?.http.setContactEmail(this.settings.contactEmail)
+    this.session?.http.setOpenAlexApiKey(this.settings.openalexApiKey)
     return this.settings
   }
 
@@ -94,16 +96,29 @@ export class AppController {
     this.emit('project-changed')
   }
 
+  /** The local similarity model, as Settings → App shows it. */
+  async modelInfo(): Promise<ModelInfo> {
+    const runtime = this.sessionDefaults.embeddings
+    if (!runtime) return { modelId: '', available: false, state: 'missing', sizeBytes: 0, downloading: false }
+    const disk = await runtime.status()
+    return { modelId: runtime.modelId, available: true, ...disk, downloading: this.session?.cache.hasActiveJobOfType('model_download') ?? false }
+  }
+
+  async removeModel(): Promise<void> {
+    if (this.session) await this.session.similarity.removeModel()
+    else await this.sessionDefaults.embeddings?.remove()
+  }
+
   /** Called on quit: running jobs go back to the queue and resume on the next launch. */
   async shutdown(): Promise<void> {
-    if (!this.session) return
     const session = this.session
     this.session = null
-    await session.close()
+    await session?.close()
+    await this.sessionDefaults.embeddings?.dispose()
   }
 
   private sessionOptions(): SessionOptions {
-    return { ...this.sessionDefaults, contactEmail: this.settings.contactEmail, deviceId: this.settings.deviceId }
+    return { ...this.sessionDefaults, contactEmail: this.settings.contactEmail, openalexApiKey: this.settings.openalexApiKey, deviceId: this.settings.deviceId }
   }
 
   private attach(session: ProjectSession): void {

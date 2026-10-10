@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AppController } from '../../src/main/AppController'
 import type { ResearchEvent } from '../../src/shared/ipc'
+import { FakeEmbeddingRuntime } from '../helpers/embeddings'
 import { tmpDir } from '../helpers/tmp'
 
 async function controller(settingsFile: string, events: ResearchEvent[] = []): Promise<AppController> {
@@ -59,5 +60,29 @@ describe('AppController', () => {
     await c.createProject(await tmpDir(), 'Thesis')
     expect(await c.updateProject({ name: 'Tesis', contentLanguage: 'es', pdfPolicy: 'untracked' })).toMatchObject({ name: 'Tesis', contentLanguage: 'es', pdfPolicy: 'untracked' })
     await c.shutdown()
+  })
+
+  it('passes the OpenAlex API key to the open project and to the next one', async () => {
+    const settingsFile = join(await tmpDir(), 'settings.json')
+    const c = await controller(settingsFile)
+    await c.setSettings({ openalexApiKey: 'k9' })
+    await c.createProject(await tmpDir(), 'Thesis')
+    expect(c.requireSession().http.politeUrl('https://api.openalex.org/works/W1')).toContain('api_key=k9')
+    await c.setSettings({ openalexApiKey: '' })
+    expect(c.requireSession().http.politeUrl('https://api.openalex.org/works/W1')).not.toContain('api_key')
+    await c.shutdown()
+  })
+
+  it('reports and removes the local model', async () => {
+    const runtime = new FakeEmbeddingRuntime(true)
+    const c = new AppController(join(await tmpDir(), 'settings.json'), () => {}, { watch: false, embeddings: runtime })
+    await c.init()
+    expect(await c.modelInfo()).toEqual({ modelId: 'fake-embedder', available: true, state: 'ready', sizeBytes: 1000, downloading: false })
+    await c.removeModel()
+    expect((await c.modelInfo()).state).toBe('missing')
+    await c.shutdown()
+    const plain = await controller(join(await tmpDir(), 'settings.json'))
+    expect((await plain.modelInfo()).available).toBe(false)
+    await plain.shutdown()
   })
 })

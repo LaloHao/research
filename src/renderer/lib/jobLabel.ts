@@ -12,6 +12,14 @@ export function jobLabel(t: TFunction, job: JobRecord): string {
       return t('jobs.update_metadata', { id: job.spec.paperId })
     case 'summarize':
       return t('jobs.summarize', { id: job.spec.paperId })
+    case 'citations':
+      return t('jobs.citations', { id: job.spec.paperId })
+    case 'cited_by':
+      return t('jobs.cited_by', { id: job.spec.paperId })
+    case 'embed':
+      return t('jobs.embed', { id: job.spec.paperId })
+    case 'model_download':
+      return t('jobs.model_download')
   }
 }
 
@@ -19,6 +27,11 @@ export function jobDetail(t: TFunction, job: JobRecord): string | null {
   if (job.state === 'done' && job.message) return t(`jobs.outcome.${job.message}`, { defaultValue: job.message })
   if (job.state === 'failed' && job.message) return errorText(t, job.message)
   return null
+}
+
+/** "43 %" while a running job reports progress (e.g. the model download). */
+export function jobProgress(job: JobRecord): string | null {
+  return job.state === 'running' && job.progress !== null ? `${Math.round(job.progress * 100)} %` : null
 }
 
 /** Active jobs plus the most recent finished ones (input is newest first). */

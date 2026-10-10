@@ -15,6 +15,7 @@ export async function loadSettings(file: string): Promise<AppSettings> {
   const raw = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {}
   return {
     contactEmail: typeof raw.contactEmail === 'string' ? raw.contactEmail : DEFAULT_SETTINGS.contactEmail,
+    openalexApiKey: typeof raw.openalexApiKey === 'string' ? raw.openalexApiKey : DEFAULT_SETTINGS.openalexApiKey,
     lastProjectPath: typeof raw.lastProjectPath === 'string' ? raw.lastProjectPath : DEFAULT_SETTINGS.lastProjectPath,
     deviceId: typeof raw.deviceId === 'string' && DEVICE_ID.test(raw.deviceId) ? raw.deviceId : randomUUID()
   }

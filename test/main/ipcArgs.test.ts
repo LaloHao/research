@@ -24,6 +24,11 @@ describe('IPC argument validation', () => {
     expect(() => arg(ipcArgs.settingsPatch, { contactEmail: 1 }, 'patch')).toThrow()
   })
 
+  it('accepts the OpenAlex API key in the settings patch', () => {
+    expect(arg(ipcArgs.settingsPatch, { openalexApiKey: 'k' }, 'patch')).toEqual({ openalexApiKey: 'k' })
+    expect(() => arg(ipcArgs.settingsPatch, { openalexApiKey: 3 }, 'patch')).toThrow()
+  })
+
   it('accepts only known project keys and policies', () => {
     expect(arg(ipcArgs.projectPatch, { pdfPolicy: 'lfs', name: 'Tesis' }, 'patch')).toEqual({ pdfPolicy: 'lfs', name: 'Tesis' })
     expect(() => arg(ipcArgs.projectPatch, { pdfPolicy: 'everywhere' }, 'patch')).toThrow()
@@ -65,5 +70,24 @@ describe('IPC argument validation', () => {
     expect(() => arg(ipcArgs.extractionForm, { facets: [{ key: 'a', type: 'scale', description: 'd', min: 5, max: 1 }] }, 'form')).toThrow()
     expect(() => arg(ipcArgs.extractionForm, 'garbage', 'form')).toThrow()
     expect(() => arg(ipcArgs.extractionForm, null, 'form')).toThrow()
+  })
+
+  it('validates the citation, map and export arguments', () => {
+    expect(arg(ipcArgs.openalexId, 'W2754665629', 'id')).toBe('W2754665629')
+    for (const bad of ['https://openalex.org/W1', 'w1', 'W', 3]) expect(() => arg(ipcArgs.openalexId, bad, 'id')).toThrow()
+    expect(arg(ipcArgs.candidateQuery, { direction: 'references', minCount: 2 }, 'q')).toEqual({ direction: 'references', minCount: 2 })
+    expect(arg(ipcArgs.candidateQuery, { direction: 'all', minCount: 1, paperId: 'he2017drain' }, 'q').paperId).toBe('he2017drain')
+    expect(() => arg(ipcArgs.candidateQuery, { direction: 'sideways', minCount: 1 }, 'q')).toThrow()
+    expect(() => arg(ipcArgs.candidateQuery, { direction: 'all', minCount: 0 }, 'q')).toThrow()
+    expect(arg(ipcArgs.chartQuery, { kind: 'bubbles', facet: 'task', facetY: 'llm_usage', onlyReviewed: false }, 'q').kind).toBe('bubbles')
+    expect(() => arg(ipcArgs.chartQuery, { kind: 'bubbles', facet: 'task', onlyReviewed: false }, 'q')).toThrow()
+    expect(() => arg(ipcArgs.chartQuery, { kind: 'pie', facet: 'task', onlyReviewed: false }, 'q')).toThrow()
+    expect(arg(ipcArgs.facetFilters, [{ facet: 'task', value: 'log_parsing' }], 'f')).toHaveLength(1)
+    expect(() => arg(ipcArgs.facetFilters, [{ facet: 'Task', value: 'x' }], 'f')).toThrow()
+    expect(arg(ipcArgs.exportName, 'bars-task.svg', 'name')).toBe('bars-task.svg')
+    for (const bad of ['../x.png', 'a/b.png', 'x.exe', '']) expect(() => arg(ipcArgs.exportName, bad, 'name')).toThrow()
+    expect(arg(ipcArgs.exportData, new Uint8Array([1]), 'data')).toEqual(new Uint8Array([1]))
+    expect(arg(ipcArgs.exportData, 'a,b\n', 'data')).toBe('a,b\n')
+    expect(() => arg(ipcArgs.exportData, 42, 'data')).toThrow()
   })
 })

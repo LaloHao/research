@@ -1,6 +1,6 @@
 {
   "app": { "loading": "Cargando…" },
-  "rail": { "library": "Biblioteca", "settings": "Ajustes" },
+  "rail": { "library": "Biblioteca", "map": "Mapa", "settings": "Ajustes" },
   "welcome": {
     "title": "Asistente de investigación",
     "subtitle": "Crea un proyecto nuevo o abre una carpeta de proyecto existente.",
@@ -34,7 +34,20 @@
     },
     "pdf_policy_help": "Aplica a los PDFs nuevos; los existentes no se mueven.",
     "contact_email": "Correo de contacto para Crossref y OpenAlex",
-    "contact_email_help": "Opcional. Con él, esos servicios atienden tus consultas con prioridad. Solo se envía a ellos.",
+    "contact_email_help": "Opcional. Crossref atiende con prioridad las consultas que lo incluyen (OpenAlex ya no lo usa). Solo se envía a esos servicios.",
+    "openalex_key": "Clave de API de OpenAlex",
+    "openalex_key_help": "Opcional y gratuita. Sin clave, OpenAlex permite unas 1000 consultas al día; con ella, más. Se guarda solo en este equipo y solo se envía a OpenAlex.",
+    "local_models": {
+      "title": "Modelos locales",
+      "help": "La similitud de contenido entre papers usa un modelo que corre en tu equipo (multilingual-e5-small, unos 470 MB). Se descarga una sola vez a la carpeta de datos de la app, nunca al proyecto.",
+      "unavailable": "Esta versión de la app no puede usar modelos locales.",
+      "state": { "missing": "No descargado", "ready": "Listo" },
+      "downloading": "Descargando… (mira el avance en Actividad)",
+      "download": "Descargar",
+      "remove": "Borrar",
+      "remove_confirm": "¿Borrar el modelo? La similitud usará solo citas y facetas hasta que lo vuelvas a descargar.",
+      "cancel": "Cancelar"
+    },
     "close_project": "Cerrar proyecto",
     "model": "Modelo",
     "models": { "sonnet": "Sonnet (recomendado)", "haiku": "Haiku (más rápido, menor calidad)", "opus": "Opus (máxima calidad, consume más cuota)" },
@@ -107,7 +120,7 @@
   },
   "library": {
     "search_placeholder": "Buscar en títulos, autores y texto…",
-    "add_placeholder": "DOI, arXiv o URL",
+    "add_placeholder": "DOI, arXiv, OpenAlex o URL",
     "add": "Agregar",
     "drop_hint": "Suelta los PDFs para agregarlos",
     "empty": "Tu biblioteca está vacía. Agrega un DOI, un ID de arXiv, una URL o arrastra PDFs.",
@@ -121,7 +134,13 @@
     "regenerate_filtered": "Regenerar filtrados con…",
     "batch_confirm": "{{count}} papers · est. ~${{cost}} · tope del lote ${{limit}}",
     "batch_none": "No hay papers pendientes de resumir.",
-    "confirm": "Confirmar"
+    "confirm": "Confirmar",
+    "facet_filter": "{{facet}} = {{value}}",
+    "remove_facet_filter": "Quitar este filtro",
+    "update_citations": "Actualizar citas",
+    "update_citations_all": "Consulta en OpenAlex las citas de todos los papers.",
+    "update_citations_filtered": "Consulta en OpenAlex las citas de los papers que se ven con la búsqueda y los filtros actuales.",
+    "citations_queued": "{{count}} papers en cola para actualizar sus citas."
   },
   "badges": {
     "problem": "Error en archivo",
@@ -132,7 +151,8 @@
     "to_review": "Por revisar ({{count}})",
     "reviewed": "Revisado",
     "stale": "Desactualizado",
-    "summary_failed": "Resumen falló"
+    "summary_failed": "Resumen falló",
+    "no_citations": "Sin citas"
   },
   "text_status": {
     "pending": "Indexando…",
@@ -148,6 +168,10 @@
     "ingest_pdf": "Agregar {{file}}",
     "update_metadata": "Completar metadatos de {{id}}",
     "summarize": "Resumir {{id}}",
+    "citations": "Citas de {{id}}",
+    "cited_by": "Quién cita a {{id}}",
+    "embed": "Similitud de {{id}}",
+    "model_download": "Descargar el modelo de similitud",
     "state": {
       "queued": "En cola",
       "running": "En curso",
@@ -159,7 +183,12 @@
       "added": "agregado",
       "merged": "actualizado",
       "duplicate": "ya estaba en la biblioteca",
-      "summarized": "resumido"
+      "summarized": "resumido",
+      "citations_updated": "citas actualizadas",
+      "citations_unresolved": "no se encontró en OpenAlex",
+      "cited_by_updated": "citas entrantes actualizadas",
+      "embedded": "listo",
+      "model_downloaded": "modelo descargado"
     }
   },
   "errors": {
@@ -184,10 +213,13 @@
     "too_long": "El texto supera el tamaño máximo configurado.",
     "invalid_form": "El formulario de extracción en project.yaml tiene errores.",
     "invalid_edit": "El valor no es válido para este campo.",
+    "openalex_limit": "Se alcanzó el límite diario de OpenAlex. Reintenta mañana o agrega una clave de API en Ajustes.",
+    "model_missing": "El modelo local de similitud no está descargado. Descárgalo en Ajustes → Aplicación.",
+    "model_error": "No se pudo cargar el modelo local de similitud. Bórralo y vuelve a descargarlo en Ajustes → Aplicación.",
     "unknown": "Ocurrió un error inesperado."
   },
   "paper": {
-    "tabs": { "summary": "Resumen", "pdf": "PDF", "content": "Contenido", "notes": "Notas" },
+    "tabs": { "summary": "Resumen", "pdf": "PDF", "content": "Contenido", "relations": "Relaciones", "notes": "Notas" },
     "cite_key": "Clave de cita",
     "copy_key": "Copiar",
     "copied": "Copiado",
@@ -266,5 +298,103 @@
     "conflict": "Las notas cambiaron fuera de la app.",
     "reload": "Recargar (descarta lo no guardado)",
     "overwrite": "Sobrescribir con mi versión"
+  },
+  "relations": {
+    "loading": "Cargando relaciones…",
+    "citations_title": "Citas (OpenAlex)",
+    "state": {
+      "none": "Aún no se consultaron.",
+      "ok": "Consultadas el {{date}} · {{count}} citas en OpenAlex",
+      "unresolved": "No se encontró en OpenAlex."
+    },
+    "unresolved_help": "No se encontró este paper en OpenAlex (no tiene DOI y no hubo una coincidencia exacta por título y año). Completa su DOI y vuelve a actualizar las citas.",
+    "update": "Actualizar citas",
+    "update_queued": "Actualización en cola; mírala en Actividad.",
+    "cites": "Cita a (en tu biblioteca)",
+    "cited_by": "Citado por (en tu biblioteca)",
+    "none_in_library": "Ninguno en tu biblioteca.",
+    "external_one": "{{count}} referencia no está en tu biblioteca.",
+    "external_other": "{{count}} referencias no están en tu biblioteca.",
+    "see_candidates": "Ver candidatos",
+    "similar": "Similares",
+    "no_similar": "Todavía no hay papers similares: actualiza las citas, resume papers o descarga el modelo local.",
+    "reasons": {
+      "coupling_one": "{{count}} referencia en común",
+      "coupling_other": "{{count}} referencias en común",
+      "cocitation_one": "citados juntos por {{count}} paper",
+      "cocitation_other": "citados juntos por {{count}} papers",
+      "direct": "{{citing}} cita a {{cited}}",
+      "content": "similitud de contenido {{score}}"
+    }
+  },
+  "map": {
+    "tabs": { "graph": "Grafo", "charts": "Gráficas", "candidates": "Candidatos" },
+    "graph": {
+      "lens": "Lente",
+      "lens_area": "Área",
+      "lens_thesis": "Tesis",
+      "color_by": "Color por",
+      "no_facets": "No hay facetas: crea el formulario de extracción en Ajustes.",
+      "citations": "Citas",
+      "similarity": "Similitud",
+      "threshold": "Umbral de similitud: {{value}}",
+      "apply_library_filters": "Aplicar los filtros de la biblioteca",
+      "library_filters_unavailable": "Abre la biblioteca y filtra para usar esta opción.",
+      "export_png": "Exportar PNG",
+      "exported": "Guardado en {{path}}",
+      "empty": "Aún no hay papers en la biblioteca.",
+      "other_values": "Otros valores",
+      "no_value": "Sin valor",
+      "no_relation": "Sin relación con la tesis",
+      "score": "Relevancia {{score}}",
+      "legend_count": "{{label}} ({{count}})",
+      "close_detail": "Cerrar",
+      "model_missing": "Sin el modelo local, la similitud usa solo citas y facetas.",
+      "download_model": "Descargar modelo",
+      "hover_hint": "Pasa el cursor por una arista punteada para ver por qué esos papers se parecen."
+    },
+    "charts": {
+      "kind": "Gráfica",
+      "kinds": { "bars": "Barras por valor", "bubbles": "Burbujas faceta × faceta", "years": "Papers por año" },
+      "facet": "Faceta",
+      "facet_y": "Faceta del eje vertical",
+      "only_reviewed": "Solo revisadas",
+      "dim_note": "Lo no revisado se dibuja más tenue.",
+      "click_hint": "Haz clic en una barra o una burbuja para ver esos papers en la biblioteca.",
+      "papers": "Papers",
+      "year": "Año",
+      "tip": "{{label}}: {{count}} papers",
+      "tip_unreviewed": "{{label}}: {{count}} papers sin revisar",
+      "export_svg": "Exportar SVG",
+      "export_png": "Exportar PNG",
+      "export_csv": "Exportar CSV",
+      "empty": "Todavía no hay valores para esta faceta.",
+      "no_facets": "No hay facetas de opción única o múltiple: créalas en Ajustes → Formulario."
+    },
+    "candidates": {
+      "direction": "Dirección",
+      "directions": { "references": "Referencias de tus papers", "citing": "Trabajos que citan a tus papers", "all": "Ambas" },
+      "min_count": "Mínimo de papers tuyos",
+      "fetch_cited_by": "Buscar quién cita a mis papers",
+      "cited_by_queued": "{{count}} consultas en cola; míralas en Actividad.",
+      "for_paper": "Solo de {{id}}",
+      "clear_paper": "Quitar el filtro por paper",
+      "loading": "Cargando candidatos…",
+      "empty": "No hay candidatos con estos filtros. Actualiza las citas de tus papers o baja el mínimo.",
+      "showing": "Mostrando {{shown}} de {{total}}; sube el mínimo para acotar.",
+      "metadata_error": "No se pudieron traer los datos de algunos candidatos: {{error}}",
+      "columns": {
+        "title": "Título",
+        "year": "Año",
+        "authors": "Autores",
+        "cited_by_library": "Citado por tus papers",
+        "cites_library": "Cita a tus papers",
+        "total": "Citas en OpenAlex"
+      },
+      "add": "Agregar",
+      "dismiss": "Descartar",
+      "added": "«{{title}}» se agregará a la biblioteca; míralo en Actividad.",
+      "none_value": "—"
+    }
   }
 }

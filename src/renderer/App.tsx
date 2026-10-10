@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ProjectInfo } from '../shared/ipc'
+import type { FacetFilter } from '../shared/relations'
 import { LibraryView } from './components/library/LibraryView'
-import { Rail, type View } from './components/Rail'
+import { MapView } from './components/map/MapView'
+import { Rail } from './components/Rail'
 import { SettingsView } from './components/SettingsView'
 import { WelcomeView } from './components/WelcomeView'
 import { useEvent } from './hooks/useEvent'
 import { flushAll } from './lib/flush'
+import type { MapTab, View } from './lib/navigation'
 
 export function App(): React.JSX.Element {
   const { t } = useTranslation()
@@ -24,10 +27,61 @@ export function App(): React.JSX.Element {
 
   if (project === undefined) return <div className="center muted">{t('app.loading')}</div>
   if (project === null) return <WelcomeView />
+  // Keyed by the project folder: filters, visible rows and the candidates' paper of one project never reach the next.
+  return <ProjectShell key={project.root} project={project} view={view} onViewChange={setView} />
+}
+
+interface ProjectShellProps {
+  project: ProjectInfo
+  view: View
+  onViewChange: (view: View) => void
+}
+
+/** Everything whose state belongs to the open project. */
+function ProjectShell({ project, view, onViewChange: setView }: ProjectShellProps): React.JSX.Element {
+  const [mapTab, setMapTab] = useState<MapTab>('graph')
+  const [candidatesPaper, setCandidatesPaper] = useState<string | null>(null)
+  const [facetFilters, setFacetFilters] = useState<FacetFilter[]>([])
+  // The library's last visible rows, for the graph's "apply the library's filters"; null until the library is shown.
+  const [visibleIds, setVisibleIds] = useState<string[] | null>(null)
+
+  const openLibrary = useCallback(
+    (filters: FacetFilter[]) => {
+      setFacetFilters(filters)
+      setView('library')
+    },
+    [setView]
+  )
+  const clearCandidatesPaper = useCallback(() => setCandidatesPaper(null), [])
+  const openCandidates = useCallback(
+    (paperId: string) => {
+      setCandidatesPaper(paperId)
+      setMapTab('candidates')
+      setView('map')
+    },
+    [setView]
+  )
+
   return (
     <div className="shell">
       <Rail view={view} onSelect={setView} />
-      <main className="view">{view === 'library' ? <LibraryView /> : <SettingsView project={project} />}</main>
+      <main className="view">
+        {view === 'library' && (
+          <LibraryView facetFilters={facetFilters} onFacetFiltersChange={setFacetFilters} onVisibleChange={setVisibleIds} onOpenCandidates={openCandidates} />
+        )}
+        {view === 'map' && (
+          <MapView
+            tab={mapTab}
+            onTabChange={setMapTab}
+            visibleIds={visibleIds}
+            candidatesPaper={candidatesPaper}
+            onClearCandidatesPaper={clearCandidatesPaper}
+            onOpenLibrary={openLibrary}
+            onOpenCandidates={openCandidates}
+          />
+        )}
+        {view === 'settings' && <SettingsView project={project} />}
+      </main>
     </div>
   )
 }

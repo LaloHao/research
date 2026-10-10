@@ -65,6 +65,7 @@ const job = (over: Partial<JobRecord>): JobRecord => ({
   spec: { type: 'summarize', paperId: 'p1' },
   state: 'queued',
   message: null,
+  progress: null,
   paperId: 'p1',
   createdAt: 't',
   updatedAt: 't',

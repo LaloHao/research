@@ -2,15 +2,23 @@ import { app, BrowserWindow, ipcMain, session, shell, type IpcMainEvent } from '
 import { join } from 'node:path'
 import { eventChannel, IPC } from '../shared/ipc'
 import { AppController } from './AppController'
+import { UtilityEmbeddingRuntime } from './embeddings/UtilityEmbeddingRuntime'
 import { waitForFlush } from './flush'
 import { registerIpc } from './ipc'
 
 let mainWindow: BrowserWindow | null = null
 let quitting = false
 
-const controller = new AppController(join(app.getPath('userData'), 'settings.json'), (event) => {
-  mainWindow?.webContents.send(eventChannel(event))
-})
+// The local model lives with the app's data, never in a project folder.
+const embeddings = new UtilityEmbeddingRuntime(join(app.getPath('userData'), 'models'), join(__dirname, 'embeddings.js'))
+
+const controller = new AppController(
+  join(app.getPath('userData'), 'settings.json'),
+  (event) => {
+    mainWindow?.webContents.send(eventChannel(event))
+  },
+  { embeddings }
+)
 
 /** Lets the renderer save pending edits (e.g. notes still in their autosave delay) before its window goes away. */
 function flushRenderer(win: BrowserWindow | null): Promise<void> {

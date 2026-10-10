@@ -4,6 +4,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PdfjsExtractor } from '../../../src/main/extract/PdfExtractor'
 import { DRAIN, LOGHUB_PREPRINT, setupLibrary } from '../../helpers/library'
+import { samplePaper } from '../../helpers/papers'
 import { makePdf } from '../../helpers/pdf'
 import { tmpDir } from '../../helpers/tmp'
 
@@ -47,6 +48,22 @@ describe('LibraryService.ingestPdf', () => {
     const after = await store.readPaper(paperId)
     expect(after.ok && after.value).toMatchObject({ id: paperId, metadata_status: 'complete', venue: 'ICWS' })
     expect(after.ok && after.value.bibtex.startsWith(`@inproceedings{${paperId},`)).toBe(true)
+  })
+
+  it('drops the citations and the OpenAlex id of the old DOI when an update changes it', async () => {
+    const { store, library } = await setupLibrary({ resolver: { '10.1109/icws.2017.13': DRAIN } })
+    const citations = { source: 'openalex' as const, fetched_at: '2026-01-01T00:00:00.000Z', openalex_id: 'W3049160591', references: ['W1'], cited_by_count: 1 }
+    await store.writePaper(samplePaper({ identifiers: { doi: '10.48550/arxiv.2008.06448', openalex: 'W3049160591' }, citations }), null)
+    await library.updateMetadata('he2017drain', '10.1109/ICWS.2017.13')
+    const changed = await store.readPaper('he2017drain')
+    expect(changed.ok && changed.value.identifiers).toEqual({ doi: '10.1109/icws.2017.13' })
+    expect(changed.ok && changed.value.citations).toBeUndefined()
+
+    const same = await store.readPaper('he2017drain')
+    await store.writePaper({ ...(same.ok ? same.value : samplePaper()), citations: { ...citations, openalex_id: 'W2754665629' } }, same.ok ? same.hash : null)
+    await library.updateMetadata('he2017drain')
+    const kept = await store.readPaper('he2017drain')
+    expect(kept.ok && kept.value.citations?.openalex_id).toBe('W2754665629')
   })
 
   it('completes metadata from an identifier typed by the user', async () => {

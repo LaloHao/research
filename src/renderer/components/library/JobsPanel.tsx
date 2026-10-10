@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { JobRecord } from '../../../shared/jobs'
 import { useEvent } from '../../hooks/useEvent'
-import { jobDetail, jobLabel, visibleJobs } from '../../lib/jobLabel'
+import { jobDetail, jobLabel, jobProgress, visibleJobs } from '../../lib/jobLabel'
 
 export function JobsPanel({ onSelectPaper }: { onSelectPaper: (id: string) => void }): React.JSX.Element | null {
   const { t } = useTranslation()
@@ -29,6 +29,7 @@ export function JobsPanel({ onSelectPaper }: { onSelectPaper: (id: string) => vo
               </button>
               <span className="muted small">
                 {t(`jobs.state.${job.state}`)}
+                {jobProgress(job) ? ` ${jobProgress(job)}` : ''}
                 {detail ? ` — ${detail}` : ''}
               </span>
               {active && (

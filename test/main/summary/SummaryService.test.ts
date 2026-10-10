@@ -42,6 +42,16 @@ describe('SummaryService', () => {
     await s.close()
   })
 
+  it('indexes the single/multi facets of the classification for the map', async () => {
+    const s = await session()
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    const rows = s.cache.facetRows()
+    expect(rows.length).toBeGreaterThan(0)
+    expect(rows.every((r) => r.paperId === 'he2017drain' && !r.reviewed && ['sanitization_technique', 'data_type', 'llm_usage', 'task'].includes(r.facet))).toBe(true)
+    await s.close()
+  })
+
   it('requestBatch with ids queues only those papers, even if already summarized, with the given model', async () => {
     const s = await session([ok(), ok()], ['a2020x', 'b2020x'])
     await s.summaries.request('a2020x')

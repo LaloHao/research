@@ -5,6 +5,10 @@ export type JobSpec =
   | { type: 'ingest_pdf'; path: string }
   | { type: 'update_metadata'; paperId: string; input?: string }
   | { type: 'summarize'; paperId: string; batchId?: string; force?: boolean; model?: LlmModel }
+  | { type: 'citations'; paperId: string; batchId?: string }
+  | { type: 'cited_by'; paperId: string; batchId?: string }
+  | { type: 'embed'; paperId: string }
+  | { type: 'model_download' }
 
 export type JobType = JobSpec['type']
 
@@ -16,6 +20,8 @@ export interface JobRecord {
   state: JobState
   /** An outcome ('added' | 'merged' | 'duplicate'), an error code, or a raw error message. */
   message: string | null
+  /** 0..1 while a running job reports progress (e.g. a model download); null otherwise. */
+  progress: number | null
   paperId: string | null
   createdAt: string
   updatedAt: string

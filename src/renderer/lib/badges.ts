@@ -1,7 +1,7 @@
 import type { PaperRow } from '../../shared/library'
 import type { LlmModel } from '../../shared/summary'
 
-export type Badge = 'problem' | 'incomplete' | 'web' | 'no_pdf' | 'summary_none' | 'to_review' | 'reviewed' | 'stale' | 'summary_failed'
+export type Badge = 'problem' | 'incomplete' | 'web' | 'no_pdf' | 'summary_none' | 'to_review' | 'reviewed' | 'stale' | 'summary_failed' | 'no_citations'
 
 export function rowBadges(row: PaperRow): Badge[] {
   if (row.problem) return ['problem']
@@ -28,6 +28,7 @@ export function rowBadges(row: PaperRow): Badge[] {
     case 'too_long':
       break
   }
+  if (row.citations_status === 'unresolved') badges.push('no_citations')
   return badges
 }
 
@@ -52,4 +53,9 @@ export function filterBySummary(rows: PaperRow[], filter: SummaryFilter): PaperR
 export function filterByModel(rows: PaperRow[], model: LlmModel | 'any'): PaperRow[] {
   if (model === 'any') return rows
   return rows.filter((row) => !!row.summary_model && row.summary_model.includes(model))
+}
+
+/** Rows whose id is in `ids` (e.g. a facet filter from the charts); all rows when there is no set. */
+export function filterByIds(rows: PaperRow[], ids: ReadonlySet<string> | null): PaperRow[] {
+  return ids ? rows.filter((row) => ids.has(row.id)) : rows
 }

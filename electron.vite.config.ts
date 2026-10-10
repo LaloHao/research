@@ -19,7 +19,15 @@ function devCsp(): Plugin {
 }
 
 export default defineConfig({
-  main: { plugins: [externalizeDepsPlugin()] },
+  main: {
+    plugins: [externalizeDepsPlugin()],
+    build: {
+      rollupOptions: {
+        // The embeddings utility process is a second entry: out/main/embeddings.js.
+        input: { index: resolve(__dirname, 'src/main/index.ts'), embeddings: resolve(__dirname, 'src/main/embeddings/worker.ts') }
+      }
+    }
+  },
   preload: { plugins: [externalizeDepsPlugin()] },
   renderer: {
     root: resolve(__dirname, 'src/renderer'),
