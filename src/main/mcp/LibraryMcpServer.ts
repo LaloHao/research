@@ -1,0 +1,187 @@
+import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { z } from 'zod'
+import { ToolError, type LibraryTools } from './libraryTools'
+
+export const MCP_SERVER_NAME = 'library'
+/** Cap on each tool answer, to bound what one run can read (and spend). */
+export const MAX_RESPONSE_CHARS = 8000
+const MAX_BODY_BYTES = 1_000_000
+
+export interface ToolCallRecord {
+  name: string
+  ok: boolean
+}
+
+export interface LibraryMcpOptions {
+  /** Tool calls allowed in this run; later calls get an error asking the model to answer. */
+  maxToolCalls: number
+  maxChars?: number
+}
+
+export interface LibraryMcpHandle {
+  url: string
+  token: string
+  calls(): ToolCallRecord[]
+  close(): Promise<void>
+}
+
+type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean }
+type Run = (name: string, fn: () => Promise<unknown>) => Promise<ToolResult>
+
+export function truncate(text: string, max = MAX_RESPONSE_CHARS): string {
+  if (text.length <= max) return text
+  return `${text.slice(0, max)}\n[truncated: ${text.length - max} more characters; ask for less: fewer pages, a narrower query, a lower limit]`
+}
+
+const text = (t: string, isError = false): ToolResult => ({ content: [{ type: 'text', text: t }], ...(isError ? { isError: true } : {}) })
+
+function defineTools(server: McpServer, tools: LibraryTools, run: Run): void {
+  const paperId = z.string().describe('Key of a library paper, e.g. he2017drain')
+  const limit = z.number().int().min(1).max(30).optional().describe('Maximum number of results')
+  server.registerTool(
+    'search_text',
+    {
+      description: 'Full-text search over the indexed text of the library papers (all words must appear). Returns passages with their paper key and page.',
+      inputSchema: { query: z.string().min(1).describe('Words to search for'), paper_id: paperId.optional(), limit }
+    },
+    (a) => run('search_text', () => tools.searchText(a.query, a.paper_id, a.limit))
+  )
+  server.registerTool(
+    'search_similar',
+    {
+      description: 'Semantic search: library papers closest in meaning to a query, using the local embedding model. Fails when the model is not downloaded.',
+      inputSchema: { query: z.string().min(1).describe('A sentence describing what to look for'), limit }
+    },
+    (a) => run('search_similar', () => tools.searchSimilar(a.query, a.limit))
+  )
+  server.registerTool(
+    'find_in_paper',
+    {
+      description: 'Finds literal text inside one paper (not a regular expression; case and accents are ignored). Returns each occurrence as written, with its page and surrounding context.',
+      inputSchema: { paper_id: paperId, text: z.string().min(2).max(200).describe('Exact words to look for'), limit }
+    },
+    (a) => run('find_in_paper', () => tools.findInPaper(a.paper_id, a.text, a.limit))
+  )
+  server.registerTool(
+    'read_pages',
+    {
+      description: 'Text of pages from..to (at most 5) of one paper; for a web page without pages, its whole text.',
+      inputSchema: { paper_id: paperId, from: z.number().int().min(1), to: z.number().int().min(1) }
+    },
+    (a) => run('read_pages', () => tools.readPages(a.paper_id, a.from, a.to))
+  )
+  server.registerTool(
+    'get_paper',
+    {
+      description: 'Metadata of one paper (title, authors, year, venue, abstract), its summary fields and facet values when it has them, and its number of pages.',
+      inputSchema: { paper_id: paperId }
+    },
+    (a) => run('get_paper', () => tools.getPaper(a.paper_id))
+  )
+  server.registerTool(
+    'get_citations',
+    {
+      description: 'Library papers that this paper cites and library papers that cite it (citations from OpenAlex).',
+      inputSchema: { paper_id: paperId }
+    },
+    (a) => run('get_citations', () => tools.getCitations(a.paper_id))
+  )
+  server.registerTool(
+    'get_neighbours',
+    {
+      description: 'The most similar library papers to this one, with a score and the reasons (shared references, co-citations, facets, content).',
+      inputSchema: { paper_id: paperId }
+    },
+    (a) => run('get_neighbours', () => tools.getNeighbours(a.paper_id))
+  )
+}
+
+function authorized(header: string | undefined, token: string): boolean {
+  const expected = Buffer.from(`Bearer ${token}`)
+  const given = Buffer.from(header ?? '')
+  return given.length === expected.length && timingSafeEqual(given, expected)
+}
+
+async function readJson(req: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length
+    if (size > MAX_BODY_BYTES) throw new Error('Request too large')
+    chunks.push(chunk as Buffer)
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+}
+
+/**
+ * An MCP server over the library for one agent run: streamable HTTP on 127.0.0.1, random port and bearer token,
+ * stateless (a fresh McpServer per request; the call budget lives here, across requests).
+ */
+export async function startLibraryMcpServer(tools: LibraryTools, opts: LibraryMcpOptions): Promise<LibraryMcpHandle> {
+  const token = randomBytes(24).toString('hex')
+  const maxChars = opts.maxChars ?? MAX_RESPONSE_CHARS
+  const calls: ToolCallRecord[] = []
+
+  const run: Run = async (name, fn) => {
+    // Recorded (and counted) before anything is awaited: concurrent requests cannot both slip under the budget.
+    const record: ToolCallRecord = { name, ok: false }
+    const overBudget = calls.length >= opts.maxToolCalls
+    calls.push(record)
+    if (overBudget) return text(`Tool budget exhausted (${opts.maxToolCalls} calls in this run). Do not call more tools: answer now with the evidence you already have.`, true)
+    try {
+      const value = await fn()
+      record.ok = true
+      return text(truncate(typeof value === 'string' ? value : JSON.stringify(value), maxChars))
+    } catch (error) {
+      // Only a ToolError's message reaches the model; anything else (a broken model, a file error) stays opaque.
+      return text(error instanceof ToolError ? error.message : 'The tool failed.', true)
+    }
+  }
+
+  const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    if (!authorized(req.headers.authorization, token)) return void res.writeHead(401).end()
+    if (req.url !== '/mcp') return void res.writeHead(404).end()
+    if (req.method !== 'POST') return void res.writeHead(405, { Allow: 'POST' }).end()
+    let body: unknown
+    try {
+      body = await readJson(req)
+    } catch {
+      return void res.writeHead(400).end()
+    }
+    const server = new McpServer({ name: MCP_SERVER_NAME, version: '1.0.0' })
+    defineTools(server, tools, run)
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
+    res.on('close', () => {
+      void transport.close()
+      void server.close()
+    })
+    await server.connect(transport)
+    await transport.handleRequest(req, res, body)
+  }
+
+  const http = createServer((req, res) => {
+    handle(req, res).catch(() => {
+      if (!res.headersSent) res.writeHead(500)
+      res.end()
+    })
+  })
+  await new Promise<void>((resolve, reject) => {
+    http.once('error', reject)
+    http.listen(0, '127.0.0.1', () => resolve())
+  })
+  const { port } = http.address() as AddressInfo
+  return {
+    url: `http://127.0.0.1:${port}/mcp`,
+    token,
+    calls: () => [...calls],
+    close: () =>
+      new Promise<void>((resolve) => {
+        http.closeAllConnections()
+        http.close(() => resolve())
+      })
+  }
+}
