@@ -1,4 +1,5 @@
-export const LLM_ERROR_CODES = ['llm_unavailable', 'llm_quota', 'llm_invalid_output', 'llm_timeout', 'budget_exceeded'] as const
+/** `operation_budget`: the call reached its own --max-budget-usd (fails that paper only); `budget_exceeded`: a batch or monthly cap refused it. */
+export const LLM_ERROR_CODES = ['llm_unavailable', 'llm_quota', 'llm_invalid_output', 'llm_timeout', 'budget_exceeded', 'operation_budget'] as const
 export type LlmErrorCode = (typeof LLM_ERROR_CODES)[number]
 
 /** `message` is the code, so a failed job records it directly. */

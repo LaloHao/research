@@ -22,4 +22,15 @@ describe('CostLedger', () => {
     expect(await here.monthTotal()).toBeCloseTo(0.3)
     expect((await store.readCosts()).find((c) => c.paper_id === 'b')?.batch_id).toBe('x')
   })
+
+  it('records the operation of each call', async () => {
+    const store = await ProjectStore.create(await tmpDir(), 'Thesis')
+    const ledger = new CostLedger(store, '11111111-1111-1111-1111-111111111111', () => new Date('2026-10-10T12:00:00.000Z'))
+    await ledger.append({ paperId: 'a', model: 'sonnet', costUsd: 0.1 })
+    await ledger.append({ paperId: 'b', model: 'sonnet', costUsd: 0.2, operation: 'suggest_relations' })
+    expect((await store.readCosts()).map((c) => [c.paper_id, c.operation])).toEqual([
+      ['a', 'summarize'],
+      ['b', 'suggest_relations']
+    ])
+  })
 })

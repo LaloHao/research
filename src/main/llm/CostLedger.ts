@@ -1,3 +1,4 @@
+import type { CostOperation } from '../../shared/summary'
 import type { ProjectStore } from '../project/ProjectStore'
 
 /** Spending log in costs/<device-id>.jsonl; the monthly total adds up every device's file. */
@@ -8,14 +9,14 @@ export class CostLedger {
     private readonly now: () => Date = () => new Date()
   ) {}
 
-  append(e: { paperId: string; batchId?: string; model: string; costUsd: number }): Promise<void> {
+  append(e: { paperId: string; batchId?: string; model: string; costUsd: number; operation?: CostOperation }): Promise<void> {
     return this.store.appendCost(this.deviceId, {
       at: this.now().toISOString(),
       paper_id: e.paperId,
       batch_id: e.batchId ?? null,
       model: e.model,
       cost_usd: e.costUsd,
-      operation: 'summarize'
+      operation: e.operation ?? 'summarize'
     })
   }
 

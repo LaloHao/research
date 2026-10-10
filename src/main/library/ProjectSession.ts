@@ -241,6 +241,8 @@ export async function runJob(
       }
     case 'model_download':
       return s.similarity.downloadModel(signal, report)
+    case 'suggest_relations':
+      throw new Error('No handler for suggest_relations jobs')
     case 'ingest_identifier':
     case 'ingest_pdf':
     case 'update_metadata': {

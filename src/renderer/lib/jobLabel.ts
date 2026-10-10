@@ -20,6 +20,8 @@ export function jobLabel(t: TFunction, job: JobRecord): string {
       return t('jobs.embed', { id: job.spec.paperId })
     case 'model_download':
       return t('jobs.model_download')
+    case 'suggest_relations':
+      return t('jobs.suggest_relations', { id: job.spec.paperId })
   }
 }
 

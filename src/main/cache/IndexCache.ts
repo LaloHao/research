@@ -547,6 +547,7 @@ function toPaperRow(r: Record<string, unknown>): PaperRow {
     summary_status: (r.summary_status as SummaryStatus) ?? 'none',
     pending_review: Number(r.pending_review ?? 0),
     summary_model: (r.summary_model as string | null) ?? null,
-    citations_status: (r.citations_status as CitationsStatus | undefined) ?? 'none'
+    citations_status: (r.citations_status as CitationsStatus | undefined) ?? 'none',
+    relations_pending: Number(r.relations_pending ?? 0)
   }
 }

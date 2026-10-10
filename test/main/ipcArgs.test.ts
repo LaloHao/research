@@ -58,6 +58,7 @@ describe('IPC argument validation', () => {
 
   it('checks the Claude settings patch', () => {
     expect(arg(ipcArgs.llmPatch, { auto_summarize: true }, 'patch')).toEqual({ auto_summarize: true })
+    expect(arg(ipcArgs.llmPatch, { auto_suggest_relations: true }, 'patch')).toEqual({ auto_suggest_relations: true })
     expect(() => arg(ipcArgs.llmPatch, { model: 'gpt' }, 'patch')).toThrow()
     expect(() => arg(ipcArgs.llmPatch, { unknown: true }, 'patch')).toThrow()
   })

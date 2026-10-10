@@ -9,6 +9,7 @@ export type JobSpec =
   | { type: 'cited_by'; paperId: string; batchId?: string }
   | { type: 'embed'; paperId: string }
   | { type: 'model_download' }
+  | { type: 'suggest_relations'; paperId: string; batchId?: string; model?: LlmModel; force?: boolean }
 
 export type JobType = JobSpec['type']
 

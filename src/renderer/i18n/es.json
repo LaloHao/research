@@ -172,6 +172,7 @@
     "cited_by": "Quién cita a {{id}}",
     "embed": "Similitud de {{id}}",
     "model_download": "Descargar el modelo de similitud",
+    "suggest_relations": "Sugerir relaciones de {{id}}",
     "state": {
       "queued": "En cola",
       "running": "En curso",
@@ -188,7 +189,9 @@
       "citations_unresolved": "no se encontró en OpenAlex",
       "cited_by_updated": "citas entrantes actualizadas",
       "embedded": "listo",
-      "model_downloaded": "modelo descargado"
+      "model_downloaded": "modelo descargado",
+      "relations_suggested": "relaciones sugeridas",
+      "relations_no_candidates": "sin candidatos para analizar"
     }
   },
   "errors": {
@@ -216,6 +219,9 @@
     "openalex_limit": "Se alcanzó el límite diario de OpenAlex. Reintenta mañana o agrega una clave de API en Ajustes.",
     "model_missing": "El modelo local de similitud no está descargado. Descárgalo en Ajustes → Aplicación.",
     "model_error": "No se pudo cargar el modelo local de similitud. Bórralo y vuelve a descargarlo en Ajustes → Aplicación.",
+    "operation_budget": "La operación llegó a su tope por paper y se detuvo. Sube «Tope por paper (USD est.)» en Ajustes → Claude o reintenta con otro modelo.",
+    "agent_tools_unavailable": "No se pudieron preparar las herramientas de búsqueda de la biblioteca para Claude. Reintenta; si sigue fallando, reinicia la app.",
+    "relations_conflict": "relations.yaml tiene un conflicto de git o un error; resuélvelo antes de cambiar relaciones.",
     "unknown": "Ocurrió un error inesperado."
   },
   "paper": {

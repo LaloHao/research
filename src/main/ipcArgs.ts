@@ -31,6 +31,7 @@ export const ipcArgs = {
   llmPatch: z.strictObject({
     model: z.enum(LLM_MODELS).optional(),
     auto_summarize: z.boolean().optional(),
+    auto_suggest_relations: z.boolean().optional(),
     max_input_chars: z.number().int().positive().optional(),
     budget: z
       .strictObject({

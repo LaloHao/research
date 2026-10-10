@@ -40,6 +40,7 @@ const row = (over: Partial<PaperRow>): PaperRow => ({
   pending_review: 0,
   summary_model: null,
   citations_status: 'none',
+  relations_pending: 0,
   ...over
 })
 
@@ -53,6 +54,7 @@ describe('jobLabel', () => {
     expect(jobLabel(t, job({ spec: { type: 'cited_by', paperId: 'he2017drain' } }))).toBe('jobs.cited_by {"id":"he2017drain"}')
     expect(jobLabel(t, job({ spec: { type: 'embed', paperId: 'he2017drain' } }))).toBe('jobs.embed {"id":"he2017drain"}')
     expect(jobLabel(t, job({ spec: { type: 'model_download' } }))).toBe('jobs.model_download')
+    expect(jobLabel(t, job({ spec: { type: 'suggest_relations', paperId: 'he2017drain' } }))).toBe('jobs.suggest_relations {"id":"he2017drain"}')
   })
 })
 

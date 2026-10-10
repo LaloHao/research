@@ -10,6 +10,15 @@ const limits = (over: Partial<{ perOperationUsd: number; perBatchUsd: number; pe
 })
 
 describe('BudgetGuard', () => {
+  it('keeps a separate estimate per operation', async () => {
+    const g = new BudgetGuard(limits(), async () => 0, 0.05, { suggest_relations: 0.25 })
+    expect(g.currentEstimate()).toBe(0.05)
+    expect(g.currentEstimate('suggest_relations')).toBe(0.25)
+    ;(await g.admit(undefined, 'suggest_relations')).settle(0.4)
+    expect(g.currentEstimate('suggest_relations')).toBe(0.4)
+    expect(g.currentEstimate('summarize')).toBe(0.05)
+  })
+
   it('admits the first call of a batch even on a tiny budget, then stops at the cap', async () => {
     const g = new BudgetGuard(limits({ perBatchUsd: 0.1 }), async () => 0)
     const r1 = await g.admit('b')
