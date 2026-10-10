@@ -90,13 +90,18 @@ The list on the left shows every paper matching the active search and filters.
 
 Selecting a paper opens its tabs (only the ones that apply):
 
-They appear in this order: Resumen, Contenido, PDF, Relaciones, Notas.
+They appear in this order: Resumen, Contenido, PDF, Texto, Relaciones, Notas.
 
 - **Resumen** (Summary): see "Summaries with Claude" below.
 - **Contenido** (Content): the extracted readable text, whenever there is one (typically web pages without a PDF), rendered as a readable document (headings, paragraphs, lists, tables, blockquotes, code). Links open in the system browser; images aren't loaded, they show as a small chip linking to the image instead. Following an evidence link to a web paper opens this tab with the quote highlighted and scrolled into view; if the exact text isn't found, it shows a small notice.
 - **PDF**: the PDF viewer. Shown for any paper that isn't a web page, even before it has an attached PDF: in that case it shows «Este paper no tiene PDF. Arrastra el archivo a la biblioteca para adjuntarlo.» (This paper has no PDF. Drag the file onto the library to attach it.) instead of the viewer.
+- **Texto** (Text): the PDF's extracted text, page by page, laid out for reading. Shown when the paper has a PDF and its text is indexed (see "Reading the text" below).
 - **Relaciones** (Relations): the citation status (not fetched yet, fetched on a date with N citations in OpenAlex, or *Sin citas* (No citations)) with an «Actualizar citas» (Update citations) button; «Cita a (en tu biblioteca)» (Cites, in your library) and «Citado por (en tu biblioteca)» (Cited by, in your library), library papers only, each opening on click; how many references aren't in your library, with «Ver candidatos» (See candidates), which opens the Candidates tab filtered by this paper; and «Similares» (Similar): the 10 most similar papers with their score and reasons (e.g. «6 referencias en común · citados juntos por 3 papers · technique: ner · similitud de contenido 0.82» (6 shared references · cited together by 3 papers · technique: ner · content similarity 0.82)).
 - **Notas** (Notes): your own notes in Markdown, with autosave (`notes.md`). If the file changed from outside the app while there were unsaved changes, it warns of the conflict and lets you choose between reloading (discards your own) or overwriting with your own version.
+
+### Reading the text
+
+The Texto tab shows one page at a time, with «Página N de M» (Page N of M), «Anterior» / «Siguiente» (Previous / Next) and a box to jump to a page. The text is reflowed: words hyphenated at a line end are joined, the lines of a paragraph are merged, short title-like lines (such as «1 Introduction», «2.3 Results» or all-caps lines) show as headings, and running headers, footers and page numbers that repeat across pages are dimmed. The search box searches every page, ignoring case and accents, and shows how many results there are; the arrows move between results, changing page when needed, with each match highlighted.
 
 Above the detail: the citation key (with a button to copy it), the link to the original DOI or URL, «Mostrar en carpeta» (Show in folder) (opens `papers/<key>/` in the file explorer), and the indexed-text status (indexing, text indexed, PDF without text/scanned, no text, extraction error).
 

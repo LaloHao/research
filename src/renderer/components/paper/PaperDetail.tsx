@@ -9,6 +9,7 @@ import { MetadataCompletion } from './MetadataCompletion'
 import { NotesEditor } from './NotesEditor'
 import { PdfViewer, type PdfFocus } from './PdfViewer'
 import { RelationsTab } from './RelationsTab'
+import { TextTab } from './TextTab'
 import { SummaryTab } from '../summary/SummaryTab'
 
 type PdfState = { status: 'loading' } | { status: 'ready'; data: Uint8Array } | { status: 'missing' } | { status: 'error'; message: string }
@@ -157,6 +158,7 @@ export function PaperDetail({
       <div className="tab-body">
         {active === 'summary' && <SummaryTab key={detail.id} detail={detail} onOpenEvidence={openEvidence} />}
         {active === 'pdf' && <PdfTab key={id} id={id} hasPdf={detail.hasPdf} focus={focus} />}
+        {active === 'text' && <TextTab key={id} id={id} />}
         {active === 'content' && <ContentView key={id} content={detail.content ?? ''} focus={contentFocus} />}
         {active === 'relations' && <RelationsTab key={id} paperId={id} onOpenCandidates={onOpenCandidates} onSelectPaper={onSelectPaper} />}
         {active === 'notes' && <NotesEditor key={id} paperId={id} />}

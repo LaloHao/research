@@ -1,12 +1,9 @@
-import * as pdfjs from 'pdfjs-dist'
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import 'pdfjs-dist/web/pdf_viewer.css'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { errorText } from '../../lib/errorText'
 import { matchSpans } from '../../lib/highlight'
-
-pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
+import { pdfjs } from './pdfjs'
 
 export type PdfFocus = { page: number; quote: string }
 
