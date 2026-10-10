@@ -278,5 +278,41 @@
     "conflict": "Las notas cambiaron fuera de la app.",
     "reload": "Recargar (descarta lo no guardado)",
     "overwrite": "Sobrescribir con mi versión"
+  },
+  "relations": {
+    "reasons": {
+      "coupling_one": "{{count}} referencia en común",
+      "coupling_other": "{{count}} referencias en común",
+      "cocitation_one": "citados juntos por {{count}} paper",
+      "cocitation_other": "citados juntos por {{count}} papers",
+      "direct": "{{citing}} cita a {{cited}}",
+      "content": "similitud de contenido {{score}}"
+    }
+  },
+  "map": {
+    "graph": {
+      "lens": "Lente",
+      "lens_area": "Área",
+      "lens_thesis": "Tesis",
+      "color_by": "Color por",
+      "no_facets": "No hay facetas: crea el formulario de extracción en Ajustes.",
+      "citations": "Citas",
+      "similarity": "Similitud",
+      "threshold": "Umbral de similitud: {{value}}",
+      "apply_library_filters": "Aplicar los filtros de la biblioteca",
+      "library_filters_unavailable": "Abre la biblioteca y filtra para usar esta opción.",
+      "export_png": "Exportar PNG",
+      "exported": "Guardado en {{path}}",
+      "empty": "Aún no hay papers en la biblioteca.",
+      "other_values": "Otros valores",
+      "no_value": "Sin valor",
+      "no_relation": "Sin relación con la tesis",
+      "score": "Relevancia {{score}}",
+      "legend_count": "{{label}} ({{count}})",
+      "close_detail": "Cerrar",
+      "model_missing": "Sin el modelo local, la similitud usa solo citas y facetas.",
+      "download_model": "Descargar modelo",
+      "hover_hint": "Pasa el cursor por una arista punteada para ver por qué esos papers se parecen."
+    }
   }
 }

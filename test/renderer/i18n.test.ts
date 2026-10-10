@@ -29,6 +29,8 @@ describe('es.json covers every code the UI can receive', () => {
     ...SUMMARY_FILTERS.map((f) => `library.summary_filter.${f}`),
     ...SETTINGS_TABS.map((tab) => `settings.tabs.${tab}`),
     ...['citations', 'cited_by', 'embed', 'model_download'].map((type) => `jobs.${type}`),
+    ...['coupling_one', 'coupling_other', 'cocitation_one', 'cocitation_other', 'direct', 'content'].map((k) => `relations.reasons.${k}`),
+    ...['score', 'no_value', 'no_relation', 'other_values', 'legend_count', 'model_missing', 'export_png', 'exported'].map((k) => `map.graph.${k}`),
     'paper.tabs.summary',
     'summary.thesis_missing',
     'summary.thesis_pending',
