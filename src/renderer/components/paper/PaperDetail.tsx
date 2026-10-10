@@ -160,7 +160,9 @@ export function PaperDetail({
         {active === 'pdf' && <PdfTab key={id} id={id} hasPdf={detail.hasPdf} focus={focus} />}
         {active === 'text' && <TextTab key={id} id={id} />}
         {active === 'content' && <ContentView key={id} content={detail.content ?? ''} focus={contentFocus} />}
-        {active === 'relations' && <RelationsTab key={id} paperId={id} onOpenCandidates={onOpenCandidates} onSelectPaper={onSelectPaper} />}
+        {active === 'relations' && (
+          <RelationsTab key={id} paperId={id} title={paper.title} onOpenEvidence={openEvidence} onOpenCandidates={onOpenCandidates} onSelectPaper={onSelectPaper} />
+        )}
         {active === 'notes' && <NotesEditor key={id} paperId={id} />}
       </div>
     </div>

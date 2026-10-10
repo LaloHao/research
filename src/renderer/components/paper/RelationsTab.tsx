@@ -5,6 +5,8 @@ import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
 import { reasonsText } from '../../lib/reasons'
 import { citationsState, scorePercent } from '../../lib/relationsView'
+import type { OpenEvidence } from '../summary/FieldCard'
+import { TypedRelationsSection } from './TypedRelationsSection'
 
 function PaperLinks({ title, papers, onSelect }: { title: string; papers: LinkedPaper[]; onSelect?: (id: string) => void }): React.JSX.Element {
   const { t } = useTranslation()
@@ -31,10 +33,14 @@ function PaperLinks({ title, papers, onSelect }: { title: string; papers: Linked
 
 export function RelationsTab({
   paperId,
+  title,
+  onOpenEvidence,
   onOpenCandidates,
   onSelectPaper
 }: {
   paperId: string
+  title: string
+  onOpenEvidence?: OpenEvidence
   onOpenCandidates?: (paperId: string) => void
   onSelectPaper?: (id: string) => void
 }): React.JSX.Element {
@@ -75,6 +81,7 @@ export function RelationsTab({
 
   return (
     <div className="relations-tab">
+      <TypedRelationsSection paperId={paperId} title={title} onOpenEvidence={onOpenEvidence} onSelectPaper={onSelectPaper} />
       <section className="card">
         <div className="row small">
           <strong>{t('relations.citations_title')}</strong>

@@ -9,6 +9,7 @@ import type { CardStatus } from '../../src/renderer/lib/summaryView'
 import { SUMMARY_FILTERS } from '../../src/renderer/lib/badges'
 import { MAP_TABS, VIEWS } from '../../src/renderer/lib/navigation'
 import { SETTINGS_TABS } from '../../src/renderer/lib/settingsTabs'
+import { RELATION_TYPES } from '../../src/shared/typedRelations'
 
 const lookup = (path: string): unknown => path.split('.').reduce<unknown>((node, key) => (node as Record<string, unknown> | undefined)?.[key], es)
 const JOB_STATES: JobState[] = ['queued', 'running', 'done', 'failed', 'cancelled']
@@ -60,7 +61,11 @@ describe('es.json covers every code the UI can receive', () => {
     'settings.local_models.state.missing',
     'settings.local_models.state.ready',
     'settings.openalex_key',
-    'settings.openalex_key_help'
+    'settings.openalex_key_help',
+    ...RELATION_TYPES.flatMap((type) => [`typed.types.${type}`, `typed.sentence.${type}`]),
+    ...['confirmed', 'rejected', 'suggested', 'retyped', 'reversed', 'justified'].map((k) => `typed.done.${k}`),
+    ...['conflict', 'invalid', 'resolve', 'show', 'resolved_dropped_one', 'resolved_dropped_other', 'dismiss'].map((k) => `typed.file.${k}`),
+    ...['title', 'suggest', 'suggest_again', 'suggest_queued', 'pending_one', 'pending_other', 'up_to_date', 'no_candidates', 'suggested', 'confirmed', 'rejected', 'none_suggested', 'none_confirmed', 'confirm', 'reject', 'change_type', 'reverse', 'edit_justification', 'back_to_suggested', 'restore', 'undo', 'edited', 'evidence_in', 'open_paper', 'generated_with'].map((k) => `typed.${k}`)
   ])('%s', (path) => {
     expect(typeof lookup(path)).toBe('string')
   })

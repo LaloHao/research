@@ -429,5 +429,65 @@
       "added": "«{{title}}» se agregará a la biblioteca; míralo en Actividad.",
       "none_value": "—"
     }
+  },
+  "typed": {
+    "title": "Relaciones tipadas",
+    "suggest": "Sugerir relaciones",
+    "suggest_again": "Volver a sugerir",
+    "suggest_queued": "Sugerencia en cola; mírala en Actividad.",
+    "pending_one": "{{count}} candidato por citas o similitud, sin analizar con Claude todavía.",
+    "pending_other": "{{count}} candidatos por citas o similitud, alguno sin analizar con Claude todavía.",
+    "up_to_date": "Ya se analizaron sus candidatos actuales; «Volver a sugerir» lo analiza de nuevo.",
+    "no_candidates": "No tiene candidatos: actualiza sus citas o resume más papers para que aparezcan similares.",
+    "suggested": "Sugeridas",
+    "confirmed": "Confirmadas",
+    "rejected": "Rechazadas ({{count}})",
+    "none_suggested": "No hay sugerencias pendientes.",
+    "none_confirmed": "Aún no confirmaste ninguna relación.",
+    "confirm": "Confirmar",
+    "reject": "Rechazar",
+    "change_type": "Cambiar tipo",
+    "reverse": "Invertir dirección",
+    "edit_justification": "Editar justificación",
+    "back_to_suggested": "Devolver a sugerida",
+    "restore": "Restaurar",
+    "undo": "Deshacer",
+    "done": {
+      "confirmed": "Relación confirmada.",
+      "rejected": "Relación rechazada.",
+      "suggested": "La relación volvió a sugeridas.",
+      "retyped": "Tipo cambiado.",
+      "reversed": "Dirección invertida.",
+      "justified": "Justificación guardada."
+    },
+    "edited": "editada",
+    "evidence_in": "En «{{title}}»:",
+    "open_paper": "Abrir",
+    "generated_with": "Sugerida con {{model}} el {{date}}",
+    "types": {
+      "extends": "Extiende",
+      "uses_method_of": "Usa el método de",
+      "compares_with": "Compara con",
+      "contradicts": "Contradice",
+      "replicates": "Replica",
+      "same_problem": "Mismo problema"
+    },
+    "sentence": {
+      "extends": "{{from}} extiende a {{to}}",
+      "uses_method_of": "{{from}} usa el método de {{to}}",
+      "compares_with": "{{from}} y {{to}} se comparan entre sí",
+      "contradicts": "{{from}} contradice a {{to}}",
+      "replicates": "{{from}} replica a {{to}}",
+      "same_problem": "{{from}} y {{to}} abordan el mismo problema"
+    },
+    "file": {
+      "conflict": "relations.yaml tiene marcadores de conflicto de git: la app no lo modifica hasta que se resuelva.",
+      "invalid": "relations.yaml no se puede leer: {{message}}",
+      "resolve": "Resolver automáticamente",
+      "show": "Mostrar archivo",
+      "resolved_dropped_one": "Conflicto resuelto; se descartó {{count}} entrada inválida de relations.yaml.",
+      "resolved_dropped_other": "Conflicto resuelto; se descartaron {{count}} entradas inválidas de relations.yaml.",
+      "dismiss": "Cerrar"
+    }
   }
 }
