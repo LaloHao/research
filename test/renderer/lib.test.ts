@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { TFunction } from 'i18next'
 import { filterByModel, filterBySummary, rowBadges } from '../../src/renderer/lib/badges'
 import { errorText } from '../../src/renderer/lib/errorText'
-import { jobDetail, jobLabel, visibleJobs } from '../../src/renderer/lib/jobLabel'
+import { jobDetail, jobLabel, jobProgress, visibleJobs } from '../../src/renderer/lib/jobLabel'
 import { nextRqId } from '../../src/renderer/lib/thesis'
 import type { JobRecord } from '../../src/shared/jobs'
 import type { PaperRow } from '../../src/shared/library'
@@ -149,5 +149,13 @@ describe('nextRqId', () => {
     expect(nextRqId([{ id: 'RQ1', text: 'a' }], 3)).toBe('RQ4')
     // The counter itself can lag behind the current questions (e.g. right after loading); the higher of the two wins.
     expect(nextRqId([{ id: 'RQ1', text: 'a' }, { id: 'RQ5', text: 'e' }], 2)).toBe('RQ6')
+  })
+})
+
+describe('jobProgress', () => {
+  it('shows the percentage of a running job that reports one', () => {
+    expect(jobProgress(job({ state: 'running', progress: 0.426 }))).toBe('43 %')
+    expect(jobProgress(job({ state: 'running' }))).toBeNull()
+    expect(jobProgress(job({ state: 'done', progress: 1 }))).toBeNull()
   })
 })

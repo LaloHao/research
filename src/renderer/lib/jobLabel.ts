@@ -29,6 +29,11 @@ export function jobDetail(t: TFunction, job: JobRecord): string | null {
   return null
 }
 
+/** "43 %" while a running job reports progress (e.g. the model download). */
+export function jobProgress(job: JobRecord): string | null {
+  return job.state === 'running' && job.progress !== null ? `${Math.round(job.progress * 100)} %` : null
+}
+
 /** Active jobs plus the most recent finished ones (input is newest first). */
 export function visibleJobs(jobs: JobRecord[], finishedLimit = 5): JobRecord[] {
   let finished = 0

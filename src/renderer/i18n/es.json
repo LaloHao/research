@@ -1,6 +1,6 @@
 {
   "app": { "loading": "Cargando…" },
-  "rail": { "library": "Biblioteca", "settings": "Ajustes" },
+  "rail": { "library": "Biblioteca", "map": "Mapa", "settings": "Ajustes" },
   "welcome": {
     "title": "Asistente de investigación",
     "subtitle": "Crea un proyecto nuevo o abre una carpeta de proyecto existente.",
@@ -290,6 +290,7 @@
     }
   },
   "map": {
+    "tabs": { "graph": "Grafo", "charts": "Gráficas", "candidates": "Candidatos" },
     "graph": {
       "lens": "Lente",
       "lens_area": "Área",

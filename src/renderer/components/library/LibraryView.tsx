@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PaperRow } from '../../../shared/library'
 import type { LlmModel } from '../../../shared/summary'
@@ -11,7 +11,7 @@ import { JobsPanel } from './JobsPanel'
 import { PaperList } from './PaperList'
 import { SummaryToolbar } from './SummaryToolbar'
 
-export function LibraryView(): React.JSX.Element {
+export function LibraryView({ onVisibleChange }: { onVisibleChange?: (ids: string[]) => void }): React.JSX.Element {
   const { t } = useTranslation()
   const [query, setQuery] = useState('')
   const [rows, setRows] = useState<PaperRow[]>([])
@@ -40,7 +40,8 @@ export function LibraryView(): React.JSX.Element {
     if (paths.length) window.research.library.addPdfs(paths).catch((error: unknown) => console.error('add pdfs', error))
   }
 
-  const visibleRows = filterByModel(filterBySummary(rows, summaryFilter), modelFilter)
+  const visibleRows = useMemo(() => filterByModel(filterBySummary(rows, summaryFilter), modelFilter), [rows, summaryFilter, modelFilter])
+  useEffect(() => onVisibleChange?.(visibleRows.map((row) => row.id)), [visibleRows, onVisibleChange])
 
   return (
     <div

@@ -1,9 +1,9 @@
 import { useTranslation } from 'react-i18next'
-
-export type View = 'library' | 'settings'
+import type { View } from '../lib/navigation'
 
 const ITEMS: { view: View; icon: string }[] = [
   { view: 'library', icon: '📚' },
+  { view: 'map', icon: '🕸' },
   { view: 'settings', icon: '⚙' }
 ]
 

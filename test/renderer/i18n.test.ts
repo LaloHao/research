@@ -7,6 +7,7 @@ import { CANDIDATE_DIRECTIONS, CHART_KINDS } from '../../src/shared/relations'
 import { LLM_MODELS, RESEARCH_TYPES, SUMMARY_FIELD_KEYS } from '../../src/shared/summary'
 import type { CardStatus } from '../../src/renderer/lib/summaryView'
 import { SUMMARY_FILTERS } from '../../src/renderer/lib/badges'
+import { MAP_TABS, VIEWS } from '../../src/renderer/lib/navigation'
 import { SETTINGS_TABS } from '../../src/renderer/lib/settingsTabs'
 
 const lookup = (path: string): unknown => path.split('.').reduce<unknown>((node, key) => (node as Record<string, unknown> | undefined)?.[key], es)
@@ -29,6 +30,8 @@ describe('es.json covers every code the UI can receive', () => {
     ...LLM_MODELS.map((m) => `settings.models.${m}`),
     ...SUMMARY_FILTERS.map((f) => `library.summary_filter.${f}`),
     ...SETTINGS_TABS.map((tab) => `settings.tabs.${tab}`),
+    ...VIEWS.map((v) => `rail.${v}`),
+    ...MAP_TABS.map((tab) => `map.tabs.${tab}`),
     ...['citations', 'cited_by', 'embed', 'model_download'].map((type) => `jobs.${type}`),
     ...['coupling_one', 'coupling_other', 'cocitation_one', 'cocitation_other', 'direct', 'content'].map((k) => `relations.reasons.${k}`),
     ...['score', 'no_value', 'no_relation', 'other_values', 'legend_count', 'model_missing', 'export_png', 'exported'].map((k) => `map.graph.${k}`),
