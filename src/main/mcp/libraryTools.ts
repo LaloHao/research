@@ -63,6 +63,11 @@ export interface LibraryTools {
   searchText(query: string, paperId?: string, limit?: number): Promise<TextHit[]>
   searchSimilar(query: string, limit?: number): Promise<SimilarHit[]>
   findInPaper(paperId: string, text: string, limit?: number): Promise<FindHit[]>
+  /**
+   * Pages `from`..`to` (inclusive, at most `MAX_PAGES_PER_READ` at a time). Page-less (e.g. web)
+   * content is split into ~6000-character numbered "pages" so it can still be read a few at a
+   * time the same way. A range entirely past the paper's last page is a `ToolError`.
+   */
   readPages(paperId: string, from: number, to: number): Promise<{ paper_id: string; pages: PageOut[] }>
   getPaper(paperId: string): Promise<PaperCard>
   getCitations(paperId: string): Promise<{ paper_id: string; cites: LinkedOut[]; cited_by: LinkedOut[] }>
@@ -74,9 +79,24 @@ const SNIPPET_CHARS = 600
 const CONTEXT_CHARS = 150
 const MIN_FIND = 2
 const MAX_FIND = 200
+const MAX_QUERY_CHARS = 200
+const MAX_QUERY_WORDS = 20
+const MAX_ID_CHARS = 40
+const PAGELESS_CHUNK_CHARS = 6000
 const SUMMARY_KEYS = ['tldr', 'problem', 'contribution', 'method', 'evaluation', 'results'] as const
 
-const clamp = (n: number | undefined, fallback: number, max: number): number => Math.min(Math.max(Math.trunc(n ?? fallback), 1), max)
+const clamp = (n: number | undefined, fallback: number, max: number): number => {
+  const v = typeof n === 'number' && Number.isFinite(n) ? Math.trunc(n) : fallback
+  return Math.min(Math.max(v, 1), max)
+}
+
+/** Splits page-less (e.g. web) content into ~6000-character numbered "pages". */
+function syntheticPages(pages: { page: number | null; text: string }[]): { page: number; text: string }[] {
+  const full = pages.map((p) => p.text).join('\n\n')
+  const out: { page: number; text: string }[] = []
+  for (let i = 0; i < full.length; i += PAGELESS_CHUNK_CHARS) out.push({ page: out.length + 1, text: full.slice(i, i + PAGELESS_CHUNK_CHARS) })
+  return out.length > 0 ? out : [{ page: 1, text: full }]
+}
 
 const stripMarks = (s: string): string => s.normalize('NFD').replace(/\p{M}/gu, '')
 
@@ -100,8 +120,16 @@ export function libraryTools(deps: { store: ProjectStore; cache: IndexCache; map
 
   const requirePaper = (id: string) => {
     const row = /^[a-z][a-z0-9]*$/.test(id) ? cache.getPaper(id) : null
-    if (!row || row.problem) throw new ToolError(`Unknown paper id "${id}". Use the ids given in the prompt or returned by the search tools.`)
+    if (!row || row.problem) {
+      const shown = id.length > MAX_ID_CHARS ? `${id.slice(0, MAX_ID_CHARS)}…` : id
+      throw new ToolError(`Unknown paper id "${shown}". Use the ids given in the prompt or returned by the search tools.`)
+    }
     return row
+  }
+  /** A paper is readable (its row exists and its paper.yaml has no problem); `chunks_fts` rows outlive a `problem`. */
+  const isReadable = (id: string): boolean => {
+    const row = cache.getPaper(id)
+    return Boolean(row) && !row!.problem
   }
   const pagesOf = (id: string) => pagesFromChunks(cache.chunksFor(id))
   const linked = (p: { id: string; title: string; year: number | null }): LinkedOut => ({ paper_id: p.id, title: p.title, year: p.year })
@@ -109,8 +137,13 @@ export function libraryTools(deps: { store: ProjectStore; cache: IndexCache; map
   return {
     async searchText(query, paperId, limit) {
       if (paperId !== undefined) requirePaper(paperId)
-      if (!/[\p{L}\p{N}]/u.test(query)) throw new ToolError('The query has no words to search for.')
-      return cache.searchChunks(query, { paperId, limit: clamp(limit, 8, 20) }).map((h) => ({ paper_id: h.paperId, page: h.page, text: h.text.slice(0, SNIPPET_CHARS) }))
+      const words = query.match(/[\p{L}\p{N}]+/gu)
+      if (!words) throw new ToolError('The query has no words to search for.')
+      if (query.length > MAX_QUERY_CHARS || words.length > MAX_QUERY_WORDS) throw new ToolError(`Give a query of at most ${MAX_QUERY_CHARS} characters (${MAX_QUERY_WORDS} words).`)
+      return cache
+        .searchChunks(query, { paperId, limit: clamp(limit, 8, 20) })
+        .filter((h) => isReadable(h.paperId))
+        .map((h) => ({ paper_id: h.paperId, page: h.page, text: h.text.slice(0, SNIPPET_CHARS) }))
     },
 
     async searchSimilar(query, limit) {
@@ -149,12 +182,15 @@ export function libraryTools(deps: { store: ProjectStore; cache: IndexCache; map
 
     async readPages(paperId, from, to) {
       requirePaper(paperId)
-      const pages = pagesOf(paperId)
-      // Web content has no pages: the whole text is one page-less block.
-      if (pages.length > 0 && pages.every((p) => p.page === null)) return { paper_id: paperId, pages: pages.map((p) => ({ page: null, text: p.text })) }
+      const rawPages = pagesOf(paperId)
+      // Web content has no pages: split it into numbered pages so it can still be read a few at a time.
+      const pages = rawPages.length > 0 && rawPages.every((p) => p.page === null) ? syntheticPages(rawPages) : rawPages
       if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < from) throw new ToolError('Give whole page numbers with 1 <= from <= to.')
       if (to - from + 1 > MAX_PAGES_PER_READ) throw new ToolError(`Read at most ${MAX_PAGES_PER_READ} pages per call.`)
-      return { paper_id: paperId, pages: pages.filter((p) => p.page !== null && p.page >= from && p.page <= to).map((p) => ({ page: p.page, text: p.text })) }
+      const numbered = pages.filter((p): p is { page: number; text: string } => p.page !== null)
+      const maxPage = numbered.reduce((m, p) => Math.max(m, p.page), 0)
+      if (from > maxPage) throw new ToolError(`The paper has ${maxPage} pages.`)
+      return { paper_id: paperId, pages: numbered.filter((p) => p.page >= from && p.page <= to).map((p) => ({ page: p.page, text: p.text })) }
     },
 
     async getPaper(paperId) {

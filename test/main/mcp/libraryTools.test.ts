@@ -26,6 +26,35 @@ describe('libraryTools', () => {
     await expect(tools.searchText('drain', 'nope2020x')).rejects.toThrow(/Unknown paper id "nope2020x"/)
   })
 
+  it('filters search hits from a paper that has a problem, even though its chunks outlive it', async () => {
+    const { tools, cache } = await setup()
+    cache.setProblem(DRAIN_ID, 'h', { kind: 'invalid_yaml', message: 'bad yaml' })
+    expect((await tools.searchText('drain')).map((h) => h.paper_id)).toEqual([LOGHUB_ID])
+  })
+
+  it('caps an echoed unknown paper id to 40 characters', async () => {
+    const { tools } = await setup()
+    const longId = 'x'.repeat(60)
+    await expect(tools.searchText('drain', longId)).rejects.toThrow(`Unknown paper id "${'x'.repeat(40)}…"`)
+  })
+
+  it('rejects a query that is too long or has too many words', async () => {
+    const { tools } = await setup()
+    await expect(tools.searchText('x'.repeat(201))).rejects.toBeInstanceOf(ToolError)
+    await expect(tools.searchText(Array.from({ length: 21 }, (_, i) => `w${i}`).join(' '))).rejects.toBeInstanceOf(ToolError)
+  })
+
+  it('clamps out-of-range limits (negative, huge or NaN) instead of erroring', async () => {
+    const { tools, cache } = await setup(new FakeEmbeddingRuntime(true))
+    cache.setVector(DRAIN_ID, 'h', 'fake-embedder', fakeVector(DRAIN_PAGES.join(' ')))
+    cache.setVector(LOGHUB_ID, 'h', 'fake-embedder', fakeVector(LOGHUB_PAGES.join(' ')))
+    for (const limit of [-5, 10_000, Number.NaN]) {
+      expect((await tools.searchText('drain', undefined, limit)).length).toBeGreaterThan(0)
+      expect((await tools.findInPaper(LOGHUB_ID, 'extend its', limit)).length).toBeGreaterThan(0)
+      expect((await tools.searchSimilar('tree', limit)).length).toBeGreaterThan(0)
+    }
+  })
+
   it('finds literal text in one paper, ignoring case and accents, with page and context as written', async () => {
     const { tools, cache } = await setup()
     expect(await tools.findInPaper(LOGHUB_ID, 'EXTEND its')).toEqual([{ page: 2, match: 'extend its', context: LOGHUB_PAGES[1] }])
@@ -45,6 +74,20 @@ describe('libraryTools', () => {
     expect((await tools.readPages(DRAIN_ID, 1, 5)).pages).toHaveLength(2)
     await expect(tools.readPages(DRAIN_ID, 1, 6)).rejects.toThrow(/at most 5 pages/)
     await expect(tools.readPages(DRAIN_ID, 2, 1)).rejects.toBeInstanceOf(ToolError)
+  })
+
+  it('rejects a page range entirely past the paper\'s last page', async () => {
+    const { tools } = await setup()
+    await expect(tools.readPages(DRAIN_ID, 5, 5)).rejects.toThrow(/has 2 pages/)
+  })
+
+  it('splits page-less content into ~6000-character numbered pages so it can still be read a few at a time', async () => {
+    const { tools, cache } = await setup()
+    const web = 'w'.repeat(7000)
+    cache.setText(DRAIN_ID, 'web', 'ok', [{ index: 0, page: null, text: web }])
+    expect((await tools.readPages(DRAIN_ID, 1, 1)).pages).toEqual([{ page: 1, text: web.slice(0, 6000) }])
+    expect((await tools.readPages(DRAIN_ID, 2, 2)).pages).toEqual([{ page: 2, text: web.slice(6000) }])
+    await expect(tools.readPages(DRAIN_ID, 3, 3)).rejects.toThrow(/has 2 pages/)
   })
 
   it('describes a paper with its metadata, summary and facets, and never a file path', async () => {
