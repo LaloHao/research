@@ -41,6 +41,7 @@ describe('es.json covers every code the UI can receive', () => {
     ...['title', 'year', 'authors', 'cited_by_library', 'cites_library', 'total'].map((c) => `map.candidates.columns.${c}`),
     ...['cited_by_queued', 'added', 'empty', 'metadata_error', 'showing'].map((k) => `map.candidates.${k}`),
     'paper.tabs.summary',
+    ...['passage_pdf', 'passage_content', 'passage_loading'].map((k) => `review.${k}`),
     'paper.content.image',
     'paper.content.image_unavailable',
     'paper.content.quote_not_found',

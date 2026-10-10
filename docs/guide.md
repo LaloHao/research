@@ -139,7 +139,7 @@ Keyboard shortcuts (shown on screen as «V verificar · E editar · U desverific
 - **→ / ←**: next / previous.
 - **Esc**: if an editor is open, it does nothing (close the editor with its own «Cancelar» (Cancel) button); if none is open, exits review mode.
 
-The right-hand panel shows the PDF with the quote highlighted when the paper has one and the quote is found in the text; otherwise (no PDF, PDF unavailable, or the quote doesn't appear in the PDF), it shows the extracted text passage from that page instead.
+The right-hand panel shows the PDF with the quote highlighted when the paper has one and the quote is found in the text. Otherwise it shows the passage, formatted for reading: for a web page, its content laid out like the **Contenido** tab, with the quote highlighted (or a small notice if the exact text isn't found); if the quote doesn't appear in the PDF, that page's text laid out like the **Texto** tab (headings, paragraphs, running headers and footers dimmed), with the quote marked wherever it can still be located. If the PDF can't be loaded (or there's no content to show), it falls back to the plain extracted text of that page.
 
 ## Citations and candidates
 

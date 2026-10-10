@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { paragraphSegments } from '../../src/renderer/lib/passage'
+import { blockSegments, paragraphSegments } from '../../src/renderer/lib/passage'
 
 describe('paragraphSegments', () => {
   it('returns one paragraph, unmarked, when there is no match', () => {
@@ -78,5 +78,51 @@ describe('paragraphSegments', () => {
 
   it('returns a single empty paragraph for an empty passage', () => {
     expect(paragraphSegments('', null)).toEqual([[{ text: '', marked: false }]])
+  })
+})
+
+describe('blockSegments', () => {
+  it('returns every block unmarked when the quote is not found', () => {
+    expect(blockSegments(['Intro', 'Body text here.'], 'nowhere to be seen at all')).toEqual([
+      [{ text: 'Intro', marked: false }],
+      [{ text: 'Body text here.', marked: false }],
+    ])
+  })
+
+  it('returns every block unmarked when the quote is empty', () => {
+    expect(blockSegments(['Some text.'], '')).toEqual([[{ text: 'Some text.', marked: false }]])
+  })
+
+  it('marks the quote inside the block that contains it', () => {
+    expect(blockSegments(['Methods', 'We fine-tune a BERT model on logs.'], 'a BERT model')).toEqual([
+      [{ text: 'Methods', marked: false }],
+      [
+        { text: 'We fine-tune ', marked: false },
+        { text: 'a BERT model', marked: true },
+        { text: ' on logs.', marked: false },
+      ],
+    ])
+  })
+
+  it('marks a quote that spans two blocks in both of them', () => {
+    expect(blockSegments(['The first ends here.', 'The second starts there.'], 'ends here. The second')).toEqual([
+      [
+        { text: 'The first ', marked: false },
+        { text: 'ends here.', marked: true },
+      ],
+      [
+        { text: 'The second', marked: true },
+        { text: ' starts there.', marked: false },
+      ],
+    ])
+  })
+
+  it('tolerates case and spacing differences in the quote', () => {
+    const segments = blockSegments(['Results show   gains.'], 'results SHOW gains')
+    expect(segments[0].filter((s) => s.marked).map((s) => s.text)).toEqual(['Results show   gains'])
+  })
+
+  it('returns no blocks for no blocks', () => {
+    expect(blockSegments([], 'anything')).toEqual([])
   })
 })

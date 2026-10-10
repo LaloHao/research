@@ -1,3 +1,5 @@
+import { locateInOriginal } from '../../shared/textMatch'
+
 interface Paragraph {
   text: string
   start: number
@@ -60,4 +62,23 @@ function segmentsFor(paragraph: Paragraph, match: { start: number; end: number }
  */
 export function paragraphSegments(passage: string, match: { start: number; end: number } | null): PassageSegment[][] {
   return splitParagraphs(passage).map((p) => segmentsFor(p, match))
+}
+
+/** What separates blocks when they are joined to look for a quote: whitespace, so a quote spanning two blocks still matches. */
+const BLOCK_SEPARATOR = '\n\n'
+
+/**
+ * Locates `quote` in the reflowed `blocks` (joined, so it may span several of them; tolerant of
+ * case, spacing and Unicode forms, see {@link locateInOriginal}) and splits each block into the
+ * segments covered by it versus not. Blocks come back in order, one segment list per block.
+ */
+export function blockSegments(blocks: string[], quote: string): PassageSegment[][] {
+  const paragraphs: Paragraph[] = []
+  let at = 0
+  for (const text of blocks) {
+    paragraphs.push({ text, start: at })
+    at += text.length + BLOCK_SEPARATOR.length
+  }
+  const match = quote.trim() ? locateInOriginal(quote, blocks.join(BLOCK_SEPARATOR)) : null
+  return paragraphs.map((p) => segmentsFor(p, match))
 }

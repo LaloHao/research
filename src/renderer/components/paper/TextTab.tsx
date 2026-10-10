@@ -2,8 +2,9 @@ import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { errorText } from '../../lib/errorText'
-import { findMatches, joinTextItems, reflowPage, repeatedLines, type Block, type TextMatch } from '../../lib/reflow'
+import { findMatches, reflowPage, type Block, type TextMatch } from '../../lib/reflow'
 import { pdfjs } from './pdfjs'
+import { readPageText, runningLines } from './pdfText'
 
 type DocState =
   | { status: 'loading' }
@@ -19,18 +20,7 @@ interface SearchResult extends TextMatch {
 
 type SearchState = { status: 'running'; query: string; page: number } | { status: 'done'; query: string; results: SearchResult[] } | { status: 'error'; message: string }
 
-/** Pages sampled (from the start) to find running headers and footers. */
-const SAMPLE_PAGES = 10
-
-/** Running header/footer keys per PDF (paper id + pdf.js fingerprint), so reopening the tab skips the sampling. */
-const repeatedCache = new Map<string, Set<string>>()
-
 const NO_RESULTS: SearchResult[] = []
-
-async function readPage(doc: PDFDocumentProxy, n: number): Promise<string> {
-  const content = await (await doc.getPage(n)).getTextContent()
-  return joinTextItems(content.items as Array<{ str?: string; hasEOL?: boolean }>)
-}
 
 /** A block's text, with the search matches that fall in it wrapped in <mark> (rendered by React, never patched into the DOM). */
 function BlockText({
@@ -98,21 +88,9 @@ export function TextTab({ id }: { id: string }): React.JSX.Element {
         const opened = await task.promise
         loaded = opened
         if (!alive) return void opened.destroy()
-        const key = `${id}:${opened.fingerprints[0]}`
-        let repeated = repeatedCache.get(key)
-        if (!repeated) {
-          // A page that fails to read is left out of the sample (and read again when shown).
-          const sample = await Promise.allSettled(Array.from({ length: Math.min(SAMPLE_PAGES, opened.numPages) }, (_, i) => readPage(opened, i + 1)))
-          if (!alive) return
-          const read: string[] = []
-          sample.forEach((r, i) => {
-            if (r.status !== 'fulfilled') return
-            read.push(r.value)
-            pageCache.current.set(i + 1, Promise.resolve(r.value))
-          })
-          repeated = repeatedLines(read)
-          repeatedCache.set(key, repeated)
-        }
+        const repeated = await runningLines(id, opened, (n, text) => {
+          if (alive) pageCache.current.set(n, Promise.resolve(text))
+        })
         if (alive) setDoc({ status: 'ready', doc: opened, repeated })
       } catch {
         fail('unreadable_pdf')
@@ -135,7 +113,7 @@ export function TextTab({ id }: { id: string }): React.JSX.Element {
       if (!ready) return Promise.reject(new Error('not ready'))
       let text = pageCache.current.get(n)
       if (!text) {
-        text = readPage(ready.doc, n)
+        text = readPageText(ready.doc, n)
         pageCache.current.set(n, text)
         // A failed read is retried next time instead of being cached.
         text.catch(() => pageCache.current.delete(n))

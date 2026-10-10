@@ -139,7 +139,7 @@ Atajos de teclado (se muestran en pantalla como «V verificar · E editar · U d
 - **→ / ←**: siguiente / anterior.
 - **Esc**: si hay un editor abierto, no hace nada (cierra el editor con su propio botón «Cancelar»); si no hay ninguno abierto, sale del modo revisar.
 
-El panel derecho muestra el PDF con la cita resaltada cuando el paper tiene uno y la cita se encuentra en el texto; si no (sin PDF, PDF no disponible, o la cita no aparece en el PDF), muestra el pasaje de texto extraído de esa página en su lugar.
+El panel derecho muestra el PDF con la cita resaltada cuando el paper tiene uno y la cita se encuentra en el texto. Si no, muestra el pasaje, dispuesto para leer: en una página web, su contenido como en la pestaña **Contenido**, con la cita resaltada (o un pequeño aviso si el texto exacto no se encuentra); si la cita no aparece en el PDF, el texto de esa página como en la pestaña **Texto** (encabezados, párrafos, encabezados y pies de página atenuados), con la cita marcada donde aún se pueda ubicar. Si el PDF no se puede cargar (o no hay contenido que mostrar), se muestra el texto extraído de esa página tal cual.
 
 ## Citas y candidatos
 
