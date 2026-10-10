@@ -331,6 +331,31 @@
       "export_csv": "Exportar CSV",
       "empty": "Todavía no hay valores para esta faceta.",
       "no_facets": "No hay facetas de opción única o múltiple: créalas en Ajustes → Formulario."
+    },
+    "candidates": {
+      "direction": "Dirección",
+      "directions": { "references": "Referencias de tus papers", "citing": "Trabajos que citan a tus papers", "all": "Ambas" },
+      "min_count": "Mínimo de papers tuyos",
+      "fetch_cited_by": "Buscar quién cita a mis papers",
+      "cited_by_queued": "{{count}} consultas en cola; míralas en Actividad.",
+      "for_paper": "Solo de {{id}}",
+      "clear_paper": "Quitar el filtro por paper",
+      "loading": "Cargando candidatos…",
+      "empty": "No hay candidatos con estos filtros. Actualiza las citas de tus papers o baja el mínimo.",
+      "showing": "Mostrando {{shown}} de {{total}}; sube el mínimo para acotar.",
+      "metadata_error": "No se pudieron traer los datos de algunos candidatos: {{error}}",
+      "columns": {
+        "title": "Título",
+        "year": "Año",
+        "authors": "Autores",
+        "cited_by_library": "Citado por tus papers",
+        "cites_library": "Cita a tus papers",
+        "total": "Citas en OpenAlex"
+      },
+      "add": "Agregar",
+      "dismiss": "Descartar",
+      "added": "«{{title}}» se agregará a la biblioteca; míralo en Actividad.",
+      "none_value": "—"
     }
   }
 }

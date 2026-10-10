@@ -177,3 +177,7 @@ mark { background: rgba(250, 204, 21, 0.45); }
 .charts { padding: 8px 16px 24px; display: flex; flex-direction: column; gap: 8px; overflow: auto; height: 100%; }
 .chart-holder { cursor: pointer; }
 .chart-holder svg { max-width: 100%; height: auto; }
+.candidates { padding: 8px 16px 24px; display: flex; flex-direction: column; gap: 8px; overflow: auto; height: 100%; }
+.candidates input[type='number'] { width: 5em; }
+.candidates-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.candidates-table th, .candidates-table td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
