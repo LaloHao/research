@@ -45,7 +45,7 @@ export interface PaperCard {
   abstract: string | null
   summary: Record<string, string> | null
   facets: Record<string, string[]>
-  /** Pages of indexed text (0 for page-less web content). */
+  /** Pages of indexed text; page-less (e.g. web) content is counted by its synthetic pages, same as `readPages`. */
   pages: number
 }
 export interface LinkedOut {
@@ -90,11 +90,45 @@ const clamp = (n: number | undefined, fallback: number, max: number): number => 
   return Math.min(Math.max(v, 1), max)
 }
 
+const BREAK_WINDOW_CHARS = 200
+const isHighSurrogate = (code: number): boolean => code >= 0xd800 && code <= 0xdbff
+
+/**
+ * The end of the next ~`chunkSize`-character page starting at `start`, never inside a surrogate
+ * pair, and preferring a paragraph break (blank line) or, failing that, any whitespace within the
+ * last `BREAK_WINDOW_CHARS` characters of the raw cut so a page doesn't end mid-word.
+ */
+function nextPageEnd(text: string, start: number, chunkSize: number): number {
+  const hardEnd = Math.min(start + chunkSize, text.length)
+  if (hardEnd >= text.length) return text.length
+  let end = hardEnd
+  if (isHighSurrogate(text.charCodeAt(end - 1))) end--
+  const searchStart = Math.max(start + 1, end - BREAK_WINDOW_CHARS)
+  let paragraphBreak = -1
+  let whitespaceBreak = -1
+  for (let i = end; i >= searchStart; i--) {
+    if (whitespaceBreak < 0 && /\s/.test(text[i - 1])) whitespaceBreak = i
+    if (text[i - 1] === '\n' && text[i - 2] === '\n') {
+      paragraphBreak = i
+      break
+    }
+  }
+  const brk = paragraphBreak >= 0 ? paragraphBreak : whitespaceBreak
+  if (brk > start) end = brk
+  if (isHighSurrogate(text.charCodeAt(end - 1))) end--
+  return end
+}
+
 /** Splits page-less (e.g. web) content into ~6000-character numbered "pages". */
 function syntheticPages(pages: { page: number | null; text: string }[]): { page: number; text: string }[] {
   const full = pages.map((p) => p.text).join('\n\n')
   const out: { page: number; text: string }[] = []
-  for (let i = 0; i < full.length; i += PAGELESS_CHUNK_CHARS) out.push({ page: out.length + 1, text: full.slice(i, i + PAGELESS_CHUNK_CHARS) })
+  let start = 0
+  while (start < full.length) {
+    const end = nextPageEnd(full, start, PAGELESS_CHUNK_CHARS)
+    out.push({ page: out.length + 1, text: full.slice(start, end) })
+    start = end
+  }
   return out.length > 0 ? out : [{ page: 1, text: full }]
 }
 
@@ -131,7 +165,16 @@ export function libraryTools(deps: { store: ProjectStore; cache: IndexCache; map
     const row = cache.getPaper(id)
     return Boolean(row) && !row!.problem
   }
-  const pagesOf = (id: string) => pagesFromChunks(cache.chunksFor(id))
+  /**
+   * The numbered pages the agent sees for `id`: the paper's real pages, or, for page-less (e.g.
+   * web) content, the same synthetic ~6000-character split used everywhere a page number is
+   * reported, so a page number from `findInPaper` or `getPaper` always lines up with `readPages`.
+   */
+  const pagesOf = (id: string): { page: number; text: string }[] => {
+    const raw = pagesFromChunks(cache.chunksFor(id))
+    if (raw.length > 0 && raw.every((p) => p.page === null)) return syntheticPages(raw)
+    return raw.filter((p): p is { page: number; text: string } => p.page !== null)
+  }
   const linked = (p: { id: string; title: string; year: number | null }): LinkedOut => ({ paper_id: p.id, title: p.title, year: p.year })
 
   return {
@@ -182,15 +225,12 @@ export function libraryTools(deps: { store: ProjectStore; cache: IndexCache; map
 
     async readPages(paperId, from, to) {
       requirePaper(paperId)
-      const rawPages = pagesOf(paperId)
-      // Web content has no pages: split it into numbered pages so it can still be read a few at a time.
-      const pages = rawPages.length > 0 && rawPages.every((p) => p.page === null) ? syntheticPages(rawPages) : rawPages
+      const pages = pagesOf(paperId)
       if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < from) throw new ToolError('Give whole page numbers with 1 <= from <= to.')
       if (to - from + 1 > MAX_PAGES_PER_READ) throw new ToolError(`Read at most ${MAX_PAGES_PER_READ} pages per call.`)
-      const numbered = pages.filter((p): p is { page: number; text: string } => p.page !== null)
-      const maxPage = numbered.reduce((m, p) => Math.max(m, p.page), 0)
+      const maxPage = pages.reduce((m, p) => Math.max(m, p.page), 0)
       if (from > maxPage) throw new ToolError(`The paper has ${maxPage} pages.`)
-      return { paper_id: paperId, pages: numbered.filter((p) => p.page >= from && p.page <= to).map((p) => ({ page: p.page, text: p.text })) }
+      return { paper_id: paperId, pages: pages.filter((p) => p.page >= from && p.page <= to).map((p) => ({ page: p.page, text: p.text })) }
     },
 
     async getPaper(paperId) {
@@ -208,7 +248,7 @@ export function libraryTools(deps: { store: ProjectStore; cache: IndexCache; map
         abstract: read.ok ? (read.value.abstract ?? null) : null,
         summary: summary?.ok ? Object.fromEntries(SUMMARY_KEYS.map((k) => [k, summary.value.fields[k].value])) : null,
         facets,
-        pages: pagesOf(paperId).filter((p) => p.page !== null).length
+        pages: pagesOf(paperId).length
       }
     },
 

@@ -90,11 +90,52 @@ describe('libraryTools', () => {
     await expect(tools.readPages(DRAIN_ID, 3, 3)).rejects.toThrow(/has 2 pages/)
   })
 
+  it('never splits a surrogate pair straddling the page-less cut', async () => {
+    const { tools, cache } = await setup()
+    const emoji = '😀'
+    const web = `${'a'.repeat(5999)}${emoji}${'a'.repeat(1000)}`
+    cache.setText(DRAIN_ID, 'web', 'ok', [{ index: 0, page: null, text: web }])
+    const { pages } = await tools.readPages(DRAIN_ID, 1, 2)
+    expect(pages.map((p) => p.text).join('')).toBe(web)
+    for (const p of pages) {
+      const lastCode = p.text.charCodeAt(p.text.length - 1)
+      expect(lastCode >= 0xd800 && lastCode <= 0xdbff).toBe(false)
+    }
+    expect(pages.some((p) => p.text.includes(emoji))).toBe(true)
+  })
+
+  it('prefers a nearby paragraph break over a hard cut when paging page-less content', async () => {
+    const { tools, cache } = await setup()
+    const web = `${'a'.repeat(5900)}\n\n${'b'.repeat(5000)}`
+    cache.setText(DRAIN_ID, 'web', 'ok', [{ index: 0, page: null, text: web }])
+    const { pages } = await tools.readPages(DRAIN_ID, 1, 1)
+    expect(pages).toEqual([{ page: 1, text: `${'a'.repeat(5900)}\n\n` }])
+  })
+
+  it('reports a findInPaper hit on page-less content with the same page readPages uses for it', async () => {
+    const { tools, cache } = await setup()
+    const web = `${'a'.repeat(6050)}unique-marker-text${'a'.repeat(100)}`
+    cache.setText(DRAIN_ID, 'web', 'ok', [{ index: 0, page: null, text: web }])
+    const hits = await tools.findInPaper(DRAIN_ID, 'unique-marker-text')
+    expect(hits).toHaveLength(1)
+    expect(hits[0].page).not.toBeNull()
+    const { pages } = await tools.readPages(DRAIN_ID, hits[0].page!, hits[0].page!)
+    expect(pages[0].text).toContain(hits[0].match)
+  })
+
   it('describes a paper with its metadata, summary and facets, and never a file path', async () => {
     const { tools, store } = await setup()
     const card = await tools.getPaper(LOGHUB_ID)
     expect(card).toMatchObject({ paper_id: LOGHUB_ID, title: 'Loghub: A Large Collection of System Log Datasets', year: 2020, abstract: 'A collection of log datasets.', summary: null, facets: {}, pages: 2 })
     expect(JSON.stringify(card)).not.toContain(store.root)
+  })
+
+  it('counts page-less content by its synthetic pages in getPaper, consistent with readPages', async () => {
+    const { tools, cache } = await setup()
+    const web = 'w'.repeat(12001)
+    cache.setText(LOGHUB_ID, 'web', 'ok', [{ index: 0, page: null, text: web }])
+    expect((await tools.getPaper(LOGHUB_ID)).pages).toBe(3)
+    await expect(tools.readPages(LOGHUB_ID, 4, 4)).rejects.toThrow(/has 3 pages/)
   })
 
   it('lists citations inside the library and neighbours with their reasons', async () => {
