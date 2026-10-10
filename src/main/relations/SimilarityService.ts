@@ -125,6 +125,19 @@ export class SimilarityService {
     return this.paperChanged(paperId)
   }
 
+  /**
+   * After a re-index that may touch many papers at once (e.g. the extraction form changed every paper's facets):
+   * a full recompute, skipped when no paper's signals differ from the last update.
+   */
+  recomputeIfChanged(): Promise<void> {
+    const snapshot = this.snapshot
+    if (snapshot && !this.running) {
+      const papers = this.signals()
+      if (papers.length === snapshot.size && papers.every((p) => snapshot.get(p.id)?.signature === signalSignature(p))) return Promise.resolve()
+    }
+    return this.requestRecompute()
+  }
+
   /** One paper changed, appeared or disappeared (a lone job, an edit outside the app). Updates run one at a time. */
   paperChanged(paperId: string): Promise<void> {
     const run = this.incremental.then(() => this.updateOne(paperId))

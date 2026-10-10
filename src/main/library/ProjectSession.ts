@@ -96,7 +96,9 @@ export class ProjectSession {
       reindex: (id) => library.indexPaper(id),
       emit: () => session.emit('library'),
       enqueue: (spec) => queue.enqueue(spec),
-      cancelBatch: (batchId) => queue.cancelBatch(batchId)
+      cancelBatch: (batchId) => queue.cancelBatch(batchId),
+      // A form change re-indexes the facets of every paper, which feed the neighbours.
+      statesRefreshed: () => void session.track(similarity.recomputeIfChanged()).catch((error) => console.error('similarity', error))
     })
     const citations = new CitationService({
       store,
@@ -250,7 +252,11 @@ export async function runJob(
             : await s.library.updateMetadata(spec.paperId, spec.input, signal)
       if (outcome.status !== 'duplicate') {
         await s.summaries.autoAfterIngest(outcome.paperId).catch(logged('auto summarize'))
-        s.citations.autoAfterIngest(outcome.paperId)
+        try {
+          s.citations.autoAfterIngest(outcome.paperId)
+        } catch (error) {
+          logged('auto citations')(error)
+        }
         await s.similarity.enqueueStale([outcome.paperId]).catch(logged('embeddings'))
       }
       return { paperId: outcome.paperId, message: outcome.status }

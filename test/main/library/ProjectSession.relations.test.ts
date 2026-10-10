@@ -30,6 +30,33 @@ describe('ProjectSession relations', () => {
     await s.close()
   })
 
+  it('refetches the citations when a metadata update changes the DOI', async () => {
+    const s = await ProjectSession.create(await tmpDir(), 'Thesis', { ...base, fetch: routeFetch(DRAIN_ROUTES) })
+    const stale = { source: 'openalex' as const, fetched_at: '2026-01-01T00:00:00.000Z', openalex_id: 'W3049160591', references: ['W1'], cited_by_count: 1 }
+    await s.store.writePaper(samplePaper({ identifiers: { doi: '10.48550/arxiv.2008.06448', openalex: 'W3049160591' }, citations: stale }), null)
+    await s.library.indexPaper('he2017drain')
+    s.queue.enqueue({ type: 'update_metadata', paperId: 'he2017drain', input: '10.1109/ICWS.2017.13' })
+    await s.queue.whenIdle()
+    expect(s.queue.list().map((j) => [j.spec.type, j.state, j.message])).toEqual([
+      ['citations', 'done', 'citations_updated'],
+      ['update_metadata', 'done', 'merged']
+    ])
+    const read = await s.store.readPaper('he2017drain')
+    expect(read.ok && read.value.identifiers.openalex).toBe('W2754665629')
+    expect(read.ok && read.value.citations).toMatchObject({ openalex_id: 'W2754665629', references: expect.arrayContaining(['W2153470728']) })
+    expect(read.ok && read.value.citations?.references).toHaveLength(4)
+    await s.close()
+  })
+
+  it('brings the neighbours up to date after the summary states are refreshed (e.g. a form change)', async () => {
+    const s = await ProjectSession.create(await tmpDir(), 'Thesis', { ...base, fetch: routeFetch([]) })
+    let calls = 0
+    s.similarity.recomputeIfChanged = async () => void calls++
+    await s.summaries.refreshStates()
+    expect(calls).toBe(1)
+    await s.close()
+  })
+
   it('embeds papers through the queue and stores their neighbours', async () => {
     const s = await ProjectSession.create(await tmpDir(), 'Thesis', { ...base, fetch: routeFetch([]), embeddings: new FakeEmbeddingRuntime(true) })
     for (const paper of [

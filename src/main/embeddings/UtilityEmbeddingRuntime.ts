@@ -57,6 +57,8 @@ export class UtilityEmbeddingRuntime implements EmbeddingRuntime {
     })
     const client = new EmbeddingClient({ postMessage: (message) => child.postMessage(message) })
     child.on('message', (message: WorkerResponse) => client.receive(message))
+    // A fatal V8 error in the worker: logged here, the 'exit' that follows fails the pending requests.
+    child.on('error', (type, location) => console.error('embeddings', type, location))
     child.on('exit', () => {
       client.failAll('The embeddings process exited')
       if (this.child === child) {

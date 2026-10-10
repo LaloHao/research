@@ -133,6 +133,23 @@ describe('SimilarityService', () => {
     expect(emits()).toBe(2)
   })
 
+  it('recomputes after a re-index only when some signal changed', async () => {
+    const a = samplePaper({ id: 'a2020logs', title: 'Log anonymization', citations: cit(['W7', 'W8']) })
+    const b = samplePaper({ id: 'b2021logs', title: 'Log parsing', citations: cit(['W9']) })
+    const { store, library, cache, service, emits } = await setup(null, [a, b])
+    await service.recomputeIfChanged()
+    expect(emits()).toBe(1)
+    await service.recomputeIfChanged()
+    expect(emits()).toBe(1)
+    const read = await store.readPaper('b2021logs')
+    if (!read.ok) throw new Error('unreadable')
+    await store.writePaper({ ...read.value, citations: cit(['W7', 'W8']) }, read.hash)
+    await library.indexPaper('b2021logs')
+    await service.recomputeIfChanged()
+    expect(emits()).toBe(2)
+    expect(cache.similarFor('a2020logs').map((x) => x.other)).toEqual(['b2021logs'])
+  })
+
   it('coalesces concurrent recompute requests into one rerun', async () => {
     const { service, emits } = await setup(new FakeEmbeddingRuntime(true), [samplePaper()])
     await Promise.all([service.requestRecompute(), service.requestRecompute(), service.requestRecompute()])

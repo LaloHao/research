@@ -99,6 +99,8 @@ export interface SummaryServiceDeps {
   emit: () => void
   enqueue: (spec: JobSpec) => number
   cancelBatch: (batchId: string) => number
+  /** After refreshStates re-indexed every paper's summary state and facets. */
+  statesRefreshed?: () => void
 }
 
 /** Both files of a paper as read from disk, with the hashes needed to write them back. */
@@ -428,6 +430,7 @@ export class SummaryService {
       if (store.paperExists(id)) await indexSummary(store, cache, id).catch((error: unknown) => console.error('summary state', id, error))
     }
     this.deps.emit()
+    this.deps.statesRefreshed?.()
   }
 
   /**
