@@ -47,6 +47,8 @@ export interface RelationServiceDeps {
   suggester: RelationSuggester
   budget: BudgetGuard
   emit: () => void
+  /** The job list changed outside the queue (a queued job rewritten), so the Activity panel refreshes. */
+  jobsChanged: () => void
   enqueue: (spec: JobSpec) => number
   cancelBatch: (batchId: string) => number
   now?: () => Date
@@ -186,6 +188,7 @@ export class RelationService {
         if (!queued.spec.force) {
           const { batchId: _batch, ...rest } = queued.spec
           cache.updateJobSpec(queued.job.id, JSON.stringify({ ...rest, force: true }), this.now())
+          this.deps.jobsChanged()
         }
         return
       }

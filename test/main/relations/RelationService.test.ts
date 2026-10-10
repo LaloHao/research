@@ -138,10 +138,12 @@ describe('RelationService', () => {
   })
 
   it("the paper's button upgrades a queued unforced analysis to forced, and queues one after a running unforced analysis", async () => {
-    const { service, cache, enqueued } = await setupRelations()
+    const { service, cache, enqueued, jobEmits } = await setupRelations()
     const queued = cache.insertJob(JSON.stringify({ type: 'suggest_relations', paperId: LOGHUB_ID, batchId: 'b1' }), NOW)
     await service.request(LOGHUB_ID, { force: true })
     expect(enqueued).toEqual([])
+    // The Activity panel refreshes: the job left its batch.
+    expect(jobEmits()).toBe(1)
     expect(JSON.parse(cache.getJob(queued)!.spec)).toEqual({ type: 'suggest_relations', paperId: LOGHUB_ID, force: true })
     cache.updateJob(queued, { state: 'running' }, NOW)
     await service.request(LOGHUB_ID, { force: true })

@@ -146,6 +146,7 @@ export class ProjectSession {
       suggester,
       budget,
       emit: () => session.emit('library'),
+      jobsChanged: () => session.emit('jobs'),
       enqueue: (spec) => queue.enqueue(spec),
       cancelBatch: (batchId) => queue.cancelBatch(batchId)
     })

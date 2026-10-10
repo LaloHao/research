@@ -74,12 +74,14 @@ export async function setupRelations(opts: { agent?: AgentResponse[]; now?: () =
   const enqueued: JobSpec[] = []
   const cancelled: string[] = []
   let emits = 0
+  let jobEmits = 0
   const service = new RelationService({
     store,
     cache,
     suggester,
     budget,
     emit: () => void emits++,
+    jobsChanged: () => void jobEmits++,
     enqueue: (spec) => enqueued.push(spec),
     cancelBatch: (batchId) => {
       cancelled.push(batchId)
@@ -88,5 +90,5 @@ export async function setupRelations(opts: { agent?: AgentResponse[]; now?: () =
     now: opts.now ?? (() => new Date(NOW))
   })
   await service.reindex()
-  return { store, cache, provider, ledger, budget, suggester, service, enqueued, cancelled, emits: () => emits }
+  return { store, cache, provider, ledger, budget, suggester, service, enqueued, cancelled, emits: () => emits, jobEmits: () => jobEmits }
 }
