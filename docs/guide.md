@@ -13,8 +13,9 @@ This app is a paper library for the thesis *Método computacional para la desens
 - Fetch each paper's references from OpenAlex and suggest **citation candidates** (*snowballing*): works your papers cite, or that cite them, which aren't in your library yet.
 - Find **similar papers** by combining shared references, shared citers, shared facet values and a local content model, with the reasons for each match.
 - See the field in the **Mapa** (Map) view: a graph of papers with two lenses (field and thesis) and per-facet charts.
+- Ask Claude for **typed relations** between papers (extends, uses the method of, compares with, contradicts, replicates, same problem), with a justification and quotes from both papers that Claude finds by itself with read-only tools over your library; you confirm, reject or retype them.
 
-Coming soon (not implemented yet): typed relations between papers suggested by Claude (extends, uses the method of, compares with, contradicts…), chat over the library, and formal systematic literature mapping.
+Coming soon (not implemented yet): facets suggested by Claude, chat over the library, and formal systematic literature mapping.
 
 ## Getting started
 
@@ -73,18 +74,19 @@ The list on the left shows every paper matching the active search and filters.
   - *Web*: the paper is a web page (no PDF, with extracted text).
   - *Sin PDF* (No PDF): not a web paper and has no attached PDF.
   - *Sin resumen* (No summary): not summarized yet (and already has indexed text). A paper too long to summarize without «Forzar» (Force) (see "Summaries with Claude") doesn't show this badge while it has no summary.
-  - *Por revisar (N)* (To review (N)): the summary has N fields, facets, or the thesis relation still neither verified nor edited, or a previously reviewed thesis relation that's now pending re-review because the thesis changed.
+  - *Por revisar (N)* (To review (N)): the summary has N fields, facets, or the thesis relation still neither verified nor edited, or a previously reviewed thesis relation that's now pending re-review because the thesis changed. N also counts the suggested typed relations that involve the paper and that you haven't confirmed or rejected yet, so the badge can show even when the summary is already reviewed.
   - *Revisado* (Reviewed): everything generated has already been verified or edited.
   - *Desactualizado* (Stale): the summary went stale because the extraction form changed, or because the thesis changed and the relation to it was still in *generado* (generated) (see "Summaries with Claude").
   - *Resumen falló* (Summary failed): the last summarize attempt ended in an error.
   - *Sin citas* (No citations): the paper wasn't found in OpenAlex (it has no DOI and there was no exact title-and-year match), so it has no citations or candidates.
-- **Filters**: by summary status (all, no summary, to review, reviewed, stale, with error) and by the model it was generated with (the selector is labeled «Resumido con» (Summarized with) for screen readers; its visible options are «Cualquier modelo» (Any model), Sonnet, Haiku and Opus).
+- **Filters**: by summary status (all, no summary, to review, reviewed, stale, with error, con relaciones por revisar (with relations to review)) and by the model it was generated with (the selector is labeled «Resumido con» (Summarized with) for screen readers; its visible options are «Cualquier modelo» (Any model), Sonnet, Haiku and Opus).
 - **Facet filter**: clicking a bar or a bubble in the charts (Map view) opens the library filtered by that value (or a pair of values), shown as a `facet = value` tag you can remove with ✕.
 - **«Actualizar citas»** (Update citations): looks up the references of every paper again in OpenAlex or, when a search or any filter is active, only of the visible ones. The jobs show up in the activity panel.
+- **Sugerir relaciones** (Suggest relations): asks Claude for typed relations for the papers whose candidates changed since their last analysis (all of them or, with a search or filter active, only the visible ones). Before queueing it shows the number of papers, the estimated cost and the batch cap; if there are none, it says «No hay papers con candidatos nuevos por analizar.» (No papers with new candidates to analyze.). See "Typed relations".
 - **Batch actions**: both queue, in one go, every eligible paper visible under the current search and filters (over-long ones are skipped unless they already have a forced summary); both ask for confirmation before queuing. All of a batch's jobs are queued upfront; if the batch cap (or Claude's quota) is hit while it runs, that batch's jobs still queued are cancelled.
   - *Resumir pendientes* (Summarize pending): queues papers with no summary (or a stale or failed one) within the batch budget, using the model chosen in the «Modelo del lote» (Batch model) selector. The confirmation shows the number of papers, the estimated cost and the batch cap; if none are pending, it warns «No hay papers pendientes de resumir.» (There are no papers pending summarization.).
   - *Regenerar filtrados con…* (Regenerate filtered with…): with an active status filter (not «Todos» (All)), regenerates with the model chosen in its own selector every visible paper that has indexed text.
-- **Activity panel**: lists running and recent jobs (adding an identifier or PDF, completing metadata, summarizing, citations, who cites a paper, a paper's similarity, downloading the similarity model), with their status (queued, running, done, failed, cancelled) and, when applicable, the outcome (added, updated, was already in the library, summarized, citations updated, not found in OpenAlex, incoming citations updated, model downloaded). The model download shows its progress as a percentage. A queued or running job can be cancelled. Tapping a job's name opens its paper.
+- **Activity panel**: lists running and recent jobs (adding an identifier or PDF, completing metadata, summarizing, citations, who cites a paper, a paper's similarity, downloading the similarity model, sugerir relaciones (suggest relations)), with their status (queued, running, done, failed, cancelled) and, when applicable, the outcome (added, updated, was already in the library, summarized, citations updated, not found in OpenAlex, incoming citations updated, model downloaded, relaciones sugeridas (relations suggested), sin candidatos para analizar (no candidates to analyze)). The model download shows its progress as a percentage. A queued or running job can be cancelled. Tapping a job's name opens its paper.
 
 ## Paper detail
 
@@ -96,7 +98,7 @@ They appear in this order: Resumen, Contenido, PDF, Texto, Relaciones, Notas.
 - **Contenido** (Content): the extracted readable text, whenever there is one (typically web pages without a PDF), rendered as a readable document (headings, paragraphs, lists, tables, blockquotes, code). Links open in the system browser; images aren't loaded, they show as a small chip linking to the image instead. Following an evidence link to a web paper opens this tab with the quote highlighted and scrolled into view; if the exact text isn't found, it shows a small notice.
 - **PDF**: the PDF viewer. Shown for any paper that isn't a web page, even before it has an attached PDF: in that case it shows «Este paper no tiene PDF. Arrastra el archivo a la biblioteca para adjuntarlo.» (This paper has no PDF. Drag the file onto the library to attach it.) instead of the viewer.
 - **Texto** (Text): the PDF's extracted text, page by page, laid out for reading. Shown when the paper has a PDF and its text is indexed (see "Reading the text" below).
-- **Relaciones** (Relations): the citation status (not fetched yet, fetched on a date with N citations in OpenAlex, or *Sin citas* (No citations)) with an «Actualizar citas» (Update citations) button; «Cita a (en tu biblioteca)» (Cites, in your library) and «Citado por (en tu biblioteca)» (Cited by, in your library), library papers only, each opening on click; how many references aren't in your library, with «Ver candidatos» (See candidates), which opens the Candidates tab filtered by this paper; and «Similares» (Similar): the 10 most similar papers with their score and reasons (e.g. «6 referencias en común · citados juntos por 3 papers · technique: ner · similitud de contenido 0.82» (6 shared references · cited together by 3 papers · technique: ner · content similarity 0.82)).
+- **Relaciones** (Relations): at the top, the «Relaciones tipadas» (Typed relations) section (see "Typed relations"); below it, the citation status (not fetched yet, fetched on a date with N citations in OpenAlex, or *Sin citas* (No citations)) with an «Actualizar citas» (Update citations) button; «Cita a (en tu biblioteca)» (Cites, in your library) and «Citado por (en tu biblioteca)» (Cited by, in your library), library papers only, each opening on click; how many references aren't in your library, with «Ver candidatos» (See candidates), which opens the Candidates tab filtered by this paper; and «Similares» (Similar): the 10 most similar papers with their score and reasons (e.g. «6 referencias en común · citados juntos por 3 papers · technique: ner · similitud de contenido 0.82» (6 shared references · cited together by 3 papers · technique: ner · content similarity 0.82)).
 - **Notas** (Notes): your own notes in Markdown, with autosave (`notes.md`). If the file changed from outside the app while there were unsaved changes, it warns of the conflict and lets you choose between reloading (discards your own) or overwriting with your own version.
 
 ### Reading the text
@@ -141,6 +143,8 @@ Keyboard shortcuts (shown on screen as «V verificar · E editar · U desverific
 
 The right-hand panel shows the PDF with the quote highlighted when the paper has one and the quote is found in the text. Otherwise it shows the passage, formatted for reading: for a web page, its content laid out like the **Contenido** tab, with the quote highlighted (or a small notice if the exact text isn't found); if the quote doesn't appear in the PDF, that page's text laid out like the **Texto** tab (headings, paragraphs, running headers and footers dimmed), with the quote marked wherever it can still be located. If the PDF can't be loaded (or there's no content to show), it falls back to the plain extracted text of that page.
 
+The queue also includes suggested typed relations, each one once, next to the first of its two papers in the list. On a relation the shortcuts are «V confirmar · R rechazar · E elegir otro tipo · U deshacer · → siguiente · ← anterior · Esc cerrar la lista o salir»: **V** confirms it, **R** rejects it, **E** opens the list of types (only those the pair doesn't have yet; **Esc** closes it) and **U** undoes the last decision; the card also offers «Invertir dirección» (Reverse direction) for types with a direction. After each decision, «Decisión guardada.» (Decision saved.) shows for a few seconds with «Deshacer» (Undo), which puts the relation back as it was and back in the queue. While that notice shows, **U** undoes that decision even on a summary item; when there is nothing to undo, **U** unverifies as usual. The right-hand panel shows both papers' evidence side by side (the PDF with the quote highlighted or, failing that, the passage, as elsewhere in review mode).
+
 ## Citations and candidates
 
 Citations come from [OpenAlex](https://openalex.org), without Claude. For each paper the app finds its OpenAlex work by OpenAlex id, otherwise by DOI and, without a DOI, by exact title and year (only on an unambiguous match; never for web pages). It stores in `paper.yaml` the full list of what the paper cites, in your library or not, and its total citation count in OpenAlex. If nothing is found, the paper gets the *Sin citas* (No citations) badge. When the OpenAlex work found by id has a different DOI than the paper, the paper's DOI wins. Completing or changing a paper's DOI («Completar» (Complete) or «Reintentar» (Retry)) discards the citations of the old work and fetches them again on their own.
@@ -168,11 +172,36 @@ Each pair of papers gets a score between 0 and 1 that combines:
 
 The direct-citation reason shows both papers' citation keys. The 10 most similar papers of each paper are kept. Without the local model, the score uses the other signals only. Everything updates on its own when a paper's citations, summary or text change: a single change updates only what involves that paper, and a batch (for example «Actualizar citas» (Update citations) for the whole library) recomputes everything when it ends. If a batch is cancelled partway through, the full recompute is left pending and runs on the next paper change. Changing the extraction form (which changes every paper's facets) also recomputes everything, only if some facet value actually changed.
 
+## Typed relations
+
+Claude can suggest how a paper relates to others in your library:
+
+- **Extiende** (Extends): builds directly on the other one (extends, improves or generalizes it).
+- **Usa el método de** (Uses the method of): applies a method, tool, dataset or technique of the other one, without extending it.
+- **Compara con** (Compares with): they are compared directly (one is a baseline of the other, or they are evaluated side by side). No direction.
+- **Contradice** (Contradicts): reports results or claims that clash with the other one's.
+- **Replica** (Replicates): reproduces the other one's study or experiments.
+- **Mismo problema** (Same problem): both address the same problem with different approaches, without building on each other. No direction.
+
+**How they are suggested.** For each paper the app picks up to 12 *candidates*: the library papers it cites or that cite it, then the most similar ones (see "Similarity"). Claude gets the paper with its summary (or its abstract), the candidates with a short summary, and the relations already recorded **for that paper** (never the rest of the library's), rejected ones included so they aren't repeated. It then looks for the evidence itself with **read-only** tools over your library: full-text search, search by meaning (if the local model is downloaded), search for literal text inside one paper (ignoring case and accents), reading pages, a paper's data and summary, its citations and its similar papers. It can't write anything or see files outside the project; the tools exist only while that request runs, and it can use them at most 12 times per paper. Every quote it returns is looked up in its paper's text, as with summaries; the ones that can't be found get a wavy underline.
+
+**When.** With «Sugerir relaciones» (Suggest relations) in a paper's Relations tab (it always analyzes the paper, with all its candidates), with the library's «Sugerir relaciones» batch, or automatically, if you turn on «Sugerir relaciones automáticamente» (Suggest relations automatically) under Settings → Claude. The batch and the automatic trigger only analyze a paper when a candidate appeared that its last analysis didn't see, and never look again at a pair already analyzed from the other paper. One paper is analyzed at a time, with the configured model and the same caps as summaries; the cost is logged in `costs/`. A paper that reaches its per-paper cap fails alone and the batch goes on; the batch stops when the Claude quota runs out or the batch or monthly cap is reached. Automatic suggestions of one day count as one batch for the batch cap.
+
+**Reviewing them.** In each paper's Relations tab, the «Relaciones tipadas» (Typed relations) section shows:
+
+- «Sugeridas» (Suggested), with «Confirmar» (Confirm), «Rechazar» (Reject), «Cambiar tipo» (Change type; it only offers types the pair doesn't have yet), «Invertir dirección» (Reverse direction, for types with a direction) and «Editar justificación» (Edit justification). Quotes from this paper carry their page and open the PDF with the quote highlighted; next to the other paper's quotes, «Abrir» (Open) opens that paper.
+- «Confirmadas» (Confirmed): they can go back to suggested («Devolver a sugerida»), be rejected or retyped.
+- «Rechazadas (N)» (Rejected (N)), folded: rejecting never deletes; «Restaurar» (Restore) puts it back among the suggested ones and «Confirmar» confirms it.
+
+Changing the type or reversing the direction leaves the relation confirmed and marked *editada* (edited); no previous type is ever suggested again. Editing the justification marks it edited without changing its status. After each decision «Deshacer» (Undo) shows for a few seconds. Analyzing a paper again only replaces the unreviewed suggestions an earlier analysis of that same paper made (Claude may repeat them if still supported); those suggested by the other paper's analysis, and confirmed, rejected and edited ones, are left alone.
+
+**`relations.yaml`.** All relations live in one file at the project root, sorted by `id` (both keys in alphabetical order plus the type, e.g. `he2017drain__zhu2020loghub__extends`), with their status (`suggested`, `confirmed` or `rejected`), the justification, the quotes with their page and whether they were found, and the model, date and paper whose analysis suggested them; plus, under `analyzed`, which candidates each paper was last analyzed with (so a rebuilt index never spends again on what was already analyzed). It is meant to be versioned with git. If a `git pull` leaves conflict markers in it, the app doesn't modify it and shows, in a notice at the bottom of the window, «relations.yaml tiene marcadores de conflicto de git: la app no lo modifica hasta que se resuelva.» (relations.yaml has git conflict markers: the app won't modify it until it's resolved.) with «Resolver automáticamente» (Resolve automatically: it merges both versions by `id`; if the same relation changed on both sides, the most recent change wins; it keeps keys it doesn't know and reports any invalid entries it had to drop) and «Mostrar archivo» (Show file). If the file can't be read for another reason, «relations.yaml no se puede leer: …» (relations.yaml can't be read: …) shows and it has to be fixed by hand.
+
 ## Map
 
 The **Mapa** (Map) view (side rail) has three tabs:
 
-- **Grafo** (Graph): one node per paper (larger the more citations it has in OpenAlex) and two kinds of edges: citations (solid arrow) and similarity (dashed, thicker the more alike). Hover a dashed edge to see its reasons; click a node to open its detail on the side. Controls: **«Lente»** (Lens) «Área» (Field; colored by the facet you pick; a paper with several values takes the one most frequent in the library) or «Tesis» (Thesis; colored by the 1–5 relevance of the thesis relation, gray without one); show or hide citations and similarity; «Umbral de similitud» (Similarity threshold); «Aplicar los filtros de la biblioteca» (Apply the library's filters; uses the papers visible the last time you opened the library); «Exportar PNG» (Export PNG; the graph exports to PNG only).
+- **Grafo** (Graph): one node per paper (larger the more citations it has in OpenAlex) and two kinds of edges: citations (solid arrow) and similarity (dashed, thicker the more alike). Hover a dashed edge to see its reasons; click a node to open its detail on the side. Controls: **«Lente»** (Lens) «Área» (Field; colored by the facet you pick; a paper with several values takes the one most frequent in the library) or «Tesis» (Thesis; colored by the 1–5 relevance of the thesis relation, gray without one); show or hide citations and similarity; «Umbral de similitud» (Similarity threshold); «Aplicar los filtros de la biblioteca» (Apply the library's filters; uses the papers visible the last time you opened the library); «Exportar PNG» (Export PNG; the graph exports to PNG only). Typed relations are drawn with one color per type: solid when confirmed, dotted when suggested, with an arrow except for the types without direction. The «Relaciones:» (Relations:) row has one switch per type and «Ocultar sugeridas» (Hide suggested); hovering a relation shows its type.
 - **Gráficas** (Charts): «Barras por valor» (Bars per value), «Burbujas faceta × faceta» (Facet × facet bubbles; empty cells show as gaps) and «Papers por año» (Papers per year). With «Solo revisadas» (Reviewed only) off, every facet value counts and unreviewed ones are drawn fainter; on, only verified or edited ones. Entries that no longer fit their facet's current type don't count. Clicking a bar or bubble opens the library filtered. They export to SVG, PNG and CSV.
 - **Candidatos** (Candidates): see "Citations and candidates".
 
@@ -182,7 +211,7 @@ Settings are organized in tabs.
 
 Tabs are navigable with ←/→/Home/End; the app remembers the last tab you had open. Most fields save themselves as soon as you leave them (immediately for selects and checkboxes) and show «Guardado» (Saved); the extraction form editor is the exception — there, changes stay pending until you tap «Guardar cambios» (Save changes) (see "Form" below).
 
-Defaults for a new project: generated-content language English; PDFs «Versionarlos con git» (Track them with git); model Sonnet; auto-summarize off; per-paper cap 0.5 USD; per-batch cap 10 USD; monthly cap empty (no cap); maximum input size 400000 characters.
+Defaults for a new project: generated-content language English; PDFs «Versionarlos con git» (Track them with git); model Sonnet; auto-summarize off; suggest relations automatically off; per-paper cap 0.5 USD; per-batch cap 10 USD; monthly cap empty (no cap); maximum input size 400000 characters.
 
 ### Project
 
@@ -195,7 +224,8 @@ Defaults for a new project: generated-content language English; PDFs «Versionar
 
 - **Modelo** (Model): Sonnet (recommended), Haiku (faster, lower quality), or Opus (highest quality, uses more quota). It's the default model for summarizing; you can pick another one just for that time with «Regenerar con…» or when confirming a batch.
 - **Resumir automáticamente al agregar papers** (Auto-summarize when adding papers): if on, at the end of an add/merge/metadata-completion job, every paper left with indexed text, no summary (or a stale or failed one), and a valid form gets queued to summarize itself; over-long papers aren't auto-summarized (they need «Forzar» by hand).
-- **Tope por paper (USD est.)** (Per-paper cap (est. USD)): the estimated maximum a single summary can cost. It can't be left empty or be 0 or negative. It applies per call to Claude (as `--max-budget-usd`); a summary can make up to two call attempts.
+- **Sugerir relaciones automáticamente** (Suggest relations automatically): if on (off by default), once a paper has a summary and citations, and its candidates changed since its last analysis, a typed relation suggestion is queued on its own. It uses Claude quota.
+- **Tope por paper (USD est.)** (Per-paper cap (est. USD)): the estimated maximum a single summary can cost. It can't be left empty or be 0 or negative. It applies per call to Claude (as `--max-budget-usd`); a summary can make up to two call attempts and a relation suggestion, one.
 - **Tope por lote (USD est.)** (Per-batch cap (est. USD)): the estimated maximum accumulated within a single batch operation (summarize pending or regenerate filtered). Once reached, that batch's jobs still queued are cancelled. It can't be left empty or be 0 or negative.
 - **Tope mensual (USD est., vacío = sin tope)** (Monthly cap (est. USD, empty = no cap)): the estimated maximum accumulated in the month, adding up spend from all your machines (see "Gasto estimado este mes" below). It's the only one of the three caps that can be left empty, and empty means no cap. The month is counted as the calendar month in UTC, across every device syncing the project.
 - **Tamaño máximo de entrada (caracteres)** (Maximum input size (characters)): how much of the paper's text is sent to Claude at most. A longer paper can't be summarized without using «Forzar» (see "Summaries with Claude").
@@ -255,6 +285,7 @@ If the form changed from outside this editor (another machine, a `git pull`) whi
 
 ```
 project.yaml               project config (name, language, PDF policy, Claude, thesis, extraction form, dismissed candidates)
+relations.yaml             typed relations between papers (suggested, confirmed and rejected)
 papers/<key>/              one paper per folder; <key> is its citation key and never changes
   paper.yaml               metadata, BibTeX and citations (OpenAlex)
   summary.md               summary fields, with evidence and per-field status
@@ -264,7 +295,7 @@ papers/<key>/              one paper per folder; <key> is its citation key and n
   paper.pdf                the PDF, per the configured policy
 costs/<device>.jsonl       estimated costs of each call to Claude, one per device (so syncing between machines never conflicts)
 exports/library.bib        BibTeX for the whole library; generated, don't edit it
-.cache/                    local search index, PDFs downloaded on demand, incoming citations, candidate data, vectors and similar papers; can be deleted without losing anything, rebuilds itself
+.cache/                    local search index, PDFs downloaded on demand, incoming citations, candidate data, vectors, similar papers and the relations index; can be deleted without losing anything, rebuilds itself
 ```
 
 Everything above, except `.cache/`, is meant to be versioned with git or synced between machines. `notes.md` and `project.yaml` (outside `extraction_form`) can be edited by hand with confidence; `paper.yaml`, `summary.md` and `extraction.yaml` too, but carefully, so as not to break their format. A file edited from outside the app (or updated by a sync) reloads on its own, without restarting the app.
@@ -318,3 +349,12 @@ Content similarity needs the local model. Until it's there, similarity uses cita
 
 **«No se pudo cargar el modelo local de similitud. Bórralo y vuelve a descargarlo en Ajustes → Aplicación.»** (The local similarity model couldn't be loaded. Delete it and download it again in Settings → App.)
 The model files are incomplete or damaged (for example, an interrupted download). Use «Borrar» (Delete) and then «Descargar» (Download).
+
+**«No se pudieron preparar las herramientas de búsqueda de la biblioteca para Claude. Reintenta; si sigue fallando, reinicia la app.»** (The library search tools for Claude couldn't be set up. Try again; if it keeps failing, restart the app.)
+The app couldn't start, on your machine, the local server (only on `127.0.0.1`) through which Claude reads your library. Nothing was spent. Try again; if it persists, restart the app.
+
+**«relations.yaml tiene un conflicto de git o un error; resuélvelo antes de cambiar relaciones.»** (relations.yaml has a git conflict or an error; resolve it before changing relations.)
+Use «Resolver automáticamente» (Resolve automatically) in the notice at the bottom of the window (see "Typed relations"), or fix the file by hand.
+
+**«La operación llegó a su tope por paper y se detuvo. Sube «Tope por paper (USD est.)» en Ajustes → Claude o reintenta con otro modelo.»** (The operation reached its per-paper cap and stopped. Raise «Tope por paper (USD est.)» under Settings → Claude or retry with another model.)
+That paper went over the per-paper cap during the request. Only that paper fails: a running batch goes on with the rest.

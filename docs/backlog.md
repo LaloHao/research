@@ -3,15 +3,14 @@
 ## Parked ideas (functionality)
 
 - Reorder facets in the extraction form editor.
-- Have Claude suggest facets (and values) from the thesis's context.
 - Remove papers with a trash (next, right after stage 3b): today the app has no way to remove a paper. "Quitar de la biblioteca" moves `papers/<key>/` (PDF, summary, extraction, notes) to `.trash/<key>/` inside the project, its relations and dismissals stay recoverable, and a Papelera view restores or empties it (emptying asks for confirmation). Removing never deletes data silently.
 - Personal shared library across projects (after stages 4–5): a store outside the projects (app data folder or a user-chosen, git-synced folder) keyed by DOI/arXiv/OpenAlex/PDF hash, holding PDFs and analyses. Adding a paper to any project offers to reuse what is compatible: summary fields when the content language matches, facets whose definition is identical, never the thesis relation; verified/edited statuses kept (optionally re-review). Papers removed from a project stay there.
 - Git sync from the app: a "Sincronizar" button that pulls, commits and pushes the project folder (git or git LFS for PDFs), shows the last sync time, warns when there are unpushed changes before closing, and reports conflicts clearly (the app already refuses to overwrite files with conflict markers). Today syncing between computers is done by hand with `git pull` / `git commit` / `git push`.
 
 ## Upcoming stages
 
-- Stage 3b: typed relations between papers suggested by Claude (`extends`, `uses_method_of`, `compares_with`, `contradicts`, `replicates`, `same_problem`) over stage 3a's candidates (citations and similar pairs), with a review flow like summaries.
-- Principle for every future LLM use (3b, chat): Claude gets **read-only tools** over the library (full-text search, semantic search, grep over the project files, reading a paper's pages, reading a summary and its facets, querying citations and neighbours) and never write tools; in 3b the relation suggester uses them to look for evidence.
+- Stage 3c: Claude suggests facets (and values) from the thesis context and the papers, reusing the read-only library MCP server and agent runner of stage 3b; suggestions reviewed like the summaries' proposed values.
+- Principle for every future LLM use (3b, 3c, chat): Claude gets **read-only tools** over the library (full-text search, semantic search, grep over the project files, reading a paper's pages, reading a summary and its facets, querying citations and neighbours) and never write tools; the 3b relation suggester already uses them (src/main/mcp/).
 - Stage 4: chat (per paper and global) over the library.
 - Stage 5: formal systematic mapping. Design decision already taken: a project can hold **several mappings** (each with its own protocol, research questions, inclusion/exclusion criteria, search log and screening) over one shared library, so papers, PDFs and summaries are never analysed twice; excluding a paper from one mapping never removes it from the library.
 
@@ -58,3 +57,18 @@
 - The local-model Download/Delete buttons in Settings aren't disabled while a download or delete is in flight (repeated clicks are harmless but can look unresponsive).
 - When a paper's stored OpenAlex id points to a work whose DOI differs from the paper's, the citation fetch falls back to the DOI but doesn't correct `identifiers.openalex`, so later metadata updates refetch citations again (two requests each time).
 - After a DOI change, the old work's incoming citations stay cached and "Buscar quién cita a mis papers" skips the paper for up to 7 days.
+
+## Stage 3b technical minutiae
+
+- The installed `claude` CLI does not list `--max-turns` in `--help`; `src/main/llm/agentCliFlags.ts` records what the real verification run proved (the `--allowedTools` form, the permission flags and whether `--max-turns` exists). Either way the turn cap is enforced by the MCP server's budget of 12 tool calls per run, plus a 10-minute timeout and `--max-budget-usd`. Regenerate that file with the verification script after a CLI upgrade.
+- Which candidates each paper was analyzed with lives in `relations.yaml` (`analyzed`), so a rebuilt cache never re-spends; removing a paper leaves its `analyzed` entry behind (harmless).
+- A relation id is the unordered pair plus the type, so `A extends B` and `B extends A` share an id: reversing a direction keeps the id.
+- A batch plan counts both papers of a new pair; at run time the second one skips the pair, so the estimate can be higher than the real cost.
+- Relations of a paper removed from the library stay in `relations.yaml`; their other end shows the key instead of a title.
+- A relation suggestion is not retried on invalid output (an agent run is expensive); the `llm_invalid_output` message still says "dos veces", which is only true for summaries.
+- `find_in_paper` searches literal text only (no model-supplied regular expressions run in the main process); it folds case and accents per character, so a ligature split across a line break may not match.
+- The MCP server is stateless: a new `McpServer` per HTTP request, with the call budget kept outside.
+- Undo tokens live in the main process (the last 100 decisions) and are lost on restart; an undo checks the entry's status and `updated_at`, so two decisions on the same relation within the same millisecond could not be told apart.
+- Evidence of confirmed relations is not re-checked when a paper's text changes (a new PDF).
+- The review mode loads a relation item with three requests (the paper's relations and both papers' details), one after another.
+- Candidates use only the stored neighbours; a paper added after the last neighbour recompute is a candidate only once the neighbours are updated.

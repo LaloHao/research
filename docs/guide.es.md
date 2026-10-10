@@ -13,8 +13,9 @@ Esta app es una biblioteca de papers para la tesis *Método computacional para l
 - Traer de OpenAlex las referencias de cada paper y proponer **candidatos por citas** (*snowballing*): trabajos que tus papers citan, o que los citan, y que todavía no están en tu biblioteca.
 - Encontrar **papers similares** combinando referencias en común, citas compartidas, facetas en común y un modelo local de contenido, con las razones de cada parecido.
 - Ver el área en la vista **Mapa**: un grafo de papers con dos lentes (área y tesis) y gráficas por faceta.
+- Pedir a Claude **relaciones tipadas** entre papers (extiende, usa el método de, compara con, contradice, replica, mismo problema), con justificación y citas de ambos papers que Claude busca por sí mismo con herramientas de solo lectura sobre tu biblioteca; tú las confirmas, rechazas o cambias de tipo.
 
-Próximamente (no implementado todavía): relaciones tipadas entre papers sugeridas por Claude (extiende, usa el método de, compara con, contradice…), chat sobre la biblioteca y mapeo sistemático de literatura.
+Próximamente (no implementado todavía): facetas sugeridas por Claude, chat sobre la biblioteca y mapeo sistemático de literatura.
 
 ## Primeros pasos
 
@@ -73,18 +74,19 @@ La lista de la izquierda muestra todos los papers que coinciden con la búsqueda
   - *Web*: el paper es una página web (sin PDF, con texto extraído).
   - *Sin PDF*: no es un paper web y no tiene PDF adjunto.
   - *Sin resumen*: todavía no se resumió (y ya tiene texto indexado). Un paper demasiado largo para resumir sin «Forzar» (ver «Resúmenes con Claude») no muestra esta insignia mientras no tenga resumen.
-  - *Por revisar (N)*: el resumen tiene N campos, facetas o la relación con la tesis todavía sin verificar ni editar, o una relación con la tesis ya revisada que quedó pendiente de volver a revisar porque cambió la tesis.
+  - *Por revisar (N)*: el resumen tiene N campos, facetas o la relación con la tesis todavía sin verificar ni editar, o una relación con la tesis ya revisada que quedó pendiente de volver a revisar porque cambió la tesis. N también cuenta las relaciones tipadas sugeridas que tocan al paper y que aún no confirmas ni rechazas; por eso la insignia puede aparecer aunque el resumen ya esté revisado.
   - *Revisado*: todo lo generado ya fue verificado o editado.
   - *Desactualizado*: el resumen quedó desactualizado porque cambió el formulario de extracción, o porque cambió la tesis y la relación con ella seguía en *generado* (ver «Resúmenes con Claude»).
   - *Resumen falló*: el último intento de resumir terminó en error.
   - *Sin citas*: no se encontró el paper en OpenAlex (no tiene DOI y no hubo una coincidencia exacta por título y año), así que no tiene citas ni candidatos.
-- **Filtros**: por estado del resumen (todos, sin resumen, por revisar, revisados, desactualizados, con error) y por modelo con el que se generó (el selector se llama «Resumido con» para lectores de pantalla; sus opciones visibles son «Cualquier modelo», Sonnet, Haiku y Opus).
+- **Filtros**: por estado del resumen (todos, sin resumen, por revisar, revisados, desactualizados, con error, con relaciones por revisar) y por modelo con el que se generó (el selector se llama «Resumido con» para lectores de pantalla; sus opciones visibles son «Cualquier modelo», Sonnet, Haiku y Opus).
 - **Filtro por faceta**: al hacer clic en una barra o una burbuja de las gráficas (vista Mapa), la biblioteca se abre filtrada por ese valor (o ese par de valores), con una etiqueta `faceta = valor` que se quita con ✕.
 - **Actualizar citas**: vuelve a consultar en OpenAlex las referencias de todos los papers o, si hay una búsqueda o algún filtro activo, solo de los que se ven. Los trabajos aparecen en el panel de actividad.
+- **Sugerir relaciones**: pide a Claude relaciones tipadas para los papers cuyos candidatos cambiaron desde su último análisis (todos o, si hay una búsqueda o algún filtro activo, solo los que se ven). Antes de encolar muestra la cantidad de papers, el costo estimado y el tope del lote; si no hay ninguno, avisa «No hay papers con candidatos nuevos por analizar.». Ver «Relaciones tipadas».
 - **Acciones por lotes**: encolan de una sola vez todos los papers elegibles visibles con la búsqueda y los filtros activos (los demasiado largos se omiten salvo que ya tuvieran un resumen forzado); ambas piden confirmación antes de encolar. Todos los trabajos del lote se encolan de entrada; si se llega al tope del lote (o a la cuota de Claude) mientras corre, los trabajos que todavía estaban en cola para ese lote se cancelan.
   - *Resumir pendientes*: encola los papers sin resumen (o con resumen desactualizado o fallido) dentro del presupuesto por lote, usando el modelo elegido en el selector «Modelo del lote». La confirmación muestra la cantidad de papers, el costo estimado y el tope del lote; si no hay ninguno pendiente, avisa «No hay papers pendientes de resumir.».
   - *Regenerar filtrados con…*: con un filtro de estado activo (no «Todos»), regenera con el modelo elegido en su propio selector todos los papers visibles que tengan texto indexado.
-- **Panel de actividad**: lista los trabajos en curso y recientes (agregar un identificador o PDF, completar metadatos, resumir, citas, quién cita a un paper, similitud de un paper, descargar el modelo de similitud), con su estado (en cola, en curso, listo, falló, cancelado) y, si corresponde, el resultado (agregado, actualizado, ya estaba en la biblioteca, resumido, citas actualizadas, no se encontró en OpenAlex, citas entrantes actualizadas, modelo descargado). La descarga del modelo muestra su avance en porcentaje. Un trabajo en cola o en curso se puede cancelar. Tocar el nombre de un trabajo abre su paper.
+- **Panel de actividad**: lista los trabajos en curso y recientes (agregar un identificador o PDF, completar metadatos, resumir, citas, quién cita a un paper, similitud de un paper, descargar el modelo de similitud, sugerir relaciones), con su estado (en cola, en curso, listo, falló, cancelado) y, si corresponde, el resultado (agregado, actualizado, ya estaba en la biblioteca, resumido, citas actualizadas, no se encontró en OpenAlex, citas entrantes actualizadas, modelo descargado, relaciones sugeridas, sin candidatos para analizar). La descarga del modelo muestra su avance en porcentaje. Un trabajo en cola o en curso se puede cancelar. Tocar el nombre de un trabajo abre su paper.
 
 ## Detalle del paper
 
@@ -96,7 +98,7 @@ Aparecen en este orden: Resumen, Contenido, PDF, Texto, Relaciones, Notas.
 - **Contenido**: el texto legible extraído, siempre que haya (típicamente páginas web sin PDF), mostrado como un documento legible (encabezados, párrafos, listas, tablas, citas en bloque, código). Los enlaces abren en el navegador del sistema; las imágenes no se cargan, se muestran como una pequeña ficha que enlaza a la imagen. Seguir un enlace de evidencia en un paper web abre esta pestaña con la cita resaltada y centrada en la vista; si el texto exacto no se encuentra, se muestra un pequeño aviso.
 - **PDF**: el visor del PDF. Aparece para todo paper que no sea una página web, aunque todavía no tenga PDF adjunto: en ese caso muestra «Este paper no tiene PDF. Arrastra el archivo a la biblioteca para adjuntarlo.» en vez del visor.
 - **Texto**: el texto extraído del PDF, página a página, dispuesto para leer. Aparece cuando el paper tiene PDF y su texto está indexado (ver «Leer el texto» abajo).
-- **Relaciones**: el estado de las citas (sin consultar, consultadas en tal fecha con N citas en OpenAlex, o *Sin citas*) con el botón «Actualizar citas»; «Cita a (en tu biblioteca)» y «Citado por (en tu biblioteca)» (solo papers de tu biblioteca; un clic los abre); cuántas referencias no están en tu biblioteca, con «Ver candidatos», que abre la pestaña Candidatos filtrada por este paper; y «Similares»: los 10 papers más parecidos, con su puntuación y sus razones (por ejemplo «6 referencias en común · citados juntos por 3 papers · technique: ner · similitud de contenido 0.82»).
+- **Relaciones**: arriba, la sección «Relaciones tipadas» (ver «Relaciones tipadas»); debajo, el estado de las citas (sin consultar, consultadas en tal fecha con N citas en OpenAlex, o *Sin citas*) con el botón «Actualizar citas»; «Cita a (en tu biblioteca)» y «Citado por (en tu biblioteca)» (solo papers de tu biblioteca; un clic los abre); cuántas referencias no están en tu biblioteca, con «Ver candidatos», que abre la pestaña Candidatos filtrada por este paper; y «Similares»: los 10 papers más parecidos, con su puntuación y sus razones (por ejemplo «6 referencias en común · citados juntos por 3 papers · technique: ner · similitud de contenido 0.82»).
 - **Notas**: notas propias en Markdown, con guardado automático (`notes.md`). Si el archivo cambió por fuera de la app mientras había cambios sin guardar, avisa el conflicto y deja elegir entre recargar (descarta lo propio) o sobrescribir con la versión propia.
 
 ### Leer el texto
@@ -141,6 +143,8 @@ Atajos de teclado (se muestran en pantalla como «V verificar · E editar · U d
 
 El panel derecho muestra el PDF con la cita resaltada cuando el paper tiene uno y la cita se encuentra en el texto. Si no, muestra el pasaje, dispuesto para leer: en una página web, su contenido como en la pestaña **Contenido**, con la cita resaltada (o un pequeño aviso si el texto exacto no se encuentra); si la cita no aparece en el PDF, el texto de esa página como en la pestaña **Texto** (encabezados, párrafos, encabezados y pies de página atenuados), con la cita marcada donde aún se pueda ubicar. Si el PDF no se puede cargar (o no hay contenido que mostrar), se muestra el texto extraído de esa página tal cual.
 
+La cola también incluye las relaciones tipadas sugeridas, cada una una sola vez, junto al primero de sus dos papers en la lista. En una relación los atajos son «V confirmar · R rechazar · E elegir otro tipo · U deshacer · → siguiente · ← anterior · Esc cerrar la lista o salir»: **V** la confirma, **R** la rechaza, **E** abre la lista de tipos (solo los que ese par todavía no tiene; **Esc** la cierra) y **U** deshace la última decisión; la tarjeta también ofrece «Invertir dirección» en los tipos con dirección. Después de cada decisión aparece unos segundos «Decisión guardada.» con «Deshacer», que deja la relación como estaba y la vuelve a poner en la cola. Mientras ese aviso se ve, **U** deshace esa decisión aunque estés en un campo del resumen; si no hay nada que deshacer, **U** desverifica como siempre. El panel derecho muestra lado a lado la evidencia de los dos papers (el PDF con la cita resaltada o, si no, el pasaje, como en el resto del modo Revisar).
+
 ## Citas y candidatos
 
 Las citas vienen de [OpenAlex](https://openalex.org), sin usar Claude. Para cada paper, la app busca su obra en OpenAlex por su id de OpenAlex, si no por su DOI y, si no tiene DOI, por su título exacto y año (solo si hay una coincidencia inequívoca; nunca para páginas web). Guarda en `paper.yaml` la lista completa de lo que cita, esté o no en tu biblioteca, y el total de citas que tiene en OpenAlex. Si no la encuentra, el paper queda con la insignia *Sin citas*. Si la obra que encuentra por id tiene otro DOI que el paper, manda el DOI del paper. Al completar o cambiar el DOI de un paper («Completar» o «Reintentar»), se descartan las citas de la obra anterior y se vuelven a buscar solas.
@@ -168,11 +172,36 @@ Cada par de papers recibe una puntuación entre 0 y 1 que combina:
 
 La razón de cita directa muestra las claves de cita de ambos papers (las de la columna «Clave de cita»). Se guardan los 10 más parecidos de cada paper. Sin el modelo local, la puntuación usa solo las demás señales. Todo se actualiza solo cuando cambian las citas, los resúmenes o el texto de un paper: un cambio suelto actualiza solo lo que toca a ese paper, y un lote (por ejemplo «Actualizar citas» de toda la biblioteca) recalcula todo al terminar. Si un lote se cancela a mitad de camino, el recálculo completo queda pendiente y se hace con el próximo cambio de un paper. Cambiar el formulario de extracción (que cambia las facetas de todos los papers) también recalcula todo, solo si de verdad cambió algún valor de faceta.
 
+## Relaciones tipadas
+
+Claude puede sugerir cómo se relaciona un paper con otros de tu biblioteca:
+
+- **Extiende**: construye directamente sobre el otro (lo extiende, mejora o generaliza).
+- **Usa el método de**: aplica un método, herramienta, dataset o técnica del otro, sin extenderlo.
+- **Compara con**: se comparan directamente (uno es línea base del otro, o se evalúan lado a lado). No tiene dirección.
+- **Contradice**: reporta resultados o afirmaciones que chocan con los del otro.
+- **Replica**: reproduce el estudio o los experimentos del otro.
+- **Mismo problema**: abordan el mismo problema con enfoques distintos, sin construir uno sobre el otro. No tiene dirección.
+
+**Cómo se sugieren.** Para cada paper la app elige hasta 12 *candidatos*: los papers de tu biblioteca que cita o que lo citan y, después, los más similares (ver «Similitud»). Claude recibe el paper con su resumen (o su resumen de autor), los candidatos con un resumen corto y las relaciones ya registradas **de ese paper** (nunca las del resto de la biblioteca), incluidas las rechazadas para no repetirlas. Luego busca la evidencia él mismo con herramientas de **solo lectura** sobre tu biblioteca: búsqueda en el texto, búsqueda por significado (si el modelo local está descargado), búsqueda de un texto literal dentro de un paper (sin distinguir mayúsculas ni acentos), lectura de páginas, datos y resumen de un paper, sus citas y sus similares. No puede escribir nada ni ver archivos fuera del proyecto; las herramientas existen solo mientras dura esa consulta y puede usarlas como mucho 12 veces por paper. Cada cita que devuelve se busca en el texto de su paper, como en los resúmenes; las que no aparecen se ven subrayadas con una onda.
+
+**Cuándo.** Con «Sugerir relaciones» en la pestaña Relaciones de un paper (lo analiza siempre, con todos sus candidatos), con el lote «Sugerir relaciones» de la biblioteca o automáticamente, si activas «Sugerir relaciones automáticamente» en Ajustes → Claude. El lote y el disparo automático solo analizan un paper si apareció algún candidato que su último análisis no vio, y nunca vuelven a mirar un par que ya se analizó desde el otro paper (si Loghub ya se analizó con Drain como candidato, al analizar Drain no se vuelve a mirar Loghub). Se analiza un paper a la vez, con el modelo configurado y los mismos topes que los resúmenes; el costo queda en `costs/`. Si un paper llega a su tope por paper, falla solo ese paper y el lote sigue; el lote se detiene si se agota la cuota de Claude o se llega al tope del lote o al mensual. Los disparos automáticos de un mismo día cuentan como un solo lote para el tope por lote.
+
+**Revisarlas.** En la pestaña Relaciones de cada paper, la sección «Relaciones tipadas» muestra:
+
+- «Sugeridas», con «Confirmar», «Rechazar», «Cambiar tipo» (solo ofrece los tipos que ese par todavía no tiene), «Invertir dirección» (en los tipos con dirección) y «Editar justificación». Las citas de este paper llevan su página y abren el PDF con la cita resaltada; junto a las del otro paper, «Abrir» abre ese paper.
+- «Confirmadas»: se pueden devolver a sugeridas («Devolver a sugerida»), rechazar o cambiar de tipo.
+- «Rechazadas (N)», plegada: rechazar nunca borra; «Restaurar» la devuelve a sugeridas y «Confirmar» la confirma.
+
+Cambiar el tipo o invertir la dirección deja la relación confirmada y marcada como *editada*; ningún tipo anterior se vuelve a sugerir. Editar la justificación la marca como *editada* sin cambiar su estado. Tras cada decisión aparece unos segundos «Deshacer». Volver a analizar un paper reemplaza solo las sugerencias sin revisar que produjo un análisis anterior de ese mismo paper (Claude puede repetirlas si siguen justificadas); las que sugirió el análisis del otro paper, las confirmadas, las rechazadas y las editadas no se tocan.
+
+**`relations.yaml`.** Todas las relaciones se guardan en un solo archivo en la raíz del proyecto, ordenadas por `id` (las dos claves en orden alfabético más el tipo, por ejemplo `he2017drain__zhu2020loghub__extends`), con su estado (`suggested`, `confirmed` o `rejected`), la justificación, las citas con su página y si se encontraron, y el modelo, la fecha y el paper cuyo análisis la sugirió; además, en `analyzed`, con qué candidatos se analizó cada paper por última vez (así un índice reconstruido nunca vuelve a gastar en lo ya analizado). Está pensado para versionarse con git. Si un `git pull` le deja marcadores de conflicto, la app no lo modifica y muestra, en un aviso abajo de la ventana, «relations.yaml tiene marcadores de conflicto de git: la app no lo modifica hasta que se resuelva.» con «Resolver automáticamente» (une ambas versiones por `id`; si una misma relación cambió en los dos lados, gana el cambio más reciente; conserva las claves que no conoce y, si tuvo que descartar entradas inválidas, lo avisa) y «Mostrar archivo». Si el archivo no se puede leer por otro motivo, se muestra «relations.yaml no se puede leer: …» y hay que corregirlo a mano.
+
 ## Mapa
 
 La vista **Mapa** (barra lateral) tiene tres pestañas:
 
-- **Grafo**: un nodo por paper (más grande cuantas más citas tiene en OpenAlex) y dos tipos de aristas: citas (flecha sólida) y similitud (punteada, más gruesa cuanto más parecidos). Pasa el cursor por una arista punteada para ver sus razones; haz clic en un nodo para abrir su detalle al costado. Controles: **Lente** «Área» (color por la faceta que elijas; un paper con varios valores toma el más frecuente en la biblioteca) o «Tesis» (color por la relevancia 1–5 de la relación con la tesis; gris sin relación); mostrar u ocultar citas y similitud; «Umbral de similitud»; «Aplicar los filtros de la biblioteca» (usa los papers visibles la última vez que abriste la biblioteca); «Exportar PNG» (el grafo solo se exporta a PNG).
+- **Grafo**: un nodo por paper (más grande cuantas más citas tiene en OpenAlex) y dos tipos de aristas: citas (flecha sólida) y similitud (punteada, más gruesa cuanto más parecidos). Pasa el cursor por una arista punteada para ver sus razones; haz clic en un nodo para abrir su detalle al costado. Controles: **Lente** «Área» (color por la faceta que elijas; un paper con varios valores toma el más frecuente en la biblioteca) o «Tesis» (color por la relevancia 1–5 de la relación con la tesis; gris sin relación); mostrar u ocultar citas y similitud; «Umbral de similitud»; «Aplicar los filtros de la biblioteca» (usa los papers visibles la última vez que abriste la biblioteca); «Exportar PNG» (el grafo solo se exporta a PNG). Las relaciones tipadas se dibujan con un color por tipo: sólidas las confirmadas, punteadas las sugeridas, con flecha salvo en los tipos sin dirección. La fila «Relaciones:» tiene un interruptor por tipo y «Ocultar sugeridas»; al pasar el cursor por una relación se ve su tipo.
 - **Gráficas**: «Barras por valor», «Burbujas faceta × faceta» (las celdas vacías se ven como huecos) y «Papers por año». Con «Solo revisadas» apagado cuentan todas las facetas y lo no revisado se dibuja más tenue; encendido, solo las verificadas o editadas. Las entradas que ya no encajan con el tipo actual de su faceta no cuentan. Un clic en una barra o burbuja abre la biblioteca filtrada. Se exportan a SVG, PNG y CSV.
 - **Candidatos**: ver «Citas y candidatos».
 
@@ -180,7 +209,7 @@ La vista **Mapa** (barra lateral) tiene tres pestañas:
 
 Los ajustes se organizan en pestañas, navegables con ←/→/Inicio/Fin; la app recuerda la última pestaña abierta. La mayoría de los campos se guardan solos al salir de ellos (de inmediato en selectores y casillas) y muestran «Guardado»; el editor del formulario de extracción es la excepción — ahí los cambios quedan pendientes hasta tocar «Guardar cambios» (ver «Formulario» abajo).
 
-Valores por defecto de un proyecto nuevo: idioma del contenido generado en inglés; PDFs «Versionarlos con git»; modelo Sonnet; resumir automáticamente desactivado; tope por paper 0,5 USD; tope por lote 10 USD; tope mensual vacío (sin tope); tamaño máximo de entrada 400000 caracteres.
+Valores por defecto de un proyecto nuevo: idioma del contenido generado en inglés; PDFs «Versionarlos con git»; modelo Sonnet; resumir automáticamente desactivado; sugerir relaciones automáticamente desactivado; tope por paper 0,5 USD; tope por lote 10 USD; tope mensual vacío (sin tope); tamaño máximo de entrada 400000 caracteres.
 
 ### Proyecto
 
@@ -193,7 +222,8 @@ Valores por defecto de un proyecto nuevo: idioma del contenido generado en ingl�
 
 - **Modelo**: Sonnet (recomendado), Haiku (más rápido, menor calidad) u Opus (máxima calidad, consume más cuota). Es el modelo por defecto para resumir; se puede elegir otro puntualmente con «Regenerar con…» o al confirmar un lote.
 - **Resumir automáticamente al agregar papers**: si está activo, al terminar un trabajo de agregar, fusionar o completar metadatos, cada paper que quede con texto indexado, sin resumen (o con uno desactualizado o fallido) y con el formulario válido se encola para resumirse solo; los papers demasiado largos para el tamaño máximo de entrada no se resumen solos (hace falta «Forzar» a mano).
-- **Tope por paper (USD est.)**: el máximo estimado que puede costar un solo resumen. No puede quedar vacío ni ser 0 o negativo. Se aplica por cada llamada a Claude (como `--max-budget-usd`); un resumen puede hacer hasta dos intentos de llamada.
+- **Sugerir relaciones automáticamente**: si está activo (por defecto no), cuando un paper ya tiene resumen y citas, y sus candidatos cambiaron desde su último análisis, se encola sola una sugerencia de relaciones tipadas. Consume cuota de Claude.
+- **Tope por paper (USD est.)**: el máximo estimado que puede costar un solo resumen. No puede quedar vacío ni ser 0 o negativo. Se aplica por cada llamada a Claude (como `--max-budget-usd`); un resumen puede hacer hasta dos intentos de llamada y una sugerencia de relaciones, uno.
 - **Tope por lote (USD est.)**: el máximo estimado acumulado dentro de una misma operación por lotes (resumir pendientes o regenerar filtrados). Al alcanzarlo, los trabajos de ese lote que todavía estaban en cola se cancelan. No puede quedar vacío ni ser 0 o negativo.
 - **Tope mensual (USD est., vacío = sin tope)**: el máximo estimado acumulado en el mes, sumando el gasto de todos tus equipos (ver «Gasto estimado este mes» más abajo). Es el único de los tres topes que puede quedar vacío, y vacío significa sin tope. El mes se cuenta por mes calendario en UTC, sumando todos los dispositivos que sincronizan el proyecto.
 - **Tamaño máximo de entrada (caracteres)**: cuánto texto del paper se manda a Claude como máximo. Un paper más largo no se puede resumir sin usar «Forzar» (ver «Resúmenes con Claude»).
@@ -253,6 +283,7 @@ Si el formulario cambió por fuera de este editor (otro equipo, un `git pull`) m
 
 ```
 project.yaml               configuración del proyecto (nombre, idioma, política de PDFs, Claude, tesis, formulario de extracción, candidatos descartados)
+relations.yaml             relaciones tipadas entre papers (sugeridas, confirmadas y rechazadas)
 papers/<clave>/            un paper por carpeta; <clave> es su clave de cita y nunca cambia
   paper.yaml               metadatos, BibTeX y citas (OpenAlex)
   summary.md               campos del resumen, con evidencia y estado por campo
@@ -262,7 +293,7 @@ papers/<clave>/            un paper por carpeta; <clave> es su clave de cita y n
   paper.pdf                el PDF, según la política configurada
 costs/<dispositivo>.jsonl  costos estimados de cada llamada a Claude, uno por dispositivo (para que sincronizar entre equipos nunca choque)
 exports/library.bib        BibTeX de toda la biblioteca; generado, no lo edites
-.cache/                    índice local de búsqueda, PDFs descargados bajo demanda, citas entrantes, datos de candidatos, vectores y similares; se puede borrar sin perder nada, se reconstruye solo
+.cache/                    índice local de búsqueda, PDFs descargados bajo demanda, citas entrantes, datos de candidatos, vectores, similares y el índice de relaciones; se puede borrar sin perder nada, se reconstruye solo
 ```
 
 Todo lo de arriba, salvo `.cache/`, está pensado para versionarse con git o sincronizarse entre equipos. `notes.md` y `project.yaml` (fuera de `extraction_form`) se pueden editar a mano con confianza; `paper.yaml`, `summary.md` y `extraction.yaml` también, pero con cuidado de no romper su formato. Un archivo editado por fuera de la app (o actualizado por una sincronización) se recarga solo, sin reiniciar la app.
@@ -316,3 +347,12 @@ La similitud de contenido necesita el modelo local. Mientras no esté, la simili
 
 **«No se pudo cargar el modelo local de similitud. Bórralo y vuelve a descargarlo en Ajustes → Aplicación.»**
 Los archivos del modelo están incompletos o dañados (por ejemplo, una descarga interrumpida). Usa «Borrar» y luego «Descargar».
+
+**«No se pudieron preparar las herramientas de búsqueda de la biblioteca para Claude. Reintenta; si sigue fallando, reinicia la app.»**
+La app no pudo abrir en tu equipo el servidor local (solo en `127.0.0.1`) con el que Claude lee tu biblioteca. No se gastó nada. Reintenta; si persiste, reinicia la app.
+
+**«relations.yaml tiene un conflicto de git o un error; resuélvelo antes de cambiar relaciones.»**
+Usa «Resolver automáticamente» en el aviso de abajo de la ventana (ver «Relaciones tipadas»), o corrige el archivo a mano.
+
+**«La operación llegó a su tope por paper y se detuvo. Sube «Tope por paper (USD est.)» en Ajustes → Claude o reintenta con otro modelo.»**
+Ese paper superó el tope por paper durante la consulta. Solo falla ese paper: un lote en curso sigue con los demás.
