@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PaperDetail as Detail } from '../../../shared/library'
 import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
 import { paperTabs, type Tab } from '../../lib/paperTabs'
-import { ContentView } from './ContentView'
+import { ContentView, type ContentFocus } from './ContentView'
 import { MetadataCompletion } from './MetadataCompletion'
 import { NotesEditor } from './NotesEditor'
 import { PdfViewer, type PdfFocus } from './PdfViewer'
@@ -61,7 +61,8 @@ export function PaperDetail({
   // The quote to show in the PDF after following an evidence link.
   const [focus, setFocus] = useState<PdfFocus | null>(null)
   // The quote to highlight in the Contenido tab after following an evidence link (web papers).
-  const [contentQuote, setContentQuote] = useState<string | null>(null)
+  const [contentFocus, setContentFocus] = useState<ContentFocus | null>(null)
+  const contentFocusSeq = useRef(0)
   const [copied, setCopied] = useState(false)
 
   const refresh = useCallback(() => {
@@ -76,7 +77,7 @@ export function PaperDetail({
   useEffect(refresh, [refresh])
   useEffect(() => {
     setFocus(null)
-    setContentQuote(null)
+    setContentFocus(null)
   }, [id])
   useEvent('library-changed', refresh)
   useEvent('jobs-changed', refresh)
@@ -109,7 +110,8 @@ export function PaperDetail({
       setFocus({ page, quote })
       setTab('pdf')
     } else if (tabs.includes('content')) {
-      setContentQuote(quote)
+      contentFocusSeq.current += 1
+      setContentFocus({ quote, seq: contentFocusSeq.current })
       setTab('content')
     }
   }
@@ -155,7 +157,7 @@ export function PaperDetail({
       <div className="tab-body">
         {active === 'summary' && <SummaryTab key={detail.id} detail={detail} onOpenEvidence={openEvidence} />}
         {active === 'pdf' && <PdfTab key={id} id={id} hasPdf={detail.hasPdf} focus={focus} />}
-        {active === 'content' && <ContentView key={id} content={detail.content ?? ''} quote={contentQuote} />}
+        {active === 'content' && <ContentView key={id} content={detail.content ?? ''} focus={contentFocus} />}
         {active === 'relations' && <RelationsTab key={id} paperId={id} onOpenCandidates={onOpenCandidates} onSelectPaper={onSelectPaper} />}
         {active === 'notes' && <NotesEditor key={id} paperId={id} />}
       </div>

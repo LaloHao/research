@@ -62,9 +62,10 @@ function createWindow(): BrowserWindow {
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
   })
-  // External links open in the system browser; dropped files must not navigate the window.
+  // External links (including mailto, e.g. from readable web content) open in the system
+  // browser/mail client; dropped files must not navigate the window.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
+    if (/^(https?:\/\/|mailto:)/i.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
   win.webContents.on('will-navigate', (event) => event.preventDefault())

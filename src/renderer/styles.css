@@ -150,7 +150,8 @@ mark { background: rgba(250, 204, 21, 0.45); }
 .content-view table { border-collapse: collapse; width: 100%; }
 .content-view th, .content-view td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
 .content-image-chip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border); border-radius: 10px; padding: 1px 8px; font-size: 12px; color: var(--muted); background: var(--surface); text-decoration: none; }
-.content-notice { padding: 0 20px 16px; }
+.content-notice { padding: 8px 20px 0; }
+.content-view::highlight(evidence) { background: rgba(250, 204, 21, 0.45); }
 .notes { display: flex; flex-direction: column; height: 100%; padding: 12px 20px; gap: 6px; }
 .notes textarea { flex: 1; resize: none; font-family: ui-monospace, monospace; line-height: 1.5; }
 
