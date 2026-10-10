@@ -92,6 +92,8 @@ export class LibraryService {
           return await this.add(await this.deps.resolver.byDoi(parsed.doi, signal), { signal })
         case 'arxiv':
           return await this.add(await this.deps.resolver.byArxiv(parsed.arxiv, signal), { signal })
+        case 'openalex':
+          return await this.add(await this.deps.resolver.byOpenAlex(parsed.openalex, signal), { signal })
         case 'url':
           return await this.ingestUrl(parsed.url, signal)
       }

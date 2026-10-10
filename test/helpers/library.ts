@@ -69,6 +69,17 @@ export class FakeResolver implements MetadataSource {
   byArxiv(id: string): Promise<ResolvedMetadata> {
     return this.byDoi(`10.48550/arxiv.${id}`)
   }
+
+  setOpenAlex(id: string, meta: ResolvedMetadata): void {
+    this.map.set(`openalex:${id.toLowerCase()}`, meta)
+  }
+
+  async byOpenAlex(id: string): Promise<ResolvedMetadata> {
+    this.calls.push(`openalex:${id}`)
+    const meta = this.map.get(`openalex:${id.toLowerCase()}`)
+    if (!meta) throw new HttpError(404, `https://api.openalex.org/works/${id}`)
+    return structuredClone(meta)
+  }
 }
 
 export async function setupLibrary(opts: { resolver?: Record<string, ResolvedMetadata>; routes?: Route[]; policy?: PdfPolicy; extractor?: PdfExtractor } = {}) {

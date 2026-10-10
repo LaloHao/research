@@ -1,11 +1,13 @@
 import type { PaperKind } from '../../shared/schemas'
 import type { HttpClient } from './http'
 import { arxivDoi, arxivFromDoi, normalizeDoi } from './identifiers'
+import { authorFromDisplayName, bareOpenAlexId } from './openalex'
 import type { ResolvedMetadata } from './types'
 
 export interface MetadataSource {
   byDoi(doi: string, signal?: AbortSignal): Promise<ResolvedMetadata>
   byArxiv(id: string, signal?: AbortSignal): Promise<ResolvedMetadata>
+  byOpenAlex(id: string, signal?: AbortSignal): Promise<ResolvedMetadata>
 }
 
 interface CslName {
@@ -33,6 +35,26 @@ interface OpenAlexWork {
   id?: string
   abstract_inverted_index?: Record<string, number[]> | null
   best_oa_location?: { pdf_url?: string | null } | null
+}
+
+interface OpenAlexFullWork extends OpenAlexWork {
+  doi?: string | null
+  title?: string | null
+  publication_year?: number | null
+  type?: string | null
+  authorships?: { author?: { display_name?: string | null } }[]
+  primary_location?: { source?: { display_name?: string | null } | null } | null
+}
+
+const OPENALEX_FIELDS = 'id,doi,title,publication_year,type,authorships,primary_location,abstract_inverted_index,best_oa_location'
+
+const KIND_BY_OPENALEX: Record<string, PaperKind> = {
+  article: 'article',
+  preprint: 'preprint',
+  book: 'book',
+  'book-chapter': 'chapter',
+  dissertation: 'thesis',
+  report: 'report'
 }
 
 const CSL_ACCEPT = 'application/vnd.citationstyles.csl+json'
@@ -91,6 +113,17 @@ export class MetadataResolver implements MetadataSource {
   byArxiv(id: string, signal?: AbortSignal): Promise<ResolvedMetadata> {
     return this.byDoi(arxivDoi(id), signal)
   }
+
+  /** A candidate without a DOI is added through its OpenAlex record; with a DOI, the DOI path gives better BibTeX. */
+  async byOpenAlex(id: string, signal?: AbortSignal): Promise<ResolvedMetadata> {
+    const work = await this.http.json<OpenAlexFullWork>(this.http.politeUrl(`https://api.openalex.org/works/${id}?select=${OPENALEX_FIELDS}`), 'application/json', signal)
+    if (work.doi) {
+      const meta = await this.byDoi(work.doi, signal)
+      meta.identifiers.openalex ??= bareOpenAlexId(work.id ?? id)
+      return meta
+    }
+    return fromOpenAlexWork(work, id)
+  }
 }
 
 export function fromCsl(csl: Csl): ResolvedMetadata {
@@ -107,6 +140,23 @@ export function fromCsl(csl: Csl): ResolvedMetadata {
     identifiers: { doi: csl.DOI?.toLowerCase() },
     complete: true
   }
+}
+
+export function fromOpenAlexWork(work: OpenAlexFullWork, id: string): ResolvedMetadata {
+  const title = work.title?.trim() ?? ''
+  const authors = (work.authorships ?? []).flatMap((a) => (a.author?.display_name ? [authorFromDisplayName(a.author.display_name)] : []))
+  const year = work.publication_year ?? undefined
+  const meta: ResolvedMetadata = {
+    kind: KIND_BY_OPENALEX[work.type ?? ''] ?? 'other',
+    title: title || id,
+    authors,
+    year,
+    venue: work.primary_location?.source?.display_name?.trim() || undefined,
+    identifiers: { openalex: bareOpenAlexId(work.id ?? id) },
+    complete: Boolean(title && authors.length && year)
+  }
+  applyOpenAlex(meta, work)
+  return meta
 }
 
 function applyOpenAlex(meta: ResolvedMetadata, work: OpenAlexWork): void {

@@ -13,6 +13,7 @@ get "https://api.openalex.org/works/doi:10.1109/ICWS.2017.13" "application/json"
 get "https://doi.org/10.48550/arXiv.2008.06448" "$CSL" "$out/loghub.csl.json"
 get "https://doi.org/10.48550/arXiv.2008.06448" "$BIB" "$out/loghub.bib"
 get "https://api.openalex.org/works/doi:10.48550/arXiv.2008.06448" "application/json" "$out/loghub.openalex.json"
+get "https://api.openalex.org/works/W2132031035?select=id,doi,title,publication_year,type,authorships,primary_location,abstract_inverted_index,best_oa_location" "application/json" "$out/consolelogs.openalex.json"
 
 # OpenAlex citation data (stage 3a). These files are committed trimmed (fewer references and results) so the tests
 # stay readable: re-recording them means updating the expectations in test/main/citations/*.test.ts.

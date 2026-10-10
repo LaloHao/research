@@ -58,6 +58,24 @@ describe('LibraryService.ingestIdentifier', () => {
     expect(await store.listPaperIds()).toEqual(['zhu2020loghub'])
   })
 
+  it('adds a paper by its OpenAlex id', async () => {
+    const { store, library, resolver } = await setupLibrary()
+    resolver.setOpenAlex('W2132031035', {
+      kind: 'article',
+      title: 'System problem detection by mining console logs',
+      authors: [{ family: 'Xu', given: 'Wei' }],
+      year: 2010,
+      identifiers: { openalex: 'W2132031035' },
+      complete: true
+    })
+    const outcome = await library.ingestIdentifier('https://openalex.org/W2132031035')
+    expect(outcome.status).toBe('added')
+    const read = await store.readPaper(outcome.paperId)
+    expect(read.ok && read.value.identifiers.openalex).toBe('W2132031035')
+    expect(read.ok && read.value.bibtex).toContain('System problem detection by mining console logs')
+    expect(resolver.calls).toEqual(['openalex:W2132031035'])
+  })
+
   it('rejects invalid input and unknown DOIs with user-facing codes', async () => {
     const { library } = await setupLibrary()
     await expect(library.ingestIdentifier('hello')).rejects.toMatchObject({ code: 'invalid_identifier' })

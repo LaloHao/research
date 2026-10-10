@@ -18,6 +18,12 @@ describe('parseInput', () => {
   ])('%s', (input, expected) => {
     expect(parseInput(input)).toEqual(expected)
   })
+
+  it('recognizes OpenAlex work ids and URLs', () => {
+    expect(parseInput('W2132031035')).toEqual({ kind: 'openalex', openalex: 'W2132031035' })
+    expect(parseInput('https://openalex.org/W2132031035')).toEqual({ kind: 'openalex', openalex: 'W2132031035' })
+    expect(parseInput('https://api.openalex.org/works/w2132031035')).toEqual({ kind: 'openalex', openalex: 'W2132031035' })
+  })
 })
 
 describe('arXiv DOIs', () => {
