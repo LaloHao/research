@@ -65,6 +65,12 @@ describe('normalizeWithMap', () => {
     'For detection, we fine-tune a BERT model on 12k annotated log lines collected from three services.',
     '  leading and trailing   spaces  ',
     'Línea con acentos: áéíóú, ñ, and "curly" quotes',
+    'detección', // precomposed ó
+    'detección', // decomposed ó (o + combining acute)
+    'año', // precomposed ñ
+    'año', // decomposed ñ (n + combining tilde)
+    'STRASSE İstanbul', // dotted capital I
+    'x a-\nb-\nc y', // chained hyphen-linebreak joins
     '',
   ]
 
@@ -92,6 +98,20 @@ describe('normalizeWithMap', () => {
     expect(text).toBe('él vino')
     const eIdx = text.indexOf('é')
     expect(s[map[eIdx]]).toBe('É')
+  })
+
+  it('composes a decomposed diacritic (base + combining mark) into one normalized character', () => {
+    const s = 'detección' // o + combining acute
+    const { text, map } = normalizeWithMap(s)
+    expect(text).toBe('detección')
+    const oIdx = text.indexOf('ó')
+    // The composed character maps back to the start of the two-codepoint cluster in the original.
+    expect(map[oIdx]).toBe(s.indexOf('o'))
+  })
+
+  it('does not over-join a chain of hyphen-linebreak gaps (regex semantics: a letter already consumed by one join cannot start another)', () => {
+    const s = 'x a-\nb-\nc y'
+    expect(normalizeWithMap(s).text).toBe(normalizeForMatch(s))
   })
 })
 
@@ -134,5 +154,14 @@ describe('locateInOriginal', () => {
   it('returns null when the quote is not found', () => {
     const original = 'We fine-tune a BERT model on logs.'
     expect(locateInOriginal('we train a GPT model on synthetic traces', original)).toBeNull()
+  })
+
+  it('finds a quote when the original has decomposed diacritics (e + combining acute, n + combining tilde)', () => {
+    // PDF text extraction can yield decomposed Unicode (base char + combining mark) instead of
+    // the precomposed form.
+    const original = 'La detección de señales ocurre en el año actual.'
+    const r = locateInOriginal('detección de señales', original)
+    expect(r).not.toBeNull()
+    expect(original.slice(r!.start, r!.end)).toBe('detección de señales')
   })
 })

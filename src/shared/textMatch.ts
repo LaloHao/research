@@ -117,6 +117,7 @@ const DASHES = /[‐-―−]/
 const WHITESPACE = /\s/
 const LETTER = /\p{L}/u
 const LOWER_LETTER = /\p{Ll}/u
+const COMBINING_MARK = /\p{M}/u
 
 interface Unit {
   ch: string
@@ -132,17 +133,34 @@ function codePointLength(s: string, idx: number): number {
 /**
  * Same normalization pipeline as {@link normalizeForMatch}, applied unit-by-unit so every
  * character of the result can be traced back to the original string. Mirrors each step:
- * NFKC (per code point, which covers single-character expansions like ligatures), quote/dash
- * folding, hyphen-linebreak and hyphen-space joins, whitespace collapsing, trim, lowercasing.
+ * NFKC (per grapheme cluster — a base code point plus any combining marks that follow it, which
+ * covers both single-character expansions like ligatures and a base+mark pair like "o" + U+0301
+ * composing into "ó"; text extracted from a PDF can arrive either way), quote/dash folding,
+ * hyphen-linebreak and hyphen-space joins, whitespace collapsing, trim, lowercasing.
+ *
+ * Caveat: `.toLowerCase()` can fold a character like the Greek final sigma ("Σ" at the end of a
+ * word lowercases to "ς", elsewhere to "σ") based on its surrounding context, not a per-unit rule;
+ * this function lowercases each unit independently, so that context-dependent choice isn't
+ * reproduced (a plain per-unit `.toLowerCase()` already picks "σ" in both positions, same as
+ * `normalizeForMatch`, so the two stay equal — this only matters if that ever changes).
  */
 export function normalizeWithMap(s: string): { text: string; map: number[] } {
   let units: Unit[] = []
   let i = 0
   while (i < s.length) {
     const len = codePointLength(s, i)
-    const char = s.slice(i, i + len)
-    for (const ec of char.normalize('NFKC')) units.push({ ch: ec, orig: i })
-    i += len
+    let clusterEnd = i + len
+    // A grapheme cluster: the base code point plus any combining marks right after it, so NFKC
+    // composes them together instead of leaving a decomposed base+mark pair unmatched against a
+    // precomposed quote (or vice versa).
+    while (clusterEnd < s.length) {
+      const markLen = codePointLength(s, clusterEnd)
+      if (!COMBINING_MARK.test(s.slice(clusterEnd, clusterEnd + markLen))) break
+      clusterEnd += markLen
+    }
+    const cluster = s.slice(i, clusterEnd)
+    for (const ec of cluster.normalize('NFKC')) units.push({ ch: ec, orig: i })
+    i = clusterEnd
   }
 
   for (const u of units) {
@@ -204,9 +222,11 @@ export function normalizeWithMap(s: string): { text: string; map: number[] } {
 }
 
 /**
- * Scans `units` left to right; whenever `match(j)` (tried at the current position) returns the
- * index of the next unit to keep, everything between is dropped and the scan continues from
- * there (mirroring a global, non-overlapping regex replace).
+ * Scans `units` left to right; whenever `match(j)` (tried at the current position) finds a gap
+ * worth joining, it returns the index of the unit right after the gap. Both the unit at `j` and
+ * that one are kept (everything strictly between is dropped) and the scan resumes right after it
+ * — never at it — so a letter consumed by one join can't also start the next one, the same way a
+ * global, non-overlapping regex replace advances `lastIndex` past the whole match.
  */
 function joinAcrossGap(units: Unit[], match: (j: number) => number | null): Unit[] {
   const result: Unit[] = []
@@ -217,8 +237,8 @@ function joinAcrossGap(units: Unit[], match: (j: number) => number | null): Unit
       result.push(units[j])
       j++
     } else {
-      result.push(units[j]) // the letter before the gap
-      j = next // resume at the letter after the gap; everything between is dropped
+      result.push(units[j], units[next]) // the letters on either side of the gap
+      j = next + 1 // resume after the second letter; it can't start another match
     }
   }
   return result

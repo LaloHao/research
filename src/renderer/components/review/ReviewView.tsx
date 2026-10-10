@@ -6,6 +6,7 @@ import type { Evidence, FieldStatus, ReviewItem, SummaryFieldKey, ThesisContext 
 import { locateInOriginal } from '../../../shared/textMatch'
 import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
+import { paragraphSegments } from '../../lib/passage'
 import { afterResolve, current, next, prev, progressLabel, type ReviewCursor } from '../../lib/reviewQueue'
 import { FacetCard } from '../summary/FacetCard'
 import { type OpenEvidence, type Origin, type RunAction } from '../summary/FieldCard'
@@ -100,50 +101,15 @@ function EvidencePanel({ detail, evidence }: { detail: PaperDetail; evidence: Pi
   return <div className="center muted">{t('paper.pdf_loading')}</div>
 }
 
-interface Paragraph {
-  text: string
-  start: number
-}
-
-/** Splits `text` into paragraphs on blank lines, keeping track of each paragraph's offset in `text`. */
-function splitParagraphs(text: string): Paragraph[] {
-  const paragraphs: Paragraph[] = []
-  const blankLine = /\n[ \t]*\n[ \t\n]*/g
-  let last = 0
-  let m: RegExpExecArray | null
-  while ((m = blankLine.exec(text))) {
-    paragraphs.push({ text: text.slice(last, m.index), start: last })
-    last = m.index + m[0].length
-  }
-  paragraphs.push({ text: text.slice(last), start: last })
-  return paragraphs
-}
-
-/** Renders one paragraph, wrapping in <mark> the slice of `match` (offsets in the full passage) that falls inside it. */
-function renderParagraph(paragraph: Paragraph, match: { start: number; end: number } | null): React.ReactNode {
-  if (!match) return paragraph.text
-  const paragraphEnd = paragraph.start + paragraph.text.length
-  const start = Math.max(match.start, paragraph.start) - paragraph.start
-  const end = Math.min(match.end, paragraphEnd) - paragraph.start
-  if (start >= end) return paragraph.text
-  return (
-    <>
-      {paragraph.text.slice(0, start)}
-      <mark>{paragraph.text.slice(start, end)}</mark>
-      {paragraph.text.slice(end)}
-    </>
-  )
-}
-
 /** Shows the passage as written (case, accents and paragraph breaks kept), the quote marked at its real position. */
 function renderPassage(passage: string | null, evidence: Picked | null): React.ReactNode {
   const text = passage ?? ''
   const match = evidence ? locateInOriginal(evidence.quote, text) : null
   return (
     <>
-      {splitParagraphs(text).map((paragraph, i) => (
+      {paragraphSegments(text, match).map((segments, i) => (
         <p key={i} className="card-text passage-paragraph">
-          {renderParagraph(paragraph, match)}
+          {segments.map((seg, j) => (seg.marked ? <mark key={j}>{seg.text}</mark> : seg.text))}
         </p>
       ))}
     </>
