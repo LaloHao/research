@@ -399,7 +399,10 @@
       "close_detail": "Cerrar",
       "model_missing": "Sin el modelo local, la similitud usa solo citas y facetas.",
       "download_model": "Descargar modelo",
-      "hover_hint": "Pasa el cursor por una arista punteada para ver por qué esos papers se parecen."
+      "typed": "Relaciones:",
+      "hide_suggested": "Ocultar sugeridas",
+      "typed_hover": "{{type}} ({{status}})",
+      "hover_hint": "Pasa el cursor por una arista punteada para ver por qué esos papers se parecen, o por una relación tipada para ver su tipo."
     },
     "charts": {
       "kind": "Gráfica",
@@ -457,6 +460,7 @@
     "suggested": "Sugeridas",
     "confirmed": "Confirmadas",
     "rejected": "Rechazadas ({{count}})",
+    "status": { "suggested": "sugerida", "confirmed": "confirmada" },
     "none_suggested": "No hay sugerencias pendientes.",
     "none_confirmed": "Aún no confirmaste ninguna relación.",
     "confirm": "Confirmar",

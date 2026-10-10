@@ -3,11 +3,13 @@ import fcose from 'cytoscape-fcose'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { FacetOption, GraphData, ModelInfo, SimilarityReason } from '../../../shared/relations'
+import { RELATION_TYPES, type RelationType } from '../../../shared/typedRelations'
 import { useDebouncedCallback } from '../../hooks/useDebouncedCallback'
 import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
 import { buildElements, initialPosition, layoutPlan, lensColors, NO_VALUE, OTHER_VALUES, type Lens, type Point } from '../../lib/graphElements'
 import { reasonsText } from '../../lib/reasons'
+import { TYPE_COLORS } from '../../lib/typedRelations'
 import { PaperDetail } from '../paper/PaperDetail'
 
 cytoscape.use(fcose)
@@ -35,7 +37,10 @@ function graphStyle(): cytoscape.CytoscapeOptions['style'] {
     },
     { selector: 'node:selected', style: { 'border-width': 3, 'border-color': cssVar('--accent', '#2563eb') } },
     { selector: 'edge.citation', style: { 'line-color': edge, 'target-arrow-color': edge, 'target-arrow-shape': 'triangle', 'curve-style': 'bezier', width: 1.2 } },
-    { selector: 'edge.similarity', style: { 'line-color': similarity, 'line-style': 'dashed', 'curve-style': 'bezier', width: 'mapData(score, 0, 1, 0.5, 4)' } }
+    { selector: 'edge.similarity', style: { 'line-color': similarity, 'line-style': 'dashed', 'curve-style': 'bezier', width: 'mapData(score, 0, 1, 0.5, 4)' } },
+    { selector: 'edge.typed', style: { 'line-color': 'data(color)', 'target-arrow-color': 'data(color)', 'curve-style': 'bezier', width: 2.5 } },
+    { selector: 'edge.typed-suggested', style: { 'line-style': 'dotted' } },
+    { selector: 'edge.typed-directed', style: { 'target-arrow-shape': 'triangle' } }
   ] as unknown as cytoscape.CytoscapeOptions['style']
 }
 
@@ -56,7 +61,9 @@ export function GraphTab({
   const [threshold, setThreshold] = useState(0.3)
   const [useLibraryFilters, setUseLibraryFilters] = useState(false)
   const [selected, setSelected] = useState<string | null>(null)
-  const [hover, setHover] = useState<SimilarityReason[] | null>(null)
+  const [typedTypes, setTypedTypes] = useState<ReadonlySet<RelationType>>(() => new Set(RELATION_TYPES))
+  const [hideSuggested, setHideSuggested] = useState(false)
+  const [hover, setHover] = useState<{ kind: 'similarity'; reasons: SimilarityReason[] } | { kind: 'typed'; type: RelationType; status: 'suggested' | 'confirmed' } | null>(null)
   const [model, setModel] = useState<ModelInfo | null>(null)
   const [notice, setNotice] = useState<{ error: boolean; text: string } | null>(null)
   const container = useRef<HTMLDivElement>(null)
@@ -88,8 +95,8 @@ export function GraphTab({
   const legend = useMemo(() => (data ? lensColors(data.nodes, lens).legend : []), [data, lens])
   const visible = useMemo(() => (useLibraryFilters && visibleIds ? new Set(visibleIds) : null), [useLibraryFilters, visibleIds])
   const elements = useMemo(
-    () => (data ? buildElements(data, { lens, showCitations, showSimilarity, threshold, visibleIds: visible }) : []),
-    [data, lens, showCitations, showSimilarity, threshold, visible]
+    () => (data ? buildElements(data, { lens, showCitations, showSimilarity, threshold, visibleIds: visible, typedTypes, showSuggested: !hideSuggested }) : []),
+    [data, lens, showCitations, showSimilarity, threshold, visible, typedTypes, hideSuggested]
   )
 
   // One cytoscape instance per mount; React never renders inside its container.
@@ -97,7 +104,10 @@ export function GraphTab({
     if (!container.current) return
     const instance = cytoscape({ container: container.current, style: graphStyle(), wheelSensitivity: 0.3, minZoom: 0.1, maxZoom: 4 })
     instance.on('tap', 'node', (event) => setSelected(event.target.id() as string))
-    instance.on('mouseover', 'edge.similarity', (event) => setHover(event.target.data('reasons') as SimilarityReason[]))
+    instance.on('mouseover', 'edge.similarity', (event) => setHover({ kind: 'similarity', reasons: event.target.data('reasons') as SimilarityReason[] }))
+    instance.on('mouseover', 'edge.typed', (event) =>
+      setHover({ kind: 'typed', type: event.target.data('type') as RelationType, status: event.target.data('status') as 'suggested' | 'confirmed' })
+    )
     instance.on('mouseout', 'edge', () => setHover(null))
     const observer = new ResizeObserver(() => instance.resize())
     observer.observe(container.current)
@@ -147,6 +157,7 @@ export function GraphTab({
         const existing = instance.getElementById(id)
         if (existing.nonempty()) {
           existing.data(def.data)
+          existing.classes(def.classes ?? '')
           continue
         }
         if (def.group === 'nodes') {
@@ -176,6 +187,14 @@ export function GraphTab({
       setNotice({ error: true, text: errorText(t, 'unknown') })
     }
   }
+
+  const toggleType = (type: RelationType, on: boolean): void =>
+    setTypedTypes((current) => {
+      const next = new Set(current)
+      if (on) next.add(type)
+      else next.delete(type)
+      return next
+    })
 
   const downloadModel = (): void => {
     setNotice(null)
@@ -239,6 +258,18 @@ export function GraphTab({
           </label>
           <button onClick={() => void exportPng()}>{t('map.graph.export_png')}</button>
         </div>
+        <div className="row small graph-controls">
+          <span>{t('map.graph.typed')}</span>
+          {RELATION_TYPES.map((type) => (
+            <label key={type}>
+              <input type="checkbox" checked={typedTypes.has(type)} onChange={(e) => toggleType(type, e.target.checked)} /> <span className="swatch" style={{ background: TYPE_COLORS[type] }} />{' '}
+              {t(`typed.types.${type}`)}
+            </label>
+          ))}
+          <label>
+            <input type="checkbox" checked={hideSuggested} onChange={(e) => setHideSuggested(e.target.checked)} /> {t('map.graph.hide_suggested')}
+          </label>
+        </div>
         {model?.available && model.state === 'missing' && !model.downloading && (
           <div className="banner warning">
             <span>{t('map.graph.model_missing')}</span>
@@ -248,7 +279,13 @@ export function GraphTab({
         {notice && <div className={`banner${notice.error ? ' error' : ''}`}>{notice.text}</div>}
         <div className="graph-canvas" ref={container} />
         {data?.nodes.length === 0 && <div className="graph-empty muted">{t('map.graph.empty')}</div>}
-        <div className="small muted">{hover ? reasonsText(t, hover) : t('map.graph.hover_hint')}</div>
+        <div className="small muted">
+          {hover?.kind === 'similarity'
+            ? reasonsText(t, hover.reasons)
+            : hover?.kind === 'typed'
+              ? t('map.graph.typed_hover', { type: t(`typed.types.${hover.type}`), status: t(`typed.status.${hover.status}`) })
+              : t('map.graph.hover_hint')}
+        </div>
         <ul className="legend small">
           {legend.map((item) => (
             <li key={item.label}>
