@@ -120,7 +120,8 @@ export function buildElements(data: GraphData, opts: GraphOptions): ElementDef[]
     if (!opts.typedTypes.has(e.type) || (e.status === 'suggested' && !opts.showSuggested) || !ids.has(e.source) || !ids.has(e.target)) continue
     out.push({
       group: 'edges',
-      data: { id: `t:${e.id}`, source: e.source, target: e.target, color: TYPE_COLORS[e.type], type: e.type, status: e.status },
+      // The direction is part of the id: cytoscape ignores a changed source/target, so a reversed relation is a new edge.
+      data: { id: `t:${e.id}:${e.source}`, source: e.source, target: e.target, color: TYPE_COLORS[e.type], type: e.type, status: e.status },
       classes: `typed typed-${e.status}${e.directed ? ' typed-directed' : ''}`
     })
   }

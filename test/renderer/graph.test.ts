@@ -106,12 +106,20 @@ describe('graph elements', () => {
     const opts: GraphOptions = { lens: { kind: 'thesis' }, showCitations: false, showSimilarity: false, threshold: 0, visibleIds: null, typedTypes: new Set(RELATION_TYPES), showSuggested: true }
     const edges = (o: GraphOptions) => buildElements(withTyped, o).filter((e) => e.group === 'edges')
     expect(edges(opts)).toEqual([
-      { group: 'edges', data: { id: 't:a__b__extends', source: 'a', target: 'b', color: TYPE_COLORS.extends, type: 'extends', status: 'confirmed' }, classes: 'typed typed-confirmed typed-directed' },
-      { group: 'edges', data: { id: 't:b__c__same_problem', source: 'b', target: 'c', color: TYPE_COLORS.same_problem, type: 'same_problem', status: 'suggested' }, classes: 'typed typed-suggested' }
+      { group: 'edges', data: { id: 't:a__b__extends:a', source: 'a', target: 'b', color: TYPE_COLORS.extends, type: 'extends', status: 'confirmed' }, classes: 'typed typed-confirmed typed-directed' },
+      { group: 'edges', data: { id: 't:b__c__same_problem:b', source: 'b', target: 'c', color: TYPE_COLORS.same_problem, type: 'same_problem', status: 'suggested' }, classes: 'typed typed-suggested' }
     ])
-    expect(edges({ ...opts, showSuggested: false }).map((e) => e.data.id)).toEqual(['t:a__b__extends'])
-    expect(edges({ ...opts, typedTypes: new Set(['same_problem'] as const) }).map((e) => e.data.id)).toEqual(['t:b__c__same_problem'])
+    expect(edges({ ...opts, showSuggested: false }).map((e) => e.data.id)).toEqual(['t:a__b__extends:a'])
+    expect(edges({ ...opts, typedTypes: new Set(['same_problem'] as const) }).map((e) => e.data.id)).toEqual(['t:b__c__same_problem:b'])
     expect(edges({ ...opts, visibleIds: new Set(['a', 'c']) })).toEqual([])
+  })
+
+  it('gives a reversed relation a new edge id, so the graph redraws its arrow (cytoscape cannot move an edge by data)', () => {
+    const opts: GraphOptions = { lens: { kind: 'thesis' }, showCitations: false, showSimilarity: false, threshold: 0, visibleIds: null, typedTypes: new Set(RELATION_TYPES), showSuggested: true }
+    const edge = (source: string, target: string) =>
+      buildElements({ ...data, typed: [{ id: 'a__b__extends', source, target, type: 'extends', status: 'confirmed', directed: true }] }, opts).find((e) => e.group === 'edges')!
+    expect(edge('a', 'b').data.id).not.toBe(edge('b', 'a').data.id)
+    expect(edge('b', 'a').data).toMatchObject({ source: 'b', target: 'a' })
   })
 })
 
