@@ -121,7 +121,13 @@
     "regenerate_filtered": "Regenerar filtrados con…",
     "batch_confirm": "{{count}} papers · est. ~${{cost}} · tope del lote ${{limit}}",
     "batch_none": "No hay papers pendientes de resumir.",
-    "confirm": "Confirmar"
+    "confirm": "Confirmar",
+    "facet_filter": "{{facet}} = {{value}}",
+    "remove_facet_filter": "Quitar este filtro",
+    "update_citations": "Actualizar citas",
+    "update_citations_all": "Consulta en OpenAlex las citas de todos los papers.",
+    "update_citations_filtered": "Consulta en OpenAlex las citas de los papers que se ven con la búsqueda y los filtros actuales.",
+    "citations_queued": "{{count}} papers en cola para actualizar sus citas."
   },
   "badges": {
     "problem": "Error en archivo",
@@ -132,7 +138,8 @@
     "to_review": "Por revisar ({{count}})",
     "reviewed": "Revisado",
     "stale": "Desactualizado",
-    "summary_failed": "Resumen falló"
+    "summary_failed": "Resumen falló",
+    "no_citations": "Sin citas"
   },
   "text_status": {
     "pending": "Indexando…",
@@ -199,7 +206,7 @@
     "unknown": "Ocurrió un error inesperado."
   },
   "paper": {
-    "tabs": { "summary": "Resumen", "pdf": "PDF", "content": "Contenido", "notes": "Notas" },
+    "tabs": { "summary": "Resumen", "pdf": "PDF", "content": "Contenido", "relations": "Relaciones", "notes": "Notas" },
     "cite_key": "Clave de cita",
     "copy_key": "Copiar",
     "copied": "Copiado",
@@ -280,6 +287,24 @@
     "overwrite": "Sobrescribir con mi versión"
   },
   "relations": {
+    "loading": "Cargando relaciones…",
+    "citations_title": "Citas (OpenAlex)",
+    "state": {
+      "none": "Aún no se consultaron.",
+      "ok": "Consultadas el {{date}} · {{count}} citas en OpenAlex",
+      "unresolved": "No se encontró en OpenAlex."
+    },
+    "unresolved_help": "No se encontró este paper en OpenAlex (no tiene DOI y no hubo una coincidencia exacta por título y año). Completa su DOI y vuelve a actualizar las citas.",
+    "update": "Actualizar citas",
+    "update_queued": "Actualización en cola; mírala en Actividad.",
+    "cites": "Cita a (en tu biblioteca)",
+    "cited_by": "Citado por (en tu biblioteca)",
+    "none_in_library": "Ninguno en tu biblioteca.",
+    "external_one": "{{count}} referencia no está en tu biblioteca.",
+    "external_other": "{{count}} referencias no están en tu biblioteca.",
+    "see_candidates": "Ver candidatos",
+    "similar": "Similares",
+    "no_similar": "Todavía no hay papers similares: actualiza las citas, resume papers o descarga el modelo local.",
     "reasons": {
       "coupling_one": "{{count}} referencia en común",
       "coupling_other": "{{count}} referencias en común",

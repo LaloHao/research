@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { TFunction } from 'i18next'
-import { filterByModel, filterBySummary, rowBadges } from '../../src/renderer/lib/badges'
+import { filterByIds, filterByModel, filterBySummary, rowBadges } from '../../src/renderer/lib/badges'
 import { errorText } from '../../src/renderer/lib/errorText'
 import { jobDetail, jobLabel, jobProgress, visibleJobs } from '../../src/renderer/lib/jobLabel'
 import { nextRqId } from '../../src/renderer/lib/thesis'
@@ -133,6 +133,18 @@ describe('filterByModel', () => {
     expect(filterByModel(rows, 'sonnet').map((r) => r.id)).toEqual(['a'])
     expect(filterByModel(rows, 'haiku').map((r) => r.id)).toEqual(['b'])
     expect(filterByModel(rows, 'opus').map((r) => r.id)).toEqual([])
+  })
+})
+
+describe('citation badges and id filter', () => {
+  it('marks papers whose citations could not be resolved', () => {
+    expect(rowBadges(row({ citations_status: 'unresolved' }))).toContain('no_citations')
+    expect(rowBadges(row({ citations_status: 'ok' }))).not.toContain('no_citations')
+  })
+
+  it('keeps only the given ids, or everything without a set', () => {
+    expect(filterByIds([row({ id: 'a' }), row({ id: 'b' })], new Set(['b'])).map((r) => r.id)).toEqual(['b'])
+    expect(filterByIds([row({ id: 'a' })], null)).toHaveLength(1)
   })
 })
 

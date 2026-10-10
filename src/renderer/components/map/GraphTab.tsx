@@ -39,7 +39,13 @@ function graphStyle(): cytoscape.CytoscapeOptions['style'] {
   ] as unknown as cytoscape.CytoscapeOptions['style']
 }
 
-export function GraphTab({ visibleIds }: { visibleIds: string[] | null }): React.JSX.Element {
+export function GraphTab({
+  visibleIds,
+  onOpenCandidates
+}: {
+  visibleIds: string[] | null
+  onOpenCandidates?: (paperId: string) => void
+}): React.JSX.Element {
   const { t } = useTranslation()
   const [data, setData] = useState<GraphData | null>(null)
   const [facets, setFacets] = useState<FacetOption[]>([])
@@ -259,7 +265,7 @@ export function GraphTab({ visibleIds }: { visibleIds: string[] | null }): React
               {t('map.graph.close_detail')}
             </button>
           </div>
-          <PaperDetail id={selected} />
+          <PaperDetail id={selected} onSelectPaper={setSelected} onOpenCandidates={onOpenCandidates} />
         </aside>
       )}
     </div>

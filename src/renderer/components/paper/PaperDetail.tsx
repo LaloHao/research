@@ -7,6 +7,7 @@ import { paperTabs, type Tab } from '../../lib/paperTabs'
 import { MetadataCompletion } from './MetadataCompletion'
 import { NotesEditor } from './NotesEditor'
 import { PdfViewer, type PdfFocus } from './PdfViewer'
+import { RelationsTab } from './RelationsTab'
 import { SummaryTab } from '../summary/SummaryTab'
 
 type PdfState = { status: 'loading' } | { status: 'ready'; data: Uint8Array } | { status: 'missing' } | { status: 'error'; message: string }
@@ -42,7 +43,15 @@ function PdfTab({ id, hasPdf, focus }: { id: string; hasPdf: boolean; focus: Pdf
   return <div className="center muted">{t('paper.no_pdf')}</div>
 }
 
-export function PaperDetail({ id }: { id: string }): React.JSX.Element {
+export function PaperDetail({
+  id,
+  onOpenCandidates,
+  onSelectPaper
+}: {
+  id: string
+  onOpenCandidates?: (paperId: string) => void
+  onSelectPaper?: (id: string) => void
+}): React.JSX.Element {
   const { t } = useTranslation()
   const [detail, setDetail] = useState<Detail | null>(null)
   // The id whose detail could not be read (deleted, or the project closed).
@@ -138,6 +147,7 @@ export function PaperDetail({ id }: { id: string }): React.JSX.Element {
         {active === 'summary' && <SummaryTab key={detail.id} detail={detail} onOpenEvidence={openEvidence} />}
         {active === 'pdf' && <PdfTab key={id} id={id} hasPdf={detail.hasPdf} focus={focus} />}
         {active === 'content' && <pre className="content">{detail.content}</pre>}
+        {active === 'relations' && <RelationsTab key={id} paperId={id} onOpenCandidates={onOpenCandidates} onSelectPaper={onSelectPaper} />}
         {active === 'notes' && <NotesEditor key={id} paperId={id} />}
       </div>
     </div>

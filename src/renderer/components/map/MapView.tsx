@@ -11,7 +11,8 @@ export function MapView({
   visibleIds,
   candidatesPaper,
   onClearCandidatesPaper,
-  onOpenLibrary
+  onOpenLibrary,
+  onOpenCandidates
 }: {
   tab: MapTab
   onTabChange: (tab: MapTab) => void
@@ -19,6 +20,7 @@ export function MapView({
   candidatesPaper: string | null
   onClearCandidatesPaper: () => void
   onOpenLibrary: (filters: FacetFilter[]) => void
+  onOpenCandidates: (paperId: string) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   return (
@@ -31,7 +33,7 @@ export function MapView({
         ))}
       </nav>
       <div className="map-body">
-        {tab === 'graph' && <GraphTab visibleIds={visibleIds} />}
+        {tab === 'graph' && <GraphTab visibleIds={visibleIds} onOpenCandidates={onOpenCandidates} />}
         {tab === 'charts' && <ChartsTab onOpenLibrary={onOpenLibrary} />}
         {tab === 'candidates' && <CandidatesTab paperId={candidatesPaper} onClearPaper={onClearCandidatesPaper} />}
       </div>

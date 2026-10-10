@@ -35,6 +35,11 @@ export function App(): React.JSX.Element {
     setView('library')
   }, [])
   const clearCandidatesPaper = useCallback(() => setCandidatesPaper(null), [])
+  const openCandidates = useCallback((paperId: string) => {
+    setCandidatesPaper(paperId)
+    setMapTab('candidates')
+    setView('map')
+  }, [])
 
   if (project === undefined) return <div className="center muted">{t('app.loading')}</div>
   if (project === null) return <WelcomeView />
@@ -42,7 +47,9 @@ export function App(): React.JSX.Element {
     <div className="shell">
       <Rail view={view} onSelect={setView} />
       <main className="view">
-        {view === 'library' && <LibraryView onVisibleChange={setVisibleIds} />}
+        {view === 'library' && (
+          <LibraryView facetFilters={facetFilters} onFacetFiltersChange={setFacetFilters} onVisibleChange={setVisibleIds} onOpenCandidates={openCandidates} />
+        )}
         {view === 'map' && (
           <MapView
             tab={mapTab}
@@ -51,6 +58,7 @@ export function App(): React.JSX.Element {
             candidatesPaper={candidatesPaper}
             onClearCandidatesPaper={clearCandidatesPaper}
             onOpenLibrary={openLibrary}
+            onOpenCandidates={openCandidates}
           />
         )}
         {view === 'settings' && <SettingsView project={project} />}
