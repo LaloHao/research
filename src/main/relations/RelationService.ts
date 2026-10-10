@@ -168,11 +168,29 @@ export class RelationService {
     }
   }
 
-  /** Queues one analysis (unless already queued). `force`: the user asked, so pairs analyzed from the other side are included. */
+  /**
+   * Queues one analysis (unless one is already queued or running). `force`: the user asked, so pairs analyzed from the
+   * other side are included; an unforced analysis already queued becomes the user's forced one (out of its batch), and
+   * one already running is followed by a forced one.
+   */
   async request(paperId: string, opts: { model?: LlmModel; force?: boolean; batchId?: string } = {}): Promise<void> {
     this.assertWritable()
-    if (this.deps.cache.getPaper(paperId)?.text_status !== 'ok') throw new UserFacingError('no_text')
-    if (this.deps.cache.hasActiveJob('suggest_relations', paperId)) return
+    const { cache } = this.deps
+    if (cache.getPaper(paperId)?.text_status !== 'ok') throw new UserFacingError('no_text')
+    const active = cache.activeJobs('suggest_relations', paperId)
+    if (active.length > 0) {
+      if (!opts.force) return
+      const specs = active.map((j) => ({ job: j, spec: JSON.parse(j.spec) as Extract<JobSpec, { type: 'suggest_relations' }> }))
+      const queued = specs.find((s) => s.job.state === 'queued')
+      if (queued) {
+        if (!queued.spec.force) {
+          const { batchId: _batch, ...rest } = queued.spec
+          cache.updateJobSpec(queued.job.id, JSON.stringify({ ...rest, force: true }), this.now())
+        }
+        return
+      }
+      if (specs.some((s) => s.spec.force)) return
+    }
     this.deps.enqueue({
       type: 'suggest_relations',
       paperId,

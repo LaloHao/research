@@ -187,6 +187,15 @@ describe('IndexCache jobs by type', () => {
     expect(cache.getJob(a)?.state).toBe('running')
     expect(cache.hasActiveJob('summarize', 'p2')).toBe(false)
   })
+
+  it("lists a paper's active jobs of a type and rewrites a job's spec", async () => {
+    const { cache } = await openCache()
+    const a = cache.insertJob(JSON.stringify({ type: 'summarize', paperId: 'p1' }), 't')
+    cache.insertJob(JSON.stringify({ type: 'summarize', paperId: 'p2' }), 't')
+    expect(cache.activeJobs('summarize', 'p1').map((j) => j.id)).toEqual([a])
+    cache.updateJobSpec(a, JSON.stringify({ type: 'summarize', paperId: 'p1', force: true }), 't2')
+    expect(cache.getJob(a)).toMatchObject({ spec: JSON.stringify({ type: 'summarize', paperId: 'p1', force: true }), updated_at: 't2' })
+  })
 })
 
 describe('IndexCache v5: relations', () => {

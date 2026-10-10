@@ -524,6 +524,17 @@ export class IndexCache {
     return Number(r.changes)
   }
 
+  /** Queued or running jobs of `type` for `paperId`, oldest first. */
+  activeJobs(type: string, paperId: string): JobRow[] {
+    return this.db
+      .prepare("SELECT * FROM jobs WHERE state IN ('queued', 'running') AND json_extract(spec, '$.type') = ? AND json_extract(spec, '$.paperId') = ? ORDER BY id")
+      .all(type, paperId) as unknown as JobRow[]
+  }
+
+  updateJobSpec(id: number, spec: string, now: string): void {
+    this.db.prepare('UPDATE jobs SET spec = ?, updated_at = ? WHERE id = ?').run(spec, now, id)
+  }
+
   hasActiveJob(type: string, paperId: string): boolean {
     return Boolean(
       this.db

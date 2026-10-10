@@ -137,6 +137,23 @@ describe('RelationService', () => {
     expect(enqueued).toEqual([{ type: 'suggest_relations', paperId: LOGHUB_ID, batchId: 'auto-2026-10-11' }])
   })
 
+  it("the paper's button upgrades a queued unforced analysis to forced, and queues one after a running unforced analysis", async () => {
+    const { service, cache, enqueued } = await setupRelations()
+    const queued = cache.insertJob(JSON.stringify({ type: 'suggest_relations', paperId: LOGHUB_ID, batchId: 'b1' }), NOW)
+    await service.request(LOGHUB_ID, { force: true })
+    expect(enqueued).toEqual([])
+    expect(JSON.parse(cache.getJob(queued)!.spec)).toEqual({ type: 'suggest_relations', paperId: LOGHUB_ID, force: true })
+    cache.updateJob(queued, { state: 'running' }, NOW)
+    await service.request(LOGHUB_ID, { force: true })
+    expect(enqueued).toEqual([])
+    const running = cache.insertJob(JSON.stringify({ type: 'suggest_relations', paperId: DRAIN_ID }), NOW)
+    cache.updateJob(running, { state: 'running' }, NOW)
+    await service.request(DRAIN_ID, { force: true })
+    expect(enqueued).toEqual([{ type: 'suggest_relations', paperId: DRAIN_ID, force: true }])
+    await service.request(DRAIN_ID)
+    expect(enqueued).toHaveLength(1)
+  })
+
   it('plans and queues a batch, and never analyzes the same pair twice from both sides unless forced', async () => {
     const { service, enqueued, provider } = await setupRelations()
     expect(await service.plan()).toEqual({ count: 2, estimateUsd: 0.5, batchLimitUsd: 10 })
