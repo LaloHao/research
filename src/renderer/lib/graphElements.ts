@@ -113,3 +113,37 @@ export function buildElements(data: GraphData, opts: GraphOptions): ElementDef[]
   }
   return out
 }
+
+export interface LayoutPlan {
+  relayout: boolean
+  randomize: boolean
+}
+
+/**
+ * Whether the layout runs again after an update, given the papers of the last layout (`null`: none yet).
+ * An empty graph never spends the randomized first layout; the layout starts from the current positions
+ * unless no paper keeps one.
+ */
+export function layoutPlan(previous: ReadonlySet<string> | null, next: readonly string[]): LayoutPlan {
+  if (next.length === 0) return { relayout: false, randomize: false }
+  if (previous === null) return { relayout: true, randomize: true }
+  const same = next.length === previous.size && next.every((id) => previous.has(id))
+  if (same) return { relayout: false, randomize: false }
+  return { relayout: true, randomize: !next.some((id) => previous.has(id)) }
+}
+
+export interface Point {
+  x: number
+  y: number
+}
+
+/** Where a node added to a laid-out graph starts: by a neighbour (slightly apart), else somewhere inside the graph. */
+export function initialPosition(
+  neighbour: Point | null,
+  box: { x1: number; y1: number; x2: number; y2: number } | null,
+  random: () => number = Math.random
+): Point | undefined {
+  if (neighbour) return { x: neighbour.x + (random() - 0.5) * 40, y: neighbour.y + (random() - 0.5) * 40 }
+  if (box) return { x: box.x1 + random() * (box.x2 - box.x1), y: box.y1 + random() * (box.y2 - box.y1) }
+  return undefined
+}

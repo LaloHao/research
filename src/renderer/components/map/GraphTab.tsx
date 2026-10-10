@@ -6,7 +6,7 @@ import type { FacetOption, GraphData, ModelInfo, SimilarityReason } from '../../
 import { useDebouncedCallback } from '../../hooks/useDebouncedCallback'
 import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
-import { buildElements, lensColors, NO_VALUE, OTHER_VALUES, type Lens } from '../../lib/graphElements'
+import { buildElements, initialPosition, layoutPlan, lensColors, NO_VALUE, OTHER_VALUES, type Lens, type Point } from '../../lib/graphElements'
 import { reasonsText } from '../../lib/reasons'
 import { PaperDetail } from '../paper/PaperDetail'
 
@@ -14,10 +14,11 @@ cytoscape.use(fcose)
 
 const cssVar = (name: string, fallback: string): string => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
 
-/** Cytoscape cannot read CSS variables: the theme colors are copied when the graph is created. */
+/** Cytoscape cannot read CSS variables: the theme colors are copied when the graph is created and when the color scheme changes. */
 function graphStyle(): cytoscape.CytoscapeOptions['style'] {
   const text = cssVar('--muted', '#666666')
   const edge = cssVar('--border', '#bbbbbb')
+  const similarity = cssVar('--graph-similarity', '#7aa6d8')
   return [
     {
       selector: 'node',
@@ -34,7 +35,7 @@ function graphStyle(): cytoscape.CytoscapeOptions['style'] {
     },
     { selector: 'node:selected', style: { 'border-width': 3, 'border-color': cssVar('--accent', '#2563eb') } },
     { selector: 'edge.citation', style: { 'line-color': edge, 'target-arrow-color': edge, 'target-arrow-shape': 'triangle', 'curve-style': 'bezier', width: 1.2 } },
-    { selector: 'edge.similarity', style: { 'line-color': '#7aa6d8', 'line-style': 'dashed', 'curve-style': 'bezier', width: 'mapData(score, 0, 1, 0.5, 4)' } }
+    { selector: 'edge.similarity', style: { 'line-color': similarity, 'line-style': 'dashed', 'curve-style': 'bezier', width: 'mapData(score, 0, 1, 0.5, 4)' } }
   ] as unknown as cytoscape.CytoscapeOptions['style']
 }
 
@@ -54,8 +55,8 @@ export function GraphTab({ visibleIds }: { visibleIds: string[] | null }): React
   const [notice, setNotice] = useState<{ error: boolean; text: string } | null>(null)
   const container = useRef<HTMLDivElement>(null)
   const cy = useRef<Core | null>(null)
-  /** Sorted node ids of the last layout: the layout only runs again when the set of papers changes. */
-  const layoutKey = useRef<string | null>(null)
+  /** Node ids of the last layout (`null`: none yet): the layout only runs again when the set of papers changes. */
+  const laidOut = useRef<ReadonlySet<string> | null>(null)
 
   const refreshModel = useCallback(() => {
     window.research.models.info().then(setModel, () => undefined)
@@ -94,12 +95,18 @@ export function GraphTab({ visibleIds }: { visibleIds: string[] | null }): React
     instance.on('mouseout', 'edge', () => setHover(null))
     const observer = new ResizeObserver(() => instance.resize())
     observer.observe(container.current)
+    const scheme = window.matchMedia('(prefers-color-scheme: dark)')
+    const restyle = (): void => {
+      instance.style(graphStyle() as unknown as cytoscape.StylesheetJson)
+    }
+    scheme.addEventListener('change', restyle)
     cy.current = instance
     return () => {
       observer.disconnect()
+      scheme.removeEventListener('change', restyle)
       instance.destroy()
       cy.current = null
-      layoutKey.current = null
+      laidOut.current = null
     }
   }, [])
 
@@ -108,33 +115,74 @@ export function GraphTab({ visibleIds }: { visibleIds: string[] | null }): React
     const instance = cy.current
     if (!instance) return
     const wanted = new Set(elements.map((e) => String(e.data.id)))
+    const neighbours = new Map<string, string[]>()
+    for (const def of elements) {
+      if (def.group !== 'edges') continue
+      const source = String(def.data.source)
+      const target = String(def.data.target)
+      neighbours.set(source, [...(neighbours.get(source) ?? []), target])
+      neighbours.set(target, [...(neighbours.get(target) ?? []), source])
+    }
     instance.batch(() => {
       instance.elements().filter((el) => !wanted.has(el.id())).remove()
+      // New nodes start by a neighbour or inside the graph, not piled up at (0, 0), so the layout can start from them.
+      const positions = instance.nodes().map((n) => n.position())
+      const box = positions.length
+        ? {
+            x1: Math.min(...positions.map((p) => p.x)),
+            y1: Math.min(...positions.map((p) => p.y)),
+            x2: Math.max(...positions.map((p) => p.x)),
+            y2: Math.max(...positions.map((p) => p.y))
+          }
+        : null
       // Nodes come before edges in `elements`, so an edge's endpoints always exist when it is added.
       for (const def of elements) {
-        const existing = instance.getElementById(String(def.data.id))
-        if (existing.nonempty()) existing.data(def.data)
-        else instance.add(def as ElementDefinition)
+        const id = String(def.data.id)
+        const existing = instance.getElementById(id)
+        if (existing.nonempty()) {
+          existing.data(def.data)
+          continue
+        }
+        if (def.group === 'nodes') {
+          const near = (neighbours.get(id) ?? []).map((n) => instance.getElementById(n)).find((n) => n.nonempty())
+          const neighbour: Point | null = near ? { ...near.position() } : null
+          instance.add({ ...def, position: initialPosition(neighbour, box) } as ElementDefinition)
+        } else instance.add(def as ElementDefinition)
       }
     })
-    const key = elements
-      .filter((e) => e.group === 'nodes')
-      .map((e) => String(e.data.id))
-      .sort()
-      .join('|')
-    if (key === layoutKey.current) return
-    const first = layoutKey.current === null
-    layoutKey.current = key
-    instance.layout({ name: 'fcose', animate: false, randomize: first } as unknown as cytoscape.LayoutOptions).run()
+    const ids = elements.filter((e) => e.group === 'nodes').map((e) => String(e.data.id))
+    const plan = layoutPlan(laidOut.current, ids)
+    laidOut.current = ids.length ? new Set(ids) : null
+    if (plan.relayout) instance.layout({ name: 'fcose', animate: false, randomize: plan.randomize } as unknown as cytoscape.LayoutOptions).run()
   }, [elements])
 
   const exportPng = async (): Promise<void> => {
     const instance = cy.current
     if (!instance) return
-    const blob = instance.png({ output: 'blob', full: true, scale: 2, bg: cssVar('--bg', '#ffffff') })
-    const result = await window.research.exports.save('graph.png', new Uint8Array(await blob.arrayBuffer()))
-    if (result.ok) setNotice({ error: false, text: t('map.graph.exported', { path: result.path }) })
-    else if (result.error) setNotice({ error: true, text: errorText(t, result.error) })
+    setNotice(null)
+    try {
+      // The canvas background, so the image looks like the graph on screen.
+      const blob = instance.png({ output: 'blob', full: true, scale: 2, bg: cssVar('--surface', '#ffffff') })
+      const result = await window.research.exports.save('graph.png', new Uint8Array(await blob.arrayBuffer()))
+      if (result.ok) setNotice({ error: false, text: t('map.graph.exported', { path: result.path }) })
+      else if (result.error) setNotice({ error: true, text: errorText(t, result.error) })
+    } catch {
+      setNotice({ error: true, text: errorText(t, 'unknown') })
+    }
+  }
+
+  const downloadModel = (): void => {
+    setNotice(null)
+    window.research.models.download().then(
+      (result) => {
+        if (!result.ok) setNotice({ error: true, text: errorText(t, result.error) })
+        refreshModel()
+      },
+      () => {
+        setNotice({ error: true, text: errorText(t, 'unknown') })
+        refreshModel()
+      }
+    )
   }
 
   const legendLabel = (label: string): string => {
@@ -188,7 +236,7 @@ export function GraphTab({ visibleIds }: { visibleIds: string[] | null }): React
         {model?.available && model.state === 'missing' && !model.downloading && (
           <div className="banner warning">
             <span>{t('map.graph.model_missing')}</span>
-            <button onClick={() => void window.research.models.download().then(refreshModel)}>{t('map.graph.download_model')}</button>
+            <button onClick={downloadModel}>{t('map.graph.download_model')}</button>
           </div>
         )}
         {notice && <div className={`banner${notice.error ? ' error' : ''}`}>{notice.text}</div>}

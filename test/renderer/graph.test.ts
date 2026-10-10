@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { TFunction } from 'i18next'
 import {
   buildElements,
+  initialPosition,
+  layoutPlan,
   lensColors,
   nodeSize,
   NO_VALUE,
@@ -71,6 +73,29 @@ describe('graph elements', () => {
     expect(all.filter((e) => e.classes === 'similarity').map((e) => e.data.id)).toEqual(['s:b|c'])
     const onlyAB = buildElements(data, { lens: { kind: 'thesis' }, showCitations: false, showSimilarity: true, threshold: 0, visibleIds: new Set(['a', 'b']) })
     expect(onlyAB.map((e) => e.data.id)).toEqual(['a', 'b'])
+  })
+})
+
+describe('graph layout', () => {
+  it('waits for real nodes before spending the randomized first layout', () => {
+    expect(layoutPlan(null, [])).toEqual({ relayout: false, randomize: false })
+    expect(layoutPlan(null, ['b', 'a'])).toEqual({ relayout: true, randomize: true })
+  })
+
+  it('relayouts from the current positions only when the set of papers changes', () => {
+    expect(layoutPlan(new Set(['a', 'b']), ['b', 'a'])).toEqual({ relayout: false, randomize: false })
+    expect(layoutPlan(new Set(['a', 'b']), ['a', 'b', 'c'])).toEqual({ relayout: true, randomize: false })
+    expect(layoutPlan(new Set(['a', 'b']), ['a'])).toEqual({ relayout: true, randomize: false })
+    expect(layoutPlan(new Set(['a', 'b']), [])).toEqual({ relayout: false, randomize: false })
+    // No paper keeps a position: start over.
+    expect(layoutPlan(new Set(['a', 'b']), ['c', 'd'])).toEqual({ relayout: true, randomize: true })
+  })
+
+  it('places a new node next to a neighbour, else inside the current graph', () => {
+    const box = { x1: 0, y1: 10, x2: 100, y2: 30 }
+    expect(initialPosition({ x: 5, y: 7 }, box, () => 0.5)).toEqual({ x: 5, y: 7 })
+    expect(initialPosition(null, box, () => 0.5)).toEqual({ x: 50, y: 20 })
+    expect(initialPosition(null, null, () => 0.5)).toBeUndefined()
   })
 })
 
