@@ -49,7 +49,11 @@ describe('es.json covers every code the UI can receive', () => {
     'paper.tabs.relations',
     'relations.external_one',
     'relations.external_other',
-    'library.citations_queued'
+    'library.citations_queued',
+    'settings.local_models.state.missing',
+    'settings.local_models.state.ready',
+    'settings.openalex_key',
+    'settings.openalex_key_help'
   ])('%s', (path) => {
     expect(typeof lookup(path)).toBe('string')
   })
