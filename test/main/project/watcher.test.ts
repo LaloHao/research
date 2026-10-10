@@ -126,4 +126,18 @@ describe('watchProject after files are replaced', () => {
       stop()
     }
   })
+
+  it('reports changes of relations.yaml at the root', async () => {
+    const root = await tmpDir()
+    let relations = 0
+    let configs = 0
+    const stop = watchProject(root, { onPaper: () => undefined, onConfig: () => configs++, onRelations: () => relations++ }, 50)
+    await new Promise((r) => setTimeout(r, 100))
+    await atomicWrite(join(root, 'relations.yaml'), 'schema_version: 1\n')
+    await waitFor(() => relations > 0)
+    await new Promise((r) => setTimeout(r, 150))
+    stop()
+    expect(relations).toBe(1)
+    expect(configs).toBe(0)
+  })
 })
