@@ -147,6 +147,27 @@ describe('RelationService', () => {
     expect(capped.cancelled).toEqual([])
   })
 
+  it("an unforced re-analysis that skips a covered pair keeps the paper's own earlier suggestion for that pair", async () => {
+    const drainComparesLoghub = { ...LOGHUB_EXTENDS_DRAIN, from: DRAIN_ID, to: LOGHUB_ID, type: 'compares_with' }
+    const { service, store, cache, provider } = await setupRelations({ agent: [agentResult([drainComparesLoghub]), agentResult([])] })
+    // A third paper that cites Drain: Drain still has a candidate once its pair with Loghub is covered.
+    const third = samplePaper({ id: 'am2019third', title: 'Third', identifiers: {}, citations: { source: 'openalex', fetched_at: NOW, openalex_id: 'W1', references: ['W2754665629'], cited_by_count: 0 } })
+    await store.writePaper(third, null)
+    cache.upsertPaper(third, 'h', false)
+    cache.setText('am2019third', 't', 'ok', [{ index: 0, page: 1, text: 'Third.' }])
+    await service.run(DRAIN_ID, {})
+    const X = 'he2017drain__zhu2020loghub__compares_with'
+    expect(cache.typedRelations(DRAIN_ID).map((r) => r.id)).toEqual([X])
+    await service.run(LOGHUB_ID, { force: true })
+    await service.run(DRAIN_ID, {})
+    const last = provider.agentCalls.at(-1)!
+    expect(last.input).not.toContain('id: zhu2020loghub')
+    expect(last.input).toContain('- he2017drain compares_with zhu2020loghub (suggested)')
+    expect(last.input).not.toContain('your earlier suggestion')
+    const read = await store.readRelations()
+    expect(read?.ok && read.value.relations.map((r) => r.id)).toEqual([X])
+  })
+
   it('analyzes a paper without candidates without calling Claude, and records it', async () => {
     const { service, store, cache, provider } = await setupRelations()
     const solo = samplePaper({ id: 'am2019solo', title: 'Solo', identifiers: {} })

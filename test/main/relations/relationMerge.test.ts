@@ -52,7 +52,7 @@ describe('mergeSuggestions', () => {
       typedRelation({ type: 'uses_method_of', updated_at: NOW }),
       typedRelation({ from: 'am2019x', to: LOGHUB_ID, type: 'replicates', updated_at: NOW, origin })
     ]
-    const merged = mergeSuggestions([confirmed, rejected, editedSuggestion, ownStale, fromDrainRun, unrelated, retyped], LOGHUB_ID, fresh)
+    const merged = mergeSuggestions([confirmed, rejected, editedSuggestion, ownStale, fromDrainRun, unrelated, retyped], LOGHUB_ID, fresh, new Set([DRAIN_ID, 'am2019x']))
     expect(merged.map((r) => r.id)).toEqual([
       'am2019x__zhu2020loghub__extends',
       'am2019x__zz2020y__same_problem',
@@ -64,6 +64,13 @@ describe('mergeSuggestions', () => {
     ])
     expect(merged.find((r) => r.type === 'uses_method_of')).toEqual(confirmed)
     expect(merged.find((r) => r.type === 'same_problem' && r.from === DRAIN_ID)).toEqual(fromDrainRun)
+  })
+
+  it('keeps its own unreviewed suggestions with papers this run did not look at (a covered pair is skipped, not re-judged)', () => {
+    const withDrain = typedRelation({ type: 'contradicts' })
+    const withOther = typedRelation({ from: LOGHUB_ID, to: 'am2019x', type: 'extends' })
+    const merged = mergeSuggestions([withDrain, withOther], LOGHUB_ID, [], new Set(['am2019x']))
+    expect(merged).toEqual([withDrain])
   })
 })
 

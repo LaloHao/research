@@ -33,15 +33,21 @@ export function toEntry(s: { type: RelationType; from: string; to: string; justi
   }
 }
 
-/** Unreviewed suggestions that an earlier analysis of `paperId` itself produced: the only entries a new analysis replaces. */
-const ownUnreviewed = (r: TypedRelation, paperId: string): boolean => r.status === 'suggested' && !r.edited && r.origin?.paper === paperId
+/**
+ * Unreviewed suggestions that an earlier analysis of `paperId` itself produced, with a paper this run looked at
+ * (`analyzed`): the only entries a new analysis replaces. A pair the run skipped (covered from the other side) keeps them.
+ */
+export function replaceable(r: TypedRelation, paperId: string, analyzed: ReadonlySet<string>): boolean {
+  return r.status === 'suggested' && !r.edited && r.origin?.paper === paperId && analyzed.has(otherEnd(r, paperId))
+}
 
 /**
- * A new analysis of `paperId`: its own earlier unreviewed suggestions are replaced (the prompt let the model repeat them);
- * suggestions from the other paper's analysis, reviewed, edited and retyped ids are never touched or duplicated.
+ * A new analysis of `paperId` that looked at the papers in `analyzed`: its own earlier unreviewed suggestions with those
+ * papers are replaced (the prompt let the model repeat them); suggestions with papers it skipped, from the other paper's
+ * analysis, reviewed, edited and retyped ids are never touched or duplicated.
  */
-export function mergeSuggestions(current: TypedRelation[], paperId: string, fresh: TypedRelation[]): TypedRelation[] {
-  const kept = current.filter((r) => !ownUnreviewed(r, paperId))
+export function mergeSuggestions(current: TypedRelation[], paperId: string, fresh: TypedRelation[], analyzed: ReadonlySet<string>): TypedRelation[] {
+  const kept = current.filter((r) => !replaceable(r, paperId, analyzed))
   const taken = new Set(kept.map((r) => r.id))
   const retyped = new Set(kept.flatMap((r) => r.replaced ?? []))
   const added: TypedRelation[] = []

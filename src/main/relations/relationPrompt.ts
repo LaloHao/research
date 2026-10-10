@@ -1,5 +1,6 @@
 import { RELATION_TYPES, SYMMETRIC_TYPES, type RelationType, type TypedRelation } from '../../shared/typedRelations'
 import type { CandidateVia } from './relationCandidates'
+import { replaceable } from './relationMerge'
 
 export const RELATION_PROMPT_VERSION = 1
 /** Tool calls per run (the MCP server enforces it); also --max-turns when the CLI supports it. */
@@ -65,12 +66,14 @@ function paperLines(p: PromptPaper): string[] {
   )
 }
 
-/** An unreviewed suggestion from an earlier analysis of the focus paper: this run replaces it, so the model may repeat it. */
-const ownPending = (r: TypedRelation, focusId: string): boolean => r.status === 'suggested' && !r.edited && r.origin?.paper === focusId
-
+/**
+ * An unreviewed suggestion from an earlier analysis of the focus paper, with one of this run's candidates: this run
+ * replaces it (see mergeSuggestions), so the model may repeat it. With a skipped paper it stays, so it is never repeated.
+ */
 export function relationInput(focus: PromptPaper, candidates: PromptCandidate[], existing: TypedRelation[]): string {
+  const analyzed = new Set(candidates.map((c) => c.id))
   const line = (r: TypedRelation): string =>
-    ownPending(r, focus.id)
+    replaceable(r, focus.id, analyzed)
       ? `- ${r.from} ${r.type} ${r.to} (your earlier suggestion, not reviewed yet: repeat it if the text still supports it)`
       : `- ${r.from} ${r.type} ${r.to} (${r.status}${r.edited ? ', edited by the user' : ''})`
   return [

@@ -148,7 +148,7 @@ export class RelationService {
       const at = this.now()
       await this.mutateFile((f) => ({
         ...f,
-        relations: result.candidates.length > 0 ? mergeSuggestions(f.relations, paperId, result.relations) : f.relations,
+        relations: mergeSuggestions(f.relations, paperId, result.relations, new Set(result.candidates.map((c) => c.id))),
         analyzed: { ...f.analyzed, [paperId]: { candidates: result.candidates.map((c) => c.id), at } }
       }))
       return { paperId, message: result.candidates.length > 0 ? 'relations_suggested' : 'relations_no_candidates' }
