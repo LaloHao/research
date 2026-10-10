@@ -2,18 +2,25 @@ import { z } from 'zod'
 import { orient, RELATION_TYPES, relationId, type RelationEvidence, type RelationType, type TypedRelation } from '../../shared/typedRelations'
 import { locateQuote } from '../summary/evidence'
 import type { PageText } from '../summary/paperText'
-import { MAX_EVIDENCE } from './relationPrompt'
+import { MAX_EVIDENCE, MAX_SUGGESTIONS } from './relationPrompt'
+
+/** A stray non-positive page (the model miscounts, or means "no page") becomes null rather than failing the whole relation. */
+const PageSchema = z
+  .number()
+  .int()
+  .nullable()
+  .transform((v) => (v !== null && v <= 0 ? null : v))
 
 const ItemSchema = z.object({
   from: z.string(),
   to: z.string(),
   type: z.enum(RELATION_TYPES),
   justification: z.string().trim().min(1),
-  evidence: z.array(z.object({ paper: z.string(), page: z.number().int().positive().nullable(), quote: z.string().trim().min(1) }))
+  evidence: z.array(z.object({ paper: z.string(), page: PageSchema, quote: z.string().trim().min(1) }))
 })
 const OutputSchema = z.object({ relations: z.array(z.unknown()) })
 
-export type DropReason = 'invalid' | 'not_a_candidate' | 'rejected' | 'retyped' | 'duplicate' | 'no_evidence'
+export type DropReason = 'invalid' | 'not_a_candidate' | 'rejected' | 'retyped' | 'duplicate' | 'no_evidence' | 'too_many'
 
 export interface ParsedSuggestion {
   id: string
@@ -35,7 +42,11 @@ export function parseRelationOutput(value: unknown, ctx: { paperId: string; cand
   const seen = new Set<string>()
   const suggestions: ParsedSuggestion[] = []
   const dropped: DropReason[] = []
-  for (const raw of top.data.relations) {
+  for (const [i, raw] of top.data.relations.entries()) {
+    if (i >= MAX_SUGGESTIONS) {
+      dropped.push('too_many')
+      continue
+    }
     const item = ItemSchema.safeParse(raw)
     if (!item.success) {
       dropped.push('invalid')

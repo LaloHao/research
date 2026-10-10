@@ -95,6 +95,25 @@ describe('parseRelationOutput', () => {
     expect(parseRelationOutput(null, ctx())).toEqual({ ok: false })
     expect(parseRelationOutput({ relations: 'none' }, ctx())).toEqual({ ok: false })
   })
+
+  it('coerces a stray non-positive page to null instead of dropping the whole relation', () => {
+    const out = parseRelationOutput({ relations: [item({ evidence: [{ paper: LOGHUB, page: 0, quote: 'we extend Drain' }] })] }, ctx())
+    expect(out).toEqual({ ok: true, dropped: [], suggestions: [expect.objectContaining({ evidence: [{ paper: LOGHUB, page: null, quote: 'we extend Drain' }] })] })
+  })
+
+  it('drops a relation with an empty justification as invalid', () => {
+    const out = parseRelationOutput({ relations: [item({ justification: '   ' })] }, ctx())
+    expect(out).toEqual({ ok: true, dropped: ['invalid'], suggestions: [] })
+  })
+
+  it('caps accepted relations at MAX_SUGGESTIONS, reporting the extras as too_many', () => {
+    const relations = Array.from({ length: 22 }, () => item())
+    const out = parseRelationOutput({ relations }, ctx())
+    expect(out.ok && out.suggestions).toHaveLength(1)
+    expect(out.ok && out.dropped.filter((d) => d === 'too_many')).toHaveLength(2)
+    expect(out.ok && out.dropped.filter((d) => d === 'duplicate')).toHaveLength(19)
+    expect(out.ok && out.dropped).toHaveLength(21)
+  })
 })
 
 describe('checkRelationEvidence', () => {
