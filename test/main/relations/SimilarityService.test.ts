@@ -9,6 +9,28 @@ import { sampleSummary } from '../../helpers/summaries'
 
 const cit = (references: string[]) => ({ source: 'openalex' as const, fetched_at: 't', references })
 
+/** Holds every embed call until `release()`, so a test can act while a paper is being embedded. */
+function gate(runtime: FakeEmbeddingRuntime) {
+  let release = () => {}
+  const held = new Promise<void>((resolve) => (release = resolve))
+  let started = () => {}
+  const embedding = new Promise<void>((resolve) => (started = resolve))
+  const inner = runtime.embedderInstance
+  runtime.embedder = async () =>
+    runtime.ready
+      ? {
+          modelId: inner.modelId,
+          dims: inner.dims,
+          embed: async (texts, kind) => {
+            started()
+            await held
+            return inner.embed(texts, kind)
+          }
+        }
+      : null
+  return { release, embedding }
+}
+
 async function setup(runtime: FakeEmbeddingRuntime | null, papers: Paper[]) {
   const { store, cache, library } = await setupLibrary()
   for (const paper of papers) {
@@ -87,6 +109,61 @@ describe('SimilarityService', () => {
     expect(emits()).toBe(1)
   })
 
+  it('runs the batch-end recompute on the next change when the batch ended without its last afterJob', async () => {
+    const { cache, service, emits } = await setup(new FakeEmbeddingRuntime(true), [samplePaper()])
+    await service.requestRecompute()
+    expect(emits()).toBe(1)
+    const job = cache.insertJob(JSON.stringify({ type: 'embed', paperId: 'he2017drain' }), 't')
+    await service.requestRecompute()
+    cache.updateJob(job, { state: 'running' }, 't')
+    await service.paperChanged('he2017drain')
+    expect(emits()).toBe(1)
+    cache.updateJob(job, { state: 'cancelled' }, 't')
+    await service.paperChanged('he2017drain')
+    expect(emits()).toBe(2)
+  })
+
+  it('also runs it once the rest of the batch was cancelled while queued', async () => {
+    const { cache, service, emits } = await setup(new FakeEmbeddingRuntime(true), [samplePaper()])
+    await service.requestRecompute()
+    cache.insertJob(JSON.stringify({ type: 'embed', paperId: 'he2017drain' }), 't')
+    await service.requestRecompute()
+    cache.cancelQueuedTypes(['embed'], 't')
+    await service.paperChanged('he2017drain')
+    expect(emits()).toBe(2)
+  })
+
+  it('coalesces concurrent recompute requests into one rerun', async () => {
+    const { service, emits } = await setup(new FakeEmbeddingRuntime(true), [samplePaper()])
+    await Promise.all([service.requestRecompute(), service.requestRecompute(), service.requestRecompute()])
+    expect(emits()).toBe(2)
+  })
+
+  it('does not store a vector when the model was removed while embedding', async () => {
+    const runtime = new FakeEmbeddingRuntime(true)
+    const { cache, service } = await setup(runtime, [samplePaper()])
+    const held = gate(runtime)
+    const embedding = service.embed('he2017drain')
+    await held.embedding
+    const removing = service.removeModel()
+    held.release()
+    await removing
+    await expect(embedding).rejects.toMatchObject({ code: 'model_missing' })
+    expect(cache.vectorMeta('he2017drain')).toBeNull()
+  })
+
+  it('queues the paper again when its input changed while it was being embedded', async () => {
+    const runtime = new FakeEmbeddingRuntime(true)
+    const { store, service, enqueued } = await setup(runtime, [samplePaper()])
+    const held = gate(runtime)
+    const embedding = service.embed('he2017drain')
+    await held.embedding
+    await store.writeSummary('he2017drain', sampleSummary(), 'body', null)
+    held.release()
+    await embedding
+    expect(enqueued).toEqual([{ type: 'embed', paperId: 'he2017drain' }])
+  })
+
   it('updates one changed paper incrementally, as a full recompute would, and ignores changes that change nothing', async () => {
     const a = samplePaper({ id: 'a2020logs', title: 'Log anonymization with named entity recognition', citations: cit(['W7', 'W8']) })
     const b = samplePaper({ id: 'b2021logs', title: 'Named entity recognition for log anonymization', citations: cit(['W7']) })
@@ -103,7 +180,7 @@ describe('SimilarityService', () => {
     await service.paperChanged('c2019protein')
     expect(cache.similarFor('c2019protein').map((x) => x.other)).toContain('a2020logs')
     const incremental = cache.allSimilar()
-    await service.recompute()
+    await service.requestRecompute()
     expect(cache.allSimilar()).toEqual(incremental)
 
     const count = emits()

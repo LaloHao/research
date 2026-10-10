@@ -10,6 +10,8 @@ import { internalCiters, neighboursOf, updateNeighbours, type PaperSignals, type
 
 /** A full recompute yields to the event loop every this many rows, so IPC keeps being served. */
 const YIELD_EVERY = 50
+/** Jobs that make up a batch whose end triggers one full recompute. */
+const BATCH_TYPES: JobType[] = ['embed', 'citations']
 const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
 
 /** The text a paper's vector is made from; when its hash changes (summary, edited abstract…) the vector is redone. */
@@ -49,10 +51,13 @@ export class SimilarityService {
   /** Each paper's signals and signature as of the last update; null until the first full recompute. */
   private snapshot: Map<string, { signals: PaperSignals; signature: string }> | null = null
   private incremental: Promise<void> = Promise.resolve()
+  /** Bumped when the model is removed: an embedding started before must not store its vector afterwards. */
+  private modelGeneration = 0
 
   constructor(private readonly deps: SimilarityServiceDeps) {}
 
   async embed(paperId: string, signal?: AbortSignal): Promise<{ paperId: string; message: 'embedded' }> {
+    const generation = this.modelGeneration
     try {
       const embedder = (await this.deps.runtime?.embedder()) ?? null
       if (!embedder) throw new UserFacingError('model_missing')
@@ -60,7 +65,11 @@ export class SimilarityService {
       if (!input) throw new UserFacingError('file_problem')
       const [vector] = await embedder.embed([input.text], 'passage', signal)
       signal?.throwIfAborted()
+      if (generation !== this.modelGeneration) throw new UserFacingError('model_missing')
       this.deps.cache.setVector(paperId, input.hash, embedder.modelId, vector)
+      // enqueueStale skipped this paper while its job ran: an input edited meanwhile needs another pass.
+      const latest = await this.input(paperId)
+      if (latest && latest.hash !== input.hash) this.deps.enqueue({ type: 'embed', paperId })
       return { paperId, message: 'embedded' }
     } catch (error) {
       if (signal?.aborted) throw error
@@ -90,7 +99,7 @@ export class SimilarityService {
    * or citations jobs are queued it is left to the last of them. Calls made while one runs share one rerun.
    */
   requestRecompute(): Promise<void> {
-    if (this.deps.cache.hasQueuedJobs(['embed', 'citations'])) {
+    if (this.deps.cache.hasQueuedJobs(BATCH_TYPES)) {
       this.batchPending = true
       return Promise.resolve()
     }
@@ -112,7 +121,7 @@ export class SimilarityService {
 
   /** After an embed or citations job: a batch ends with one full recompute; a lone job updates its paper only. */
   afterJob(paperId: string): Promise<void> {
-    if (this.batchPending || !this.snapshot || this.deps.cache.hasQueuedJobs(['embed', 'citations'])) return this.requestRecompute()
+    if (this.batchPending || !this.snapshot || this.deps.cache.hasQueuedJobs(BATCH_TYPES)) return this.requestRecompute()
     return this.paperChanged(paperId)
   }
 
@@ -124,7 +133,7 @@ export class SimilarityService {
   }
 
   /** Every row from scratch, yielding regularly so a large library does not block IPC. */
-  async recompute(): Promise<void> {
+  private async recompute(): Promise<void> {
     const papers = this.signals()
     const citers = internalCiters(papers)
     const rows: ScoredPair[] = []
@@ -179,6 +188,7 @@ export class SimilarityService {
 
   /** Deletes the model files; similarity falls back to citations and facets. */
   async removeModel(): Promise<void> {
+    this.modelGeneration++
     // Queued embeddings would only fail with model_missing.
     this.deps.cancelQueued(['embed'])
     await this.deps.runtime?.remove()
@@ -189,10 +199,17 @@ export class SimilarityService {
   private async updateOne(paperId: string): Promise<void> {
     if (this.running) await this.running
     if (!this.snapshot) return this.requestRecompute()
-    if (this.batchPending || this.deps.cache.hasQueuedJobs(['embed', 'citations'])) {
+    const { cache } = this.deps
+    if (cache.hasQueuedJobs(BATCH_TYPES)) {
       // The batch's last job recomputes everything, this paper included.
       this.batchPending = true
       return
+    }
+    if (this.batchPending) {
+      // A batch job still running will recompute in its afterJob. Otherwise the batch ended without one (its last job
+      // aborted, or the rest cancelled while queued): recompute now, or every later change would wait forever.
+      if (BATCH_TYPES.some((type) => cache.hasActiveJobOfType(type))) return
+      return this.requestRecompute()
     }
     const papers = this.signals()
     const current = papers.find((p) => p.id === paperId) ?? null
