@@ -71,7 +71,9 @@ describe('es.json covers every code the UI can receive', () => {
     ...['conflict', 'invalid', 'resolve', 'show', 'resolved_dropped_one', 'resolved_dropped_other', 'dismiss'].map((k) => `typed.file.${k}`),
     ...['title', 'suggest', 'suggest_again', 'suggest_queued', 'pending_one', 'pending_other', 'up_to_date', 'no_candidates', 'suggested', 'confirmed', 'rejected', 'none_suggested', 'none_confirmed', 'confirm', 'reject', 'change_type', 'reverse', 'edit_justification', 'back_to_suggested', 'restore', 'undo', 'retry', 'edited', 'evidence_in', 'open_paper', 'generated_with'].map((k) => `typed.${k}`),
     'review.relation_shortcuts',
-    'review.decided'
+    'review.decided',
+    'settings.auto_suggest_relations',
+    'settings.auto_suggest_relations_help'
   ])('%s', (path) => {
     expect(typeof lookup(path)).toBe('string')
   })

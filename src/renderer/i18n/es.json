@@ -52,6 +52,8 @@
     "model": "Modelo",
     "models": { "sonnet": "Sonnet (recomendado)", "haiku": "Haiku (más rápido, menor calidad)", "opus": "Opus (máxima calidad, consume más cuota)" },
     "auto_summarize": "Resumir automáticamente al agregar papers",
+    "auto_suggest_relations": "Sugerir relaciones automáticamente",
+    "auto_suggest_relations_help": "Solo se analizan papers que ya tienen resumen y citas. Los disparos automáticos de todos los papers comparten un tope por lote diario; al llegar a ese tope, se detienen hasta el día siguiente. Consume cuota de Claude.",
     "budget_operation": "Tope por paper (USD est.)",
     "budget_batch": "Tope por lote (USD est.)",
     "budget_month": "Tope mensual (USD est., vacío = sin tope)",
