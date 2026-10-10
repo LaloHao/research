@@ -15,7 +15,7 @@ export class AppController {
   constructor(
     private readonly settingsFile: string,
     private readonly emit: (event: ResearchEvent) => void,
-    private readonly sessionDefaults: Omit<SessionOptions, 'contactEmail'> = {}
+    private readonly sessionDefaults: Omit<SessionOptions, 'contactEmail' | 'openalexApiKey'> = {}
   ) {}
 
   async init(): Promise<void> {
@@ -42,6 +42,7 @@ export class AppController {
     this.settings = { ...this.settings, ...patch }
     await saveSettings(this.settingsFile, this.settings)
     this.session?.http.setContactEmail(this.settings.contactEmail)
+    this.session?.http.setOpenAlexApiKey(this.settings.openalexApiKey)
     return this.settings
   }
 
@@ -103,7 +104,7 @@ export class AppController {
   }
 
   private sessionOptions(): SessionOptions {
-    return { ...this.sessionDefaults, contactEmail: this.settings.contactEmail, deviceId: this.settings.deviceId }
+    return { ...this.sessionDefaults, contactEmail: this.settings.contactEmail, openalexApiKey: this.settings.openalexApiKey, deviceId: this.settings.deviceId }
   }
 
   private attach(session: ProjectSession): void {

@@ -106,3 +106,42 @@ describe('HttpClient', () => {
     expect(e.message).toBe('HTTP 500 for https://x.test')
   })
 })
+
+describe('HttpClient and OpenAlex', () => {
+  it('adds the API key only to OpenAlex URLs', () => {
+    const http = new HttpClient({ openalexApiKey: 'k1' })
+    expect(http.politeUrl('https://api.openalex.org/works/W1?select=id')).toBe('https://api.openalex.org/works/W1?select=id&api_key=k1')
+    expect(http.politeUrl('https://api.crossref.org/works/x')).toBe('https://api.crossref.org/works/x')
+    http.setOpenAlexApiKey('  ')
+    expect(http.politeUrl('https://api.openalex.org/works/W1')).toBe('https://api.openalex.org/works/W1')
+  })
+
+  it('does not retry an OpenAlex 429 once the daily budget is spent, and hides the key in the error', async () => {
+    const fetch = sequence(new Response('', { status: 429, headers: { 'x-ratelimit-remaining': '0', 'retry-after': '43200' } }))
+    const { delays, sleep } = sleeper()
+    const http = new HttpClient({ fetch, sleep, openalexApiKey: 'secret' })
+    const error = await http.json(http.politeUrl('https://api.openalex.org/works/W1')).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(HttpError)
+    expect((error as HttpError).status).toBe(429)
+    expect((error as HttpError).url).not.toContain('secret')
+    expect(fetch.count()).toBe(1)
+    expect(delays).toEqual([])
+    expect((error as HttpError).headers?.get('x-ratelimit-remaining')).toBe('0')
+  })
+
+  it('retries a passing OpenAlex 429 that still has budget left', async () => {
+    const fetch = sequence(new Response('', { status: 429, headers: { 'x-ratelimit-remaining': '812', 'retry-after': '2' } }), 200)
+    const { delays, sleep } = sleeper()
+    const http = new HttpClient({ fetch, sleep })
+    expect(await http.text('https://api.openalex.org/works/W1', 'application/json')).toBe('200')
+    expect(fetch.count()).toBe(2)
+    expect(delays).toEqual([2000])
+  })
+
+  it('still retries a 429 from other hosts', async () => {
+    const fetch = sequence(429, 200)
+    const http = new HttpClient({ fetch, sleep: sleeper().sleep })
+    await http.text('https://api.crossref.org/works/x', 'text/plain')
+    expect(fetch.count()).toBe(2)
+  })
+})

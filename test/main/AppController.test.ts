@@ -60,4 +60,15 @@ describe('AppController', () => {
     expect(await c.updateProject({ name: 'Tesis', contentLanguage: 'es', pdfPolicy: 'untracked' })).toMatchObject({ name: 'Tesis', contentLanguage: 'es', pdfPolicy: 'untracked' })
     await c.shutdown()
   })
+
+  it('passes the OpenAlex API key to the open project and to the next one', async () => {
+    const settingsFile = join(await tmpDir(), 'settings.json')
+    const c = await controller(settingsFile)
+    await c.setSettings({ openalexApiKey: 'k9' })
+    await c.createProject(await tmpDir(), 'Thesis')
+    expect(c.requireSession().http.politeUrl('https://api.openalex.org/works/W1')).toContain('api_key=k9')
+    await c.setSettings({ openalexApiKey: '' })
+    expect(c.requireSession().http.politeUrl('https://api.openalex.org/works/W1')).not.toContain('api_key')
+    await c.shutdown()
+  })
 })

@@ -3,7 +3,9 @@ export type FetchFn = (url: string, init?: RequestInit) => Promise<Response>
 export class HttpError extends Error {
   constructor(
     readonly status: number,
-    readonly url: string
+    readonly url: string,
+    /** Response headers, e.g. OpenAlex's x-ratelimit-* and Retry-After. */
+    readonly headers: Headers | null = null
   ) {
     super(`HTTP ${status} for ${url}`)
     this.name = 'HttpError'
@@ -20,6 +22,8 @@ export interface HttpClientOptions {
   /** Time to read a large body such as a PDF, counted once the headers arrive. */
   downloadTimeoutMs?: number
   sleep?: (ms: number) => Promise<void>
+  /** Optional OpenAlex API key; sent only to api.openalex.org. */
+  openalexApiKey?: string
 }
 
 /** The only hosts that may receive the contact email: DOI content negotiation, Crossref and OpenAlex. */
@@ -36,15 +40,65 @@ function acceptsContact(url: string): boolean {
 const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504])
 const MAX_RETRY_AFTER_MS = 30_000
 
+const OPENALEX_HOST = 'api.openalex.org'
+
+export function isOpenAlexUrl(url: string): boolean {
+  try {
+    return new URL(url).hostname.toLowerCase() === OPENALEX_HOST
+  } catch {
+    return false
+  }
+}
+
+const isOpenAlex429 = (error: HttpError): boolean => error.status === 429 && isOpenAlexUrl(error.url)
+
+/** OpenAlex says the daily budget is spent (x-ratelimit-* headers): retrying within seconds only wastes time. */
+export function openalexBudgetSpent(error: HttpError): boolean {
+  if (!isOpenAlex429(error) || !error.headers) return false
+  return ['x-ratelimit-remaining', 'x-ratelimit-remaining-usd'].some((name) => {
+    const value = error.headers!.get(name)
+    return value !== null && value.trim() !== '' && Number(value) <= 0
+  })
+}
+
+/**
+ * A 429 from OpenAlex that means "come back tomorrow": the budget is spent, or (after the retries) it asks to wait
+ * longer than we ever wait, or says nothing about when to retry.
+ */
+export function isOpenAlexDailyLimit(error: HttpError): boolean {
+  if (!isOpenAlex429(error)) return false
+  if (openalexBudgetSpent(error)) return true
+  const retryAfter = Number(error.headers?.get('retry-after'))
+  return !(Number.isFinite(retryAfter) && retryAfter > 0 && retryAfter * 1000 <= MAX_RETRY_AFTER_MS)
+}
+
+/** Errors are logged and shown: they must never carry the API key. */
+function redactKey(url: string): string {
+  try {
+    const u = new URL(url)
+    if (!u.searchParams.has('api_key')) return url
+    u.searchParams.set('api_key', 'redacted')
+    return u.toString()
+  } catch {
+    return url
+  }
+}
+
 export class HttpClient {
   private contactEmail: string
+  private openalexApiKey: string
 
   constructor(private readonly opts: HttpClientOptions = {}) {
     this.contactEmail = opts.contactEmail?.trim() ?? ''
+    this.openalexApiKey = opts.openalexApiKey?.trim() ?? ''
   }
 
   setContactEmail(email: string): void {
     this.contactEmail = email.trim()
+  }
+
+  setOpenAlexApiKey(key: string): void {
+    this.openalexApiKey = key.trim()
   }
 
   /** Crossref and OpenAlex route requests that identify a contact to their "polite" pool; no other host sees the email. */
@@ -52,11 +106,18 @@ export class HttpClient {
     return this.contactEmail && acceptsContact(url) ? `research-app/0.1 (mailto:${this.contactEmail})` : 'research-app/0.1'
   }
 
+  /** Adds the contact email (Crossref, OpenAlex) and the OpenAlex API key; no other host sees either. */
   politeUrl(url: string): string {
-    if (!this.contactEmail || !acceptsContact(url)) return url
-    const u = new URL(url)
-    u.searchParams.set('mailto', this.contactEmail)
-    return u.toString()
+    let u: URL | null = null
+    if (this.contactEmail && acceptsContact(url)) {
+      u = new URL(url)
+      u.searchParams.set('mailto', this.contactEmail)
+    }
+    if (this.openalexApiKey && isOpenAlexUrl(url)) {
+      u ??= new URL(url)
+      u.searchParams.set('api_key', this.openalexApiKey)
+    }
+    return u ? u.toString() : url
   }
 
   /** The body must be read within `bodyTimeoutMs` (default: the header timeout) once the headers arrive. */
@@ -91,12 +152,12 @@ export class HttpClient {
           expire(bodyTimeoutMs ?? headerTimeoutMs)
           return res
         }
-        lastError = new HttpError(res.status, url)
-        if (!RETRYABLE.has(res.status)) throw lastError
+        lastError = new HttpError(res.status, redactKey(url), res.headers)
+        if (!RETRYABLE.has(res.status) || openalexBudgetSpent(lastError as HttpError)) throw lastError
         const retryAfter = Number(res.headers.get('retry-after'))
         if (Number.isFinite(retryAfter) && retryAfter > 0) retryAfterMs = Math.min(retryAfter * 1000, MAX_RETRY_AFTER_MS)
       } catch (error) {
-        if (error instanceof HttpError && !RETRYABLE.has(error.status)) throw error
+        if (error instanceof HttpError && (!RETRYABLE.has(error.status) || openalexBudgetSpent(error))) throw error
         if (signal?.aborted) throw error
         lastError = error
       }
