@@ -32,6 +32,21 @@ export interface CompleteResult {
   model: string
 }
 
+/** A streamable-HTTP MCP server the agent may use, reached with a bearer token. */
+export interface McpEndpoint {
+  name: string
+  url: string
+  token: string
+}
+
+/** A run where Claude may call the tools of `mcp` (and nothing else) before answering in `schema`. */
+export interface AgentRequest extends CompleteRequest {
+  mcp: McpEndpoint
+  /** Hard cap on turns; enforced by the MCP server's call budget, and by the CLI when it supports --max-turns. */
+  maxTurns: number
+}
+
 export interface LlmProvider {
   complete(req: CompleteRequest): Promise<CompleteResult>
+  runAgent(req: AgentRequest): Promise<CompleteResult>
 }

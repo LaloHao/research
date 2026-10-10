@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ClaudeCliProvider, cliArgs, parseCliOutput } from '../../../src/main/llm/ClaudeCliProvider'
+import { agentArgs, ClaudeCliProvider, cliArgs, mcpConfig, parseCliOutput } from '../../../src/main/llm/ClaudeCliProvider'
 import { LlmError } from '../../../src/main/llm/LlmProvider'
 import { toUserFacing } from '../../../src/main/library/UserFacingError'
+import { startLibraryMcpServer } from '../../../src/main/mcp/LibraryMcpServer'
+import { stubTools } from '../../helpers/mcp'
 import { tmpDir } from '../../helpers/tmp'
 
 const fake = fileURLToPath(new URL('../../fixtures/bin/fake-claude.mjs', import.meta.url))
@@ -66,7 +69,7 @@ describe('ClaudeCliProvider', () => {
   it.each([
     ['quota', 'llm_quota'],
     ['auth', 'llm_unavailable'],
-    ['budget', 'budget_exceeded'],
+    ['budget', 'operation_budget'],
     ['no_structured', 'llm_invalid_output'],
     ['garbage', 'llm_unavailable']
   ])('maps %s to %s', async (mode, code) => {
@@ -99,5 +102,117 @@ describe('ClaudeCliProvider', () => {
 
   it('becomes a user-facing error with the same code', () => {
     expect(toUserFacing(new LlmError('llm_quota')).code).toBe('llm_quota')
+  })
+})
+
+const mcp = { name: 'library', url: 'http://127.0.0.1:4100/mcp', token: 'secret-token' }
+const agentReq = { ...req, mcp, maxTurns: 12 }
+const flags = { allowedTools: 'glob' as const, permissionArgs: ['--permission-mode', 'dontAsk'], maxTurns: false }
+
+describe('agentArgs', () => {
+  it('allows only the library MCP tools and none of the CLI own tools', () => {
+    const args = agentArgs(agentReq, '/tmp/research-mcp-x/mcp.json', flags)
+    expect(args.slice(0, 3)).toEqual(['-p', '--output-format', 'json'])
+    for (const [flag, value] of [
+      ['--tools', ''],
+      ['--mcp-config', '/tmp/research-mcp-x/mcp.json'],
+      ['--allowedTools', 'mcp__library__*'],
+      ['--permission-mode', 'dontAsk'],
+      ['--setting-sources', ''],
+      ['--model', 'sonnet'],
+      ['--max-budget-usd', '0.5'],
+      ['--system-prompt', 'sys']
+    ]) {
+      expect(args[args.indexOf(flag) + 1]).toBe(value)
+    }
+    expect(args).toContain('--strict-mcp-config')
+    expect(args).toContain('--no-session-persistence')
+    expect(args).not.toContain('--max-turns')
+    expect(args.some((a) => a.includes('secret-token'))).toBe(false)
+  })
+
+  it('passes --max-turns only when the installed CLI supports it', () => {
+    const args = agentArgs(agentReq, '/tmp/c.json', { ...flags, maxTurns: true })
+    expect(args[args.indexOf('--max-turns') + 1]).toBe('12')
+  })
+
+  it('uses the allowed-tools form and permission flags the real run proved', () => {
+    const args = agentArgs(agentReq, '/tmp/c.json', { allowedTools: 'server', permissionArgs: ['--permission-prompts', 'none'], maxTurns: false })
+    expect(args[args.indexOf('--allowedTools') + 1]).toBe('mcp__library')
+    expect(args[args.indexOf('--permission-prompts') + 1]).toBe('none')
+    expect(args).not.toContain('--permission-mode')
+    expect(agentArgs(agentReq, '/tmp/c.json', { ...flags, permissionArgs: [] })).not.toContain('--permission-mode')
+  })
+
+  it('points the CLI at the server with the bearer token in the config file', () => {
+    expect(mcpConfig(mcp)).toEqual({ mcpServers: { library: { type: 'http', url: mcp.url, headers: { Authorization: 'Bearer secret-token' } } } })
+  })
+})
+
+describe('parseCliOutput (agent runs)', () => {
+  it('reads the recorded agent run', async () => {
+    const stdout = await readFile(fileURLToPath(new URL('../../fixtures/llm/agent-success.json', import.meta.url)), 'utf8')
+    const result = parseCliOutput(stdout, '', 0, 'haiku')
+    expect(Array.isArray((result.value as { relations: unknown[] }).relations)).toBe(true)
+    expect(result.costUsd).toBeGreaterThan(0)
+    expect(result.model).toMatch(/haiku/)
+  })
+
+  it('reports the per-operation cap as operation_budget, so it never stops a batch', () => {
+    const out = JSON.stringify({ subtype: 'error_max_budget_usd', is_error: true, total_cost_usd: 0.5 })
+    let error: unknown
+    try {
+      parseCliOutput(out, '', 1)
+    } catch (e) {
+      error = e
+    }
+    expect(error).toMatchObject({ name: 'LlmError', code: 'operation_budget', costUsd: 0.5 })
+  })
+
+  it('treats a run stopped by the turn limit as invalid output, keeping its cost', () => {
+    const out = JSON.stringify({ subtype: 'error_max_turns', is_error: true, total_cost_usd: 0.2 })
+    let error: unknown
+    try {
+      parseCliOutput(out, '', 1)
+    } catch (e) {
+      error = e
+    }
+    expect(error).toMatchObject({ name: 'LlmError', code: 'llm_invalid_output', costUsd: 0.2 })
+  })
+})
+
+describe('ClaudeCliProvider.runAgent', () => {
+  it('lets the agent call the library tools over MCP and removes the temporary config', async () => {
+    const server = await startLibraryMcpServer(stubTools(), { maxToolCalls: 12 })
+    try {
+      const { p, log } = await provider('agent', {
+        FAKE_CLAUDE_TOOL_CALLS: JSON.stringify([{ name: 'get_paper', arguments: { paper_id: 'he2017drain' } }]),
+        FAKE_CLAUDE_OUTPUT: JSON.stringify({ relations: [] })
+      })
+      const result = await p.runAgent({ ...req, mcp: { name: 'library', url: server.url, token: server.token }, maxTurns: 12 })
+      expect(result.value).toEqual({ relations: [] })
+      expect(server.calls()).toEqual([{ name: 'get_paper', ok: true }])
+      const [call, tools] = (await readFile(log, 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+      expect(call.input).toBe('paper text')
+      expect(existsSync(call.args[call.args.indexOf('--mcp-config') + 1])).toBe(false)
+      expect(JSON.parse(tools.toolResults[0].content[0].text)).toMatchObject({ paper_id: 'he2017drain' })
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('maps CLI errors like complete() does', async () => {
+    const { p } = await provider('quota')
+    await expect(p.runAgent(agentReq)).rejects.toMatchObject({ code: 'llm_quota' })
+  })
+
+  it('kills a hung agent after the timeout and still removes the config', async () => {
+    const { p, log } = await provider('hang')
+    await expect(p.runAgent({ ...agentReq, timeoutMs: 300 })).rejects.toMatchObject({ code: 'llm_timeout' })
+    const call = JSON.parse((await readFile(log, 'utf8')).trim().split('\n')[0])
+    expect(existsSync(call.args[call.args.indexOf('--mcp-config') + 1])).toBe(false)
   })
 })

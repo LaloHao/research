@@ -1,5 +1,17 @@
 import { spawn } from 'node:child_process'
-import { LlmError, type CompleteRequest, type CompleteResult, type LlmErrorCode, type LlmProvider } from './LlmProvider'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { AGENT_CLI_FLAGS, type AgentCliFlags } from './agentCliFlags'
+import {
+  LlmError,
+  type AgentRequest,
+  type CompleteRequest,
+  type CompleteResult,
+  type LlmErrorCode,
+  type LlmProvider,
+  type McpEndpoint
+} from './LlmProvider'
 
 const DEFAULT_TIMEOUT_MS = 5 * 60_000
 
@@ -25,6 +37,39 @@ export function cliArgs(req: CompleteRequest): string[] {
   ]
 }
 
+export function mcpConfig(mcp: McpEndpoint): object {
+  return { mcpServers: { [mcp.name]: { type: 'http', url: mcp.url, headers: { Authorization: `Bearer ${mcp.token}` } } } }
+}
+
+/** Only the tools of `req.mcp` are allowed; the CLI's own tools, other MCP servers and user settings are off. */
+export function agentArgs(req: AgentRequest, configPath: string, flags: AgentCliFlags): string[] {
+  return [
+    '-p',
+    '--output-format',
+    'json',
+    '--json-schema',
+    JSON.stringify(req.schema),
+    '--model',
+    req.model,
+    '--max-budget-usd',
+    String(req.maxUsd),
+    ...(flags.maxTurns ? ['--max-turns', String(req.maxTurns)] : []),
+    '--tools',
+    '',
+    '--mcp-config',
+    configPath,
+    '--strict-mcp-config',
+    '--allowedTools',
+    flags.allowedTools === 'glob' ? `mcp__${req.mcp.name}__*` : `mcp__${req.mcp.name}`,
+    ...flags.permissionArgs,
+    '--no-session-persistence',
+    '--setting-sources',
+    '',
+    '--system-prompt',
+    req.system
+  ]
+}
+
 interface CliOutput {
   subtype?: string
   is_error?: boolean
@@ -36,7 +81,9 @@ interface CliOutput {
 }
 
 function classify(text: string, status: number | null | undefined, subtype: string | undefined): LlmErrorCode {
-  if (subtype?.includes('max_budget')) return 'budget_exceeded'
+  // The call's own --max-budget-usd: fails that paper, never the batch (budget_exceeded is BudgetGuard.admit's refusal).
+  if (subtype?.includes('max_budget')) return 'operation_budget'
+  if (subtype?.includes('max_turns')) return 'llm_invalid_output'
   if (status === 429 || /usage limit|rate limit|quota|limit (?:reached|will reset)/i.test(text)) return 'llm_quota'
   if (subtype?.includes('structured_output')) return 'llm_invalid_output'
   return 'llm_unavailable'
@@ -67,16 +114,39 @@ export function parseCliOutput(stdout: string, stderr: string, exitCode: number 
   return { value: out.structured_output, costUsd: cost, model: mainModel(out.modelUsage, requestedModel) }
 }
 
-/** Runs `claude -p` with no tools, no MCP servers, no user settings and no saved session. */
+/** Runs `claude -p`: plain completions with no tools, no MCP servers, no user settings and no saved session; agent runs with only the given MCP server's tools. */
 export class ClaudeCliProvider implements LlmProvider {
   constructor(
-    private readonly opts: { command?: string; prefixArgs?: string[]; env?: NodeJS.ProcessEnv; defaultTimeoutMs?: number } = {}
+    private readonly opts: {
+      command?: string
+      prefixArgs?: string[]
+      env?: NodeJS.ProcessEnv
+      defaultTimeoutMs?: number
+      cliFlags?: AgentCliFlags
+    } = {}
   ) {}
 
   complete(req: CompleteRequest): Promise<CompleteResult> {
+    return this.spawnCli(cliArgs(req), req)
+  }
+
+  /** The token travels in a 0600 temp file (never in argv) that is removed when the run ends, however it ends. */
+  async runAgent(req: AgentRequest): Promise<CompleteResult> {
+    if (req.signal?.aborted) throw abortError()
+    const dir = await mkdtemp(join(tmpdir(), 'research-mcp-'))
+    const configPath = join(dir, 'mcp.json')
+    try {
+      await writeFile(configPath, JSON.stringify(mcpConfig(req.mcp)), { mode: 0o600 })
+      return await this.spawnCli(agentArgs(req, configPath, this.opts.cliFlags ?? AGENT_CLI_FLAGS), req)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }
+
+  private spawnCli(args: string[], req: CompleteRequest): Promise<CompleteResult> {
     return new Promise((resolve, reject) => {
       if (req.signal?.aborted) return reject(abortError())
-      const child = spawn(this.opts.command ?? 'claude', [...(this.opts.prefixArgs ?? []), ...cliArgs(req)], {
+      const child = spawn(this.opts.command ?? 'claude', [...(this.opts.prefixArgs ?? []), ...args], {
         env: this.opts.env ?? process.env,
         stdio: ['pipe', 'pipe', 'pipe']
       })

@@ -2,7 +2,7 @@ import { join } from 'node:path'
 import { IndexCache } from '../../src/main/cache/IndexCache'
 import { BudgetGuard, limitsFromConfig } from '../../src/main/llm/BudgetGuard'
 import { CostLedger } from '../../src/main/llm/CostLedger'
-import type { CompleteRequest, CompleteResult, LlmProvider } from '../../src/main/llm/LlmProvider'
+import type { AgentRequest, CompleteRequest, CompleteResult, LlmProvider } from '../../src/main/llm/LlmProvider'
 import { DEFAULT_EXTRACTION_FORM } from '../../src/main/summary/extractionForm'
 import type { LlmOutput } from '../../src/main/summary/llmOutput'
 import { Summarizer } from '../../src/main/summary/Summarizer'
@@ -13,14 +13,30 @@ import { tmpDir } from './tmp'
 
 type Response = CompleteResult | Error | ((req: CompleteRequest) => CompleteResult | Error)
 
+export type AgentResponse = CompleteResult | Error | ((req: AgentRequest) => CompleteResult | Error | Promise<CompleteResult | Error>)
+
 export class FakeLlmProvider implements LlmProvider {
   readonly calls: CompleteRequest[] = []
-  constructor(private readonly responses: Response[]) {}
+  readonly agentCalls: AgentRequest[] = []
+  constructor(
+    private readonly responses: Response[],
+    private readonly agentResponses: AgentResponse[] = []
+  ) {}
 
   async complete(req: CompleteRequest): Promise<CompleteResult> {
     this.calls.push(req)
     const next = this.responses.length > 1 ? this.responses.shift()! : this.responses[0]
     const r = typeof next === 'function' ? next(req) : next
+    if (r instanceof Error) throw r
+    return r
+  }
+
+  /** The last configured response repeats; a function can call the tools at `req.mcp` (see helpers/mcp.ts). */
+  async runAgent(req: AgentRequest): Promise<CompleteResult> {
+    this.agentCalls.push(req)
+    if (this.agentResponses.length === 0) throw new Error('FakeLlmProvider: no agent response configured')
+    const next = this.agentResponses.length > 1 ? this.agentResponses.shift()! : this.agentResponses[0]
+    const r = typeof next === 'function' ? await next(req) : next
     if (r instanceof Error) throw r
     return r
   }
