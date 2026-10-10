@@ -66,12 +66,14 @@ code { font-family: ui-monospace, 'JetBrains Mono', monospace; font-size: 12px; 
 .banner.error { background: var(--error-soft); }
 .banner pre { white-space: pre-wrap; margin: 0; width: 100%; }
 
-.shell { display: flex; height: 100%; }
+/* Rail on the left; the relations.yaml notice, when present, takes a row under the view instead of covering it. */
+.shell { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; height: 100%; }
+.shell > .rail { grid-row: 1 / -1; }
 .rail { width: 52px; display: flex; flex-direction: column; gap: 6px; padding: 10px 6px; border-right: 1px solid var(--border); background: var(--surface); }
 .rail-item { width: 40px; height: 40px; font-size: 18px; border: none; background: none; }
 .rail-item.active { background: var(--accent-soft); }
 .rail-item:last-child { margin-top: auto; }
-.view { flex: 1; min-width: 0; height: 100%; overflow: hidden; }
+.view { min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
 
 .welcome { max-width: 420px; margin: 12vh auto; display: flex; flex-direction: column; gap: 14px; padding: 0 16px; }
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; }
@@ -228,5 +230,4 @@ mark { background: rgba(250, 204, 21, 0.45); }
 .typed-card p { margin: 0; }
 .typed-card textarea { width: 100%; }
 .typed-rejected { opacity: 0.75; }
-.type-chip { color: #fff; }
-.relations-file-banner { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 20; max-width: min(90ch, calc(100vw - 32px)); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); }
+.shell > .relations-file-banner { grid-column: 2; margin: 8px 12px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); }

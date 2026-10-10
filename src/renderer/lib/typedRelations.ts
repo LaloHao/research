@@ -14,6 +14,25 @@ export const TYPE_COLORS: Record<RelationType, string> = {
   same_problem: '#9c755f'
 }
 
+function luminance(hex: string): number {
+  const channel = (i: number): number => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5)
+}
+
+/** WCAG contrast ratio between two `#rrggbb` colors. */
+export function contrastRatio(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (hi + 0.05) / (lo + 0.05)
+}
+
+/** Text color for a chip on `background` (`#rrggbb`): dark or white, whichever contrasts more; the chip looks the same in both themes. */
+export function chipTextColor(background: string): string {
+  return contrastRatio(background, '#111111') >= contrastRatio(background, '#ffffff') ? '#111111' : '#ffffff'
+}
+
 /** "Loghub extiende a Drain"; symmetric types read without direction ("Drain y Loghub abordan el mismo problema"). */
 export function relationSentence(t: TFunction, r: Pick<TypedRelation, 'type' | 'from' | 'to'>, titleOf: (id: string) => string): string {
   return t(`typed.sentence.${r.type}`, { from: titleOf(r.from), to: titleOf(r.to) })

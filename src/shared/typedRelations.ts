@@ -6,6 +6,9 @@ export type RelationType = (typeof RELATION_TYPES)[number]
 /** No direction: `from`/`to` are stored in alphabetical order and the UI shows none. */
 export const SYMMETRIC_TYPES: ReadonlySet<RelationType> = new Set<RelationType>(['compares_with', 'same_problem'])
 
+/** Longest justification the user can save (renderer textarea and main-process validation). */
+export const MAX_JUSTIFICATION = 2000
+
 export const RELATION_STATUSES = ['suggested', 'confirmed', 'rejected'] as const
 export type RelationStatus = (typeof RELATION_STATUSES)[number]
 

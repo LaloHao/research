@@ -1,5 +1,6 @@
 import type { ReviewItem } from '../../shared/summary'
 import {
+  MAX_JUSTIFICATION,
   orient,
   otherEnd,
   relationId,
@@ -78,8 +79,6 @@ export function reverse(r: TypedRelation, now: string): TypedRelation {
   if (SYMMETRIC_TYPES.has(r.type)) throw new InvalidEdit(`Relation ${r.id} has no direction`)
   return { ...r, from: r.to, to: r.from, status: 'confirmed', edited: true, updated_at: now }
 }
-
-export const MAX_JUSTIFICATION = 2000
 
 /** The user's own justification; the status is kept (editing is not reviewing). */
 export function withJustification(r: TypedRelation, text: string, now: string): TypedRelation {

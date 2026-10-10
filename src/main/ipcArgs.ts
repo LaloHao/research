@@ -2,8 +2,7 @@ import { z } from 'zod'
 import { CANDIDATE_DIRECTIONS, OPENALEX_ID } from '../shared/relations'
 import { PDF_POLICIES } from '../shared/schemas'
 import { ExtractionFormSchema, LLM_MODELS, ThesisContextSchema } from '../shared/summary'
-import { RELATION_ID, RELATION_STATUSES, RELATION_TYPES } from '../shared/typedRelations'
-import { MAX_JUSTIFICATION } from './relations/relationMerge'
+import { MAX_JUSTIFICATION, RELATION_ID, RELATION_STATUSES, RELATION_TYPES } from '../shared/typedRelations'
 
 const paperIdSchema = z.string().regex(/^[a-z][a-z0-9]*$/)
 const facetKeySchema = z.string().regex(/^[a-z][a-z0-9_]*$/)

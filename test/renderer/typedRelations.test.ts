@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { TFunction } from 'i18next'
-import { availableTypes, firstEvidence, isDirected, relationSentence, splitEvidence, TYPE_COLORS } from '../../src/renderer/lib/typedRelations'
+import { availableTypes, chipTextColor, contrastRatio, firstEvidence, isDirected, relationSentence, splitEvidence, TYPE_COLORS } from '../../src/renderer/lib/typedRelations'
 import { RELATION_TYPES } from '../../src/shared/typedRelations'
 
 const t = ((key: string, options?: Record<string, unknown>) => (options ? `${key} ${JSON.stringify(options)}` : key)) as unknown as TFunction
@@ -42,5 +42,13 @@ describe('typed relation helpers', () => {
 
   it('has one distinct color per type', () => {
     expect(new Set(RELATION_TYPES.map((type) => TYPE_COLORS[type])).size).toBe(RELATION_TYPES.length)
+  })
+
+  it('picks a readable chip text color for every type color', () => {
+    expect(chipTextColor('#ffffff')).toBe('#111111')
+    expect(chipTextColor('#000000')).toBe('#ffffff')
+    expect(chipTextColor('#f28e2b')).toBe('#111111')
+    expect(contrastRatio('#ffffff', '#000000')).toBeCloseTo(21)
+    for (const type of RELATION_TYPES) expect(contrastRatio(TYPE_COLORS[type], chipTextColor(TYPE_COLORS[type]))).toBeGreaterThanOrEqual(4.5)
   })
 })

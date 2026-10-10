@@ -452,6 +452,7 @@
     "back_to_suggested": "Devolver a sugerida",
     "restore": "Restaurar",
     "undo": "Deshacer",
+    "retry": "Reintentar",
     "done": {
       "confirmed": "Relación confirmada.",
       "rejected": "Relación rechazada.",

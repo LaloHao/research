@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { RelationDecisionResult } from '../../../shared/ipc'
-import type { PaperRelations, RelationEvidence, RelationStatus, RelationType, RelationView } from '../../../shared/typedRelations'
+import { MAX_JUSTIFICATION, type PaperRelations, type RelationEvidence, type RelationStatus, type RelationType, type RelationView } from '../../../shared/typedRelations'
 import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
-import { availableTypes, isDirected, relationSentence, splitEvidence, TYPE_COLORS, UNDO_MS } from '../../lib/typedRelations'
+import { availableTypes, chipTextColor, isDirected, relationSentence, splitEvidence, TYPE_COLORS, UNDO_MS } from '../../lib/typedRelations'
 import { formatDate, type OpenEvidence } from '../summary/FieldCard'
 
 type Done = 'confirmed' | 'rejected' | 'suggested' | 'retyped' | 'reversed' | 'justified'
-type Act = (action: () => Promise<RelationDecisionResult>, done: Done) => void
+/** Runs a review decision; `onOk` runs only when it succeeded. */
+type Act = (action: () => Promise<RelationDecisionResult>, done: Done, onOk?: () => void) => void
 
 function Quotes({ evidence, onOpen }: { evidence: RelationEvidence[]; onOpen?: OpenEvidence }): React.JSX.Element {
   const { t } = useTranslation()
@@ -58,7 +59,7 @@ function RelationCard({
   return (
     <div className={`typed-card typed-${relation.status}`}>
       <div className="row small">
-        <span className="chip type-chip" style={{ background: TYPE_COLORS[relation.type] }}>
+        <span className="chip type-chip" style={{ background: TYPE_COLORS[relation.type], color: chipTextColor(TYPE_COLORS[relation.type]) }}>
           {t(`typed.types.${relation.type}`)}
         </span>
         {relation.edited && <span className="chip chip-edited">{t('typed.edited')}</span>}
@@ -69,15 +70,12 @@ function RelationCard({
       </p>
       {editing ? (
         <div className="editor">
-          <textarea value={draft} rows={3} onChange={(e) => setDraft(e.target.value)} />
+          <textarea value={draft} rows={3} maxLength={MAX_JUSTIFICATION} onChange={(e) => setDraft(e.target.value)} />
           <div className="row">
             <button
               className="small primary"
               disabled={busy || !draft.trim()}
-              onClick={() => {
-                act(() => window.research.relations.editJustification(relation.id, draft), 'justified')
-                setEditing(false)
-              }}
+              onClick={() => act(() => window.research.relations.editJustification(relation.id, draft), 'justified', () => setEditing(false))}
             >
               {t('summary.save')}
             </button>
@@ -184,7 +182,8 @@ export function TypedRelationsSection({
   const { t } = useTranslation()
   const [data, setData] = useState<PaperRelations | null>(null)
   const [busy, setBusy] = useState(false)
-  const [notice, setNotice] = useState<{ error: boolean; text: string } | null>(null)
+  /** `load`: a failed refresh, cleared by the next successful one. */
+  const [notice, setNotice] = useState<{ error: boolean; text: string; load?: boolean } | null>(null)
   const [undo, setUndo] = useState<{ token: string; text: string } | null>(null)
   const [showRejected, setShowRejected] = useState(false)
   const request = useRef(0)
@@ -194,10 +193,12 @@ export function TypedRelationsSection({
     const token = ++request.current
     window.research.relations.forPaper(paperId).then(
       (next) => {
-        if (token === request.current) setData(next)
+        if (token !== request.current) return
+        setData(next)
+        setNotice((n) => (n?.load ? null : n))
       },
       () => {
-        if (token === request.current) setNotice({ error: true, text: errorText(t, 'unknown') })
+        if (token === request.current) setNotice({ error: true, text: errorText(t, 'unknown'), load: true })
       }
     )
   }, [paperId, t])
@@ -216,7 +217,7 @@ export function TypedRelationsSection({
     setUndo(null)
   }
 
-  const act: Act = (action, done) => {
+  const act: Act = (action, done, onOk) => {
     if (busy) return
     setBusy(true)
     setNotice(null)
@@ -224,6 +225,7 @@ export function TypedRelationsSection({
       (r) => {
         setBusy(false)
         if (!r.ok) return setNotice({ error: true, text: errorText(t, r.error) })
+        onOk?.()
         clearUndo()
         setUndo({ token: r.undoToken, text: t(`typed.done.${done}`) })
         undoTimer.current = setTimeout(() => setUndo(null), UNDO_MS)
@@ -238,12 +240,14 @@ export function TypedRelationsSection({
   const revert = (): void => {
     if (!undo || busy) return
     const { token } = undo
-    clearUndo()
     setBusy(true)
+    setNotice(null)
+    // The token stays until it succeeds (or the notice expires), so a failed undo can be retried.
     window.research.relations.revert(token).then(
       (r) => {
         setBusy(false)
-        if (!r.ok) setNotice({ error: true, text: errorText(t, r.error) })
+        if (r.ok) clearUndo()
+        else setNotice({ error: true, text: errorText(t, r.error) })
       },
       () => {
         setBusy(false)
@@ -268,7 +272,17 @@ export function TypedRelationsSection({
     )
   }
 
-  if (!data) return <p className="muted small">{t('relations.loading')}</p>
+  if (!data) {
+    if (!notice?.load) return <p className="muted small">{t('relations.loading')}</p>
+    return (
+      <div className="banner error">
+        <span>{notice.text}</span>
+        <button className="small" onClick={refresh}>
+          {t('typed.retry')}
+        </button>
+      </div>
+    )
+  }
   const all = [...data.suggested, ...data.confirmed, ...data.rejected]
   const card = (r: RelationView): React.JSX.Element => (
     <RelationCard key={r.id} relation={r} all={all} paperId={paperId} title={title} busy={busy} act={act} onOpenEvidence={onOpenEvidence} onSelectPaper={onSelectPaper} />
