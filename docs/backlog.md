@@ -4,6 +4,8 @@
 
 - Reorder facets in the extraction form editor.
 - Have Claude suggest facets (and values) from the thesis's context.
+- Remove papers with a trash (next, right after stage 3b): today the app has no way to remove a paper. "Quitar de la biblioteca" moves `papers/<key>/` (PDF, summary, extraction, notes) to `.trash/<key>/` inside the project, its relations and dismissals stay recoverable, and a Papelera view restores or empties it (emptying asks for confirmation). Removing never deletes data silently.
+- Personal shared library across projects (after stages 4–5): a store outside the projects (app data folder or a user-chosen, git-synced folder) keyed by DOI/arXiv/OpenAlex/PDF hash, holding PDFs and analyses. Adding a paper to any project offers to reuse what is compatible: summary fields when the content language matches, facets whose definition is identical, never the thesis relation; verified/edited statuses kept (optionally re-review). Papers removed from a project stay there.
 - Git sync from the app: a "Sincronizar" button that pulls, commits and pushes the project folder (git or git LFS for PDFs), shows the last sync time, warns when there are unpushed changes before closing, and reports conflicts clearly (the app already refuses to overwrite files with conflict markers). Today syncing between computers is done by hand with `git pull` / `git commit` / `git push`.
 
 ## Upcoming stages
@@ -11,7 +13,7 @@
 - Stage 3b: typed relations between papers suggested by Claude (`extends`, `uses_method_of`, `compares_with`, `contradicts`, `replicates`, `same_problem`) over stage 3a's candidates (citations and similar pairs), with a review flow like summaries.
 - Principle for every future LLM use (3b, chat): Claude gets **read-only tools** over the library (full-text search, semantic search, grep over the project files, reading a paper's pages, reading a summary and its facets, querying citations and neighbours) and never write tools; in 3b the relation suggester uses them to look for evidence.
 - Stage 4: chat (per paper and global) over the library.
-- Stage 5: formal systematic mapping.
+- Stage 5: formal systematic mapping. Design decision already taken: a project can hold **several mappings** (each with its own protocol, research questions, inclusion/exclusion criteria, search log and screening) over one shared library, so papers, PDFs and summaries are never analysed twice; excluding a paper from one mapping never removes it from the library.
 
 ## Stage 2 technical minutiae
 
