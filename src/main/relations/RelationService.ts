@@ -38,6 +38,8 @@ import type { RelationSuggester } from './RelationSuggester'
 const BATCH_STOPPERS = new Set(['llm_quota', 'budget_exceeded'])
 const SUMMARIZED = new Set(['generated', 'reviewed'])
 const MAX_UNDO = 100
+/** After a failed analysis the automatic trigger leaves that paper alone this long (the user can still ask). */
+export const AUTO_RETRY_COOLDOWN_MS = 24 * 3600_000
 
 export interface RelationServiceDeps {
   store: ProjectStore
@@ -61,6 +63,8 @@ export class RelationService {
   private indexedHash: string | null | undefined = undefined
   /** Undo token → decision; tokens never leave the main process with the relation data. */
   private readonly undo = new Map<string, RelationChange>()
+  /** Paper → when its last analysis failed (in memory: a restart lets the automatic trigger try again). */
+  private readonly failedAt = new Map<string, number>()
   /** Writes of relations.yaml run one after another. */
   private queue: Promise<unknown> = Promise.resolve()
 
@@ -151,9 +155,11 @@ export class RelationService {
         relations: mergeSuggestions(f.relations, paperId, result.relations, new Set(result.candidates.map((c) => c.id))),
         analyzed: { ...f.analyzed, [paperId]: { candidates: result.candidates.map((c) => c.id), at } }
       }))
+      this.failedAt.delete(paperId)
       return { paperId, message: result.candidates.length > 0 ? 'relations_suggested' : 'relations_no_candidates' }
     } catch (error) {
       if (opts.signal?.aborted) throw error
+      this.failedAt.set(paperId, Date.parse(this.now()))
       const facing = toUserFacing(error)
       if (opts.batchId && BATCH_STOPPERS.has(facing.code)) this.deps.cancelBatch(opts.batchId)
       throw facing
@@ -197,6 +203,9 @@ export class RelationService {
     if (!row || row.problem || row.text_status !== 'ok' || row.citations_status !== 'ok' || !SUMMARIZED.has(row.summary_status)) return
     if (this.file.status === 'conflict' || this.file.status === 'invalid') return
     if (!this.needsAnalysis(paperId)) return
+    // A paper that keeps failing (timeouts, invalid answers) is not retried, and paid for, after every job.
+    const failed = this.failedAt.get(paperId)
+    if (failed !== undefined && Date.parse(this.now()) - failed < AUTO_RETRY_COOLDOWN_MS) return
     await this.request(paperId, { batchId: `auto-${this.now().slice(0, 10)}` })
   }
 

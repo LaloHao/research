@@ -190,6 +190,8 @@ export interface CostEntry {
   model: string
   cost_usd: number
   operation: CostOperation
+  /** The call was cut off (timeout, cancel) before it reported its cost: `cost_usd` is the per-operation cap. */
+  estimated?: true
 }
 
 /** The `thesis` section has a single key, `relation`. */

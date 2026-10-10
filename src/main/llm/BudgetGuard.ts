@@ -8,8 +8,8 @@ export interface BudgetLimits {
 }
 
 export interface Reservation {
-  /** Records the real cost; the reservation is freed. */
-  settle(actualUsd: number): void
+  /** Records the cost; the reservation is freed. An `estimated` cost (a run cut off) counts but does not move the estimate. */
+  settle(actualUsd: number, opts?: { estimated?: boolean }): void
   /** Frees the reservation without spending (the call never happened). */
   release(): void
 }
@@ -59,12 +59,12 @@ export class BudgetGuard {
       if (batchId !== undefined) this.batchReserved.set(batchId, (this.batchReserved.get(batchId) ?? 0) - estimate)
     }
     return {
-      settle: (actualUsd) => {
+      settle: (actualUsd, opts) => {
         if (done) return
         done = true
         unreserve()
         if (batchId !== undefined) this.batchSpent.set(batchId, (this.batchSpent.get(batchId) ?? 0) + actualUsd)
-        this.estimates.set(operation, Math.max(this.estimates.get(operation) ?? 0, actualUsd))
+        if (!opts?.estimated) this.estimates.set(operation, Math.max(this.estimates.get(operation) ?? 0, actualUsd))
       },
       release: () => {
         if (done) return

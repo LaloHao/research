@@ -33,4 +33,13 @@ describe('CostLedger', () => {
       ['b', 'suggest_relations']
     ])
   })
+
+  it('marks an estimated charge (a run cut off before it reported its cost) and counts it in the month', async () => {
+    const store = await ProjectStore.create(await tmpDir(), 'Thesis')
+    const ledger = new CostLedger(store, '11111111-1111-1111-1111-111111111111', () => new Date('2026-10-10T12:00:00.000Z'))
+    await ledger.append({ paperId: 'a', model: 'sonnet', costUsd: 0.1 })
+    await ledger.append({ paperId: 'b', model: 'sonnet', costUsd: 0.5, estimated: true })
+    expect((await store.readCosts()).map((c) => c.estimated)).toEqual([undefined, true])
+    expect(await ledger.monthTotal()).toBeCloseTo(0.6)
+  })
 })

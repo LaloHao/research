@@ -123,6 +123,18 @@ describe('RelationSuggester', () => {
     expect((await store.readCosts()).map((c) => c.cost_usd)).toEqual([0.2])
   })
 
+  it('records a timed-out or cancelled run at the per-operation cap, marked as estimated, without raising the estimate', async () => {
+    const aborted = Object.assign(new DOMException('The operation was aborted.', 'AbortError'), { costUsd: 0.5, estimated: true })
+    const { suggester, store, budget } = await setup([new LlmError('llm_timeout', 0.5, { estimated: true }), aborted])
+    await expect(suggester.suggest({ paperId: LOGHUB_ID, existing: [], batchId: 'b' })).rejects.toMatchObject({ code: 'llm_timeout' })
+    await expect(suggester.suggest({ paperId: LOGHUB_ID, existing: [], batchId: 'b' })).rejects.toMatchObject({ name: 'AbortError' })
+    expect((await store.readCosts()).map((c) => [c.cost_usd, c.estimated, c.operation, c.batch_id])).toEqual([
+      [0.5, true, 'suggest_relations', 'b'],
+      [0.5, true, 'suggest_relations', 'b']
+    ])
+    expect(budget.currentEstimate('suggest_relations')).toBe(0.25)
+  })
+
   it('reports agent_tools_unavailable before spending when the tool server cannot start', async () => {
     const { suggester, provider, budget } = await setup([agentResult()], async () => {
       throw new Error('EADDRINUSE')

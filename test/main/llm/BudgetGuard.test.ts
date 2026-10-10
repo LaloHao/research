@@ -19,6 +19,13 @@ describe('BudgetGuard', () => {
     expect(g.currentEstimate('summarize')).toBe(0.05)
   })
 
+  it('counts an estimated charge in the batch without learning it as the estimate', async () => {
+    const g = new BudgetGuard(limits({ perBatchUsd: 0.5 }), async () => 0, 0.05, { suggest_relations: 0.25 })
+    ;(await g.admit('b', 'suggest_relations')).settle(0.5, { estimated: true })
+    expect(g.currentEstimate('suggest_relations')).toBe(0.25)
+    await expect(g.admit('b', 'suggest_relations')).rejects.toMatchObject({ code: 'budget_exceeded' })
+  })
+
   it('admits the first call of a batch even on a tiny budget, then stops at the cap', async () => {
     const g = new BudgetGuard(limits({ perBatchUsd: 0.1 }), async () => 0)
     const r1 = await g.admit('b')

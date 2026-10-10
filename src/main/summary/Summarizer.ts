@@ -2,7 +2,7 @@ import type { ExtractionFile, FacetDef, LlmModel, SummaryFile } from '../../shar
 import type { IndexCache } from '../cache/IndexCache'
 import type { BudgetGuard } from '../llm/BudgetGuard'
 import type { CostLedger } from '../llm/CostLedger'
-import { LlmError, type LlmProvider } from '../llm/LlmProvider'
+import { failedCallCost, LlmError, type LlmProvider } from '../llm/LlmProvider'
 import { UserFacingError } from '../library/UserFacingError'
 import { ConflictError } from '../project/errors'
 import type { ProjectStore } from '../project/ProjectStore'
@@ -63,6 +63,7 @@ export class Summarizer {
 
     const reservation = await budget.admit(req.batchId)
     let spent = 0
+    let estimated = false
     let model: string = req.model ?? llm.model
     try {
       const base = {
@@ -81,9 +82,11 @@ export class Summarizer {
         try {
           result = await provider.complete({ ...base, input })
         } catch (error) {
-          if (error instanceof LlmError && error.costUsd > 0) {
-            spent += error.costUsd
-            await ledger.append({ paperId: id, batchId: req.batchId, model, costUsd: error.costUsd })
+          const charge = failedCallCost(error)
+          if (charge.costUsd > 0) {
+            spent += charge.costUsd
+            estimated ||= charge.estimated
+            await ledger.append({ paperId: id, batchId: req.batchId, model, costUsd: charge.costUsd, estimated: charge.estimated })
           }
           throw error
         }
@@ -101,7 +104,7 @@ export class Summarizer {
       await this.write(id, paper.value.title, checked.summary, checked.extraction, form.form.facets)
       return { costUsd: spent, evidenceFound: checked.found, evidenceTotal: checked.total }
     } finally {
-      reservation.settle(spent)
+      reservation.settle(spent, { estimated })
     }
   }
 

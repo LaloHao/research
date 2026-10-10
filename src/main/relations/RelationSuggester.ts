@@ -3,7 +3,7 @@ import type { TypedRelation } from '../../shared/typedRelations'
 import type { IndexCache } from '../cache/IndexCache'
 import type { BudgetGuard } from '../llm/BudgetGuard'
 import type { CostLedger } from '../llm/CostLedger'
-import { LlmError, type CompleteResult, type LlmProvider } from '../llm/LlmProvider'
+import { failedCallCost, LlmError, type CompleteResult, type LlmProvider } from '../llm/LlmProvider'
 import { UserFacingError } from '../library/UserFacingError'
 import { MCP_SERVER_NAME, type LibraryMcpHandle, type LibraryMcpOptions } from '../mcp/LibraryMcpServer'
 import type { ProjectStore } from '../project/ProjectStore'
@@ -81,6 +81,7 @@ export class RelationSuggester {
     const llm = store.config.llm
     const reservation = await budget.admit(req.batchId, 'suggest_relations')
     let spent = 0
+    let estimated = false
     let model: string = req.model ?? llm.model
     try {
       const tools = await this.deps.startTools({ maxToolCalls: MAX_TURNS }).catch((error: unknown) => {
@@ -101,9 +102,12 @@ export class RelationSuggester {
           timeoutMs: AGENT_TIMEOUT_MS
         })
       } catch (error) {
-        if (error instanceof LlmError && error.costUsd > 0) {
-          spent += error.costUsd
-          await ledger.append({ paperId: id, batchId: req.batchId, model, costUsd: error.costUsd, operation: 'suggest_relations' })
+        // A timed-out or cancelled run is charged at the per-operation cap (estimated), so batch and monthly caps count it.
+        const charge = failedCallCost(error)
+        if (charge.costUsd > 0) {
+          spent += charge.costUsd
+          estimated = charge.estimated
+          await ledger.append({ paperId: id, batchId: req.batchId, model, costUsd: charge.costUsd, operation: 'suggest_relations', estimated: charge.estimated })
         }
         throw error
       } finally {
@@ -136,7 +140,7 @@ export class RelationSuggester {
       })
       return { relations, candidates, costUsd: spent, toolCalls, dropped: parsed.dropped, evidenceFound, evidenceTotal }
     } finally {
-      reservation.settle(spent)
+      reservation.settle(spent, { estimated })
     }
   }
 

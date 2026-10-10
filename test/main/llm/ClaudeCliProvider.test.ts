@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { agentArgs, ClaudeCliProvider, cliArgs, mcpConfig, parseCliOutput } from '../../../src/main/llm/ClaudeCliProvider'
-import { LlmError } from '../../../src/main/llm/LlmProvider'
+import { failedCallCost, LlmError } from '../../../src/main/llm/LlmProvider'
 import { toUserFacing } from '../../../src/main/library/UserFacingError'
 import { startLibraryMcpServer } from '../../../src/main/mcp/LibraryMcpServer'
 import { stubTools } from '../../helpers/mcp'
@@ -87,17 +87,26 @@ describe('ClaudeCliProvider', () => {
     await expect(p.complete(req)).rejects.toMatchObject({ code: 'llm_unavailable' })
   })
 
-  it('kills a hung process after the timeout', async () => {
+  it('kills a hung process after the timeout, charging the per-operation cap as an estimate', async () => {
     const { p } = await provider('hang')
-    await expect(p.complete({ ...req, timeoutMs: 300 })).rejects.toMatchObject({ code: 'llm_timeout' })
+    await expect(p.complete({ ...req, timeoutMs: 300 })).rejects.toMatchObject({ code: 'llm_timeout', costUsd: 0.5, estimated: true })
   })
 
-  it('kills the process when the job is cancelled', async () => {
+  it('kills the process when the job is cancelled, charging the per-operation cap as an estimate', async () => {
     const { p } = await provider('hang')
     const ac = new AbortController()
     const pending = p.complete({ ...req, signal: ac.signal })
     setTimeout(() => ac.abort(), 100)
-    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    const error = await pending.catch((e: unknown) => e)
+    expect(error).toMatchObject({ name: 'AbortError' })
+    expect(failedCallCost(error)).toEqual({ costUsd: 0.5, estimated: true })
+  })
+
+  it('charges nothing when cancelled before the CLI starts', async () => {
+    const { p } = await provider('hang')
+    const error = await p.complete({ ...req, signal: AbortSignal.abort() }).catch((e: unknown) => e)
+    expect(error).toMatchObject({ name: 'AbortError' })
+    expect(failedCallCost(error)).toEqual({ costUsd: 0, estimated: false })
   })
 
   it('becomes a user-facing error with the same code', () => {
@@ -211,7 +220,7 @@ describe('ClaudeCliProvider.runAgent', () => {
 
   it('kills a hung agent after the timeout and still removes the config', async () => {
     const { p, log } = await provider('hang')
-    await expect(p.runAgent({ ...agentReq, timeoutMs: 300 })).rejects.toMatchObject({ code: 'llm_timeout' })
+    await expect(p.runAgent({ ...agentReq, timeoutMs: 300 })).rejects.toMatchObject({ code: 'llm_timeout', costUsd: 0.5, estimated: true })
     const call = JSON.parse((await readFile(log, 'utf8')).trim().split('\n')[0])
     expect(existsSync(call.args[call.args.indexOf('--mcp-config') + 1])).toBe(false)
   })

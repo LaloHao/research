@@ -121,6 +121,22 @@ describe('RelationService', () => {
     expect(enqueued).toEqual([])
   })
 
+  it('does not auto-retry a paper whose analysis failed in the last 24 hours; the user can still ask', async () => {
+    let now = new Date(NOW)
+    const { service, store, cache, enqueued } = await setupRelations({ agent: [new LlmError('llm_timeout', 0.5, { estimated: true }), agentResult()], now: () => now })
+    await store.updateConfig({ llm: { ...store.config.llm, auto_suggest_relations: true } })
+    cache.setSummaryState(LOGHUB_ID, 'generated', 3, '', 'm')
+    await expect(service.run(LOGHUB_ID, { batchId: 'auto-2026-10-10' })).rejects.toMatchObject({ code: 'llm_timeout' })
+    await service.autoAfter(LOGHUB_ID)
+    expect(enqueued).toEqual([])
+    await service.request(LOGHUB_ID, { force: true })
+    expect(enqueued).toEqual([{ type: 'suggest_relations', paperId: LOGHUB_ID, force: true }])
+    enqueued.length = 0
+    now = new Date(Date.parse(NOW) + 25 * 3600_000)
+    await service.autoAfter(LOGHUB_ID)
+    expect(enqueued).toEqual([{ type: 'suggest_relations', paperId: LOGHUB_ID, batchId: 'auto-2026-10-11' }])
+  })
+
   it('plans and queues a batch, and never analyzes the same pair twice from both sides unless forced', async () => {
     const { service, enqueued, provider } = await setupRelations()
     expect(await service.plan()).toEqual({ count: 2, estimateUsd: 0.5, batchLimitUsd: 10 })

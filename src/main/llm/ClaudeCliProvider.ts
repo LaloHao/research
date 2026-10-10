@@ -160,13 +160,14 @@ export class ClaudeCliProvider implements LlmProvider {
         req.signal?.removeEventListener('abort', onAbort)
         fn()
       }
+      // Killed after it started: its real cost is unknown, so the per-operation cap it may spend is charged as an estimate.
       const timer = setTimeout(() => {
         child.kill('SIGKILL')
-        finish(() => reject(new LlmError('llm_timeout')))
+        finish(() => reject(new LlmError('llm_timeout', req.maxUsd, { estimated: true })))
       }, req.timeoutMs ?? this.opts.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS)
       const onAbort = (): void => {
         child.kill('SIGKILL')
-        finish(() => reject(abortError()))
+        finish(() => reject(Object.assign(abortError(), { costUsd: req.maxUsd, estimated: true })))
       }
       req.signal?.addEventListener('abort', onAbort)
       child.stdout.on('data', (d: Buffer) => (stdout += d.toString('utf8')))

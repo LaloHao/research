@@ -54,7 +54,7 @@ export function agentResult(relations: unknown[] = [LOGHUB_EXTENDS_DRAIN], costU
 }
 
 /** A project with Drain and Loghub seeded, a fake agent and a RelationService that records what it enqueues. */
-export async function setupRelations(opts: { agent?: AgentResponse[] } = {}) {
+export async function setupRelations(opts: { agent?: AgentResponse[]; now?: () => Date } = {}) {
   const store = await ProjectStore.create(await tmpDir(), 'Thesis')
   const cache = IndexCache.open(join(store.cacheDir, 'index.sqlite'))
   await seedPair(store, cache)
@@ -85,7 +85,7 @@ export async function setupRelations(opts: { agent?: AgentResponse[] } = {}) {
       cancelled.push(batchId)
       return 0
     },
-    now: () => new Date(NOW)
+    now: opts.now ?? (() => new Date(NOW))
   })
   await service.reindex()
   return { store, cache, provider, ledger, budget, suggester, service, enqueued, cancelled, emits: () => emits }
