@@ -157,3 +157,37 @@ describe('JobQueue limits by type', () => {
     expect(c.getJob(other)?.state).toBe('queued')
   })
 })
+
+describe('JobQueue progress and cancel by type', () => {
+  it('shows the progress a running job reports, then clears it', async () => {
+    let release: () => void = () => {}
+    const handler: JobHandler = async (_spec, _signal, report) => {
+      report(0.25)
+      report(0.251)
+      await new Promise<void>((resolve) => (release = resolve))
+      return {}
+    }
+    const queue = new JobQueue(await cache(), handler, 1)
+    let emits = 0
+    queue.onChange(() => emits++)
+    queue.start()
+    queue.enqueue({ type: 'model_download' })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(queue.list()[0]).toMatchObject({ state: 'running', progress: 0.25 })
+    const before = emits
+    release()
+    await queue.whenIdle()
+    expect(queue.list()[0]).toMatchObject({ state: 'done', progress: null })
+    expect(emits).toBeGreaterThan(before)
+  })
+
+  it('cancelTypes drops only the queued jobs of those types', async () => {
+    const c = await cache()
+    const queue = new JobQueue(c, async () => ({}), 1)
+    const a = queue.enqueue({ type: 'citations', paperId: 'p1' })
+    const b = queue.enqueue({ type: 'cited_by', paperId: 'p1' })
+    const other = queue.enqueue({ type: 'embed', paperId: 'p1' })
+    expect(queue.cancelTypes(['citations', 'cited_by'])).toBe(2)
+    expect([c.getJob(a)?.state, c.getJob(b)?.state, c.getJob(other)?.state]).toEqual(['cancelled', 'cancelled', 'queued'])
+  })
+})

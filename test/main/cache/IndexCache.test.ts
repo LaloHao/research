@@ -4,6 +4,7 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { IndexCache } from '../../../src/main/cache/IndexCache'
+import type { Citations } from '../../../src/shared/relations'
 import { samplePaper } from '../../helpers/papers'
 import { tmpDir } from '../../helpers/tmp'
 
@@ -171,5 +172,98 @@ describe('IndexCache jobs by type', () => {
     expect(cache.cancelQueuedBatch('b1', 't2')).toBe(1)
     expect(cache.getJob(a)?.state).toBe('running')
     expect(cache.hasActiveJob('summarize', 'p2')).toBe(false)
+  })
+})
+
+describe('IndexCache v5: relations', () => {
+  const citations: Citations = {
+    source: 'openalex',
+    fetched_at: '2026-10-09T12:00:00.000Z',
+    openalex_id: 'W2754665629',
+    references: ['W1', 'W2'],
+    cited_by_count: 904
+  }
+
+  it('indexes citations from paper.yaml: status, OpenAlex id and edges', async () => {
+    const { cache } = await openCache()
+    cache.upsertPaper(samplePaper({ citations }), 'h', false)
+    expect(cache.getPaper('he2017drain')?.citations_status).toBe('ok')
+    expect(cache.citationEdges()).toEqual([
+      { citing: 'he2017drain', cited: 'W1' },
+      { citing: 'he2017drain', cited: 'W2' }
+    ])
+    expect(cache.relationRows()).toEqual([
+      {
+        id: 'he2017drain',
+        title: samplePaper().title,
+        year: 2017,
+        doi: '10.1109/icws.2017.13',
+        openalex_id: 'W2754665629',
+        cited_by_count: 904,
+        citations_status: 'ok',
+        thesis_score: null
+      }
+    ])
+    cache.upsertPaper(samplePaper({ citations: { source: 'openalex', fetched_at: 't', references: [], unresolved: true } }), 'h2', false)
+    expect(cache.getPaper('he2017drain')?.citations_status).toBe('unresolved')
+    expect(cache.citationEdges()).toEqual([])
+  })
+
+  it('stores incoming citations, external works, vectors, neighbours and facets, and forgets them with the paper', async () => {
+    const { cache } = await openCache()
+    cache.upsertPaper(samplePaper(), 'h', false)
+    cache.setIncoming('he2017drain', ['W9', 'W8'], 't')
+    expect(cache.incomingEdges()).toEqual([
+      { paperId: 'he2017drain', citing: 'W8' },
+      { paperId: 'he2017drain', citing: 'W9' }
+    ])
+    const work = { openalexId: 'W8', title: 'T', year: 2020, authors: 'A', doi: '10.1/x', citedByCount: 3 }
+    cache.upsertExternalWorks([work], 't')
+    expect(cache.externalWorks(['W8', 'W7'])).toEqual(new Map([['W8', work]]))
+    cache.setVector('he2017drain', 'ih', 'm1', new Float32Array([0.5, 0.25]))
+    expect(cache.vectorMeta('he2017drain')).toEqual({ inputHash: 'ih', model: 'm1' })
+    expect([...cache.vectors('m1').get('he2017drain')!]).toEqual([0.5, 0.25])
+    expect(cache.vectors('m2').size).toBe(0)
+    cache.replaceSimilar([{ a: 'he2017drain', b: 'x', score: 0.5, reasons: [{ kind: 'coupling', shared: 2 }] }])
+    expect(cache.similarFor('he2017drain')).toEqual([{ other: 'x', score: 0.5, reasons: [{ kind: 'coupling', shared: 2 }] }])
+    expect(cache.allSimilar()).toHaveLength(1)
+    cache.setSimilarRows(new Map([['he2017drain', [{ a: 'he2017drain', b: 'y', score: 0.7, reasons: [] }]], ['x', []]]))
+    expect(cache.allSimilar().map((r) => [r.a, r.b])).toEqual([['he2017drain', 'y']])
+    cache.setFacets('he2017drain', [{ facet: 'task', value: 'log_parsing', reviewed: true }], 4)
+    expect(cache.facetRows()).toEqual([{ paperId: 'he2017drain', facet: 'task', value: 'log_parsing', reviewed: true, year: 2017 }])
+    expect(cache.relationRows()[0].thesis_score).toBe(4)
+    cache.removePaper('he2017drain')
+    expect([cache.incomingEdges(), cache.vectors('m1').size, cache.similarFor('he2017drain'), cache.facetRows()]).toEqual([[], 0, [], []])
+  })
+
+  it('clears every vector', async () => {
+    const { cache } = await openCache()
+    cache.upsertPaper(samplePaper(), 'h', false)
+    cache.setVector('he2017drain', 'ih', 'm1', new Float32Array([1]))
+    cache.clearVectors()
+    expect(cache.vectorMeta('he2017drain')).toBeNull()
+  })
+
+  it('cancels queued jobs by type and finds pending ones', async () => {
+    const { cache } = await openCache()
+    cache.insertJob(JSON.stringify({ type: 'citations', paperId: 'a' }), 't')
+    const running = cache.insertJob(JSON.stringify({ type: 'embed', paperId: 'a' }), 't')
+    cache.updateJob(running, { state: 'running' }, 't')
+    cache.insertJob(JSON.stringify({ type: 'model_download' }), 't')
+    expect(cache.hasQueuedJobs(['embed'])).toBe(false)
+    expect(cache.hasQueuedJobs(['embed', 'citations'])).toBe(true)
+    expect(cache.hasActiveJobOfType('model_download')).toBe(true)
+    expect(cache.cancelQueuedTypes(['citations', 'cited_by'], 't2')).toBe(1)
+    expect(cache.hasQueuedJobs(['citations'])).toBe(false)
+  })
+
+  it('rebuilds a v4 cache', async () => {
+    const file = join(await tmpDir(), 'index.sqlite')
+    const db = new DatabaseSync(file)
+    db.exec('CREATE TABLE papers (id TEXT PRIMARY KEY); PRAGMA user_version = 4')
+    db.close()
+    const cache = IndexCache.open(file)
+    cache.upsertPaper(samplePaper(), 'h', false)
+    expect(cache.getPaper('he2017drain')?.citations_status).toBe('none')
   })
 })
