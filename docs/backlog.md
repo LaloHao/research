@@ -54,3 +54,5 @@
 - Two different candidate queries running at once can fetch the same missing ids twice.
 - A cancelled model download leaves its `.tmp` files behind, and they count in the model's size on disk until the next download.
 - The local-model Download/Delete buttons in Settings aren't disabled while a download or delete is in flight (repeated clicks are harmless but can look unresponsive).
+- When a paper's stored OpenAlex id points to a work whose DOI differs from the paper's, the citation fetch falls back to the DOI but doesn't correct `identifiers.openalex`, so later metadata updates refetch citations again (two requests each time).
+- After a DOI change, the old work's incoming citations stay cached and "Buscar quién cita a mis papers" skips the paper for up to 7 days.
