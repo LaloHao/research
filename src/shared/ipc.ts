@@ -15,6 +15,7 @@ import type {
 import type { PdfPolicy } from './schemas'
 import type { AppSettings } from './settings'
 import type { ExtractionForm, FormImpact, FormInfo, LlmConfig, LlmModel, ReviewItem, Section, SummaryPlan, ThesisContext } from './summary'
+import type { PaperRelations, RelationPlan, RelationsFileState, RelationStatus, RelationType } from './typedRelations'
 
 export const IPC = {
   settingsGet: 'settings:get',
@@ -67,6 +68,18 @@ export const IPC = {
   modelsInfo: 'models:info',
   modelsDownload: 'models:download',
   modelsRemove: 'models:remove',
+  relationsForPaper: 'relations:for-paper',
+  relationsSuggest: 'relations:suggest',
+  relationsPlan: 'relations:plan',
+  relationsSuggestBatch: 'relations:suggest-batch',
+  relationsSetStatus: 'relations:set-status',
+  relationsChangeType: 'relations:change-type',
+  relationsReverse: 'relations:reverse',
+  relationsEditJustification: 'relations:edit-justification',
+  relationsRevert: 'relations:revert',
+  relationsFileState: 'relations:file-state',
+  relationsResolveConflict: 'relations:resolve-conflict',
+  relationsShowFile: 'relations:show-file',
   exportSave: 'export:save',
   flushDone: 'window:flush-done'
 } as const
@@ -91,6 +104,11 @@ export type PdfReadResult = { ok: true; data: Uint8Array | null } | { ok: false;
 export type ActionResult = { ok: true } | { ok: false; error: string }
 export type RunBatchResult = { ok: true; batchId: string; count: number } | { ok: false; error: string }
 export type SaveResult = { ok: true; path: string } | { ok: false; error?: string }
+
+/** A review decision on a typed relation; `undoToken` is what "Deshacer" sends back. */
+export type RelationDecisionResult = { ok: true; undoToken: string } | { ok: false; error: string }
+/** "Resolver automáticamente": how many invalid entries had to be left out. */
+export type ResolveConflictResult = { ok: true; dropped: number } | { ok: false; error: string }
 
 export interface LlmInfo {
   config: LlmConfig
@@ -177,6 +195,22 @@ export interface ResearchApi {
     info(): Promise<ModelInfo>
     download(): Promise<ActionResult>
     remove(): Promise<ActionResult>
+  }
+  relations: {
+    forPaper(id: string): Promise<PaperRelations>
+    /** Queues a suggestion for this paper; the user asked, so it runs even if its candidates did not change. */
+    suggest(id: string): Promise<ActionResult>
+    /** Papers (these, or all) with candidates their last analysis did not see, with the estimated cost. */
+    plan(ids?: string[]): Promise<RelationPlan>
+    suggestBatch(ids?: string[]): Promise<RunBatchResult>
+    setStatus(relationId: string, status: RelationStatus): Promise<RelationDecisionResult>
+    changeType(relationId: string, type: RelationType): Promise<RelationDecisionResult>
+    reverse(relationId: string): Promise<RelationDecisionResult>
+    editJustification(relationId: string, text: string): Promise<RelationDecisionResult>
+    revert(undoToken: string): Promise<ActionResult>
+    fileState(): Promise<RelationsFileState>
+    resolveConflict(): Promise<ResolveConflictResult>
+    showFile(): Promise<void>
   }
   exports: {
     /** Asks where to save, then writes the file there. */

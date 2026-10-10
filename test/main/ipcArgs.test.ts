@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { arg, ipcArgs } from '../../src/main/ipcArgs'
+import { arg, InvalidIpcArgument, ipcArgs } from '../../src/main/ipcArgs'
 
 describe('IPC argument validation', () => {
   it('accepts citation keys and rejects anything that could escape the papers folder', () => {
@@ -90,5 +90,25 @@ describe('IPC argument validation', () => {
     expect(arg(ipcArgs.exportData, new Uint8Array([1]), 'data')).toEqual(new Uint8Array([1]))
     expect(arg(ipcArgs.exportData, 'a,b\n', 'data')).toBe('a,b\n')
     expect(() => arg(ipcArgs.exportData, 42, 'data')).toThrow()
+  })
+})
+
+describe('typed relation arguments', () => {
+  it('accepts well-formed relation ids, statuses and types only', () => {
+    expect(arg(ipcArgs.relationId, 'he2017drain__zhu2020loghub__extends', 'id')).toBe('he2017drain__zhu2020loghub__extends')
+    expect(() => arg(ipcArgs.relationId, 'he2017drain__zhu2020loghub__cites', 'id')).toThrow(InvalidIpcArgument)
+    expect(() => arg(ipcArgs.relationId, '../relations.yaml', 'id')).toThrow(InvalidIpcArgument)
+    expect(arg(ipcArgs.relationStatus, 'rejected', 'status')).toBe('rejected')
+    expect(() => arg(ipcArgs.relationStatus, 'deleted', 'status')).toThrow(InvalidIpcArgument)
+    expect(arg(ipcArgs.relationType, 'same_problem', 'type')).toBe('same_problem')
+    expect(() => arg(ipcArgs.relationType, 'cites', 'type')).toThrow(InvalidIpcArgument)
+  })
+
+  it('accepts an undo token and a justification, nothing else', () => {
+    expect(arg(ipcArgs.undoToken, '3f2b8c1e-4a5d-4e6f-8a7b-9c0d1e2f3a4b', 'token')).toBe('3f2b8c1e-4a5d-4e6f-8a7b-9c0d1e2f3a4b')
+    expect(() => arg(ipcArgs.undoToken, { before: {}, after: {} }, 'token')).toThrow(InvalidIpcArgument)
+    expect(arg(ipcArgs.justification, '  Loghub reuses Drain.  ', 'text')).toBe('Loghub reuses Drain.')
+    expect(() => arg(ipcArgs.justification, '   ', 'text')).toThrow(InvalidIpcArgument)
+    expect(() => arg(ipcArgs.justification, 'x'.repeat(2001), 'text')).toThrow(InvalidIpcArgument)
   })
 })

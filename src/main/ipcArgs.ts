@@ -2,6 +2,8 @@ import { z } from 'zod'
 import { CANDIDATE_DIRECTIONS, OPENALEX_ID } from '../shared/relations'
 import { PDF_POLICIES } from '../shared/schemas'
 import { ExtractionFormSchema, LLM_MODELS, ThesisContextSchema } from '../shared/summary'
+import { RELATION_ID, RELATION_STATUSES, RELATION_TYPES } from '../shared/typedRelations'
+import { MAX_JUSTIFICATION } from './relations/relationMerge'
 
 const paperIdSchema = z.string().regex(/^[a-z][a-z0-9]*$/)
 const facetKeySchema = z.string().regex(/^[a-z][a-z0-9_]*$/)
@@ -61,7 +63,13 @@ export const ipcArgs = {
   facetFilters: z.array(z.strictObject({ facet: facetKeySchema, value: z.string().min(1) })).max(4),
   /** A bare file name for the save dialog's default: never a path. */
   exportName: z.string().regex(/^[\w.-]{1,100}\.(png|svg|csv)$/),
-  exportData: z.union([z.string(), z.custom<Uint8Array>((v) => v instanceof Uint8Array)])
+  exportData: z.union([z.string(), z.custom<Uint8Array>((v) => v instanceof Uint8Array)]),
+  relationId: z.string().regex(RELATION_ID),
+  relationStatus: z.enum(RELATION_STATUSES),
+  relationType: z.enum(RELATION_TYPES),
+  /** Undo sends back only the token the main process handed out; never relation data. */
+  undoToken: z.uuid(),
+  justification: z.string().trim().min(1).max(MAX_JUSTIFICATION)
 }
 
 export class InvalidIpcArgument extends Error {
