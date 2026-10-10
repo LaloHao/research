@@ -7,6 +7,7 @@ import type { PaperRow, TextStatus } from '../../shared/library'
 import type { Citations, CitationsStatus, ExternalWork, SimilarityReason } from '../../shared/relations'
 import type { Paper } from '../../shared/schemas'
 import type { SummaryStatus } from '../../shared/summary'
+import { TypedRelationSchema, type TypedRelation } from '../../shared/typedRelations'
 import type { Chunk } from '../extract/chunker'
 import type { DedupeEntry } from '../library/dedupe'
 import type { FacetRow, FacetValueRow } from '../map/facetStats'
@@ -26,7 +27,8 @@ export interface JobRow {
 }
 
 // 5: citations, external works, vectors, neighbours and facet values (stage 3a). 6: when citing works were fetched.
-const SCHEMA_VERSION = 6
+// 7: typed relations, an index of relations.yaml (stage 3b).
+const SCHEMA_VERSION = 7
 const TOKENIZER = "tokenize='unicode61 remove_diacritics 2'"
 const DDL = `
 CREATE TABLE papers (
@@ -76,10 +78,14 @@ CREATE TABLE external_works (openalex_id TEXT PRIMARY KEY, title TEXT, year INTE
 CREATE TABLE paper_vectors (paper_id TEXT PRIMARY KEY, input_hash TEXT NOT NULL, model TEXT NOT NULL, dims INTEGER NOT NULL, vector BLOB NOT NULL);
 CREATE TABLE similar_pairs (a TEXT NOT NULL, b TEXT NOT NULL, score REAL NOT NULL, reasons TEXT NOT NULL, PRIMARY KEY (a, b));
 CREATE TABLE paper_facets (paper_id TEXT NOT NULL, facet TEXT NOT NULL, value TEXT NOT NULL, reviewed INTEGER NOT NULL, PRIMARY KEY (paper_id, facet, value));
+CREATE TABLE typed_relations (id TEXT PRIMARY KEY, type TEXT NOT NULL, from_id TEXT NOT NULL, to_id TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL);
+CREATE INDEX typed_relations_from ON typed_relations (from_id);
+CREATE INDEX typed_relations_to ON typed_relations (to_id);
 `
 
 const PAPER_COLUMNS =
-  'id, title, authors_label, year, venue, kind, doi, arxiv, metadata_status, has_pdf, problem, added_at, text_status, summary_status, pending_review, summary_model, citations_status'
+  'id, title, authors_label, year, venue, kind, doi, arxiv, metadata_status, has_pdf, problem, added_at, text_status, summary_status, pending_review, summary_model, citations_status, ' +
+  "(SELECT COUNT(*) FROM typed_relations r WHERE r.status = 'suggested' AND (r.from_id = papers.id OR r.to_id = papers.id)) AS relations_pending"
 
 export interface RelationRow {
   id: string
@@ -427,6 +433,41 @@ export class IndexCache {
         )
         .all() as Record<string, unknown>[]
     ).map((r) => ({ paperId: r.paper_id as string, facet: r.facet as string, value: r.value as string, reviewed: Boolean(r.reviewed), year: num(r.year) }))
+  }
+
+  /** Mirrors relations.yaml: the whole table is replaced on every (re)index. */
+  replaceTypedRelations(relations: TypedRelation[]): void {
+    this.tx(() => {
+      this.db.exec('DELETE FROM typed_relations')
+      const insert = this.db.prepare('INSERT OR REPLACE INTO typed_relations (id, type, from_id, to_id, status, data) VALUES (?, ?, ?, ?, ?, ?)')
+      for (const r of relations) insert.run(r.id, r.type, r.from, r.to, r.status, JSON.stringify(r))
+    })
+  }
+
+  /** Sorted by id; with `paperId`, only the relations that involve that paper. */
+  typedRelations(paperId?: string): TypedRelation[] {
+    const rows = (
+      paperId
+        ? this.db.prepare('SELECT data FROM typed_relations WHERE from_id = ? OR to_id = ? ORDER BY id').all(paperId, paperId)
+        : this.db.prepare('SELECT data FROM typed_relations ORDER BY id').all()
+    ) as { data: string }[]
+    return rows.flatMap((r) => {
+      const parsed = TypedRelationSchema.safeParse(JSON.parse(r.data))
+      return parsed.success ? [parsed.data] : []
+    })
+  }
+
+  /** Full-text hits over the indexed chunks, best first; every word must appear (prefix match). */
+  searchChunks(query: string, opts: { paperId?: string; limit: number }): { paperId: string; page: number | null; text: string }[] {
+    const words = query.match(/[\p{L}\p{N}]+/gu)
+    if (!words) return []
+    const match = words.map((w) => `"${w}"*`).join(' ')
+    const filter = opts.paperId ? ' AND paper_id = ?' : ''
+    const params = opts.paperId ? [match, opts.paperId, opts.limit] : [match, opts.limit]
+    const rows = this.db
+      .prepare(`SELECT paper_id, page, text FROM chunks_fts WHERE chunks_fts MATCH ?${filter} ORDER BY bm25(chunks_fts) LIMIT ?`)
+      .all(...params) as { paper_id: string; page: number | null; text: string }[]
+    return rows.map((r) => ({ paperId: r.paper_id, page: r.page === null ? null : Number(r.page), text: r.text }))
   }
 
   hasQueuedJobs(types: string[]): boolean {

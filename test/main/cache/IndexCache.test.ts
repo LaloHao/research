@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { IndexCache } from '../../../src/main/cache/IndexCache'
 import type { Citations } from '../../../src/shared/relations'
+import { relationId, type TypedRelation } from '../../../src/shared/typedRelations'
 import { samplePaper } from '../../helpers/papers'
 import { tmpDir } from '../../helpers/tmp'
 
@@ -12,6 +13,19 @@ async function openCache(): Promise<{ cache: IndexCache; file: string }> {
   const file = join(await tmpDir(), '.cache', 'index.sqlite')
   return { cache: IndexCache.open(file), file }
 }
+
+const typed = (from: string, to: string, over: Partial<TypedRelation> = {}): TypedRelation => ({
+  id: relationId(from, to, 'extends'),
+  type: 'extends',
+  from,
+  to,
+  status: 'suggested',
+  edited: false,
+  justification: 'j',
+  evidence: [{ paper: from, page: 1, quote: 'q', found: true }],
+  updated_at: '2026-10-10T00:00:00.000Z',
+  ...over
+})
 
 describe('IndexCache papers', () => {
   it('upserts and lists papers with a display label', async () => {
@@ -265,5 +279,57 @@ describe('IndexCache v5: relations', () => {
     const cache = IndexCache.open(file)
     cache.upsertPaper(samplePaper(), 'h', false)
     expect(cache.getPaper('he2017drain')?.citations_status).toBe('none')
+  })
+})
+
+describe('IndexCache typed relations', () => {
+  it('replaces and lists relations, all or those of one paper', async () => {
+    const { cache } = await openCache()
+    const a = typed('zhu2020loghub', 'he2017drain')
+    const b = typed('am2019x', 'zz2020y', { status: 'confirmed' })
+    cache.replaceTypedRelations([a, b])
+    expect(cache.typedRelations()).toEqual([b, a])
+    expect(cache.typedRelations('he2017drain')).toEqual([a])
+    cache.replaceTypedRelations([b])
+    expect(cache.typedRelations('he2017drain')).toEqual([])
+  })
+
+  it('counts the suggestions that touch each paper in its row', async () => {
+    const { cache } = await openCache()
+    cache.upsertPaper(samplePaper(), 'h', false)
+    cache.upsertPaper(samplePaper({ id: 'zhu2020loghub', title: 'Loghub' }), 'h', false)
+    cache.replaceTypedRelations([typed('zhu2020loghub', 'he2017drain'), typed('am2019x', 'he2017drain', { status: 'rejected' })])
+    expect(cache.getPaper('he2017drain')?.relations_pending).toBe(1)
+    expect(cache.listPapers().map((r) => [r.id, r.relations_pending])).toEqual([
+      ['he2017drain', 1],
+      ['zhu2020loghub', 1]
+    ])
+  })
+
+  it('searches chunks best match first, optionally within one paper', async () => {
+    const { cache } = await openCache()
+    cache.upsertPaper(samplePaper(), 'h', false)
+    cache.upsertPaper(samplePaper({ id: 'zhu2020loghub', title: 'Loghub' }), 'h', false)
+    cache.setText('he2017drain', 't', 'ok', [
+      { index: 0, page: 1, text: 'Drain parses logs with a fixed depth tree.' },
+      { index: 1, page: 2, text: 'Evaluation on five datasets.' }
+    ])
+    cache.setText('zhu2020loghub', 't', 'ok', [{ index: 0, page: 3, text: 'We evaluate Drain and other parsers on Loghub.' }])
+    expect(cache.searchChunks('drain', { limit: 10 }).map((h) => h.paperId).sort()).toEqual(['he2017drain', 'zhu2020loghub'])
+    expect(cache.searchChunks('drain', { paperId: 'zhu2020loghub', limit: 10 })).toEqual([
+      { paperId: 'zhu2020loghub', page: 3, text: 'We evaluate Drain and other parsers on Loghub.' }
+    ])
+    expect(cache.searchChunks('evaluation datasets', { limit: 1 })).toEqual([{ paperId: 'he2017drain', page: 2, text: 'Evaluation on five datasets.' }])
+    expect(cache.searchChunks('  ', { limit: 5 })).toEqual([])
+  })
+
+  it('rebuilds a v6 index', async () => {
+    const file = join(await tmpDir(), '.cache', 'index.sqlite')
+    IndexCache.open(file).close()
+    const db = new DatabaseSync(file)
+    db.exec('PRAGMA user_version = 6')
+    db.close()
+    const cache = IndexCache.open(file)
+    expect(cache.typedRelations()).toEqual([])
   })
 })
