@@ -3,6 +3,7 @@ import { appendFile, mkdir, readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PaperSchema, ProjectConfigSchema, type Paper, type ProjectConfig } from '../../shared/schemas'
 import { parse } from 'yaml'
+import { SnowballSchema, type Snowball } from '../../shared/relations'
 import {
   ExtractionFileSchema,
   LlmConfigShape,
@@ -21,7 +22,7 @@ import { parseFrontmatterFile, parseYamlFile, toFrontmatter, toYaml } from './ya
 export const PROJECT_FILE = 'project.yaml'
 
 /** Blocks of project.yaml read leniently: an invalid one is replaced by defaults in memory but never on disk by accident. */
-const LENIENT_BLOCKS = { llm: LlmConfigShape, thesis: ThesisContextSchema } as const
+const LENIENT_BLOCKS = { llm: LlmConfigShape, thesis: ThesisContextSchema, snowball: SnowballSchema } as const
 type LenientBlock = keyof typeof LENIENT_BLOCKS
 type InvalidBlocks = Partial<Record<LenientBlock, unknown>>
 
@@ -56,7 +57,10 @@ export class ProjectStore {
   }
 
   async updateConfig(
-    patch: Partial<Pick<ProjectConfig, 'name' | 'content_language' | 'pdfs' | 'llm' | 'extraction_form'>> & { thesis?: ThesisContext }
+    patch: Partial<Pick<ProjectConfig, 'name' | 'content_language' | 'pdfs' | 'llm' | 'extraction_form'>> & {
+      thesis?: ThesisContext
+      snowball?: Snowball
+    }
   ): Promise<ProjectConfig> {
     const next = ProjectConfigSchema.parse({ ...this.cfg, ...patch })
     // An invalid llm/thesis block stays as the user wrote it unless this write replaces that block on purpose.
