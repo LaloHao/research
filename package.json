@@ -18,6 +18,7 @@
     "test:watch": "vitest",
     "eval:summaries": "vitest run --config vitest.eval.config.mts test/eval/summaries.eval.ts",
     "eval:similarity": "vitest run --config vitest.eval.config.mts test/eval/similarity.eval.ts",
+    "eval:relations": "vitest run --config vitest.eval.config.mts test/eval/relations.eval.ts",
     "check": "pnpm typecheck && pnpm test"
   },
   "dependencies": {
