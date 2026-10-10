@@ -22,6 +22,7 @@ import type { IndexCache } from '../cache/IndexCache'
 import type { BudgetGuard } from '../llm/BudgetGuard'
 import type { CostLedger } from '../llm/CostLedger'
 import { toUserFacing, UserFacingError } from '../library/UserFacingError'
+import { facetRowsFor } from '../map/facetStats'
 import type { ProjectStore } from '../project/ProjectStore'
 import { DEFAULT_EXTRACTION_FORM, formHash, loadForm } from './extractionForm'
 import { renderSummaryMarkdown } from './markdown'
@@ -79,6 +80,8 @@ export async function indexSummary(store: ProjectStore, cache: IndexCache, id: s
     summarySearchText(summary, extraction),
     summary?.generated.model ?? null
   )
+  // The map's charts, lenses and similarity read facet values from the index, never from the files.
+  cache.setFacets(id, facetRowsFor(extraction, facetDefs), extraction?.thesis_relation?.score ?? null)
 }
 
 /** Hash of the project's thesis context; null when there is none. */

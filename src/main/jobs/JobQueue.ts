@@ -1,7 +1,7 @@
 import type { JobRecord, JobSpec, JobType } from '../../shared/jobs'
 import type { IndexCache, JobRow } from '../cache/IndexCache'
 
-export type JobHandler = (spec: JobSpec, signal: AbortSignal) => Promise<{ paperId?: string; message?: string }>
+export type JobHandler = (spec: JobSpec, signal: AbortSignal, report: (progress: number) => void) => Promise<{ paperId?: string; message?: string }>
 
 export interface QueueLimits {
   total: number
@@ -11,6 +11,7 @@ export interface QueueLimits {
 /** Background work persisted in the cache, so a quit or crash resumes where it stopped. */
 export class JobQueue {
   private readonly running = new Map<number, { controller: AbortController; type: JobType }>()
+  private readonly progress = new Map<number, number>()
   private readonly listeners = new Set<() => void>()
   private idleWaiters: (() => void)[] = []
   private started = false
@@ -62,7 +63,7 @@ export class JobQueue {
   }
 
   list(limit = 50): JobRecord[] {
-    return this.cache.listJobs(limit).map(toRecord)
+    return this.cache.listJobs(limit).map((row) => toRecord(row, this.progress.get(row.id) ?? null))
   }
 
   onChange(listener: () => void): () => void {
@@ -109,10 +110,25 @@ export class JobQueue {
     return n
   }
 
+  /** Cancels every queued job of these types (e.g. OpenAlex's daily limit stops all pending citation work). */
+  cancelTypes(types: JobType[]): number {
+    const n = this.cache.cancelQueuedTypes(types, this.now())
+    if (n) this.emit()
+    return n
+  }
+
   private async run(job: JobRow, controller: AbortController): Promise<void> {
     const interrupted = (): 'queued' | 'cancelled' => (this.stopping ? 'queued' : 'cancelled')
+    const report = (value: number): void => {
+      const next = Math.max(0, Math.min(1, value))
+      const previous = this.progress.get(job.id)
+      // Only a change of the whole percentage is worth a 'jobs-changed' round trip to the UI.
+      if (previous !== undefined && Math.floor(previous * 100) === Math.floor(next * 100)) return
+      this.progress.set(job.id, next)
+      this.emit()
+    }
     try {
-      const result = await this.handler(JSON.parse(job.spec) as JobSpec, controller.signal)
+      const result = await this.handler(JSON.parse(job.spec) as JobSpec, controller.signal, report)
       this.cache.updateJob(
         job.id,
         { state: controller.signal.aborted ? interrupted() : 'done', message: result.message ?? null, paper_id: result.paperId ?? null },
@@ -125,6 +141,7 @@ export class JobQueue {
         this.now()
       )
     } finally {
+      this.progress.delete(job.id)
       this.running.delete(job.id)
       this.emit()
       this.pump()
@@ -136,13 +153,13 @@ export class JobQueue {
   }
 }
 
-function toRecord(row: JobRow): JobRecord {
+function toRecord(row: JobRow, progress: number | null): JobRecord {
   return {
     id: row.id,
     spec: JSON.parse(row.spec) as JobSpec,
     state: row.state,
     message: row.message,
-    progress: null,
+    progress,
     paperId: row.paper_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at
