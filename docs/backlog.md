@@ -65,10 +65,13 @@
 - A relation id is the unordered pair plus the type, so `A extends B` and `B extends A` share an id: reversing a direction keeps the id.
 - A batch plan counts both papers of a new pair; at run time the second one skips the pair, so the estimate can be higher than the real cost.
 - Relations of a paper removed from the library stay in `relations.yaml`; their other end shows the key instead of a title.
-- A relation suggestion is not retried on invalid output (an agent run is expensive); the `llm_invalid_output` message still says "dos veces", which is only true for summaries.
+- A relation suggestion is not retried on invalid output (an agent run is expensive).
 - `find_in_paper` searches literal text only (no model-supplied regular expressions run in the main process); it folds case and accents per character, so a ligature split across a line break may not match.
 - The MCP server is stateless: a new `McpServer` per HTTP request, with the call budget kept outside.
-- Undo tokens live in the main process (the last 100 decisions) and are lost on restart; an undo checks the entry's status and `updated_at`, so two decisions on the same relation within the same millisecond could not be told apart.
+- Undo tokens live in the main process (the last 100 decisions) and are lost on restart; an undo deep-compares the entry with what the decision left (timestamps compared as instants), so any change since refuses it.
+- A timed-out or cancelled agent or summary call is charged at the per-paper cap (`estimated: true` in `costs/`), which overstates calls cut off early; the CLI gives no partial cost.
+- The automatic trigger's 24-hour pause after a failed analysis lives in memory, so restarting the app lets it try that paper again.
+- The paper's button upgrades a queued unforced analysis in place (its job spec is rewritten and it leaves its batch), so that job no longer counts toward the batch cap.
 - Evidence of confirmed relations is not re-checked when a paper's text changes (a new PDF).
 - The review mode loads a relation item with three requests (the paper's relations and both papers' details), one after another.
 - Candidates use only the stored neighbours; a paper added after the last neighbour recompute is a candidate only once the neighbours are updated.
