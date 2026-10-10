@@ -12,20 +12,20 @@ describe('auto summarize', () => {
   it('summarizes a new paper after ingest when enabled', async () => {
     const root = await tmpDir()
     const llm = new FakeLlmProvider([{ value: llmOutputFor(DEFAULT_EXTRACTION_FORM), costUsd: 0.01, model: 'm' }])
-    const s = await ProjectSession.create(root, 'Thesis', { contactEmail: '', watch: false, fetch: routeFetch([]), llm })
+    const s = await ProjectSession.create(root, 'Thesis', { contactEmail: '', watch: false, fetch: routeFetch([]), llm, citationPauseMs: 0 })
     await s.store.updateConfig({ llm: { ...s.store.config.llm, auto_summarize: true } })
     const pdf = join(await tmpDir(), 'p.pdf')
     await writeFile(pdf, await makePdf([['A study of pseudonymization for production logs and incident reviews in large systems.']], { title: 'Pseudonymization of logs' }))
     s.queue.enqueue({ type: 'ingest_pdf', path: pdf })
     await s.queue.whenIdle()
-    expect(s.queue.list().map((j) => j.spec.type).sort()).toEqual(['ingest_pdf', 'summarize'])
+    expect(s.queue.list().map((j) => j.spec.type).sort()).toEqual(['citations', 'ingest_pdf', 'summarize'])
     expect(llm.calls).toHaveLength(1)
     await s.close()
   })
 
   it('does nothing extra when disabled', async () => {
     const llm = new FakeLlmProvider([{ value: {}, costUsd: 0, model: 'm' }])
-    const s = await ProjectSession.create(await tmpDir(), 'Thesis', { contactEmail: '', watch: false, fetch: routeFetch([]), llm })
+    const s = await ProjectSession.create(await tmpDir(), 'Thesis', { contactEmail: '', watch: false, fetch: routeFetch([]), llm, citationPauseMs: 0 })
     const pdf = join(await tmpDir(), 'p.pdf')
     await writeFile(pdf, await makePdf([['A study of pseudonymization for production logs and incident reviews in large systems.']]))
     s.queue.enqueue({ type: 'ingest_pdf', path: pdf })

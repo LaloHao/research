@@ -16,19 +16,19 @@ const DRAIN_ROUTES: Route[] = [
 describe('ProjectSession', () => {
   it('runs an ingest job end to end and survives a reopen', async () => {
     const root = await tmpDir()
-    const opts = { contactEmail: '', fetch: routeFetch(DRAIN_ROUTES), watch: false }
+    const opts = { contactEmail: '', fetch: routeFetch(DRAIN_ROUTES), watch: false, citationPauseMs: 0 }
     const session = await ProjectSession.create(root, 'Thesis', opts)
     let jobsChanged = 0
     session.on('jobs', () => jobsChanged++)
     session.queue.enqueue({ type: 'ingest_identifier', input: '10.1109/ICWS.2017.13' })
     await session.queue.whenIdle()
-    expect(session.queue.list()[0]).toMatchObject({ state: 'done', paperId: 'he2017drain', message: 'added' })
+    expect(session.queue.list().find((j) => j.spec.type === 'ingest_identifier')).toMatchObject({ state: 'done', paperId: 'he2017drain', message: 'added' })
     expect(jobsChanged).toBeGreaterThan(0)
     await session.close()
 
     const reopened = await ProjectSession.open(root, opts)
     expect(reopened.library.list().map((r) => r.id)).toEqual(['he2017drain'])
-    expect(reopened.queue.list()).toHaveLength(1)
+    expect(reopened.queue.list().map((j) => j.spec.type).sort()).toEqual(['citations', 'ingest_identifier'])
     await reopened.close()
   })
 
@@ -42,7 +42,7 @@ describe('ProjectSession', () => {
 
   it('reindexes a paper edited outside the app', async () => {
     const root = await tmpDir()
-    const session = await ProjectSession.create(root, 'Thesis', { contactEmail: '', fetch: routeFetch(DRAIN_ROUTES) })
+    const session = await ProjectSession.create(root, 'Thesis', { contactEmail: '', fetch: routeFetch(DRAIN_ROUTES), citationPauseMs: 0 })
     session.queue.enqueue({ type: 'ingest_identifier', input: '10.1109/icws.2017.13' })
     await session.queue.whenIdle()
     const file = join(root, 'papers/he2017drain/paper.yaml')
@@ -76,7 +76,7 @@ describe('ProjectSession', () => {
 
   it('reindexes but does not re-export the bibliography when only notes change', async () => {
     const root = await tmpDir()
-    const session = await ProjectSession.create(root, 'Thesis', { contactEmail: '', fetch: routeFetch(DRAIN_ROUTES) })
+    const session = await ProjectSession.create(root, 'Thesis', { contactEmail: '', fetch: routeFetch(DRAIN_ROUTES), citationPauseMs: 0 })
     session.queue.enqueue({ type: 'ingest_identifier', input: '10.1109/icws.2017.13' })
     await session.queue.whenIdle()
     await new Promise((r) => setTimeout(r, 500))
