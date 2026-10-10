@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { orient, RELATION_TYPES, relationId, type RelationEvidence, type RelationType, type TypedRelation } from '../../shared/typedRelations'
+import { MAX_JUSTIFICATION, orient, RELATION_TYPES, relationId, type RelationEvidence, type RelationType, type TypedRelation } from '../../shared/typedRelations'
 import { locateQuote } from '../summary/evidence'
 import type { PageText } from '../summary/paperText'
 import { MAX_EVIDENCE, MAX_SUGGESTIONS } from './relationPrompt'
@@ -15,7 +15,12 @@ const ItemSchema = z.object({
   from: z.string(),
   to: z.string(),
   type: z.enum(RELATION_TYPES),
-  justification: z.string().trim().min(1),
+  // An overlong justification is cut (relations.yaml refuses one longer than MAX_JUSTIFICATION), never dropped.
+  justification: z
+    .string()
+    .trim()
+    .min(1)
+    .transform((v) => (v.length > MAX_JUSTIFICATION ? `${v.slice(0, MAX_JUSTIFICATION - 1)}…` : v)),
   evidence: z.array(z.object({ paper: z.string(), page: PageSchema, quote: z.string().trim().min(1) }))
 })
 const OutputSchema = z.object({ relations: z.array(z.unknown()) })

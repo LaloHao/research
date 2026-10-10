@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { checkRelationEvidence, parseRelationOutput } from '../../../src/main/relations/relationOutput'
-import { relationId, type RelationType, type TypedRelation } from '../../../src/shared/typedRelations'
+import { MAX_JUSTIFICATION, relationId, type RelationType, type TypedRelation } from '../../../src/shared/typedRelations'
 
 const LOGHUB = 'zhu2020loghub'
 const DRAIN = 'he2017drain'
@@ -104,6 +104,13 @@ describe('parseRelationOutput', () => {
   it('drops a relation with an empty justification as invalid', () => {
     const out = parseRelationOutput({ relations: [item({ justification: '   ' })] }, ctx())
     expect(out).toEqual({ ok: true, dropped: ['invalid'], suggestions: [] })
+  })
+
+  it('clamps an overlong justification to MAX_JUSTIFICATION characters instead of failing the write', () => {
+    const r = parseRelationOutput({ relations: [item({ justification: 'x'.repeat(MAX_JUSTIFICATION + 500) })] }, ctx())
+    const justification = r.ok ? r.suggestions[0].justification : ''
+    expect(justification).toHaveLength(MAX_JUSTIFICATION)
+    expect(justification.endsWith('…')).toBe(true)
   })
 
   it('caps accepted relations at MAX_SUGGESTIONS, reporting the extras as too_many', () => {
