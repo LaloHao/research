@@ -159,7 +159,12 @@ function EvidencePanel({ detail, evidence }: { detail: PaperDetail; evidence: Pi
   const contentFocus = useMemo<ContentFocus | null>(() => (quote ? { quote, seq: 0 } : null), [quote])
 
   if (needsPassage) {
-    const notice = detail.hasPdf && focusResult === false && <p className="banner warning">{t('review.quote_not_in_pdf')}</p>
+    // pdf.js could not open the PDF at all: say so, rather than that the quote was not found in it.
+    const unreadable = wantReflow && opened?.source === currentPdf && opened.status === 'error'
+    const notice =
+      detail.hasPdf &&
+      focusResult === false &&
+      (unreadable ? <p className="banner warning">{errorText(t, 'unreadable_pdf')}</p> : <p className="banner warning">{t('review.quote_not_in_pdf')}</p>)
     if (showContent) {
       return (
         <div className="review-passage">
@@ -171,7 +176,7 @@ function EvidencePanel({ detail, evidence }: { detail: PaperDetail; evidence: Pi
     if (!needsPageText) {
       return (
         <div className="review-passage">
-          {notice}
+          <p className="banner warning">{t('review.quote_not_in_pdf_reflow')}</p>
           <p className="muted small">{t('review.passage_pdf', { page })}</p>
           {blocks ? <ReflowedPassage blocks={blocks} quote={quote} /> : <p className="muted">{t('review.passage_loading')}</p>}
         </div>
