@@ -7,7 +7,7 @@ describe('flush before close', () => {
     let ack: () => void = () => {}
     let unsubscribed = false
     const start = Date.now()
-    await waitForFlush(
+    const acked = await waitForFlush(
       () => setTimeout(() => ack(), 10),
       (cb) => {
         ack = cb
@@ -17,12 +17,25 @@ describe('flush before close', () => {
     )
     expect(Date.now() - start).toBeLessThan(1000)
     expect(unsubscribed).toBe(true)
+    expect(acked).toBe(true)
   })
 
   it('main gives up after the timeout when the renderer never answers', async () => {
     const start = Date.now()
-    await waitForFlush(() => {}, () => () => {}, 50)
+    const acked = await waitForFlush(() => {}, () => () => {}, 50)
     expect(Date.now() - start).toBeGreaterThanOrEqual(45)
+    expect(acked).toBe(false)
+  })
+
+  it('a send that throws counts as not acknowledged, right away', async () => {
+    const acked = await waitForFlush(
+      () => {
+        throw new Error('renderer gone')
+      },
+      () => () => {},
+      5000
+    )
+    expect(acked).toBe(false)
   })
 
   it('the renderer waits for every pending save, even if one fails', async () => {

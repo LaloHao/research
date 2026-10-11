@@ -39,23 +39,69 @@ export function once<T>(run: () => Promise<T>): () => Promise<T> {
   }
 }
 
-export type QuitAction = 'allow' | 'join' | 'start'
+export interface QuitDeps {
+  /** Flushes, and asks «Hay cambios sin sincronizar» when needed, for the single window; whether leaving is allowed. */
+  confirmLeave(): Promise<boolean>
+  /** Closes everything down for good (sessions, the write gate, embeddings, …). */
+  shutdown(): Promise<void>
+  /** Requests the native quit, e.g. `app.quit()`. */
+  quit(): void
+}
 
-/**
- * What a `before-quit` arrival (or the `app.quit()` from `window-all-closed`) should do, given whether
- * a shutdown is already running or already finished:
- * - `'allow'`: a shutdown already finished; let this quit go through with no `preventDefault`.
- * - `'join'`: another arrival is already driving the shutdown; `preventDefault` and do nothing else —
- *   that chain will call `quit()` once it is done.
- * - `'start'`: nothing is running yet; `preventDefault` and drive `confirmLeave` + `shutdown` here.
- *
- * Only the arrival that gets `'start'` is ever allowed to call `quit()` afterwards, and only once the
- * shutdown it started has actually finished — never a `before-quit` that merely joined it. This keeps
- * two quit requests racing during the prompt, or a window close followed by a quit, from exiting the
- * app while `shutdown()` is still in progress.
- */
-export function decideQuit(state: { quitting: boolean; shutDown: boolean }): QuitAction {
-  if (state.shutDown) return 'allow'
-  if (state.quitting) return 'join'
-  return 'start'
+export interface QuitFlow {
+  /**
+   * Call for every `before-quit` arrival — including the one `window-all-closed`'s `app.quit()`
+   * triggers. Returns whether the caller must call `event.preventDefault()`: every arrival does,
+   * except the one that finds the shutdown this flow started already finished.
+   *
+   * Only the arrival that starts the chain (the first one, or the first one after a previous chain
+   * was cancelled) ever drives `confirmLeave()` and `shutdown()`; every other arrival while it runs
+   * only prevents the default and waits — that chain is the only one that ever calls `quit()`, and
+   * only once `shutdown()` has settled (it still quits even if `shutdown()` throws).
+   */
+  beforeQuit(): boolean
+  /**
+   * True once the running (or last) quit chain's `confirmLeave()` resolved `true` — the user (or the
+   * renderer being gone) actually allowed leaving, not merely that a quit was requested. The window's
+   * own `close` handler uses this instead of "a quit is pending" so that clicking ✕ while «Hay cambios
+   * sin sincronizar» is still open joins that same prompt instead of skipping it.
+   */
+  isLeavingConfirmed(): boolean
+}
+
+/** The quit state machine shared by the window's `close` handler and `before-quit`/`window-all-closed`. */
+export function createQuitFlow(deps: QuitDeps): QuitFlow {
+  let quitting = false // a chain is confirming or shutting down
+  let shutDown = false // that chain's shutdown finished: a later arrival may go straight through
+  let leavingConfirmed = false // that chain's confirmLeave() resolved true
+
+  async function run(): Promise<void> {
+    const ok = await deps.confirmLeave().catch((error: unknown) => {
+      console.error('leave', error)
+      return false
+    })
+    if (!ok) {
+      quitting = false
+      return
+    }
+    leavingConfirmed = true
+    try {
+      await deps.shutdown()
+    } catch (error) {
+      console.error('shutdown', error)
+    }
+    // The app must always be able to quit, even when shutdown() failed to finish cleanly.
+    shutDown = true
+    deps.quit()
+  }
+
+  function beforeQuit(): boolean {
+    if (shutDown) return false
+    if (quitting) return true
+    quitting = true
+    void run()
+    return true
+  }
+
+  return { beforeQuit, isLeavingConfirmed: () => leavingConfirmed }
 }

@@ -1,5 +1,39 @@
 import { describe, expect, it, vi } from 'vitest'
-import { confirmClose, decideQuit, once, type CloseSteps } from '../../src/main/closeFlow'
+import { confirmClose, createQuitFlow, once, type CloseSteps, type QuitDeps } from '../../src/main/closeFlow'
+
+/** A `confirmLeave`/`shutdown` pair whose resolution the test drives by hand, plus call counters. */
+function deferredQuitDeps(): {
+  deps: QuitDeps
+  calls: string[]
+  resolveLeave(ok: boolean): void
+  resolveShutdown(error?: Error): void
+} {
+  const calls: string[] = []
+  let resolveLeave: (ok: boolean) => void = () => {}
+  let resolveShutdown: (error?: Error) => void = () => {}
+  const deps: QuitDeps = {
+    confirmLeave: () => {
+      calls.push('confirmLeave')
+      return new Promise((resolve) => {
+        resolveLeave = resolve
+      })
+    },
+    shutdown: () =>
+      new Promise((resolve, reject) => {
+        resolveShutdown = (error) => (error ? reject(error) : resolve())
+      }),
+    quit: () => calls.push('quit')
+  }
+  return {
+    deps,
+    calls,
+    resolveLeave: (ok) => resolveLeave(ok),
+    resolveShutdown: (error) => resolveShutdown(error)
+  }
+}
+
+/** Waits a tick so queued promise continuations (but not a still-pending one) have run. */
+const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
 function steps(over: Partial<CloseSteps> = {}): { calls: string[]; steps: CloseSteps } {
   const calls: string[] = []
@@ -95,28 +129,81 @@ describe('once', () => {
   })
 })
 
-describe('decideQuit', () => {
-  it('starts the shutdown when nothing is running', () => {
-    expect(decideQuit({ quitting: false, shutDown: false })).toBe('start')
+describe('createQuitFlow', () => {
+  it('two quit requests racing during the prompt: only the first drives confirm + shutdown, and quit() happens once, after shutdown finishes', async () => {
+    const { deps, calls, resolveLeave, resolveShutdown } = deferredQuitDeps()
+    const flow = createQuitFlow(deps)
+
+    expect(flow.beforeQuit()).toBe(true) // first arrival: starts the chain, must preventDefault
+    expect(flow.beforeQuit()).toBe(true) // second arrival while confirming: joins, must also preventDefault
+    expect(calls).toEqual(['confirmLeave']) // only one confirmLeave() call, not two
+
+    resolveLeave(true)
+    await tick()
+    expect(flow.beforeQuit()).toBe(true) // a third arrival while shutting down: still joins
+    expect(calls).toEqual(['confirmLeave']) // shutdown() is in flight, not yet settled, so no quit() yet
+
+    resolveShutdown()
+    await tick()
+    expect(calls).toEqual(['confirmLeave', 'quit']) // quit() called exactly once, after shutdown resolved
   })
 
-  it('two quit requests racing during the prompt: only the first drives the shutdown', () => {
-    // First arrival: nothing running yet, it starts the chain.
-    expect(decideQuit({ quitting: false, shutDown: false })).toBe('start')
-    // Second arrival while the first is still confirming or shutting down: it only joins.
-    expect(decideQuit({ quitting: true, shutDown: false })).toBe('join')
+  it('Important 2: a failing shutdown still lets the app quit', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { deps, calls, resolveLeave, resolveShutdown } = deferredQuitDeps()
+    const flow = createQuitFlow(deps)
+
+    flow.beforeQuit()
+    resolveLeave(true)
+    await tick()
+    resolveShutdown(new Error('cache.close() failed'))
+    await tick()
+
+    expect(calls).toEqual(['confirmLeave', 'quit'])
+    spy.mockRestore()
   })
 
-  it('a window close followed by a quit while the window close is still confirming: the quit joins', () => {
-    // The window's own `close` handler drives `confirmLeave` outside this state machine; a `before-quit`
-    // that arrives in the meantime (quitting not yet true, because no shutdown chain started) still
-    // starts its own chain rather than being lost — it is `confirmLeave` itself (deduped by `once`)
-    // that keeps the two from asking twice.
-    expect(decideQuit({ quitting: false, shutDown: false })).toBe('start')
+  it('Important 1: leaving is confirmed only once confirmLeave() resolves true, not merely because a quit was requested', async () => {
+    const { deps, resolveLeave, resolveShutdown } = deferredQuitDeps()
+    const flow = createQuitFlow(deps)
+
+    flow.beforeQuit()
+    expect(flow.isLeavingConfirmed()).toBe(false) // the prompt is still open: ✕ must still join it, not skip it
+
+    resolveLeave(true)
+    await tick()
+    expect(flow.isLeavingConfirmed()).toBe(true) // the user (or a flush-ack-less renderer) allowed leaving
+
+    resolveShutdown()
+    await tick()
   })
 
-  it('lets a later quit through once the shutdown already finished', () => {
-    expect(decideQuit({ quitting: true, shutDown: true })).toBe('allow')
-    expect(decideQuit({ quitting: false, shutDown: true })).toBe('allow')
+  it('a cancelled quit never confirms leaving or calls quit(), and a later quit can ask again', async () => {
+    const { deps, calls, resolveLeave } = deferredQuitDeps()
+    const flow = createQuitFlow(deps)
+
+    flow.beforeQuit()
+    resolveLeave(false)
+    await tick()
+    expect(flow.isLeavingConfirmed()).toBe(false)
+    expect(calls).toEqual(['confirmLeave'])
+
+    flow.beforeQuit() // a fresh chain: confirmLeave() is called again, not skipped
+    expect(calls).toEqual(['confirmLeave', 'confirmLeave'])
+  })
+
+  it('a later before-quit (or window-all-closed quitting again) lets the native quit through once shut down', async () => {
+    const { deps, calls, resolveLeave, resolveShutdown } = deferredQuitDeps()
+    const flow = createQuitFlow(deps)
+
+    flow.beforeQuit()
+    resolveLeave(true)
+    await tick()
+    resolveShutdown()
+    await tick()
+    expect(calls).toEqual(['confirmLeave', 'quit'])
+
+    expect(flow.beforeQuit()).toBe(false) // already shut down: no preventDefault, let it quit for real
+    expect(calls).toEqual(['confirmLeave', 'quit']) // quit() is not called again
   })
 })

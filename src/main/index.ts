@@ -3,15 +3,13 @@ import { join } from 'node:path'
 import { eventChannel, IPC } from '../shared/ipc'
 import type { CloseDecision } from '../shared/sync'
 import { AppController } from './AppController'
-import { confirmClose, decideQuit, once } from './closeFlow'
+import { confirmClose, createQuitFlow, once } from './closeFlow'
 import { UtilityEmbeddingRuntime } from './embeddings/UtilityEmbeddingRuntime'
 import { waitForFlush } from './flush'
 import { registerIpc } from './ipc'
 import { arg, ipcArgs } from './ipcArgs'
 
 let mainWindow: BrowserWindow | null = null
-let quitting = false // a shutdown is confirmed and running
-let shutDown = false // the shutdown finished: the next `before-quit` may go straight through
 
 // The local model lives with the app's data, never in a project folder.
 const embeddings = new UtilityEmbeddingRuntime(join(app.getPath('userData'), 'models'), join(__dirname, 'embeddings.js'))
@@ -92,6 +90,16 @@ const confirmLeave = once((): Promise<boolean> => {
   })
 })
 
+/**
+ * Drives `before-quit` (and the one `window-all-closed`'s `app.quit()` triggers): confirms leaving at
+ * most once, shuts the app down, then quits — even if `shutdown()` throws, so the app can always quit.
+ */
+const quitFlow = createQuitFlow({
+  confirmLeave,
+  shutdown: () => controller.shutdown(),
+  quit: () => app.quit()
+})
+
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
@@ -107,8 +115,8 @@ function createWindow(): BrowserWindow {
   win.on('ready-to-show', () => win.show())
   let allowClose = false
   win.on('close', (event) => {
-    // On quit, before-quit has already asked, flushed and closed the project.
-    if (allowClose || quitting) return
+    // Once a pending quit's prompt was answered to leave, this fires again as part of that shutdown.
+    if (allowClose || quitFlow.isLeavingConfirmed()) return
     event.preventDefault()
     void confirmLeave().then((ok) => {
       if (!ok || allowClose || win.isDestroyed()) return
@@ -159,29 +167,10 @@ function start(): void {
   })
 
   // Several `before-quit` (one per Cmd+Q / File > Quit, plus the one `window-all-closed` triggers) can
-  // arrive while the first is still confirming or shutting down. Only the arrival that starts the
-  // shutdown ever calls `app.quit()` again, and only once `shutdown()` actually finished — every other
-  // arrival here just prevents the default and waits for that one to finish and quit for it.
+  // arrive while the first is still confirming or shutting down; `quitFlow` makes sure only the one
+  // that started the chain ever calls `app.quit()` again, and only once it is done.
   app.on('before-quit', (event) => {
-    const action = decideQuit({ quitting, shutDown })
-    if (action === 'allow') return
-    event.preventDefault()
-    if (action === 'join') return
-    quitting = true
-    void confirmLeave()
-      .then(async (ok) => {
-        if (!ok) {
-          quitting = false
-          return
-        }
-        await controller.shutdown()
-        shutDown = true
-        app.quit()
-      })
-      .catch((error) => {
-        console.error('shutdown', error)
-        quitting = false
-      })
+    if (quitFlow.beforeQuit()) event.preventDefault()
   })
 
   app.on('window-all-closed', () => {
