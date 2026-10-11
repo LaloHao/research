@@ -26,7 +26,15 @@ import { RelationSuggester } from '../relations/RelationSuggester'
 import { SimilarityService } from '../relations/SimilarityService'
 import { Summarizer } from '../summary/Summarizer'
 import { SummaryService } from '../summary/SummaryService'
+import { SyncScheduler } from '../sync/SyncScheduler'
+import { SyncService } from '../sync/SyncService'
 import { DEFAULT_DEVICE_ID, LibraryService } from './LibraryService'
+
+/** The per-device automatic sync settings, read at every tick. */
+export interface AutoSyncOptions {
+  enabled: () => boolean
+  intervalMs: () => number
+}
 
 export interface SessionOptions {
   contactEmail: string
@@ -44,18 +52,27 @@ export interface SessionOptions {
   embeddings?: EmbeddingRuntime | null
   /** Pause before each OpenAlex request of a citations job; tests pass 0. */
   citationPauseMs?: number
+  /** The automatic git sync; absent or null: the project syncs only when asked. */
+  autoSync?: AutoSyncOptions | null
+  /** Extra environment for git (tests isolate it from the user's git config). */
+  gitEnv?: Record<string, string>
+  /** Names this machine in sync commits; defaults to the host name. */
+  machineName?: string
 }
 
-type SessionEvent = 'library' | 'jobs' | 'project'
+type SessionEvent = 'library' | 'jobs' | 'project' | 'sync'
 
 /** Files whose external change alters the bibliography (paper.yaml, or the paper folder appearing or going away). */
 const BIB_FILES = new Set(['paper.yaml', PAPER_FOLDER])
 
 /** Everything that lives while one project is open. */
 export class ProjectSession {
-  private readonly listeners: Record<SessionEvent, Set<() => void>> = { library: new Set(), jobs: new Set(), project: new Set() }
+  private readonly listeners: Record<SessionEvent, Set<() => void>> = { library: new Set(), jobs: new Set(), project: new Set(), sync: new Set() }
   private stopWatching: (() => void) | null = null
   private readonly inFlight = new Set<Promise<unknown>>()
+  private scheduler: SyncScheduler | null = null
+  /** Trash operations in flight: they move whole folders, so the automatic sync waits for the next tick. */
+  private trashOps = 0
 
   private constructor(
     readonly store: ProjectStore,
@@ -67,7 +84,8 @@ export class ProjectSession {
     readonly citations: CitationService,
     readonly similarity: SimilarityService,
     readonly map: MapService,
-    readonly relations: RelationService
+    readonly relations: RelationService,
+    readonly sync: SyncService
   ) {}
 
   static async create(root: string, name: string, opts: SessionOptions): Promise<ProjectSession> {
@@ -167,7 +185,16 @@ export class ProjectSession {
       enqueue: (spec) => queue.enqueue(spec),
       cancelBatch: (batchId) => queue.cancelBatch(batchId)
     })
-    const session: ProjectSession = new ProjectSession(store, cache, http, library, queue, summaries, citations, similarity, map, relations)
+    const sync = new SyncService({
+      root: store.root,
+      exclusive: (fn) => store.exclusive(fn),
+      pdfPolicy: () => store.config.pdfs.policy,
+      paperTitle: (key) => cache.getPaper(key)?.title ?? null,
+      machineName: opts.machineName,
+      gitEnv: opts.gitEnv,
+      emit: () => session.emit('sync')
+    })
+    const session: ProjectSession = new ProjectSession(store, cache, http, library, queue, summaries, citations, similarity, map, relations, sync)
     await library.reindexAll()
     await relations.reindex()
     library.onChange(() => session.emit('library'))
@@ -220,6 +247,17 @@ export class ProjectSession {
         }
       })
     }
+    if (opts.autoSync) {
+      const auto = opts.autoSync
+      session.scheduler = new SyncScheduler({
+        run: () => sync.run({ auto: true }),
+        // Never over a decision waiting for the user, nor while the trash moves folders.
+        canRun: () => !sync.hasConflicts && session.trashOps === 0,
+        enabled: () => auto.enabled(),
+        intervalMs: () => auto.intervalMs()
+      })
+      session.scheduler.start()
+    }
     return session
   }
 
@@ -270,18 +308,18 @@ export class ProjectSession {
   /** «Quitar de la biblioteca»; the neighbours of the moved papers are updated afterwards. */
   trash(ids: string[]): Promise<TrashOutcome> {
     return this.track(
-      (async () => {
+      this.trashOp(async () => {
         const outcome = await this.library.trash(ids)
         for (const id of outcome.moved) await this.similarity.paperChanged(id).catch(logged('neighbours'))
         return outcome
-      })()
+      })
     )
   }
 
   /** «Restaurar» or «Fusionar»; restored papers get their vector (if it changed) and neighbours back. */
   restore(ids: string[], opts: { merge: boolean }): Promise<RestoreOutcome> {
     return this.track(
-      (async () => {
+      this.trashOp(async () => {
         const outcome = await this.library.restore(ids, opts)
         // Where each paper now is: its own key, a free one, or the library paper it was merged into.
         const keys = [...new Set(outcome.restored.map((r) => r.key))]
@@ -290,7 +328,7 @@ export class ProjectSession {
           for (const key of keys) await this.similarity.paperChanged(key).catch(logged('neighbours'))
         }
         return outcome
-      })()
+      })
     )
   }
 
@@ -304,15 +342,33 @@ export class ProjectSession {
 
   /** Exactly the ids a confirmation showed (from deletePlan). */
   deleteForever(ids: string[]): Promise<number> {
-    return this.track(this.library.deleteForever(ids))
+    return this.track(this.trashOp(() => this.library.deleteForever(ids)))
+  }
+
+  /** The automatic sync settings changed. */
+  rescheduleSync(): void {
+    this.scheduler?.reschedule()
   }
 
   async close(): Promise<void> {
     this.stopWatching?.()
     this.stopWatching = null
-    await this.queue.stop()
+    // Everything is told to stop at once, before any wait: the scheduler (no new automatic sync), the sync (its git runs
+    // in a process group of its own that would outlive the app, so a fetch or push is cut short; a local step, which may
+    // hold the store's write gate, is let finish) and the queue (running jobs abort and stay queued for next time).
+    // Awaiting the scheduler on its own first would wait for that fetch or push to end by itself.
+    await Promise.all([this.scheduler?.stop(), this.sync.close(), this.queue.stop()])
     while (this.inFlight.size > 0) await Promise.allSettled([...this.inFlight])
     this.cache.close()
+  }
+
+  private async trashOp<T>(work: () => Promise<T>): Promise<T> {
+    this.trashOps++
+    try {
+      return await work()
+    } finally {
+      this.trashOps--
+    }
   }
 
   private emit(event: SessionEvent): void {

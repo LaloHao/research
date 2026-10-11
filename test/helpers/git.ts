@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { realpathSync } from 'node:fs'
-import { mkdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { tmpDir } from './tmp'
 
@@ -98,4 +98,34 @@ export async function pathWithOnlyGit(): Promise<string> {
   const git = realpathSync(execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim())
   await symlink(git, join(dir, 'git'))
   return dir
+}
+
+export function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Points machine A's remote at an ssh "server" that never answers: a script that records its pid and sleeps, so a
+ * fetch hangs until it is cut short. No network is involved. Linux only (`sh`).
+ */
+export async function hangingRemote(m: Machines): Promise<{ env: GitEnv; pids: () => Promise<number[]> }> {
+  const dir = await tmpDir()
+  const pidFile = join(dir, 'pids')
+  const script = join(dir, 'fake-ssh')
+  await writeFile(script, `#!/bin/sh\necho $$ >> '${pidFile}'\nexec sleep 600\n`)
+  await chmod(script, 0o755)
+  m.git(m.a, 'remote', 'set-url', 'origin', 'ssh://git@example.invalid/remote.git')
+  const pids = async (): Promise<number[]> => {
+    try {
+      return (await readFile(pidFile, 'utf8')).split('\n').filter(Boolean).map(Number)
+    } catch {
+      return []
+    }
+  }
+  return { env: { ...m.env, GIT_SSH_COMMAND: script }, pids }
 }

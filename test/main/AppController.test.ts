@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { AppController } from '../../src/main/AppController'
 import type { ResearchEvent } from '../../src/shared/ipc'
 import { FakeEmbeddingRuntime } from '../helpers/embeddings'
+import { hangingRemote, processAlive, twoMachines } from '../helpers/git'
 import { tmpDir } from '../helpers/tmp'
 
 async function controller(settingsFile: string, events: ResearchEvent[] = []): Promise<AppController> {
@@ -84,5 +85,77 @@ describe('AppController', () => {
     const plain = await controller(join(await tmpDir(), 'settings.json'))
     expect((await plain.modelInfo()).available).toBe(false)
     await plain.shutdown()
+  })
+
+  it('offers to sync before closing only for a project with a remote and something not synced', async () => {
+    const m = await twoMachines()
+    const c = new AppController(join(await tmpDir(), 'settings.json'), () => undefined, { watch: false, gitEnv: m.env, autoSync: null })
+    await c.init()
+    expect(await c.hasUnsyncedChanges()).toBe(false)
+    await c.openProject(m.projectA)
+    // Opening wrote the app's block in .gitignore.
+    expect(await c.hasUnsyncedChanges()).toBe(true)
+    expect(await c.requireSession().sync.run({ auto: false })).toEqual({ ok: true, outcome: 'synced' })
+    expect(await c.hasUnsyncedChanges()).toBe(false)
+    await c.createProject(await tmpDir(), 'Not in git')
+    expect(await c.hasUnsyncedChanges()).toBe(false)
+    await c.shutdown()
+  })
+
+  it('keeps the automatic sync settings across launches', async () => {
+    const settingsFile = join(await tmpDir(), 'settings.json')
+    const first = await controller(settingsFile)
+    expect(first.getSettings()).toMatchObject({ autoSync: true, autoSyncMinutes: 10 })
+    await first.setSettings({ autoSync: false, autoSyncMinutes: 30 })
+    expect((await controller(settingsFile)).getSettings()).toMatchObject({ autoSync: false, autoSyncMinutes: 30 })
+  })
+
+  it('passes sync changes on to the window', async () => {
+    const m = await twoMachines()
+    const events: ResearchEvent[] = []
+    const c = new AppController(join(await tmpDir(), 'settings.json'), (e) => events.push(e), { watch: false, gitEnv: m.env, autoSync: null })
+    await c.init()
+    await c.openProject(m.projectA)
+    await c.requireSession().sync.run({ auto: false })
+    expect(events).toContain('sync-changed')
+    await c.shutdown()
+  })
+
+  // git runs in its own process group and outlives the app unless it is stopped.
+  it.skipIf(process.platform === 'win32')('closing the project and quitting kill a sync that hangs on the network', async () => {
+    const m = await twoMachines()
+    const remote = await hangingRemote(m)
+    const c = new AppController(join(await tmpDir(), 'settings.json'), () => undefined, { watch: false, gitEnv: remote.env })
+    await c.init()
+    const hung = async (count: number): Promise<number> => {
+      const start = Date.now()
+      while ((await remote.pids()).length < count) {
+        if (Date.now() - start > 10_000) throw new Error('timed out')
+        await new Promise((r) => setTimeout(r, 50))
+      }
+      return (await remote.pids())[count - 1]
+    }
+    const stopped = async (pid: number): Promise<void> => {
+      const start = Date.now()
+      while (processAlive(pid)) {
+        if (Date.now() - start > 5_000) throw new Error(`git ${pid} still running`)
+        await new Promise((r) => setTimeout(r, 50))
+      }
+    }
+
+    // The automatic sync starts as the project opens.
+    await c.openProject(m.projectA)
+    const first = await hung(1)
+    let started = Date.now()
+    await c.closeProject()
+    expect(Date.now() - started).toBeLessThan(5_000)
+    await stopped(first)
+
+    await c.openProject(m.projectA)
+    const second = await hung(2)
+    started = Date.now()
+    await c.shutdown()
+    expect(Date.now() - started).toBeLessThan(5_000)
+    await stopped(second)
   })
 })

@@ -92,8 +92,8 @@ export const IPC = {
   flushDone: 'window:flush-done'
 } as const
 
-/** `flush-request`: the window is about to close; save pending edits, then call `flushDone()`. */
-export type ResearchEvent = 'library-changed' | 'jobs-changed' | 'project-changed' | 'flush-request'
+/** `sync-changed`: the git sync's state changed. `flush-request`: the window is about to close; save pending edits, then call `flushDone()`. */
+export type ResearchEvent = 'library-changed' | 'jobs-changed' | 'project-changed' | 'sync-changed' | 'flush-request'
 
 export const eventChannel = (event: ResearchEvent): string => `event:${event}`
 
