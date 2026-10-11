@@ -6,6 +6,7 @@ import { parseSyncMinutes } from '../../lib/sync'
 import { ModelsSection } from './ModelsSection'
 
 type SettingsPatch = Parameters<typeof window.research.settings.set>[0]
+type Field = 'contactEmail' | 'openalexApiKey' | 'autoSync' | 'autoSyncMinutes'
 
 export function AppSection({ onSaved }: { onSaved: () => void }): React.JSX.Element {
   const { t } = useTranslation()
@@ -16,9 +17,13 @@ export function AppSection({ onSaved }: { onSaved: () => void }): React.JSX.Elem
   const [minutes, setMinutes] = useState('')
   const [savedMinutes, setSavedMinutes] = useState<number | null>(null)
   const [minutesIssue, setMinutesIssue] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  // Only the latest save's answer shows (a failure or «Guardado»); the main process applies them in order.
-  const request = useRef(0)
+  // A failed save per field: another field's success never hides it.
+  const [errors, setErrors] = useState<Partial<Record<Field, string>>>({})
+  const [loadError, setLoadError] = useState<string | null>(null)
+  // Per field, only the latest save's answer counts; the main process applies them in order.
+  const requests = useRef<Partial<Record<Field, number>>>({})
+  // The last «Sincronizar automáticamente» the main process confirmed, to go back to when a save fails.
+  const savedAutoSync = useRef(true)
 
   useEffect(() => {
     window.research.settings.get().then(
@@ -26,24 +31,48 @@ export function AppSection({ onSaved }: { onSaved: () => void }): React.JSX.Elem
         setEmail(s.contactEmail)
         setApiKey(s.openalexApiKey)
         setAutoSync(s.autoSync)
+        savedAutoSync.current = s.autoSync
         setMinutes(String(s.autoSyncMinutes))
         setSavedMinutes(s.autoSyncMinutes)
         setLoaded(true)
       },
-      () => setError(errorText(t, 'unknown'))
+      () => setLoadError(errorText(t, 'unknown'))
     )
   }, [t])
 
-  const save = (patch: SettingsPatch, applied?: (s: AppSettings) => void): void => {
-    const token = ++request.current
-    setError(null)
+  const save = (field: Field, patch: SettingsPatch, outcome: { applied?: (s: AppSettings, latest: boolean) => void; failed?: () => void } = {}): void => {
+    const token = (requests.current[field] ?? 0) + 1
+    requests.current[field] = token
+    const latest = (): boolean => requests.current[field] === token
+    setErrors((current) => {
+      const next = { ...current }
+      delete next[field]
+      return next
+    })
     window.research.settings.set(patch).then(
       (s) => {
-        applied?.(s)
-        if (token === request.current) onSaved()
+        outcome.applied?.(s, latest())
+        if (latest()) onSaved()
       },
       () => {
-        if (token === request.current) setError(errorText(t, 'unknown'))
+        if (!latest()) return
+        outcome.failed?.()
+        setErrors((current) => ({ ...current, [field]: errorText(t, 'unknown') }))
+      }
+    )
+  }
+
+  const saveAutoSync = (value: boolean): void => {
+    setAutoSync(value)
+    save(
+      'autoSync',
+      { autoSync: value },
+      {
+        applied: (s, latest) => {
+          savedAutoSync.current = s.autoSync
+          if (latest) setAutoSync(s.autoSync)
+        },
+        failed: () => setAutoSync(savedAutoSync.current)
       }
     )
   }
@@ -57,14 +86,16 @@ export function AppSection({ onSaved }: { onSaved: () => void }): React.JSX.Elem
     setMinutesIssue(null)
     setMinutes(String(parsed.value))
     if (parsed.value === savedMinutes) return
-    save({ autoSyncMinutes: parsed.value }, (s) => setSavedMinutes(s.autoSyncMinutes))
+    save('autoSyncMinutes', { autoSyncMinutes: parsed.value }, { applied: (s) => setSavedMinutes(s.autoSyncMinutes) })
   }
+
+  const shownError = loadError ?? Object.values(errors).find(Boolean) ?? null
 
   return (
     <section>
       <label className="field">
         <span>{t('settings.contact_email')}</span>
-        <input type="email" value={email} disabled={!loaded} onChange={(e) => setEmail(e.target.value)} onBlur={() => save({ contactEmail: email.trim() })} />
+        <input type="email" value={email} disabled={!loaded} onChange={(e) => setEmail(e.target.value)} onBlur={() => save('contactEmail', { contactEmail: email.trim() })} />
         <small className="muted">{t('settings.contact_email_help')}</small>
       </label>
       <label className="field">
@@ -76,7 +107,7 @@ export function AppSection({ onSaved }: { onSaved: () => void }): React.JSX.Elem
           value={apiKey}
           disabled={!loaded}
           onChange={(e) => setApiKey(e.target.value)}
-          onBlur={() => save({ openalexApiKey: apiKey.trim() })}
+          onBlur={() => save('openalexApiKey', { openalexApiKey: apiKey.trim() })}
         />
         <small className="muted">{t('settings.openalex_key_help')}</small>
       </label>
@@ -87,10 +118,7 @@ export function AppSection({ onSaved }: { onSaved: () => void }): React.JSX.Elem
             type="checkbox"
             checked={autoSync}
             disabled={!loaded}
-            onChange={(e) => {
-              setAutoSync(e.target.checked)
-              save({ autoSync: e.target.checked })
-            }}
+            onChange={(e) => saveAutoSync(e.target.checked)}
           />
           {t('sync.auto.enabled')}
         </label>
@@ -108,9 +136,9 @@ export function AppSection({ onSaved }: { onSaved: () => void }): React.JSX.Elem
         />
         {minutesIssue ? <small className="field-error">{minutesIssue}</small> : <small className="muted">{t('sync.auto.minutes_help')}</small>}
       </label>
-      {error && (
+      {shownError && (
         <p className="field-error" role="alert">
-          {error}
+          {shownError}
         </p>
       )}
       <ModelsSection />
