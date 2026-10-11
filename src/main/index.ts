@@ -1,13 +1,15 @@
 import { app, BrowserWindow, ipcMain, session, shell, type IpcMainEvent } from 'electron'
 import { join } from 'node:path'
 import { eventChannel, IPC } from '../shared/ipc'
+import type { CloseDecision } from '../shared/sync'
 import { AppController } from './AppController'
+import { confirmClose, createQuitFlow, once } from './closeFlow'
 import { UtilityEmbeddingRuntime } from './embeddings/UtilityEmbeddingRuntime'
 import { waitForFlush } from './flush'
 import { registerIpc } from './ipc'
+import { arg, ipcArgs } from './ipcArgs'
 
 let mainWindow: BrowserWindow | null = null
-let quitting = false
 
 // The local model lives with the app's data, never in a project folder.
 const embeddings = new UtilityEmbeddingRuntime(join(app.getPath('userData'), 'models'), join(__dirname, 'embeddings.js'))
@@ -21,8 +23,8 @@ const controller = new AppController(
 )
 
 /** Lets the renderer save pending edits (e.g. notes still in their autosave delay) before its window goes away. */
-function flushRenderer(win: BrowserWindow | null): Promise<void> {
-  if (!win || win.isDestroyed()) return Promise.resolve()
+function flushRenderer(win: BrowserWindow | null): Promise<boolean> {
+  if (!win || win.isDestroyed()) return Promise.resolve(true)
   const contents = win.webContents
   return waitForFlush(
     () => contents.send(eventChannel('flush-request')),
@@ -35,6 +37,68 @@ function flushRenderer(win: BrowserWindow | null): Promise<void> {
     }
   )
 }
+
+/** Shows «Hay cambios sin sincronizar» in the window and waits for the answer; a window that is gone or stuck counts as `close`. */
+function askCloseDecision(win: BrowserWindow): Promise<CloseDecision> {
+  return new Promise((resolve) => {
+    const contents = win.webContents
+    let answered = false
+    const finish = (decision: CloseDecision): void => {
+      if (answered) return
+      answered = true
+      ipcMain.removeListener(IPC.closeDecision, onAnswer)
+      contents.removeListener('render-process-gone', onGone)
+      contents.removeListener('destroyed', onGone)
+      contents.removeListener('unresponsive', onGone)
+      resolve(decision)
+    }
+    function onAnswer(event: IpcMainEvent, raw: unknown): void {
+      if (event.sender !== contents) return
+      try {
+        finish(arg(ipcArgs.closeDecision, raw, 'decision'))
+      } catch {
+        finish('cancel')
+      }
+    }
+    function onGone(): void {
+      finish('close')
+    }
+    ipcMain.on(IPC.closeDecision, onAnswer)
+    contents.on('render-process-gone', onGone)
+    contents.on('destroyed', onGone)
+    contents.on('unresponsive', onGone)
+    try {
+      contents.send(eventChannel('close-request'))
+    } catch {
+      finish('close')
+    }
+  })
+}
+
+/**
+ * Saves pending edits, then asks only when the renderer answered the flush (it is alive) and the
+ * project has changes not synced; true when the window may go. Shared by the window's `close` and
+ * `before-quit`, which always act on the single `mainWindow`, so concurrent callers join one prompt.
+ */
+const confirmLeave = once((): Promise<boolean> => {
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+  if (!win) return Promise.resolve(true)
+  return confirmClose({
+    flush: () => flushRenderer(win),
+    unsynced: () => controller.hasUnsyncedChanges(),
+    ask: () => (win.isDestroyed() ? Promise.resolve<CloseDecision>('close') : askCloseDecision(win))
+  })
+})
+
+/**
+ * Drives `before-quit` (and the one `window-all-closed`'s `app.quit()` triggers): confirms leaving at
+ * most once, shuts the app down, then quits — even if `shutdown()` throws, so the app can always quit.
+ */
+const quitFlow = createQuitFlow({
+  confirmLeave,
+  shutdown: () => controller.shutdown(),
+  quit: () => app.quit()
+})
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -49,14 +113,15 @@ function createWindow(): BrowserWindow {
     }
   })
   win.on('ready-to-show', () => win.show())
-  let flushed = false
+  let allowClose = false
   win.on('close', (event) => {
-    // On quit, before-quit has already flushed and closed the project.
-    if (flushed || quitting) return
+    // Once a pending quit's prompt was answered to leave, this fires again as part of that shutdown.
+    if (allowClose || quitFlow.isLeavingConfirmed()) return
     event.preventDefault()
-    flushed = true
-    void flushRenderer(win).finally(() => {
-      if (!win.isDestroyed()) win.close()
+    void confirmLeave().then((ok) => {
+      if (!ok || allowClose || win.isDestroyed()) return
+      allowClose = true
+      win.close()
     })
   })
   win.on('closed', () => {
@@ -101,14 +166,11 @@ function start(): void {
     })
   })
 
+  // Several `before-quit` (one per Cmd+Q / File > Quit, plus the one `window-all-closed` triggers) can
+  // arrive while the first is still confirming or shutting down; `quitFlow` makes sure only the one
+  // that started the chain ever calls `app.quit()` again, and only once it is done.
   app.on('before-quit', (event) => {
-    if (quitting) return
-    event.preventDefault()
-    quitting = true
-    void flushRenderer(mainWindow)
-      .then(() => controller.shutdown())
-      .catch((error) => console.error('shutdown', error))
-      .finally(() => app.quit())
+    if (quitFlow.beforeQuit()) event.preventDefault()
   })
 
   app.on('window-all-closed', () => {
