@@ -111,13 +111,14 @@ export function processAlive(pid: number): boolean {
 
 /**
  * Points machine A's remote at an ssh "server" that never answers: a script that records its pid and sleeps, so a
- * fetch hangs until it is cut short. No network is involved. Linux only (`sh`).
+ * fetch hangs until it is cut short. No network is involved. Linux only (`sh`). The sleep is far longer than any test waits
+ * but short enough that a failed run leaves nothing for long; call `kill()` in a `finally` so it leaves nothing at all.
  */
-export async function hangingRemote(m: Machines): Promise<{ env: GitEnv; pids: () => Promise<number[]> }> {
+export async function hangingRemote(m: Machines): Promise<{ env: GitEnv; pids: () => Promise<number[]>; kill: () => Promise<void> }> {
   const dir = await tmpDir()
   const pidFile = join(dir, 'pids')
   const script = join(dir, 'fake-ssh')
-  await writeFile(script, `#!/bin/sh\necho $$ >> '${pidFile}'\nexec sleep 600\n`)
+  await writeFile(script, `#!/bin/sh\necho $$ >> '${pidFile}'\nexec sleep 60\n`)
   await chmod(script, 0o755)
   m.git(m.a, 'remote', 'set-url', 'origin', 'ssh://git@example.invalid/remote.git')
   const pids = async (): Promise<number[]> => {
@@ -127,5 +128,14 @@ export async function hangingRemote(m: Machines): Promise<{ env: GitEnv; pids: (
       return []
     }
   }
-  return { env: { ...m.env, GIT_SSH_COMMAND: script }, pids }
+  const kill = async (): Promise<void> => {
+    for (const pid of await pids()) {
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch {
+        // Already gone, as it should be.
+      }
+    }
+  }
+  return { env: { ...m.env, GIT_SSH_COMMAND: script }, pids, kill }
 }

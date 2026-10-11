@@ -41,11 +41,13 @@ export class AppController {
   }
 
   async setSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
+    const before = this.settings
     this.settings = { ...this.settings, ...patch }
     await saveSettings(this.settingsFile, this.settings)
     this.session?.http.setContactEmail(this.settings.contactEmail)
     this.session?.http.setOpenAlexApiKey(this.settings.openalexApiKey)
-    if ('autoSync' in patch || 'autoSyncMinutes' in patch) this.session?.rescheduleSync()
+    // A full new interval starts on a reschedule: saving the same values again must not push the next sync back.
+    if (before.autoSync !== this.settings.autoSync || before.autoSyncMinutes !== this.settings.autoSyncMinutes) this.session?.rescheduleSync()
     return this.settings
   }
 
@@ -148,5 +150,7 @@ export class AppController {
     session.on('project', () => this.emit('project-changed'))
     session.on('sync', () => this.emit('sync-changed'))
     this.emit('project-changed')
+    // The first automatic sync may already be running (it starts as the session opens, before these listeners).
+    this.emit('sync-changed')
   }
 }
