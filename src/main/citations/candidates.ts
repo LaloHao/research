@@ -8,6 +8,8 @@ export interface CandidateInput {
   library: { id: string; openalexId: string | null; doi: string | null }[]
   dismissed: ReadonlySet<string>
   works: ReadonlyMap<string, ExternalWork>
+  /** Papers in the trash: a candidate that is one of them is marked, not hidden. */
+  trash?: { id: string; openalexId: string | null; doi: string | null }[]
 }
 
 const strength = (c: Candidate): number => Math.max(c.citedByLibrary, c.citesLibrary)
@@ -16,6 +18,8 @@ const strength = (c: Candidate): number => Math.max(c.citedByLibrary, c.citesLib
 export function computeCandidates(input: CandidateInput, query: CandidateQuery): Candidate[] {
   const inLibrary = new Set(input.library.flatMap((p) => (p.openalexId ? [p.openalexId] : [])))
   const libraryDois = new Set(input.library.flatMap((p) => (p.doi ? [p.doi.toLowerCase()] : [])))
+  const trashedByOpenAlex = new Map((input.trash ?? []).flatMap((p) => (p.openalexId ? [[p.openalexId, p.id] as const] : [])))
+  const trashedByDoi = new Map((input.trash ?? []).flatMap((p) => (p.doi ? [[p.doi.toLowerCase(), p.id] as const] : [])))
   const related = new Map<string, { citedBy: Set<string>; cites: Set<string> }>()
   const entry = (id: string): { citedBy: Set<string>; cites: Set<string> } => {
     let e = related.get(id)
@@ -37,6 +41,8 @@ export function computeCandidates(input: CandidateInput, query: CandidateQuery):
       citesLibrary: rel.cites.size,
       paperIds: [...new Set([...rel.citedBy, ...rel.cites])].sort()
     }
+    const trashedId = trashedByOpenAlex.get(openalexId) ?? (work?.doi ? trashedByDoi.get(work.doi.toLowerCase()) : undefined)
+    if (trashedId) candidate.trashedId = trashedId
     const count =
       query.direction === 'references' ? candidate.citedByLibrary : query.direction === 'citing' ? candidate.citesLibrary : strength(candidate)
     if (count < query.minCount) continue
