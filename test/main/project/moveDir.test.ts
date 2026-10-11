@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { existsSync } from 'node:fs'
 import { cp, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { moveDir, type MoveOps } from '../../../src/main/project/atomicWrite'
+import { moveDir, retryableMoveCodes, type MoveOps } from '../../../src/main/project/atomicWrite'
 import { tmpDir } from '../../helpers/tmp'
 
 async function folder(): Promise<{ root: string; from: string; to: string }> {
@@ -62,5 +62,35 @@ describe('moveDir', () => {
     await expect(moveDir(from, to, ops)).rejects.toThrow('ENOSPC')
     expect(await readFile(join(from, 'paper.yaml'), 'utf8')).toBe('a')
     expect(await readdir(join(root, '.trash'))).toEqual([])
+  })
+
+  it('retries the final rename of a cross-disk copy refused for a moment', async () => {
+    const { from, to } = await folder()
+    let tries = 0
+    const ops: MoveOps = {
+      ...real,
+      rename: async (a, b) => {
+        if (a === from) return Promise.reject(fail('EXDEV'))
+        return ++tries < 3 ? Promise.reject(fail('EBUSY')) : rename(a, b)
+      }
+    }
+    await moveDir(from, to, ops, 1)
+    expect(tries).toBe(3)
+    expect(existsSync(from)).toBe(false)
+    expect(await readFile(join(to, 'paper.yaml'), 'utf8')).toBe('a')
+  })
+
+  it('retries EACCES only on Windows, where it means a file briefly open', () => {
+    expect([...retryableMoveCodes('win32')].sort()).toEqual(['EACCES', 'EBUSY', 'EPERM'])
+    expect([...retryableMoveCodes('linux')].sort()).toEqual(['EBUSY', 'EPERM'])
+    expect([...retryableMoveCodes('darwin')].sort()).toEqual(['EBUSY', 'EPERM'])
+  })
+
+  it.skipIf(process.platform === 'win32')('fails at once on EACCES outside Windows (a real permission problem)', async () => {
+    const { from, to } = await folder()
+    let tries = 0
+    const ops: MoveOps = { ...real, rename: async () => (tries++, Promise.reject(fail('EACCES'))) }
+    await expect(moveDir(from, to, ops, 1)).rejects.toMatchObject({ code: 'EACCES' })
+    expect(tries).toBe(1)
   })
 })

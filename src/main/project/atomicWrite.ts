@@ -27,25 +27,26 @@ export interface MoveOps {
 }
 
 const FS_OPS: MoveOps = { rename, cp, rm }
-/** Windows refuses a rename for a moment while another process (an indexer, an antivirus, a viewer) has a file open. */
-export const MOVE_RETRYABLE: ReadonlySet<string> = new Set(['EPERM', 'EBUSY', 'EACCES'])
-const MAX_RETRIES = 3
 
 /**
- * Moves a folder. Within the project this is one rename, so a crash never leaves half a folder on each side; a refused
- * rename is retried with a growing wait (retryMs, ×2, ×4). Only when the destination is on another disk (EXDEV) the folder
- * is copied under a dot-prefixed temp name (ignored by the watcher), renamed into place, and then the source is removed;
- * a failed copy leaves the source untouched, and a source that cannot be removed afterwards is only logged.
+ * Codes for which a refused rename is retried. Windows refuses a rename for a moment (EPERM, EBUSY, and also EACCES)
+ * while another process (an indexer, an antivirus, a viewer) has a file open; elsewhere EACCES is a real permission
+ * problem and fails at once.
  */
-export async function moveDir(from: string, to: string, ops: MoveOps = FS_OPS, retryMs = 100): Promise<void> {
-  await mkdir(dirname(to), { recursive: true })
+export function retryableMoveCodes(platform: NodeJS.Platform): ReadonlySet<string> {
+  return new Set(platform === 'win32' ? ['EPERM', 'EBUSY', 'EACCES'] : ['EPERM', 'EBUSY'])
+}
+export const MOVE_RETRYABLE: ReadonlySet<string> = retryableMoveCodes(process.platform)
+const MAX_RETRIES = 3
+
+/** One rename, retried with a growing wait (retryMs, ×2, ×4) while it is refused for a retryable reason. */
+async function renameRetrying(ops: MoveOps, from: string, to: string, retryMs: number): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     try {
       await ops.rename(from, to)
       return
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
-      if (code === 'EXDEV') break
       if (code && MOVE_RETRYABLE.has(code) && attempt < MAX_RETRIES) {
         await new Promise((resolve) => setTimeout(resolve, retryMs * 2 ** attempt))
         continue
@@ -53,10 +54,27 @@ export async function moveDir(from: string, to: string, ops: MoveOps = FS_OPS, r
       throw error
     }
   }
+}
+
+/**
+ * Moves a folder. Within the project this is one rename, so a crash never leaves half a folder on each side; a refused
+ * rename is retried (see `renameRetrying`). Only when the destination is on another disk (EXDEV) the folder is copied
+ * under a dot-prefixed temp name (ignored by the watcher), renamed into place (retried the same way), and then the
+ * source is removed; a failed copy leaves the source untouched, and a source that cannot be removed afterwards is only
+ * logged.
+ */
+export async function moveDir(from: string, to: string, ops: MoveOps = FS_OPS, retryMs = 100): Promise<void> {
+  await mkdir(dirname(to), { recursive: true })
+  try {
+    await renameRetrying(ops, from, to, retryMs)
+    return
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error
+  }
   const tmp = join(dirname(to), `.${basename(to)}.${randomBytes(6).toString('hex')}.moving`)
   try {
     await ops.cp(from, tmp, { recursive: true, errorOnExist: true, force: false })
-    await ops.rename(tmp, to)
+    await renameRetrying(ops, tmp, to, retryMs)
   } catch (error) {
     await ops.rm(tmp, { recursive: true, force: true })
     throw error

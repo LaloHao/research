@@ -293,8 +293,10 @@ export class ProjectStore {
    * `rewrite` gives the paper.yaml for it (written in the trash first, hash-checked). When `papers/<as>/` exists without
    * a paper.yaml (files a sync left behind), the trashed files move into it one by one, paper.yaml last, and a name
    * already taken there is kept beside it as `<name>.trashed.<ext>`. Never over a folder that holds a paper.
+   * If the folder cannot be moved, the original paper.yaml goes back into the trash (hash-checked), so the entry stays
+   * restorable. `remnant`: something (a subfolder) stayed in the trash, which keeps its entry and trashed.yaml.
    */
-  async restorePaper(id: string, opts: { as?: string; rewrite?: (paper: Paper) => Paper } = {}): Promise<void> {
+  async restorePaper(id: string, opts: { as?: string; rewrite?: (paper: Paper) => Paper } = {}): Promise<{ remnant: boolean }> {
     const as = opts.as ?? id
     if (!PAPER_ID.test(id) || !PAPER_ID.test(as) || !existsSync(join(this.trashDir(id), 'paper.yaml'))) {
       throw new ProjectError(`${id} cannot be restored: no paper.yaml in the trash`, 'trash_problem')
@@ -305,18 +307,18 @@ export class ProjectStore {
       if (!read?.ok || !opts.rewrite) throw new ProjectError(`${id} cannot be restored as ${as}`, 'trash_problem')
       const next = PaperSchema.parse(opts.rewrite(read.value))
       if (next.id !== as) throw new Error(`The rewritten paper.yaml must have id ${as}`)
-      await this.writeChecked(join(this.trashDir(id), 'paper.yaml'), toYaml(next), read.hash)
+      const path = join(this.trashDir(id), 'paper.yaml')
+      const original = await readFile(path, 'utf8')
+      const rewritten = await this.writeChecked(path, toYaml(next), read.hash)
+      try {
+        return await this.moveOutOfTrash(id, as)
+      } catch (error) {
+        // Still in the trash with the new key inside it would never be restorable again: put the original back.
+        await this.writeChecked(path, original, rewritten).catch((undo: unknown) => console.error('restore: paper.yaml', id, undo))
+        throw error
+      }
     }
-    if (!existsSync(this.paperDir(as))) {
-      await this.move(this.trashDir(id), this.paperDir(as))
-      await rm(join(this.paperDir(as), TRASHED_FILE), { force: true })
-      return
-    }
-    for (const name of await this.listTrashedFiles(id)) {
-      const taken = existsSync(join(this.paperDir(as), name))
-      await rename(join(this.trashDir(id), name), join(this.paperDir(as), taken ? this.freeSibling(as, name, 'trashed') : name))
-    }
-    await this.removeTrashDirIfDone(id)
+    return this.moveOutOfTrash(id, as)
   }
 
   /** Files of a trashed paper (no folders, dot files or trashed.yaml), sorted with paper.yaml last. */
@@ -431,8 +433,25 @@ export class ProjectStore {
     return read.ok ? read.value : null
   }
 
-  /** Drops trashed.yaml and the folder when nothing else is left in it; true when it is gone. */
+  /** `.trash/<id>/` becomes `papers/<as>/`: one move, or file by file (paper.yaml last) into a leftover folder. */
+  private async moveOutOfTrash(id: string, as: string): Promise<{ remnant: boolean }> {
+    if (!existsSync(this.paperDir(as))) {
+      await this.move(this.trashDir(id), this.paperDir(as))
+      await rm(join(this.paperDir(as), TRASHED_FILE), { force: true })
+      return { remnant: false }
+    }
+    for (const name of await this.listTrashedFiles(id)) {
+      const taken = existsSync(join(this.paperDir(as), name))
+      await rename(join(this.trashDir(id), name), join(this.paperDir(as), taken ? this.freeSibling(as, name, 'trashed') : name))
+    }
+    return { remnant: !(await this.removeTrashDirIfDone(id)) }
+  }
+
+  /** Drops trashed.yaml and the folder when nothing else is left in it; true when it is gone. An entry that stays keeps trashed.yaml. */
   private async removeTrashDirIfDone(id: string): Promise<boolean> {
+    const left = await readdir(this.trashDir(id)).catch(() => null)
+    if (left === null) return true
+    if (left.some((name) => name !== TRASHED_FILE)) return false
     await rm(join(this.trashDir(id), TRASHED_FILE), { force: true })
     try {
       await rmdir(this.trashDir(id))

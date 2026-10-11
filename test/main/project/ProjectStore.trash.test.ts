@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -11,6 +11,21 @@ import { siblingName } from '../../../src/main/project/trashPaths'
 import { samplePaper } from '../../helpers/papers'
 import { sampleSummary } from '../../helpers/summaries'
 import { tmpDir } from '../../helpers/tmp'
+
+// Lets a test make the next folder move fail, as Windows does while another program holds a file open.
+const moves = vi.hoisted(() => ({ failNext: null as string | null }))
+vi.mock('../../../src/main/project/atomicWrite', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/main/project/atomicWrite')>()
+  return {
+    ...actual,
+    moveDir: async (...args: Parameters<typeof actual.moveDir>) => {
+      const failure = moves.failNext
+      moves.failNext = null
+      if (failure) throw Object.assign(new Error(failure), { code: failure })
+      return actual.moveDir(...args)
+    }
+  }
+})
 
 const DEVICE = '22222222-2222-2222-2222-222222222222'
 const AT = new Date('2026-10-11T12:00:00.000Z')
@@ -61,7 +76,7 @@ describe('ProjectStore trash', () => {
   it('restores the folder as it was, without trashed.yaml', async () => {
     const store = await withPaper()
     await store.trashPaper(ID, DEVICE, AT)
-    await store.restorePaper(ID)
+    expect(await store.restorePaper(ID)).toEqual({ remnant: false })
     expect(store.paperExists(ID)).toBe(true)
     expect(store.trashExists(ID)).toBe(false)
     expect(existsSync(join(store.paperDir(ID), 'trashed.yaml'))).toBe(false)
@@ -89,7 +104,7 @@ describe('ProjectStore trash', () => {
     await store.trashPaper(ID, DEVICE, AT)
     await mkdir(store.paperDir(ID), { recursive: true })
     await writeFile(join(store.paperDir(ID), 'notes.md'), 'written late')
-    await store.restorePaper(ID)
+    expect(await store.restorePaper(ID)).toEqual({ remnant: false })
     expect(store.paperExists(ID)).toBe(true)
     expect(await readFile(join(store.paperDir(ID), 'notes.md'), 'utf8')).toBe('written late')
     expect(await readFile(join(store.paperDir(ID), 'notes.trashed.md'), 'utf8')).toBe('my notes')
@@ -131,6 +146,8 @@ describe('ProjectStore trash', () => {
     expect(await store.finishMerge(ID, await store.listTrashedFiles(ID))).toBe(false)
     expect(await store.listTrashedFiles(ID)).toEqual([])
     expect(store.trashExists(ID)).toBe(true)
+    // The entry that stays keeps its date and device.
+    expect(existsSync(join(store.trashDir(ID), 'trashed.yaml'))).toBe(true)
     await store.deleteTrashed(ID)
     expect(store.trashExists(ID)).toBe(false)
   })
@@ -159,6 +176,32 @@ describe('ProjectStore trash', () => {
     expect(await readFile(join(root, '.gitignore'), 'utf8')).toContain('.trash/*/paper.pdf')
     expect(existsSync(join(root, '.trash', '.he2017drain.abc123.moving'))).toBe(false)
     expect(await store.listPaperIds()).toEqual([])
+  })
+
+  it('reports a subfolder left in the trash after restoring into a leftover folder, keeping its trashed.yaml', async () => {
+    const store = await withPaper()
+    await store.trashPaper(ID, DEVICE, AT)
+    await mkdir(join(store.trashDir(ID), 'figures'))
+    await mkdir(store.paperDir(ID), { recursive: true })
+    expect(await store.restorePaper(ID)).toEqual({ remnant: true })
+    expect(store.paperExists(ID)).toBe(true)
+    expect(store.trashExists(ID)).toBe(true)
+    expect(existsSync(join(store.trashDir(ID), 'trashed.yaml'))).toBe(true)
+  })
+
+  it('puts the original paper.yaml back when a restore under another key cannot move the folder', async () => {
+    const store = await withPaper()
+    await store.trashPaper(ID, DEVICE, AT)
+    await store.writePaper(samplePaper({ title: 'Someone else' }), null)
+    const rewrite = (p: ReturnType<typeof samplePaper>): ReturnType<typeof samplePaper> => ({ ...p, id: 'he2017draina' })
+    moves.failNext = 'EBUSY'
+    expect(await code(store.restorePaper(ID, { as: 'he2017draina', rewrite }))).toBe('folder_busy')
+    const kept = await store.readTrashedPaper(ID)
+    expect(kept?.ok && kept.value.id).toBe(ID)
+    expect(existsSync(store.paperDir('he2017draina'))).toBe(false)
+    expect(await store.restorePaper(ID, { as: 'he2017draina', rewrite })).toEqual({ remnant: false })
+    const read = await store.readPaper('he2017draina')
+    expect(read.ok && read.value.title).toBe(samplePaper().title)
   })
 
   it('names a copy kept beside another', () => {
