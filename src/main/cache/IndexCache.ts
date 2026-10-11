@@ -27,8 +27,8 @@ export interface JobRow {
 }
 
 // 5: citations, external works, vectors, neighbours and facet values (stage 3a). 6: when citing works were fetched.
-// 7: typed relations, an index of relations.yaml (stage 3b).
-const SCHEMA_VERSION = 7
+// 7: typed relations, an index of relations.yaml (stage 3b). 8: the trash (.trash/), whose papers keep their text and vector.
+const SCHEMA_VERSION = 8
 const TOKENIZER = "tokenize='unicode61 remove_diacritics 2'"
 const DDL = `
 CREATE TABLE papers (
@@ -81,11 +81,17 @@ CREATE TABLE paper_facets (paper_id TEXT NOT NULL, facet TEXT NOT NULL, value TE
 CREATE TABLE typed_relations (id TEXT PRIMARY KEY, type TEXT NOT NULL, from_id TEXT NOT NULL, to_id TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL);
 CREATE INDEX typed_relations_from ON typed_relations (from_id);
 CREATE INDEX typed_relations_to ON typed_relations (to_id);
+CREATE TABLE trash (id TEXT PRIMARY KEY, title TEXT NOT NULL, authors_label TEXT NOT NULL DEFAULT '', year INTEGER, doi TEXT, openalex_id TEXT,
+  trashed_at TEXT, device TEXT, problem TEXT, text_hash TEXT, text_status TEXT, text_chars INTEGER NOT NULL DEFAULT 0);
 `
+
+/** A typed relation with an end in the trash stays in relations.yaml but is hidden from every read. */
+const VISIBLE_RELATION = 'from_id NOT IN (SELECT id FROM trash) AND to_id NOT IN (SELECT id FROM trash)'
 
 const PAPER_COLUMNS =
   'id, title, authors_label, year, venue, kind, doi, arxiv, metadata_status, has_pdf, problem, added_at, text_status, summary_status, pending_review, summary_model, citations_status, ' +
-  "(SELECT COUNT(*) FROM typed_relations r WHERE r.status = 'suggested' AND (r.from_id = papers.id OR r.to_id = papers.id)) AS relations_pending"
+  "(SELECT COUNT(*) FROM typed_relations r WHERE r.status = 'suggested' AND (r.from_id = papers.id OR r.to_id = papers.id) " +
+  'AND r.from_id NOT IN (SELECT id FROM trash) AND r.to_id NOT IN (SELECT id FROM trash)) AS relations_pending'
 
 export interface RelationRow {
   id: string
@@ -96,6 +102,25 @@ export interface RelationRow {
   cited_by_count: number | null
   citations_status: CitationsStatus
   thesis_score: number | null
+}
+
+/** One paper in the trash, as the index keeps it (from .trash/<key>/paper.yaml and trashed.yaml). */
+export interface TrashRow {
+  id: string
+  title: string
+  authors_label: string
+  year: number | null
+  doi: string | null
+  openalex_id: string | null
+  trashed_at: string | null
+  device: string | null
+  problem: string | null
+}
+
+interface TextState {
+  text_hash: string | null
+  text_status: string | null
+  text_chars: number
 }
 
 function citationsStatus(c: Citations | undefined): CitationsStatus {
@@ -160,6 +185,8 @@ export class IndexCache {
       this.db.prepare('DELETE FROM citation_edges WHERE citing_id = ?').run(p.id)
       const edge = this.db.prepare('INSERT OR IGNORE INTO citation_edges (citing_id, cited_openalex_id) VALUES (?, ?)')
       for (const ref of p.citations?.references ?? []) edge.run(p.id, ref)
+      // A library paper took this key: the text state kept for a trashed paper with the same key no longer matches the chunks.
+      this.db.prepare('UPDATE trash SET text_hash = NULL, text_status = NULL, text_chars = 0 WHERE id = ?').run(p.id)
     })
   }
 
@@ -175,19 +202,9 @@ export class IndexCache {
     })
   }
 
+  /** A paper left the library; a paper in the trash keeps its chunks, vector and citing works for a restore. */
   removePaper(id: string): void {
-    this.tx(() => {
-      this.db.prepare('DELETE FROM papers WHERE id = ?').run(id)
-      this.db.prepare('DELETE FROM papers_fts WHERE id = ?').run(id)
-      this.db.prepare('DELETE FROM chunks_fts WHERE paper_id = ?').run(id)
-      this.db.prepare('DELETE FROM summaries_fts WHERE paper_id = ?').run(id)
-      this.db.prepare('DELETE FROM citation_edges WHERE citing_id = ?').run(id)
-      this.db.prepare('DELETE FROM incoming_citations WHERE cited_paper_id = ?').run(id)
-      this.db.prepare('DELETE FROM incoming_fetches WHERE paper_id = ?').run(id)
-      this.db.prepare('DELETE FROM paper_vectors WHERE paper_id = ?').run(id)
-      this.db.prepare('DELETE FROM similar_pairs WHERE a = ? OR b = ?').run(id, id)
-      this.db.prepare('DELETE FROM paper_facets WHERE paper_id = ?').run(id)
-    })
+    this.tx(() => this.dropPaperRows(id, this.isTrashed(id)))
   }
 
   fileHash(id: string): string | null {
@@ -269,7 +286,7 @@ export class IndexCache {
            SELECT paper_id AS id, bm25(chunks_fts) AS score FROM chunks_fts WHERE chunks_fts MATCH ?
            UNION ALL
            SELECT paper_id AS id, bm25(summaries_fts) * 1.5 AS score FROM summaries_fts WHERE summaries_fts MATCH ?
-         ) GROUP BY id ORDER BY score LIMIT ?`
+         ) WHERE id IN (SELECT id FROM papers) GROUP BY id ORDER BY score LIMIT ?`
       )
       .all(match, match, match, limit) as { id: string }[]
     return rows.map((r) => r.id)
@@ -444,12 +461,12 @@ export class IndexCache {
     })
   }
 
-  /** Sorted by id; with `paperId`, only the relations that involve that paper. */
+  /** Sorted by id; with `paperId`, only the relations that involve that paper. Relations with a trashed end are left out. */
   typedRelations(paperId?: string): TypedRelation[] {
     const rows = (
       paperId
-        ? this.db.prepare('SELECT data FROM typed_relations WHERE from_id = ? OR to_id = ? ORDER BY id').all(paperId, paperId)
-        : this.db.prepare('SELECT data FROM typed_relations ORDER BY id').all()
+        ? this.db.prepare(`SELECT data FROM typed_relations WHERE (from_id = ? OR to_id = ?) AND ${VISIBLE_RELATION} ORDER BY id`).all(paperId, paperId)
+        : this.db.prepare(`SELECT data FROM typed_relations WHERE ${VISIBLE_RELATION} ORDER BY id`).all()
     ) as { data: string }[]
     return rows.flatMap((r) => {
       const parsed = TypedRelationSchema.safeParse(JSON.parse(r.data))
@@ -465,7 +482,7 @@ export class IndexCache {
     const filter = opts.paperId ? ' AND paper_id = ?' : ''
     const params = opts.paperId ? [match, opts.paperId, opts.limit] : [match, opts.limit]
     const rows = this.db
-      .prepare(`SELECT paper_id, page, text FROM chunks_fts WHERE chunks_fts MATCH ?${filter} ORDER BY bm25(chunks_fts) LIMIT ?`)
+      .prepare(`SELECT paper_id, page, text FROM chunks_fts WHERE chunks_fts MATCH ? AND paper_id IN (SELECT id FROM papers)${filter} ORDER BY bm25(chunks_fts) LIMIT ?`)
       .all(...params) as { paper_id: string; page: number | null; text: string }[]
     return rows.map((r) => ({ paperId: r.paper_id, page: r.page === null ? null : Number(r.page), text: r.text }))
   }
@@ -489,6 +506,95 @@ export class IndexCache {
       .prepare(`UPDATE jobs SET state = 'cancelled', updated_at = ? WHERE state = 'queued' AND json_extract(spec, '$.type') IN (${types.map(() => '?').join(', ')})`)
       .run(now, ...types)
     return Number(r.changes)
+  }
+
+  /** Queued jobs of these papers (any type with a `paperId`) become cancelled. */
+  cancelQueuedPapers(ids: string[], now: string): number {
+    if (ids.length === 0) return 0
+    const r = this.db
+      .prepare(`UPDATE jobs SET state = 'cancelled', updated_at = ? WHERE state = 'queued' AND json_extract(spec, '$.paperId') IN (${ids.map(() => '?').join(', ')})`)
+      .run(now, ...ids)
+    return Number(r.changes)
+  }
+
+  /** A paper moved to the trash leaves the library, but keeps its text state, chunks and vector so a restore does not extract or embed it again. */
+  moveToTrash(entry: TrashRow): void {
+    this.tx(() => {
+      const text = this.db.prepare('SELECT text_hash, text_status, text_chars FROM papers WHERE id = ?').get(entry.id) as TextState | undefined
+      this.upsertTrash(entry, text ?? null)
+      this.dropPaperRows(entry.id, true)
+    })
+  }
+
+  /** Before a restored paper is indexed again: its entry goes and its text state comes back, so an unchanged PDF is not extracted again. */
+  takeFromTrash(id: string): void {
+    this.tx(() => {
+      const row = this.db.prepare('SELECT title, text_hash, text_status, text_chars FROM trash WHERE id = ?').get(id) as ({ title: string } & TextState) | undefined
+      this.db.prepare('DELETE FROM trash WHERE id = ?').run(id)
+      if (!row?.text_hash) return
+      this.db
+        .prepare("INSERT INTO papers (id, file_hash, title, text_hash, text_status, text_chars) VALUES (?, '', ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING")
+        .run(id, row.title, row.text_hash, row.text_status ?? 'pending', Number(row.text_chars))
+    })
+  }
+
+  /**
+   * Mirrors `.trash/` (opening the project, a git pull): listed entries are upserted keeping their text state (a new
+   * entry takes it from its row in `papers`, e.g. a folder git moved while the app was closed), the others go, and so do
+   * chunks, vectors and citing works that neither a library paper nor a trash entry owns.
+   */
+  replaceTrash(entries: TrashRow[]): void {
+    this.tx(() => {
+      const keep = new Set(entries.map((e) => e.id))
+      for (const { id } of this.db.prepare('SELECT id FROM trash').all() as { id: string }[]) {
+        if (!keep.has(id)) this.db.prepare('DELETE FROM trash WHERE id = ?').run(id)
+      }
+      for (const e of entries) {
+        const known = this.db.prepare('SELECT 1 FROM trash WHERE id = ?').get(e.id)
+        const text = known ? undefined : (this.db.prepare('SELECT text_hash, text_status, text_chars FROM papers WHERE id = ?').get(e.id) as TextState | undefined)
+        this.upsertTrash(e, text ?? null)
+      }
+      const owned = (column: string): string => `${column} NOT IN (SELECT id FROM papers) AND ${column} NOT IN (SELECT id FROM trash)`
+      this.db.exec(`DELETE FROM chunks_fts WHERE ${owned('paper_id')}`)
+      this.db.exec(`DELETE FROM paper_vectors WHERE ${owned('paper_id')}`)
+      this.db.exec(`DELETE FROM incoming_citations WHERE ${owned('cited_paper_id')}`)
+      this.db.exec(`DELETE FROM incoming_fetches WHERE ${owned('paper_id')}`)
+    })
+  }
+
+  /** Deleted for good: the entry goes, and its kept text unless a library paper now uses that key. */
+  removeTrash(id: string): void {
+    this.tx(() => {
+      this.db.prepare('DELETE FROM trash WHERE id = ?').run(id)
+      if (!this.db.prepare('SELECT 1 FROM papers WHERE id = ?').get(id)) this.dropText(id)
+    })
+  }
+
+  isTrashed(id: string): boolean {
+    return Boolean(this.db.prepare('SELECT 1 FROM trash WHERE id = ?').get(id))
+  }
+
+  trashedIds(): Set<string> {
+    return new Set((this.db.prepare('SELECT id FROM trash').all() as { id: string }[]).map((r) => r.id))
+  }
+
+  /** Most recently removed first; entries without a date (no trashed.yaml) last. */
+  trashEntries(): TrashRow[] {
+    return (
+      this.db
+        .prepare('SELECT id, title, authors_label, year, doi, openalex_id, trashed_at, device, problem FROM trash ORDER BY trashed_at DESC, id')
+        .all() as Record<string, unknown>[]
+    ).map((r) => ({
+      id: r.id as string,
+      title: r.title as string,
+      authors_label: (r.authors_label as string | null) ?? '',
+      year: num(r.year),
+      doi: (r.doi as string | null) ?? null,
+      openalex_id: (r.openalex_id as string | null) ?? null,
+      trashed_at: (r.trashed_at as string | null) ?? null,
+      device: (r.device as string | null) ?? null,
+      problem: (r.problem as string | null) ?? null
+    }))
   }
 
   dedupeEntries(): DedupeEntry[] {
@@ -550,6 +656,38 @@ export class IndexCache {
   /** Jobs left running by a crash or a quit go back to the queue. */
   requeueRunningJobs(now: string): void {
     this.db.prepare("UPDATE jobs SET state = 'queued', updated_at = ? WHERE state = 'running'").run(now)
+  }
+
+  /** The library rows of a paper; with `keepText`, its chunks, vector and citing works stay (a paper in the trash). */
+  private dropPaperRows(id: string, keepText: boolean): void {
+    this.db.prepare('DELETE FROM papers WHERE id = ?').run(id)
+    this.db.prepare('DELETE FROM papers_fts WHERE id = ?').run(id)
+    this.db.prepare('DELETE FROM summaries_fts WHERE paper_id = ?').run(id)
+    this.db.prepare('DELETE FROM citation_edges WHERE citing_id = ?').run(id)
+    this.db.prepare('DELETE FROM similar_pairs WHERE a = ? OR b = ?').run(id, id)
+    this.db.prepare('DELETE FROM paper_facets WHERE paper_id = ?').run(id)
+    if (!keepText) this.dropText(id)
+  }
+
+  private dropText(id: string): void {
+    this.db.prepare('DELETE FROM chunks_fts WHERE paper_id = ?').run(id)
+    this.db.prepare('DELETE FROM incoming_citations WHERE cited_paper_id = ?').run(id)
+    this.db.prepare('DELETE FROM incoming_fetches WHERE paper_id = ?').run(id)
+    this.db.prepare('DELETE FROM paper_vectors WHERE paper_id = ?').run(id)
+  }
+
+  /** `text` is null when only the metadata changes (a resync): the kept text state stays as it was. */
+  private upsertTrash(e: TrashRow, text: TextState | null): void {
+    this.db
+      .prepare(
+        `INSERT INTO trash (id, title, authors_label, year, doi, openalex_id, trashed_at, device, problem, text_hash, text_status, text_chars)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET title = excluded.title, authors_label = excluded.authors_label, year = excluded.year, doi = excluded.doi,
+           openalex_id = excluded.openalex_id, trashed_at = excluded.trashed_at, device = excluded.device, problem = excluded.problem,
+           text_hash = COALESCE(excluded.text_hash, trash.text_hash), text_status = COALESCE(excluded.text_status, trash.text_status),
+           text_chars = CASE WHEN excluded.text_hash IS NULL THEN trash.text_chars ELSE excluded.text_chars END`
+      )
+      .run(e.id, e.title, e.authors_label, e.year, e.doi, e.openalex_id, e.trashed_at, e.device, e.problem, text?.text_hash ?? null, text?.text_status ?? null, Number(text?.text_chars ?? 0))
   }
 
   private tx(fn: () => void): void {
