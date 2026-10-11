@@ -129,4 +129,27 @@ describe('typed relation arguments', () => {
     expect(() => arg(ipcArgs.justification, '   ', 'text')).toThrow(InvalidIpcArgument)
     expect(() => arg(ipcArgs.justification, 'x'.repeat(2001), 'text')).toThrow(InvalidIpcArgument)
   })
+
+  it('lets the renderer turn the automatic sync on or off and set its interval within bounds', () => {
+    expect(arg(ipcArgs.settingsPatch, { autoSync: false, autoSyncMinutes: 30 }, 'patch')).toEqual({ autoSync: false, autoSyncMinutes: 30 })
+    for (const bad of [{ autoSyncMinutes: 4 }, { autoSyncMinutes: 121 }, { autoSyncMinutes: 7.5 }, { autoSync: 'yes' }]) {
+      expect(() => arg(ipcArgs.settingsPatch, bad, 'patch')).toThrow()
+    }
+  })
+
+  it('accepts only the conflict ids and choices the sync hands out, and a remote URL that is no option and has no password', () => {
+    expect(arg(ipcArgs.conflictId, 'file:papers/k/summary.md', 'id')).toBe('file:papers/k/summary.md')
+    expect(arg(ipcArgs.conflictId, 'paper:he2017drain', 'id')).toBe('paper:he2017drain')
+    for (const bad of ['', 'papers/k/summary.md', 'paper:../x', 'paper:', 'file:', 3]) expect(() => arg(ipcArgs.conflictId, bad, 'id')).toThrow()
+    expect(arg(ipcArgs.conflictChoices, { 'paper:k': 'ours', 'file:a.md': 'theirs' }, 'choices')).toEqual({ 'paper:k': 'ours', 'file:a.md': 'theirs' })
+    expect(() => arg(ipcArgs.conflictChoices, { 'paper:k': 'both' }, 'choices')).toThrow()
+    expect(() => arg(ipcArgs.conflictChoices, { nope: 'ours' }, 'choices')).toThrow()
+    expect(arg(ipcArgs.remoteUrl, '  git@github.com:me/thesis.git ', 'url')).toBe('git@github.com:me/thesis.git')
+    expect(arg(ipcArgs.remoteUrl, null, 'url')).toBeNull()
+    for (const bad of ['', '--upload-pack=touch /tmp/x', 'https://me:secret@github.com/me/thesis.git', 'a b', 7]) {
+      expect(() => arg(ipcArgs.remoteUrl, bad, 'url')).toThrow()
+    }
+    expect(arg(ipcArgs.closeDecision, 'cancel', 'decision')).toBe('cancel')
+    expect(() => arg(ipcArgs.closeDecision, 'sync', 'decision')).toThrow()
+  })
 })

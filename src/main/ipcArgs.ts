@@ -2,6 +2,7 @@ import { isAbsolute, win32 } from 'node:path'
 import { z } from 'zod'
 import { CANDIDATE_DIRECTIONS, OPENALEX_ID } from '../shared/relations'
 import { PDF_POLICIES } from '../shared/schemas'
+import { AUTO_SYNC_MINUTES, CLOSE_DECISIONS, CONFLICT_CHOICES, CONFLICT_ID, isRemoteUrl } from '../shared/sync'
 import { ExtractionFormSchema, LLM_MODELS, ThesisContextSchema } from '../shared/summary'
 import { MAX_JUSTIFICATION, RELATION_ID, RELATION_STATUSES, RELATION_TYPES } from '../shared/typedRelations'
 
@@ -21,7 +22,12 @@ export const ipcArgs = {
   flag: z.boolean(),
   jobId: z.number().int().nonnegative(),
   /** `lastProjectPath` is managed by the main process only. */
-  settingsPatch: z.strictObject({ contactEmail: z.string().optional(), openalexApiKey: z.string().optional() }),
+  settingsPatch: z.strictObject({
+    contactEmail: z.string().optional(),
+    openalexApiKey: z.string().optional(),
+    autoSync: z.boolean().optional(),
+    autoSyncMinutes: z.number().int().min(AUTO_SYNC_MINUTES.min).max(AUTO_SYNC_MINUTES.max).optional()
+  }),
   projectPatch: z.strictObject({
     name: z.string().trim().min(1).optional(),
     contentLanguage: z.string().min(2).optional(),
@@ -76,7 +82,13 @@ export const ipcArgs = {
   /** Papers to move to or out of the trash: at least one key. */
   trashIds: z.array(paperIdSchema).min(1),
   /** Planning «Vaciar papelera» names the whole trash explicitly; an empty or missing list never means everything. */
-  trashTarget: z.union([z.literal('all'), z.array(paperIdSchema).min(1)])
+  trashTarget: z.union([z.literal('all'), z.array(paperIdSchema).min(1)]),
+  /** A conflict id the sync handed out: `file:<path>` or `paper:<key>`. */
+  conflictId: z.string().max(4096).regex(CONFLICT_ID),
+  conflictChoices: z.record(z.string().max(4096).regex(CONFLICT_ID), z.enum(CONFLICT_CHOICES)),
+  /** The remote the user typed for the first sync; null when only initializing the repository. */
+  remoteUrl: z.string().trim().refine(isRemoteUrl).nullable(),
+  closeDecision: z.enum(CLOSE_DECISIONS)
 }
 
 export class InvalidIpcArgument extends Error {

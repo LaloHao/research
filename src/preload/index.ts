@@ -98,6 +98,15 @@ const api: ResearchApi = {
   exports: {
     save: (defaultName, data) => ipcRenderer.invoke(IPC.exportSave, defaultName, data)
   },
+  sync: {
+    status: () => ipcRenderer.invoke(IPC.syncStatus),
+    run: () => ipcRenderer.invoke(IPC.syncRun),
+    conflicts: () => ipcRenderer.invoke(IPC.syncConflicts),
+    diff: (id) => ipcRenderer.invoke(IPC.syncDiff, id),
+    resolve: (choices) => ipcRenderer.invoke(IPC.syncResolve, choices),
+    abort: () => ipcRenderer.invoke(IPC.syncAbort),
+    init: (url) => ipcRenderer.invoke(IPC.syncInit, url)
+  },
   on: (event, callback) => {
     const channel = eventChannel(event)
     const handler = (): void => callback()
@@ -105,6 +114,7 @@ const api: ResearchApi = {
     return () => ipcRenderer.removeListener(channel, handler)
   },
   flushDone: () => ipcRenderer.send(IPC.flushDone),
+  closeDecision: (decision) => ipcRenderer.send(IPC.closeDecision, decision),
   pathForFile: (file) => webUtils.getPathForFile(file)
 }
 
