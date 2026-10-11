@@ -10,6 +10,7 @@ import { SUMMARY_FILTERS } from '../../src/renderer/lib/badges'
 import { MAP_TABS, VIEWS } from '../../src/renderer/lib/navigation'
 import { SETTINGS_TABS } from '../../src/renderer/lib/settingsTabs'
 import { RELATION_TYPES } from '../../src/shared/typedRelations'
+import { TRASH_PROBLEMS } from '../../src/shared/trash'
 
 const lookup = (path: string): unknown => path.split('.').reduce<unknown>((node, key) => (node as Record<string, unknown> | undefined)?.[key], es)
 const JOB_STATES: JobState[] = ['queued', 'running', 'done', 'failed', 'cancelled']
@@ -76,7 +77,10 @@ describe('es.json covers every code the UI can receive', () => {
     'settings.auto_suggest_relations_help',
     'jobs.attach_pdf',
     'paper.no_pdf',
-    ...['attach', 'replace', 'confirm', 'confirm_file', 'confirm_replace', 'cancel', 'queued', 'drop_hint', 'drop_hint_replace', 'only_one_pdf'].map((k) => `paper.attach.${k}`)
+    ...['attach', 'replace', 'confirm', 'confirm_file', 'confirm_replace', 'cancel', 'queued', 'drop_hint', 'drop_hint_replace', 'only_one_pdf'].map((k) => `paper.attach.${k}`),
+    ...['title', 'search_placeholder', 'empty', 'no_results', 'select_visible', 'restore', 'restore_selected', 'delete_forever', 'delete_selected', 'empty_trash', 'delete_confirm_one', 'delete_confirm_other', 'empty_confirm_one', 'empty_confirm_other', 'conflict', 'merge', 'restored_one', 'restored_other', 'restored_as', 'restored_remnant', 'restored_index_failed', 'deleted_one', 'deleted_other', 'removed_on', 'unknown_date', 'problem'].map((k) => `trash.${k}`),
+    ...TRASH_PROBLEMS.map((k) => `trash.problems.${k}`),
+    ...['this', 'other', 'unknown'].map((k) => `trash.device.${k}`)
   ])('%s', (path) => {
     expect(typeof lookup(path)).toBe('string')
   })
