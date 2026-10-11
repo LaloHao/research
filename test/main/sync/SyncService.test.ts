@@ -481,6 +481,22 @@ describe('SyncService', () => {
     expect(await fresh.setup(typo)).toEqual({ ok: false, error: { code: 'remote_exists', paths: [] } })
   })
 
+  it('never re-points an origin that was fetched or that another branch follows', async () => {
+    const m = await twoMachines()
+    // A new local branch follows nothing, while main still tracks the fetched origin.
+    m.git(m.a, 'switch', '--quiet', '-c', 'research')
+    const a = service(m, m.projectA)
+    expect((await a.status()).setup).toBe('no_upstream')
+    const other = join(await tmpDir(), 'other.git')
+    m.git(m.a, 'init', '--quiet', '--bare', '--initial-branch=main', other)
+    expect(await a.setup(other)).toEqual({ ok: false, error: { code: 'remote_exists', paths: [] } })
+    expect(m.git(m.a, 'remote', 'get-url', 'origin')).toBe(m.remote)
+    // Fetched once, even with no branch following it, origin is not a typo either.
+    m.git(m.a, 'config', '--unset', 'branch.main.remote')
+    expect(await a.setup(other)).toEqual({ ok: false, error: { code: 'remote_exists', paths: [] } })
+    expect(m.git(m.a, 'remote', 'get-url', 'origin')).toBe(m.remote)
+  })
+
   it('refuses a remote with an unrelated history before following it', async () => {
     const m = await twoMachines()
     const root = await tmpDir()

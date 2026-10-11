@@ -144,6 +144,17 @@ export class ProjectRepo {
     await this.git.run(['remote', 'add', '--', name, url])
   }
 
+  /** `name` was fetched from (it has remote-tracking refs) or some branch follows it: it is a working remote, not a typo. */
+  async remoteInUse(name: string): Promise<boolean> {
+    if ((await this.git.text(['for-each-ref', '--count=1', '--format=%(refname)', `refs/remotes/${name}/`])).trim() !== '') return true
+    const out = await this.git.run(['config', '--get-regexp', '^branch\\..*\\.remote$'], { okCodes: [1] })
+    if (out.code !== 0) return false
+    return out.stdout
+      .toString('utf8')
+      .split('\n')
+      .some((line) => line.slice(line.indexOf(' ') + 1) === name)
+  }
+
   /** Replaces the URL of `name`; `url` is checked by `isRemoteUrl`, and `--` keeps git from reading it as an option. */
   async setRemoteUrl(name: string, url: string): Promise<void> {
     await this.git.run(['remote', 'set-url', '--', name, url])

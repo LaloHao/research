@@ -270,8 +270,9 @@ export class SyncService {
           info = await repo.info()
         } else if ((await repo.remoteUrl('origin')) !== url) {
           // The same URL again is a retry (e.g. after the first attempt went offline). Another one corrects a mistyped
-          // URL while the branch follows nothing yet; once it does, origin is the user's to change with git.
-          if (info.upstream) fail('remote_exists')
+          // URL only while origin never worked: never fetched and followed by no branch. A working origin (other
+          // branches may follow it) is the user's to change with git.
+          if (info.upstream || (await repo.remoteInUse('origin'))) fail('remote_exists')
           await repo.setRemoteUrl('origin', url)
         }
       }
