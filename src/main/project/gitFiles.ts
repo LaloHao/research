@@ -13,10 +13,13 @@ export function withManagedBlock(existing: string, lines: string[]): string {
   return `${existing}${sep}${block}`
 }
 
+/** PDFs in the library, in the trash, and copies kept beside them on a merge (paper.trashed.pdf…) follow one policy. */
+const PDF_PATTERNS = ['papers/*/paper.pdf', 'papers/*/paper.*.pdf', '.trash/*/paper.pdf', '.trash/*/paper.*.pdf']
+
 export function gitignoreLines(policy: PdfPolicy): string[] {
-  return policy === 'untracked' ? ['.cache/', 'papers/*/paper.pdf'] : ['.cache/']
+  return policy === 'untracked' ? ['.cache/', ...PDF_PATTERNS] : ['.cache/']
 }
 
 export function gitattributesLines(policy: PdfPolicy): string[] {
-  return policy === 'lfs' ? ['papers/*/paper.pdf filter=lfs diff=lfs merge=lfs -text'] : []
+  return policy === 'lfs' ? PDF_PATTERNS.map((p) => `${p} filter=lfs diff=lfs merge=lfs -text`) : []
 }

@@ -241,6 +241,10 @@
     "relations_conflict": "relations.yaml tiene un conflicto de git o un error; resuélvelo antes de cambiar relaciones.",
     "file_too_large": "El archivo pesa más de 200 MB.",
     "pdf_exists": "Este paper ya tiene PDF. Usa «Reemplazar PDF…» si quieres cambiarlo.",
+    "paper_exists": "Ya hay un paper con esa clave en la biblioteca.",
+    "trash_problem": "No se pudo mover ese paper: su carpeta en la papelera está dañada (le falta paper.yaml) o ya existe. Revísala en la carpeta .trash del proyecto.",
+    "folder_busy": "Otro programa tiene abierto un archivo de ese paper (por ejemplo, su PDF). Ciérralo y vuelve a intentarlo.",
+    "not_in_trash": "Ese paper ya no está en la papelera (quizás ya se restauró).",
     "unknown": "Ocurrió un error inesperado."
   },
   "paper": {
