@@ -88,6 +88,8 @@ export interface Candidate {
   citesLibrary: number
   /** Library papers it is related to, either way. */
   paperIds: string[]
+  /** This work is a paper in the trash (by OpenAlex id or DOI): the UI offers «Restaurar» instead of «Agregar». */
+  trashedId?: string
 }
 
 export interface CandidateList {

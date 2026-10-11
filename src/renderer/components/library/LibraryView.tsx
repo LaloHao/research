@@ -13,6 +13,8 @@ import { AddPaperBar } from './AddPaperBar'
 import { JobsPanel } from './JobsPanel'
 import { PaperList } from './PaperList'
 import { SummaryToolbar } from './SummaryToolbar'
+import { useTrashUndo } from '../TrashUndo'
+import { batchRemoveReady, facetKey } from '../../lib/trash'
 
 export function LibraryView({
   facetFilters,
@@ -28,40 +30,84 @@ export function LibraryView({
   const { t } = useTranslation()
   const [query, setQuery] = useState('')
   const [rows, setRows] = useState<PaperRow[]>([])
+  // The search the rows were loaded for, and the facet filters facetIds were loaded for: the batch removal waits for both.
+  const [rowsQuery, setRowsQuery] = useState<string | null>(null)
   const [summaryFilter, setSummaryFilter] = useState<SummaryFilter>('all')
   const [modelFilter, setModelFilter] = useState<LlmModel | 'any'>('any')
   const [selected, setSelected] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
   const [reviewIds, setReviewIds] = useState<string[] | null>(null)
-  const [facetIds, setFacetIds] = useState<Set<string> | null>(null)
+  const [facetIds, setFacetIds] = useState<{ ids: Set<string> | null; key: string }>({ ids: null, key: facetKey([]) })
   const [citationsNotice, setCitationsNotice] = useState<{ error: boolean; text: string } | null>(null)
   const [updatingCitations, setUpdatingCitations] = useState(false)
   const [relationsConfirm, setRelationsConfirm] = useState<{ ids: string[] | undefined; plan: RelationPlan } | null>(null)
   const [relationsBusy, setRelationsBusy] = useState(false)
   const [relationsNotice, setRelationsNotice] = useState<{ error: boolean; text: string } | null>(null)
+  const [removeConfirm, setRemoveConfirm] = useState<string[] | null>(null)
+  const [removeBusy, setRemoveBusy] = useState(false)
+  const [removeNotice, setRemoveNotice] = useState<{ error: boolean; text: string } | null>(null)
+  const undo = useTrashUndo()
+  const showUndo = undo.show
+
+  /** Papers just moved to the trash: the open one closes and «Deshacer» stays a few seconds. */
+  const onRemoved = useCallback(
+    (ids: string[]) => {
+      setSelected((current) => (current && ids.includes(current) ? null : current))
+      showUndo(ids)
+    },
+    [showUndo]
+  )
+
+  // The visible list a batch removal leaves: its error notice must survive the moved papers leaving the list.
+  const keepNoticeFor = useRef<string | null>(null)
+  const removeVisible = (): void => {
+    if (!removeConfirm || removeBusy) return
+    setRemoveBusy(true)
+    const before = visibleRows.map((row) => row.id)
+    window.research.library.trash(removeConfirm).then(
+      (r) => {
+        setRemoveBusy(false)
+        setRemoveConfirm(null)
+        keepNoticeFor.current = before.filter((id) => !r.moved.includes(id)).join(' ')
+        if (r.moved.length > 0) onRemoved(r.moved)
+        setRemoveNotice(r.error ? { error: true, text: errorText(t, r.error) } : null)
+      },
+      () => {
+        setRemoveBusy(false)
+        setRemoveNotice({ error: true, text: errorText(t, 'unknown') })
+      }
+    )
+  }
 
   const facetIdsRequest = useRef(0)
   const loadFacetIds = useCallback(() => {
     const token = ++facetIdsRequest.current
+    const key = facetKey(facetFilters)
     if (facetFilters.length === 0) {
-      setFacetIds(null)
+      setFacetIds({ ids: null, key })
       return
     }
     window.research.map.facetPaperIds(facetFilters).then(
       (ids) => {
-        if (token === facetIdsRequest.current) setFacetIds(new Set(ids))
+        if (token === facetIdsRequest.current) setFacetIds({ ids: new Set(ids), key })
       },
       () => {
-        if (token === facetIdsRequest.current) setFacetIds(new Set())
+        if (token === facetIdsRequest.current) setFacetIds({ ids: new Set(), key })
       }
     )
   }, [facetFilters])
   useEffect(loadFacetIds, [loadFacetIds])
   useEvent('library-changed', loadFacetIds)
 
+  const rowsRequest = useRef(0)
   const refresh = useCallback(() => {
+    const token = ++rowsRequest.current
     // Fails only when the project was just closed; this view is about to go away.
-    window.research.library.list(query).then(setRows, () => undefined)
+    window.research.library.list(query).then((next) => {
+      if (token !== rowsRequest.current) return
+      setRows(next)
+      setRowsQuery(query)
+    }, () => undefined)
   }, [query])
   useEffect(() => {
     const handle = setTimeout(refresh, 150)
@@ -78,11 +124,20 @@ export function LibraryView({
   }
 
   const visibleRows = useMemo(
-    () => filterByIds(filterByModel(filterBySummary(rows, summaryFilter), modelFilter), facetIds),
+    () => filterByIds(filterByModel(filterBySummary(rows, summaryFilter), modelFilter), facetIds.ids),
     [rows, summaryFilter, modelFilter, facetIds]
   )
   useEffect(() => onVisibleChange?.(visibleRows.map((row) => row.id)), [visibleRows, onVisibleChange])
   const anyFilter = query.trim() !== '' || summaryFilter !== 'all' || modelFilter !== 'any' || facetFilters.length > 0
+  // A pending confirmation closes when the visible papers change (not when the list reloads the same), since its count would no longer hold.
+  const visibleKey = useMemo(() => visibleRows.map((row) => row.id).join(' '), [visibleRows])
+  useEffect(() => {
+    setRemoveConfirm(null)
+    // Old notices go when the visible papers change, except the list a batch removal just left.
+    if (visibleKey !== keepNoticeFor.current) setRemoveNotice(null)
+    keepNoticeFor.current = null
+  }, [visibleKey])
+  const removeReady = batchRemoveReady({ query, rowsQuery, facetFilters, facetIdsKey: facetIds.key })
 
   const updateCitations = (): void => {
     setUpdatingCitations(true)
@@ -182,6 +237,19 @@ export function LibraryView({
           >
             {t('library.suggest_relations')}
           </button>
+          {anyFilter && removeReady && visibleRows.length > 0 && (
+            <button
+              className="small"
+              disabled={removeBusy}
+              onClick={() => {
+                setRemoveNotice(null)
+                setRemoveConfirm(visibleRows.map((row) => row.id))
+              }}
+              title={t('library.remove_filtered_hint')}
+            >
+              {t('library.remove_filtered')}
+            </button>
+          )}
         </div>
         {citationsNotice && <div className={`banner${citationsNotice.error ? ' error' : ''}`}>{citationsNotice.text}</div>}
         {relationsConfirm && (
@@ -200,6 +268,18 @@ export function LibraryView({
           </div>
         )}
         {relationsNotice && <div className={`banner${relationsNotice.error ? ' error' : ''}`}>{relationsNotice.text}</div>}
+        {removeConfirm && (
+          <div className="banner warning">
+            <span>{t('library.remove_confirm', { count: removeConfirm.length })}</span>
+            <button className="danger" disabled={removeBusy} onClick={removeVisible}>
+              {t('library.remove_filtered')}
+            </button>
+            <button disabled={removeBusy} onClick={() => setRemoveConfirm(null)}>
+              {t('jobs.cancel')}
+            </button>
+          </div>
+        )}
+        {removeNotice && <div className={`banner${removeNotice.error ? ' error' : ''}`}>{removeNotice.text}</div>}
         {reviewIds === null && <PaperList rows={visibleRows} query={query} selected={selected} onSelect={setSelected} />}
         <JobsPanel onSelectPaper={setSelected} />
       </aside>
@@ -207,12 +287,13 @@ export function LibraryView({
         {reviewIds !== null ? (
           <ReviewView ids={reviewIds} onExit={() => setReviewIds(null)} />
         ) : selected ? (
-          <PaperDetail id={selected} onOpenCandidates={onOpenCandidates} onSelectPaper={setSelected} />
+          <PaperDetail id={selected} onOpenCandidates={onOpenCandidates} onSelectPaper={setSelected} onRemoved={onRemoved} />
         ) : (
           <div className="center muted">{t('library.select_hint')}</div>
         )}
       </section>
       {dragging && <div className="drop-overlay">{t('library.drop_hint')}</div>}
+      {undo.element}
     </div>
   )
 }

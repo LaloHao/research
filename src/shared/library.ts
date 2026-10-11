@@ -63,6 +63,10 @@ export const USER_ERROR_CODES = [
   'relations_conflict',
   'pdf_exists',
   'file_too_large',
+  'paper_exists',
+  'trash_problem',
+  'folder_busy',
+  'not_in_trash',
   'unknown'
 ] as const
 export type UserErrorCode = (typeof USER_ERROR_CODES)[number]

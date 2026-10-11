@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { candidateLink, candidateTitle, defaultMinCount } from '../../src/renderer/lib/candidates'
+import { candidateAction, candidateLink, candidateTitle, defaultMinCount } from '../../src/renderer/lib/candidates'
 import type { Candidate } from '../../src/shared/relations'
 
 const candidate = (over: Partial<Candidate> = {}): Candidate => ({ openalexId: 'W2153470728', work: null, citedByLibrary: 2, citesLibrary: 0, paperIds: ['a'], ...over })
@@ -16,5 +16,10 @@ describe('candidates view', () => {
     const work = { openalexId: 'W2153470728', title: 'LogSig', year: 2011, authors: 'Tang et al.', doi: '10.1145/2063576.2063690', citedByCount: 249 }
     expect(candidateTitle(candidate({ work }))).toBe('LogSig')
     expect(candidateLink(candidate({ work }))).toBe('https://doi.org/10.1145/2063576.2063690')
+  })
+
+  it('offers «Restaurar» instead of «Agregar» for a work that is a paper in the trash', () => {
+    expect(candidateAction(candidate())).toBe('add')
+    expect(candidateAction(candidate({ trashedId: 'he2017drain' }))).toBe('restore')
   })
 })

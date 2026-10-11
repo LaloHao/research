@@ -72,7 +72,11 @@ export const ipcArgs = {
   relationType: z.enum(RELATION_TYPES),
   /** Undo sends back only the token the main process handed out; never relation data. */
   undoToken: z.uuid(),
-  justification: z.string().trim().min(1).max(MAX_JUSTIFICATION)
+  justification: z.string().trim().min(1).max(MAX_JUSTIFICATION),
+  /** Papers to move to or out of the trash: at least one key. */
+  trashIds: z.array(paperIdSchema).min(1),
+  /** Planning «Vaciar papelera» names the whole trash explicitly; an empty or missing list never means everything. */
+  trashTarget: z.union([z.literal('all'), z.array(paperIdSchema).min(1)])
 }
 
 export class InvalidIpcArgument extends Error {

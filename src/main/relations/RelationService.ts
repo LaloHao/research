@@ -1,16 +1,17 @@
 import { randomUUID } from 'node:crypto'
 import type { JobSpec } from '../../shared/jobs'
 import type { LlmModel, ReviewItem } from '../../shared/summary'
-import type {
-  PaperAnalysis,
-  PaperRelations,
-  RelationChange,
-  RelationPlan,
-  RelationsFile,
-  RelationsFileState,
-  RelationStatus,
-  RelationType,
-  TypedRelation
+import {
+  otherEnd,
+  type PaperAnalysis,
+  type PaperRelations,
+  type RelationChange,
+  type RelationPlan,
+  type RelationsFile,
+  type RelationsFileState,
+  type RelationStatus,
+  type RelationType,
+  type TypedRelation
 } from '../../shared/typedRelations'
 import type { IndexCache } from '../cache/IndexCache'
 import type { BudgetGuard } from '../llm/BudgetGuard'
@@ -23,13 +24,17 @@ import { coveredFrom, hasNewCandidates, type CandidateIndex, type RelationCandid
 import {
   applyChange,
   mergeSuggestions,
+  rekeyRelations,
   relationReviewItems,
+  removeAnalyzedCandidates,
+  renameAnalyzedCandidate,
   retype,
   reverse,
   revertChange,
   userKept,
   viewsFor,
   withJustification,
+  withoutPapers,
   withStatus
 } from './relationMerge'
 import type { RelationSuggester } from './RelationSuggester'
@@ -142,10 +147,12 @@ export class RelationService {
   ): Promise<{ paperId: string; message: 'relations_suggested' | 'relations_no_candidates' }> {
     try {
       const file = await this.currentFile()
+      // Relations with a paper in the trash stay in relations.yaml, but the model never sees them.
+      const trashed = this.deps.cache.trashedIds()
       const result = await this.deps.suggester.suggest({
         paperId,
         // Only this paper's relations: the model never sees (or repeats) the rest of the library.
-        existing: file.relations.filter((r) => r.from === paperId || r.to === paperId),
+        existing: file.relations.filter((r) => (r.from === paperId || r.to === paperId) && !trashed.has(otherEnd(r, paperId))),
         skip: opts.force ? undefined : coveredFrom(file.analyzed, paperId),
         batchId: opts.batchId,
         model: opts.model,
@@ -296,6 +303,48 @@ export class RelationService {
     return relationReviewItems(this.deps.cache.typedRelations(), rows)
   }
 
+  /** Relations in relations.yaml with an end among `ids`, hidden ones included: what deleting those papers forever removes. */
+  async countTouching(ids: string[]): Promise<number> {
+    const wanted = new Set(ids)
+    const file = await this.currentFile()
+    return file.relations.length - withoutPapers(file.relations, wanted).length
+  }
+
+  /**
+   * Deleting papers forever: their relations and analyses leave relations.yaml (hash-checked, one retry). Nothing is
+   * written when there is nothing to remove, and nothing at all while the file has a git conflict (relations_conflict).
+   */
+  async removeTouching(ids: string[]): Promise<number> {
+    const wanted = new Set(ids)
+    const file = await this.currentFile()
+    const touched = file.relations.length - withoutPapers(file.relations, wanted).length
+    const hasAnalyzed = ids.some((id) => file.analyzed[id])
+    const othersReferencing = Object.values(file.analyzed).some((a) => a.candidates.some((c) => wanted.has(c)))
+    if (touched === 0 && !hasAnalyzed && !othersReferencing) return 0
+    let removed = 0
+    await this.mutateFile((f) => {
+      const relations = withoutPapers(f.relations, wanted)
+      removed = f.relations.length - relations.length
+      return { ...f, relations, analyzed: removeAnalyzedCandidates(withoutKeys(f.analyzed, wanted), wanted) }
+    })
+    this.deps.emit()
+    return removed
+  }
+
+  /** A trashed paper merged into the library paper `to` on restore: its relations follow it there (same guarantees as removeTouching). */
+  async rekey(from: string, to: string): Promise<void> {
+    const file = await this.currentFile()
+    const touchesFrom = file.relations.some((r) => r.from === from || r.to === from)
+    const othersReferencing = Object.values(file.analyzed).some((a) => a.candidates.includes(from))
+    if (!touchesFrom && !file.analyzed[from] && !othersReferencing) return
+    await this.mutateFile((f) => ({
+      ...f,
+      relations: rekeyRelations(f.relations, from, to, this.now()),
+      analyzed: renameAnalyzedCandidate(withoutKeys(f.analyzed, new Set([from])), from, to)
+    }))
+    this.deps.emit()
+  }
+
   private now(): string {
     return (this.deps.now ?? (() => new Date()))().toISOString()
   }
@@ -376,4 +425,8 @@ export class RelationService {
       await this.reindex()
     })
   }
+}
+
+function withoutKeys<T>(record: Record<string, T>, keys: ReadonlySet<string>): Record<string, T> {
+  return Object.fromEntries(Object.entries(record).filter(([k]) => !keys.has(k)))
 }

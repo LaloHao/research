@@ -194,7 +194,8 @@ export class CitationService {
       incoming: cache.incomingEdges().filter((e) => readable.has(e.paperId)),
       library: rows.map((r) => ({ id: r.id, openalexId: r.openalex_id, doi: r.doi })),
       dismissed: new Set(store.config.snowball.dismissed),
-      works: new Map()
+      works: new Map(),
+      trash: cache.trashEntries().map((r) => ({ id: r.id, openalexId: r.openalex_id, doi: r.doi }))
     }
   }
 

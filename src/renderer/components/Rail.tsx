@@ -4,6 +4,7 @@ import type { View } from '../lib/navigation'
 const ITEMS: { view: View; icon: string }[] = [
   { view: 'library', icon: '📚' },
   { view: 'map', icon: '🕸' },
+  { view: 'trash', icon: '🗑' },
   { view: 'settings', icon: '⚙' }
 ]
 

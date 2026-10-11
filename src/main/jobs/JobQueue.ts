@@ -8,9 +8,18 @@ export interface QueueLimits {
   byType?: Partial<Record<JobType, number>>
 }
 
+interface Running {
+  controller: AbortController
+  type: JobType
+  /** The paper the job works on, when its spec names one. */
+  paperId: string | null
+  /** Settles once the job has stopped and its state is recorded. */
+  done: Promise<void>
+}
+
 /** Background work persisted in the cache, so a quit or crash resumes where it stopped. */
 export class JobQueue {
-  private readonly running = new Map<number, { controller: AbortController; type: JobType }>()
+  private readonly running = new Map<number, Running>()
   private readonly progress = new Map<number, number>()
   private readonly listeners = new Set<() => void>()
   private idleWaiters: (() => void)[] = []
@@ -81,12 +90,20 @@ export class JobQueue {
     while (this.running.size < this.limits.total) {
       const job = this.cache.nextQueuedJob(this.fullTypes())
       if (!job) break
-      const type = (JSON.parse(job.spec) as JobSpec).type
+      const spec = JSON.parse(job.spec) as JobSpec
+      const paperId = 'paperId' in spec ? spec.paperId : null
+      // A paper in the trash is never worked on (e.g. a job requeued after a restart, or queued by a late trigger).
+      if (paperId !== null && this.cache.isTrashed(paperId)) {
+        this.cache.updateJob(job.id, { state: 'cancelled' }, this.now())
+        this.emit()
+        continue
+      }
       const controller = new AbortController()
-      this.running.set(job.id, { controller, type })
+      const entry: Running = { controller, type: spec.type, paperId, done: Promise.resolve() }
+      this.running.set(job.id, entry)
       this.cache.updateJob(job.id, { state: 'running' }, this.now())
       this.emit()
-      void this.run(job, controller)
+      entry.done = this.run(job, controller)
     }
     if (this.running.size === 0) {
       const waiters = this.idleWaiters
@@ -115,6 +132,32 @@ export class JobQueue {
     const n = this.cache.cancelQueuedTypes(types, this.now())
     if (n) this.emit()
     return n
+  }
+
+  /** Cancels the queued jobs of these papers (running ones go on). */
+  cancelQueuedPapers(ids: string[]): number {
+    const n = this.cache.cancelQueuedPapers(ids, this.now())
+    if (n) this.emit()
+    return n
+  }
+
+  /**
+   * Cancels every queued job of these papers and aborts their running ones, resolving once none of them still runs:
+   * a paper moved to the trash must not be written to by a job that finishes afterwards.
+   */
+  async cancelPapers(ids: string[]): Promise<number> {
+    const wanted = new Set(ids)
+    let count = this.cache.cancelQueuedPapers(ids, this.now())
+    const stopping: Promise<void>[] = []
+    for (const entry of this.running.values()) {
+      if (entry.paperId === null || !wanted.has(entry.paperId)) continue
+      entry.controller.abort()
+      stopping.push(entry.done)
+      count++
+    }
+    if (count) this.emit()
+    await Promise.all(stopping)
+    return count
   }
 
   private async run(job: JobRow, controller: AbortController): Promise<void> {

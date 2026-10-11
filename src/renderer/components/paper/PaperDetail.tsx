@@ -10,6 +10,7 @@ import { MetadataCompletion } from './MetadataCompletion'
 import { NotesEditor } from './NotesEditor'
 import { PdfViewer, type PdfFocus } from './PdfViewer'
 import { RelationsTab } from './RelationsTab'
+import { RemovePaper } from './RemovePaper'
 import { TextTab } from './TextTab'
 import { SummaryTab } from '../summary/SummaryTab'
 
@@ -93,11 +94,14 @@ function ContentTab({ id, content, focus }: { id: string; content: string; focus
 export function PaperDetail({
   id,
   onOpenCandidates,
-  onSelectPaper
+  onSelectPaper,
+  onRemoved
 }: {
   id: string
   onOpenCandidates?: (paperId: string) => void
   onSelectPaper?: (id: string) => void
+  /** The paper went to the trash: the host closes the detail and shows «Deshacer». Without it, there is no remove button. */
+  onRemoved?: (ids: string[]) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [detail, setDetail] = useState<Detail | null>(null)
@@ -143,6 +147,7 @@ export function PaperDetail({
           </details>
         </div>
         <button onClick={() => void window.research.library.showInFolder(id)}>{t('paper.show_in_folder')}</button>
+        {onRemoved && <RemovePaper id={id} title={id} onRemoved={onRemoved} />}
       </div>
     )
   }
@@ -192,6 +197,7 @@ export function PaperDetail({
         {paper.metadata_status === 'incomplete' && (
           <MetadataCompletion paperId={id} hasIdentifier={Boolean(paper.identifiers.doi || paper.identifiers.arxiv)} />
         )}
+        {onRemoved && <RemovePaper id={id} title={paper.title} onRemoved={onRemoved} />}
       </header>
       <nav className="tabs">
         {tabs.map((name) => (

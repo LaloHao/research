@@ -7,6 +7,7 @@ import { MapView } from './components/map/MapView'
 import { Rail } from './components/Rail'
 import { RelationsFileBanner } from './components/RelationsFileBanner'
 import { SettingsView } from './components/SettingsView'
+import { TrashView } from './components/TrashView'
 import { WelcomeView } from './components/WelcomeView'
 import { useEvent } from './hooks/useEvent'
 import { flushAll } from './lib/flush'
@@ -81,6 +82,7 @@ function ProjectShell({ project, view, onViewChange: setView }: ProjectShellProp
             onOpenCandidates={openCandidates}
           />
         )}
+        {view === 'trash' && <TrashView />}
         {view === 'settings' && <SettingsView project={project} />}
       </main>
       <RelationsFileBanner />

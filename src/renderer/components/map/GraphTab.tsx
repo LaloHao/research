@@ -11,6 +11,7 @@ import { buildElements, initialPosition, layoutPlan, lensColors, NO_VALUE, OTHER
 import { reasonsText } from '../../lib/reasons'
 import { TYPE_COLORS } from '../../lib/typedRelations'
 import { PaperDetail } from '../paper/PaperDetail'
+import { useTrashUndo } from '../TrashUndo'
 
 cytoscape.use(fcose)
 
@@ -61,6 +62,16 @@ export function GraphTab({
   const [threshold, setThreshold] = useState(0.3)
   const [useLibraryFilters, setUseLibraryFilters] = useState(false)
   const [selected, setSelected] = useState<string | null>(null)
+  const undo = useTrashUndo()
+  const showUndo = undo.show
+  /** A paper removed from the side detail: the detail closes and «Deshacer» shows, as in the library. */
+  const onRemoved = useCallback(
+    (ids: string[]) => {
+      setSelected((current) => (current && ids.includes(current) ? null : current))
+      showUndo(ids)
+    },
+    [showUndo]
+  )
   const [typedTypes, setTypedTypes] = useState<ReadonlySet<RelationType>>(() => new Set(RELATION_TYPES))
   const [hideSuggested, setHideSuggested] = useState(false)
   const [hover, setHover] = useState<{ kind: 'similarity'; reasons: SimilarityReason[] } | { kind: 'typed'; type: RelationType; status: 'suggested' | 'confirmed' } | null>(null)
@@ -302,9 +313,10 @@ export function GraphTab({
               {t('map.graph.close_detail')}
             </button>
           </div>
-          <PaperDetail id={selected} onSelectPaper={setSelected} onOpenCandidates={onOpenCandidates} />
+          <PaperDetail id={selected} onSelectPaper={setSelected} onOpenCandidates={onOpenCandidates} onRemoved={onRemoved} />
         </aside>
       )}
+      {undo.element}
     </div>
   )
 }

@@ -3,9 +3,8 @@
 ## Parked ideas (functionality)
 
 - Reorder facets in the extraction form editor.
-- Remove papers with a trash (next, right after stage 3b): today the app has no way to remove a paper. "Quitar de la biblioteca" moves `papers/<key>/` (PDF, summary, extraction, notes) to `.trash/<key>/` inside the project, its relations and dismissals stay recoverable, and a Papelera view restores or empties it (emptying asks for confirmation). Removing never deletes data silently.
 - Personal shared library across projects (after stages 4–5): a store outside the projects (app data folder or a user-chosen, git-synced folder) keyed by DOI/arXiv/OpenAlex/PDF hash, holding PDFs and analyses. Adding a paper to any project offers to reuse what is compatible: summary fields when the content language matches, facets whose definition is identical, never the thesis relation; verified/edited statuses kept (optionally re-review). Papers removed from a project stay there.
-- Git sync from the app (next, right after the trash): a "Sincronizar" button that pulls, commits and pushes the project folder (git or git LFS for PDFs), shows the last sync time, warns about unpushed changes before closing, resolves automatically the files the app knows how to merge (relations.yaml, per-device costs/, dismissed lists) and asks the user to pick a version for the rest (e.g. a summary edited on both machines). In the stage 4 chat, a separate MCP server used only for syncing, enabled per conversation and always behind the user's approval (it is not part of the read-only library tools). Today syncing between computers is done by hand with `git pull` / `git commit` / `git push`.
+- Git sync from the app (next): a "Sincronizar" button that pulls, commits and pushes the project folder (git or git LFS for PDFs), shows the last sync time, warns about unpushed changes before closing, resolves automatically the files the app knows how to merge (relations.yaml, per-device costs/, dismissed lists) and asks the user to pick a version for the rest (e.g. a summary edited on both machines). In the stage 4 chat, a separate MCP server used only for syncing, enabled per conversation and always behind the user's approval (it is not part of the read-only library tools). Today syncing between computers is done by hand with `git pull` / `git commit` / `git push`.
 
 ## Upcoming stages
 
@@ -78,3 +77,9 @@
 - Evidence of confirmed relations is not re-checked when a paper's text changes (a new PDF).
 - The review mode loads a relation item with three requests (the paper's relations and both papers' details), one after another.
 - Candidates use only the stored neighbours; a paper added after the last neighbour recompute is a candidate only once the neighbours are updated.
+
+## Paper trash technical minutiae
+
+- Removing a paper drops it from its neighbours' lists without backfilling: a paper that had it in its top 10 shows 9 neighbours until the next full recompute (end of a batch, project open).
+- A paper trashed on another machine that arrives through `git pull` while an untracked PDF keeps its `papers/<key>/` folder loses its cached text before the trash records it; restoring it extracts the text again.
+- Listing the trash and planning a delete wait behind a long ingest (a PDF download) on the same project.

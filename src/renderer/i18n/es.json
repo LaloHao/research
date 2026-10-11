@@ -1,6 +1,6 @@
 {
   "app": { "loading": "Cargando…" },
-  "rail": { "library": "Biblioteca", "map": "Mapa", "settings": "Ajustes" },
+  "rail": { "library": "Biblioteca", "map": "Mapa", "trash": "Papelera", "settings": "Ajustes" },
   "welcome": {
     "title": "Asistente de investigación",
     "subtitle": "Crea un proyecto nuevo o abre una carpeta de proyecto existente.",
@@ -155,7 +155,11 @@
     "suggest_relations_all": "Pide a Claude relaciones tipadas para los papers cuyos candidatos cambiaron desde su último análisis.",
     "suggest_relations_filtered": "Pide a Claude relaciones tipadas para los papers que se ven con la búsqueda y los filtros actuales, si sus candidatos cambiaron desde su último análisis.",
     "relations_none": "No hay papers con candidatos nuevos por analizar.",
-    "relations_queued": "{{count}} papers en cola para sugerir relaciones."
+    "relations_queued": "{{count}} papers en cola para sugerir relaciones.",
+    "remove_filtered": "Quitar de la biblioteca",
+    "remove_filtered_hint": "Mueve a la papelera los papers que se ven con la búsqueda y los filtros activos",
+    "remove_confirm_one": "¿Quitar 1 paper de la biblioteca? Se mueve a la papelera y puedes restaurarlo cuando quieras.",
+    "remove_confirm_other": "¿Quitar {{count}} papers de la biblioteca? Se mueven a la papelera y puedes restaurarlos cuando quieras."
   },
   "badges": {
     "problem": "Error en archivo",
@@ -241,6 +245,10 @@
     "relations_conflict": "relations.yaml tiene un conflicto de git o un error; resuélvelo antes de cambiar relaciones.",
     "file_too_large": "El archivo pesa más de 200 MB.",
     "pdf_exists": "Este paper ya tiene PDF. Usa «Reemplazar PDF…» si quieres cambiarlo.",
+    "paper_exists": "Ya hay un paper con esa clave en la biblioteca.",
+    "trash_problem": "No se pudo mover ese paper: su carpeta en la papelera está dañada (le falta paper.yaml) o ya existe. Revísala en la carpeta .trash del proyecto.",
+    "folder_busy": "Otro programa tiene abierto un archivo de ese paper (por ejemplo, su PDF). Ciérralo y vuelve a intentarlo.",
+    "not_in_trash": "Ese paper ya no está en la papelera (quizás ya se restauró).",
     "unknown": "Ocurrió un error inesperado."
   },
   "paper": {
@@ -250,6 +258,8 @@
     "copied": "Copiado",
     "open_link": "Abrir enlace",
     "show_in_folder": "Mostrar en carpeta",
+    "remove": "Quitar de la biblioteca",
+    "remove_confirm": "¿Quitar «{{title}}» de la biblioteca? Se mueve a la papelera con su PDF, resumen y notas; sus relaciones quedan ocultas y puedes restaurarlo cuando quieras.",
     "problem_title": "No se puede leer paper.yaml",
     "problem_kinds": {
       "conflict_markers": "El archivo tiene marcas de conflicto de git sin resolver.",
@@ -462,6 +472,10 @@
       },
       "add": "Agregar",
       "dismiss": "Descartar",
+      "in_trash": "En la papelera",
+      "restore": "Restaurar",
+      "restored": "«{{title}}» volvió a la biblioteca.",
+      "restore_conflict": "Ese paper ya está otra vez en la biblioteca. Fusiónalos desde la Papelera.",
       "added": "«{{title}}» se agregará a la biblioteca; míralo en Actividad.",
       "none_value": "—"
     }
@@ -526,6 +540,49 @@
       "resolved_dropped_one": "Conflicto resuelto; se descartó {{count}} entrada inválida de relations.yaml.",
       "resolved_dropped_other": "Conflicto resuelto; se descartaron {{count}} entradas inválidas de relations.yaml.",
       "dismiss": "Cerrar"
+    }
+  },
+  "trash": {
+    "title": "Papelera",
+    "moved_one": "1 paper movido a la papelera",
+    "moved_other": "{{count}} papers movidos a la papelera",
+    "undo": "Deshacer",
+    "undo_conflict": "No se pudo deshacer todo: el mismo paper ya está otra vez en la biblioteca; resuélvelo en la Papelera.",
+    "search_placeholder": "Buscar en la papelera",
+    "empty": "La papelera está vacía.",
+    "no_results": "Nada en la papelera coincide con «{{query}}».",
+    "select_visible": "Seleccionar los visibles",
+    "restore": "Restaurar",
+    "restore_selected": "Restaurar ({{count}})",
+    "delete_forever": "Eliminar definitivamente",
+    "delete_selected": "Eliminar definitivamente ({{count}})",
+    "empty_trash": "Vaciar papelera",
+    "delete_confirm_one": "¿Eliminar definitivamente 1 paper? Relaciones que se borrarán de relations.yaml: {{relations}}. Solo podrás recuperarlo desde el historial de git, y los PDF guardados fuera de git no se recuperan.",
+    "delete_confirm_other": "¿Eliminar definitivamente {{count}} papers? Relaciones que se borrarán de relations.yaml: {{relations}}. Solo podrás recuperarlos desde el historial de git, y los PDF guardados fuera de git no se recuperan.",
+    "empty_confirm_one": "¿Vaciar la papelera? Se eliminará definitivamente 1 paper. Relaciones que se borrarán de relations.yaml: {{relations}}. Solo podrás recuperarlo desde el historial de git, y los PDF guardados fuera de git no se recuperan.",
+    "empty_confirm_other": "¿Vaciar la papelera? Se eliminarán definitivamente {{count}} papers. Relaciones que se borrarán de relations.yaml: {{relations}}. Solo podrás recuperarlos desde el historial de git, y los PDF guardados fuera de git no se recuperan.",
+    "conflict": "«{{title}}» ya está en la biblioteca como {{target}}. Fusionar deja un solo paper y conserva aparte cualquier archivo distinto.",
+    "merge": "Fusionar",
+    "restored_one": "1 paper restaurado.",
+    "restored_other": "{{count}} papers restaurados.",
+    "restored_as": "{{id}} quedó en la biblioteca como {{key}}.",
+    "restored_remnant": "Algo de {{id}} (un archivo o una subcarpeta que la app no mueve) sigue en la papelera.",
+    "restored_index_failed": "{{key}} volvió a la biblioteca, pero no se pudo indexar; la próxima reindexación lo incluirá.",
+    "deleted_one": "1 paper eliminado definitivamente.",
+    "deleted_other": "{{count}} papers eliminados definitivamente.",
+    "removed_on": "Quitado el {{date}} · {{device}}",
+    "unknown_date": "fecha desconocida",
+    "device": {
+      "this": "este equipo",
+      "other": "otro equipo ({{id}})",
+      "unknown": "equipo desconocido"
+    },
+    "problem": "No se puede restaurar: {{problem}}.",
+    "problems": {
+      "missing_paper_yaml": "le falta paper.yaml",
+      "conflict_markers": "su paper.yaml tiene marcas de conflicto de git",
+      "invalid_yaml": "su paper.yaml no es YAML válido",
+      "invalid_schema": "a su paper.yaml le faltan datos o tiene datos inválidos"
     }
   }
 }

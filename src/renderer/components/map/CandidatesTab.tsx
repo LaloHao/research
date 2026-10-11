@@ -3,8 +3,9 @@ import { useTranslation } from 'react-i18next'
 import { CANDIDATE_DIRECTIONS, type Candidate, type CandidateDirection, type CandidateList } from '../../../shared/relations'
 import { useDebouncedCallback } from '../../hooks/useDebouncedCallback'
 import { useEvent } from '../../hooks/useEvent'
-import { candidateLink, candidateTitle, defaultMinCount, MAX_ROWS } from '../../lib/candidates'
+import { candidateAction, candidateLink, candidateTitle, defaultMinCount, MAX_ROWS } from '../../lib/candidates'
 import { errorText } from '../../lib/errorText'
+import { restoreDetails } from '../../lib/trash'
 
 export function CandidatesTab({ paperId, onClearPaper }: { paperId: string | null; onClearPaper: () => void }): React.JSX.Element {
   const { t } = useTranslation()
@@ -20,26 +21,31 @@ export function CandidatesTab({ paperId, onClearPaper }: { paperId: string | nul
 
   useEffect(() => setMinCount(defaultMinCount(paperId)), [paperId])
 
-  const refresh = useCallback(() => {
-    const token = ++requestToken.current
-    setLoading(true)
-    setNotice(null)
-    window.research.citations.candidates({ direction, minCount, ...(paperId ? { paperId } : {}) }).then(
-      (next) => {
-        if (requestToken.current !== token) return
-        setList(next)
-        setLoading(false)
-      },
-      () => {
-        if (requestToken.current !== token) return
-        setLoading(false)
-        setNotice({ error: true, text: errorText(t, 'unknown') })
-      }
-    )
-  }, [direction, minCount, paperId, t])
+  // `clearNotice` is false for the reload a library change triggers, so a notice about what just happened (a restore) stays.
+  const load = useCallback(
+    (clearNotice: boolean) => {
+      const token = ++requestToken.current
+      setLoading(true)
+      if (clearNotice) setNotice(null)
+      window.research.citations.candidates({ direction, minCount, ...(paperId ? { paperId } : {}) }).then(
+        (next) => {
+          if (requestToken.current !== token) return
+          setList(next)
+          setLoading(false)
+        },
+        () => {
+          if (requestToken.current !== token) return
+          setLoading(false)
+          setNotice({ error: true, text: errorText(t, 'unknown') })
+        }
+      )
+    },
+    [direction, minCount, paperId, t]
+  )
+  const refresh = useCallback(() => load(true), [load])
   useEffect(refresh, [refresh])
   // A batch of jobs emits many library-changed events; refreshing once after them avoids repeated work.
-  useEvent('library-changed', useDebouncedCallback(refresh, 800))
+  useEvent('library-changed', useDebouncedCallback(() => load(false), 800))
 
   const report = (result: { ok: true } | { ok: false; error: string }, success: string): void => {
     setNotice(result.ok ? { error: false, text: success } : { error: true, text: errorText(t, result.error) })
@@ -52,6 +58,26 @@ export function CandidatesTab({ paperId, onClearPaper }: { paperId: string | nul
     withPending(c.openalexId, () =>
       window.research.citations.add(c.openalexId).then(
         (r) => report(r, t('map.candidates.added', { title: candidateTitle(c) })),
+        () => report({ ok: false, error: 'unknown' }, '')
+      )
+    )
+  }
+  /** A work that is a paper in the trash comes back from there, with everything it had. */
+  const restore = (c: Candidate): void => {
+    const paperId = c.trashedId
+    if (!paperId) return
+    withPending(c.openalexId, () =>
+      window.research.trash.restore([paperId], false).then(
+        (r) => {
+          const details = restoreDetails(t, r)
+          if (r.failed.length > 0) setNotice({ error: true, text: details.join(' ') })
+          else if (r.conflicts.length > 0) setNotice({ error: true, text: t('map.candidates.restore_conflict') })
+          else {
+            // load(false) reloads the list without clearing notices, so this one stays.
+            load(false)
+            setNotice({ error: false, text: [t('map.candidates.restored', { title: candidateTitle(c) }), ...details].join(' ') })
+          }
+        },
         () => report({ ok: false, error: 'unknown' }, '')
       )
     )
@@ -143,9 +169,18 @@ export function CandidatesTab({ paperId, onClearPaper }: { paperId: string | nul
                 <td>{c.work?.citedByCount ?? none}</td>
                 <td>
                   <div className="row">
-                    <button className="small primary" onClick={() => add(c)} disabled={pendingIds.has(c.openalexId)}>
-                      {t('map.candidates.add')}
-                    </button>
+                    {candidateAction(c) === 'restore' ? (
+                      <>
+                        <span className="chip">{t('map.candidates.in_trash')}</span>
+                        <button className="small primary" onClick={() => restore(c)} disabled={pendingIds.has(c.openalexId)}>
+                          {t('map.candidates.restore')}
+                        </button>
+                      </>
+                    ) : (
+                      <button className="small primary" onClick={() => add(c)} disabled={pendingIds.has(c.openalexId)}>
+                        {t('map.candidates.add')}
+                      </button>
+                    )}
                     <button className="small" onClick={() => dismiss(c)} disabled={pendingIds.has(c.openalexId)}>
                       {t('map.candidates.dismiss')}
                     </button>
