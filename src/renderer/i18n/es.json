@@ -592,6 +592,7 @@
     "repo_upstream": "Repositorio: {{root}} · rama {{branch}} → {{upstream}}",
     "done": "Sincronizado.",
     "rail_title": "Sincronizar · {{status}}",
+    "retry": "Reintentar",
     "status": {
       "loading": "Consultando el estado de git…",
       "unavailable": "No se pudo consultar el estado de git.",
@@ -665,6 +666,7 @@
       "url_label": "URL del remoto",
       "url_placeholder": "git@github.com:usuario/tesis.git",
       "url_help": "Se usan las credenciales que ya tiene git (ssh-agent o el gestor de credenciales); la app nunca pide ni guarda contraseñas.",
+      "url_fix_help": "Déjala vacía para usar el remoto que ya tiene el repositorio, o escribe otra URL para corregir la de origin (por ejemplo, si la escribiste mal).",
       "init": "Inicializar repositorio",
       "add_remote": "Agregar remoto y sincronizar",
       "connect": "Conectar y sincronizar",
@@ -692,6 +694,7 @@
       "cancel_help": "«Cancelar» deja todo como estaba: tus cambios quedan guardados en un commit local, sin subir.",
       "pending_one": "Falta elegir en 1 conflicto.",
       "pending_other": "Falta elegir en {{count}} conflictos.",
+      "wait_sync": "Hay una sincronización en curso; espera a que termine.",
       "changed": "Algo cambió desde que viste estos conflictos (se guardó algo nuevo en este equipo o el otro equipo subió cambios). Revisa de nuevo los que siguen en la lista y vuelve a elegir; las elecciones que aún aplican ya se conservaron.",
       "diff_mine": "Tu versión (este equipo)",
       "diff_theirs": "Versión del otro equipo",

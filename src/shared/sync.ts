@@ -75,6 +75,15 @@ export type ConflictChoice = (typeof CONFLICT_CHOICES)[number]
 /** `file:<path from the repository root>` or `paper:<key>`. */
 export const CONFLICT_ID = /^(?:file:.+|paper:[a-z][a-z0-9]*)$/
 
+/** The versions a conflict is about, as a short hash: a choice applies only to the versions it was made for. */
+export const CONFLICT_VERSION = /^[0-9a-f]{16}$/
+
+/** A choice in the conflicts panel, bound to the version of the conflict the user saw. */
+export interface ConflictDecision {
+  choice: ConflictChoice
+  version: string
+}
+
 /** One decision the user makes before the sync can finish. */
 export interface ConflictItem {
   id: string
@@ -86,6 +95,8 @@ export interface ConflictItem {
   paperTitle: string | null
   ours: ConflictSide
   theirs: ConflictSide
+  /** Changes whenever either version (or the base) changes; see `CONFLICT_VERSION`. */
+  version: string
 }
 
 /** Both versions of one file for the side-by-side view; null is a side where the file does not exist. */

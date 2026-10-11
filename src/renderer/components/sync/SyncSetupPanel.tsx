@@ -10,20 +10,25 @@ export function SyncSetupPanel({ setup, onDone }: { setup: Exclude<SyncSetup, 'r
   const [url, setUrl] = useState('')
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
-  const showsUrl = setup === 'no_repo' || setup === 'no_remote'
+  // The problem is the typed URL itself (marks the field).
+  const [badUrl, setBadUrl] = useState(false)
+  // Optional with a repository to create, required to add a remote, and a way to correct a mistyped one while the branch
+  // still follows nothing (the first sync with it failed).
+  const showsUrl = setup !== 'no_git'
 
   const submit = (): void => {
     if (busy) return
     const typed = url.trim()
     // The URL is required to add a remote, optional when only initializing the repository.
-    const issue = showsUrl && (setup === 'no_remote' || typed !== '') ? remoteUrlProblem(typed) : null
+    const issue = setup === 'no_remote' || typed !== '' ? remoteUrlProblem(typed) : null
     if (issue) {
       setProblem(t(`sync.setup.url_${issue}`))
+      setBadUrl(true)
       return
     }
     setBusy(true)
     setProblem(null)
-    window.research.sync.init(showsUrl && typed !== '' ? typed : null).then(
+    window.research.sync.init(typed !== '' ? typed : null).then(
       () => {
         setBusy(false)
         // A failure is kept in the status and shown by the Sync view's banner; initialized without a remote, the panel
@@ -51,9 +56,15 @@ export function SyncSetupPanel({ setup, onDone }: { setup: Exclude<SyncSetup, 'r
             autoComplete="off"
             placeholder={t('sync.setup.url_placeholder')}
             disabled={busy}
-            onChange={(e) => setUrl(e.target.value)}
+            className={badUrl ? 'invalid' : undefined}
+            aria-invalid={badUrl}
+            onChange={(e) => {
+              setUrl(e.target.value)
+              setProblem(null)
+              setBadUrl(false)
+            }}
           />
-          <small className="muted">{t('sync.setup.url_help')}</small>
+          <small className="muted">{t(setup === 'no_upstream' ? 'sync.setup.url_fix_help' : 'sync.setup.url_help')}</small>
         </label>
       )}
       {setup !== 'no_git' && (

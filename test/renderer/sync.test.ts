@@ -9,6 +9,7 @@ import {
   pathList,
   railAction,
   remoteUrlProblem,
+  staleChoices,
   syncIndicator
 } from '../../src/renderer/lib/sync'
 import type { ConflictItem, SyncStatus } from '../../src/shared/sync'
@@ -36,6 +37,7 @@ const item = (over: Partial<ConflictItem> = {}): ConflictItem => ({
   paperTitle: 'Kernel paper',
   ours: 'modified',
   theirs: 'modified',
+  version: '0000000000000001',
   ...over
 })
 
@@ -94,9 +96,24 @@ describe('conflicts', () => {
 
   it('counts the decisions still missing and drops choices of conflicts no longer listed', () => {
     const items = [item(), item({ id: 'paper:j', kind: 'paper', paperId: 'j', ours: 'edited', theirs: 'trashed' })]
+    const v = '0000000000000001'
     expect(missingChoices(items, {})).toBe(2)
-    expect(missingChoices(items, { 'paper:j': 'ours' })).toBe(1)
-    expect(keepChoices({ 'paper:j': 'ours', 'file:gone.md': 'theirs' }, items)).toEqual({ 'paper:j': 'ours' })
+    expect(missingChoices(items, { 'paper:j': { choice: 'ours', version: v } })).toBe(1)
+    expect(keepChoices({ 'paper:j': { choice: 'ours', version: v }, 'file:gone.md': { choice: 'theirs', version: v } }, items)).toEqual({
+      'paper:j': { choice: 'ours', version: v }
+    })
+  })
+
+  it('keeps a choice only while its conflict has the version it was made for, and names the ones that changed', () => {
+    const before = { 'file:papers/k/summary.md': { choice: 'ours' as const, version: '0000000000000001' }, 'file:gone.md': { choice: 'theirs' as const, version: '0000000000000001' } }
+    const changed = [item({ version: '0000000000000002' })]
+    expect(keepChoices(before, changed)).toEqual({})
+    // A choice for an older version counts as missing, even before the list is filtered.
+    expect(missingChoices(changed, before)).toBe(1)
+    expect(staleChoices(before, changed)).toEqual(['file:papers/k/summary.md'])
+    // A conflict no longer listed was settled: nothing to review again.
+    expect(staleChoices(before, [item()])).toEqual([])
+    expect(keepChoices(before, [item()])).toEqual({ 'file:papers/k/summary.md': before['file:papers/k/summary.md'] })
   })
 
   it('lists the first files an error names', () => {

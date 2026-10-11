@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto'
 import { hostname } from 'node:os'
 import { parse } from 'yaml'
 import type { PdfPolicy } from '../../shared/schemas'
 import {
   isRemoteUrl,
   type ConflictChoice,
+  type ConflictDecision,
   type ConflictDiff,
   type ConflictItem,
   type ConflictSide,
@@ -113,6 +115,11 @@ async function fingerprint(repo: ProjectRepo, c: PendingConflict, commits: Commi
   return parts.join(' ')
 }
 
+/** The short hash of a fingerprint the renderer sees as `ConflictItem.version`. */
+function conflictVersion(fingerprint: string): string {
+  return createHash('sha256').update(fingerprint).digest('hex').slice(0, 16)
+}
+
 interface Ready {
   repo: ProjectRepo
   upstream: Upstream
@@ -215,15 +222,16 @@ export class SyncService {
    * a new one, or one whose versions changed since (a newer local save, the remote moving) keeps the conflicts open.
    * While a sync runs the choices are not taken: the caller gets that sync's result (the UI disables the button).
    */
-  resolve(choices: Readonly<Record<string, ConflictChoice>>): Promise<SyncResult> {
+  resolve(choices: Readonly<Record<string, ConflictDecision>>): Promise<SyncResult> {
     if (this.running) return this.running
     if (this.closed) return this.refused()
     const pending = this.pending
     if (!pending) return this.run({ auto: false })
     const decided = new Map(pending.decided)
-    for (const [id, choice] of Object.entries(choices)) {
+    for (const [id, { choice, version }] of Object.entries(choices)) {
+      // A choice made for versions a later sync replaced (same id, new version) is not taken: that conflict stays open.
       const seen = pending.fingerprints.get(id)
-      if (seen !== undefined) decided.set(id, { choice, fingerprint: seen })
+      if (seen !== undefined && conflictVersion(seen) === version) decided.set(id, { choice, fingerprint: seen })
     }
     return this.start(() => this.cycle(decided, pending.theirs), false)
   }
@@ -261,8 +269,10 @@ export class SyncService {
           await repo.addRemote('origin', url)
           info = await repo.info()
         } else if ((await repo.remoteUrl('origin')) !== url) {
-          // The same URL again is a retry (e.g. after the first attempt went offline).
-          fail('remote_exists')
+          // The same URL again is a retry (e.g. after the first attempt went offline). Another one corrects a mistyped
+          // URL while the branch follows nothing yet; once it does, origin is the user's to change with git.
+          if (info.upstream) fail('remote_exists')
+          await repo.setRemoteUrl('origin', url)
         }
       }
       if (info.remotes.length === 0) return { ok: false, error: { code: 'no_remote', paths: [] } }
@@ -499,7 +509,8 @@ export class SyncService {
         paperId: c.key,
         paperTitle: await this.title(repo, pending, c.key),
         ours: c.trashedBy === 'ours' ? 'trashed' : 'edited',
-        theirs: c.trashedBy === 'theirs' ? 'trashed' : 'edited'
+        theirs: c.trashedBy === 'theirs' ? 'trashed' : 'edited',
+        version: conflictVersion(pending.fingerprints.get(c.id) ?? '')
       }
     }
     const path = c.path.slice(repo.prefix.length)
@@ -511,7 +522,8 @@ export class SyncService {
       paperId: key,
       paperTitle: key ? await this.title(repo, pending, key) : null,
       ours: side(c.base, c.ours),
-      theirs: side(c.base, c.theirs)
+      theirs: side(c.base, c.theirs),
+      version: conflictVersion(pending.fingerprints.get(c.id) ?? '')
     }
   }
 

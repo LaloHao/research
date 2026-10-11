@@ -144,6 +144,11 @@ export class ProjectRepo {
     await this.git.run(['remote', 'add', '--', name, url])
   }
 
+  /** Replaces the URL of `name`; `url` is checked by `isRemoteUrl`, and `--` keeps git from reading it as an option. */
+  async setRemoteUrl(name: string, url: string): Promise<void> {
+    await this.git.run(['remote', 'set-url', '--', name, url])
+  }
+
   async lfsAvailable(): Promise<boolean> {
     try {
       await this.git.run(['lfs', 'version'])

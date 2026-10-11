@@ -23,6 +23,7 @@ export function Rail({ view, onSelect, sync, syncing, onSync }: RailProps): Reac
   const indicator = syncIndicator(sync.status, sync.now)
   const full = t(`sync.status.${indicator.state}`, { count: indicator.count })
   const action = railAction(sync.status)
+  const short = t(`sync.short.${indicator.state}`, { count: indicator.count })
 
   const item = (v: View, icon: string): React.JSX.Element => (
     <button
@@ -54,11 +55,12 @@ export function Rail({ view, onSelect, sync, syncing, onSync }: RailProps): Reac
         <button
           className="link rail-sync-label"
           title={full}
-          aria-label={t('rail.sync')}
+          // The visible short status is part of the name (WCAG 2.5.3); the full one is the tooltip.
+          aria-label={`${t('rail.sync')}: ${short}`}
           aria-current={view === 'sync' ? 'page' : undefined}
           onClick={() => onSelect('sync')}
         >
-          {t(`sync.short.${indicator.state}`, { count: indicator.count })}
+          {short}
         </button>
       </div>
       {item('settings', '⚙')}

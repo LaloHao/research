@@ -2,7 +2,7 @@ import { isAbsolute, win32 } from 'node:path'
 import { z } from 'zod'
 import { CANDIDATE_DIRECTIONS, OPENALEX_ID } from '../shared/relations'
 import { PDF_POLICIES } from '../shared/schemas'
-import { AUTO_SYNC_MINUTES, CLOSE_DECISIONS, CONFLICT_CHOICES, CONFLICT_ID, isRemoteUrl } from '../shared/sync'
+import { AUTO_SYNC_MINUTES, CLOSE_DECISIONS, CONFLICT_CHOICES, CONFLICT_ID, CONFLICT_VERSION, isRemoteUrl } from '../shared/sync'
 import { ExtractionFormSchema, LLM_MODELS, ThesisContextSchema } from '../shared/summary'
 import { MAX_JUSTIFICATION, RELATION_ID, RELATION_STATUSES, RELATION_TYPES } from '../shared/typedRelations'
 
@@ -85,7 +85,11 @@ export const ipcArgs = {
   trashTarget: z.union([z.literal('all'), z.array(paperIdSchema).min(1)]),
   /** A conflict id the sync handed out: `file:<path>` or `paper:<key>`. */
   conflictId: z.string().max(4096).regex(CONFLICT_ID),
-  conflictChoices: z.record(z.string().max(4096).regex(CONFLICT_ID), z.enum(CONFLICT_CHOICES)),
+  /** «Terminar sincronización»: a choice per conflict id, each with the version of the conflict the user saw. */
+  conflictChoices: z.record(
+    z.string().max(4096).regex(CONFLICT_ID),
+    z.object({ choice: z.enum(CONFLICT_CHOICES), version: z.string().regex(CONFLICT_VERSION) }).strict()
+  ),
   /** The remote the user typed for the first sync; null when only initializing the repository. */
   remoteUrl: z.string().trim().refine(isRemoteUrl).nullable(),
   closeDecision: z.enum(CLOSE_DECISIONS)

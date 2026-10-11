@@ -91,8 +91,8 @@ describe('es.json covers every code the UI can receive', () => {
     ...SYNC_STATES.flatMap((s) => [`sync.status.${s}`, `sync.short.${s}`]),
     ...SYNC_ERROR_CODES.map((c) => `sync.errors.${c}`),
     ...CONFLICT_SIDES.map((s) => `sync.sides.${s}`),
-    ...['title', 'run', 'repo', 'repo_upstream', 'done', 'rail_title'].map((k) => `sync.${k}`),
-    ...['no_git', 'no_repo', 'no_remote', 'no_upstream', 'url_label', 'url_placeholder', 'url_help', 'init', 'add_remote', 'connect', 'url_empty', 'url_password', 'url_invalid'].map(
+    ...['title', 'run', 'repo', 'repo_upstream', 'done', 'rail_title', 'retry'].map((k) => `sync.${k}`),
+    ...['no_git', 'no_repo', 'no_remote', 'no_upstream', 'url_label', 'url_placeholder', 'url_help', 'url_fix_help', 'init', 'add_remote', 'connect', 'url_empty', 'url_password', 'url_invalid'].map(
       (k) => `sync.setup.${k}`
     ),
     ...[
@@ -116,6 +116,7 @@ describe('es.json covers every code the UI can receive', () => {
       'pending_one',
       'pending_other',
       'changed',
+      'wait_sync',
       'diff_mine',
       'diff_theirs',
       'diff_deleted',

@@ -15,7 +15,7 @@ import type {
 import type { PdfPolicy } from './schemas'
 import type { AppSettings } from './settings'
 import type { ExtractionForm, FormImpact, FormInfo, LlmConfig, LlmModel, ReviewItem, Section, SummaryPlan, ThesisContext } from './summary'
-import type { CloseDecision, ConflictChoice, ConflictDiff, ConflictItem, SyncResult, SyncStatus } from './sync'
+import type { CloseDecision, ConflictDecision, ConflictDiff, ConflictItem, SyncResult, SyncStatus } from './sync'
 import type { DeletePlanResult, RestoreOutcome, TrashEntry, TrashOutcome, TrashTarget } from './trash'
 import type { PaperRelations, RelationPlan, RelationsFileState, RelationStatus, RelationType } from './typedRelations'
 
@@ -258,8 +258,11 @@ export interface ResearchApi {
     run(): Promise<SyncResult>
     conflicts(): Promise<ConflictItem[]>
     diff(id: string): Promise<ConflictDiff>
-    /** «Terminar sincronización» with a choice per conflict id. */
-    resolve(choices: Record<string, ConflictChoice>): Promise<SyncResult>
+    /**
+     * «Terminar sincronización» with a choice per conflict id, each with the `version` it was made for; a choice whose
+     * conflict changed since is not taken (the result is `conflicts` again).
+     */
+    resolve(choices: Record<string, ConflictDecision>): Promise<SyncResult>
     /** «Cancelar»: forgets the decisions; the local commit stays, unpushed. */
     abort(): Promise<void>
     /** «Inicializar repositorio» (when there is none) and/or adds `url` as origin, then the first sync. */

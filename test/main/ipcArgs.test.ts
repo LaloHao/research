@@ -141,9 +141,21 @@ describe('typed relation arguments', () => {
     expect(arg(ipcArgs.conflictId, 'file:papers/k/summary.md', 'id')).toBe('file:papers/k/summary.md')
     expect(arg(ipcArgs.conflictId, 'paper:he2017drain', 'id')).toBe('paper:he2017drain')
     for (const bad of ['', 'papers/k/summary.md', 'paper:../x', 'paper:', 'file:', 3]) expect(() => arg(ipcArgs.conflictId, bad, 'id')).toThrow()
-    expect(arg(ipcArgs.conflictChoices, { 'paper:k': 'ours', 'file:a.md': 'theirs' }, 'choices')).toEqual({ 'paper:k': 'ours', 'file:a.md': 'theirs' })
-    expect(() => arg(ipcArgs.conflictChoices, { 'paper:k': 'both' }, 'choices')).toThrow()
-    expect(() => arg(ipcArgs.conflictChoices, { nope: 'ours' }, 'choices')).toThrow()
+    const v = '0123456789abcdef'
+    const choices = { 'paper:k': { choice: 'ours', version: v }, 'file:a.md': { choice: 'theirs', version: v } }
+    expect(arg(ipcArgs.conflictChoices, choices, 'choices')).toEqual(choices)
+    // Each choice carries the version of the conflict the user saw: a bare choice, a bad version or extra keys are refused.
+    for (const bad of [
+      { 'paper:k': 'ours' },
+      { 'paper:k': { choice: 'both', version: v } },
+      { 'paper:k': { choice: 'ours' } },
+      { 'paper:k': { choice: 'ours', version: 'ABCDEF0123456789' } },
+      { 'paper:k': { choice: 'ours', version: v.slice(1) } },
+      { 'paper:k': { choice: 'ours', version: v, extra: 1 } },
+      { nope: { choice: 'ours', version: v } }
+    ]) {
+      expect(() => arg(ipcArgs.conflictChoices, bad, 'choices')).toThrow()
+    }
     expect(arg(ipcArgs.remoteUrl, '  git@github.com:me/thesis.git ', 'url')).toBe('git@github.com:me/thesis.git')
     expect(arg(ipcArgs.remoteUrl, null, 'url')).toBeNull()
     for (const bad of ['', '--upload-pack=touch /tmp/x', 'https://me:secret@github.com/me/thesis.git', 'a b', 7]) {

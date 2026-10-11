@@ -1,4 +1,4 @@
-import { AUTO_SYNC_MINUTES, hasPasswordInUrl, isRemoteUrl, type ConflictChoice, type ConflictItem, type SyncStatus } from '../../shared/sync'
+import { AUTO_SYNC_MINUTES, hasPasswordInUrl, isRemoteUrl, type ConflictChoice, type ConflictDecision, type ConflictItem, type SyncStatus } from '../../shared/sync'
 import { parseCount, type NumberIssue } from './numberField'
 
 /** Every state the rail and the Sync view show; each has `sync.status.<state>` (full) and `sync.short.<state>` (rail). */
@@ -75,14 +75,37 @@ export function choiceButtons(item: ConflictItem): { choice: ConflictChoice; key
   ]
 }
 
-export function missingChoices(items: ConflictItem[], choices: Readonly<Record<string, ConflictChoice>>): number {
-  return items.filter((item) => !choices[item.id]).length
+/** The panel's choices by conflict id, each bound to the version of the conflict it was made for. */
+export type Choices = Readonly<Record<string, ConflictDecision>>
+
+/** A choice counts only for the version of the conflict it was made for. */
+function chosen(item: ConflictItem, choices: Choices): ConflictDecision | null {
+  const c = choices[item.id]
+  return c && c.version === item.version ? c : null
 }
 
-/** The choices of conflicts still listed (a new list, after the remote moved, drops the others). */
-export function keepChoices(choices: Readonly<Record<string, ConflictChoice>>, items: ConflictItem[]): Record<string, ConflictChoice> {
-  const ids = new Set(items.map((item) => item.id))
-  return Object.fromEntries(Object.entries(choices).filter(([id]) => ids.has(id)))
+export function missingChoices(items: ConflictItem[], choices: Choices): number {
+  return items.filter((item) => !chosen(item, choices)).length
+}
+
+/** The choice shown as picked for a conflict, if it was made for the versions listed now. */
+export function choiceOf(item: ConflictItem, choices: Choices): ConflictChoice | null {
+  return chosen(item, choices)?.choice ?? null
+}
+
+/** The choices of conflicts still listed with the same version: a conflict whose versions changed is asked again. */
+export function keepChoices(choices: Choices, items: ConflictItem[]): Record<string, ConflictDecision> {
+  const kept: Record<string, ConflictDecision> = {}
+  for (const item of items) {
+    const c = chosen(item, choices)
+    if (c) kept[item.id] = c
+  }
+  return kept
+}
+
+/** Conflicts still listed whose versions changed since a choice was made for them (the user must review them again). */
+export function staleChoices(choices: Choices, items: ConflictItem[]): string[] {
+  return items.filter((item) => choices[item.id] && !chosen(item, choices)).map((item) => item.id)
 }
 
 /** The files an error names, for its message: the first five, then «…». */

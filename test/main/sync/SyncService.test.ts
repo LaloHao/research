@@ -7,6 +7,7 @@ import { parse } from 'yaml'
 import { toYaml } from '../../../src/main/project/yamlFile'
 import { ProjectRepo } from '../../../src/main/sync/ProjectRepo'
 import { SyncService, type SyncServiceDeps } from '../../../src/main/sync/SyncService'
+import type { ConflictChoice, SyncResult } from '../../../src/shared/sync'
 import type { TypedRelation } from '../../../src/shared/typedRelations'
 import { applyFiles, commitAll, identify, pathWithOnlyGit, trashOnDisk, twoMachines, type Machines } from '../../helpers/git'
 import { typedRelation } from '../../helpers/relations'
@@ -27,7 +28,13 @@ function filesWithMarkers(dir: string): string[] {
   return out
 }
 
+const VERSION = expect.stringMatching(/^[0-9a-f]{16}$/)
 const PAPER = 'schema_version: 1\nid: k\ntitle: Kernel paper\n'
+/** «Terminar sincronización» as the panel sends it: each choice with the version of its conflict listed right now. */
+async function choose(svc: SyncService, picks: Record<string, ConflictChoice>): Promise<SyncResult> {
+  const versions = new Map((await svc.conflicts()).map((c) => [c.id, c.version]))
+  return svc.resolve(Object.fromEntries(Object.entries(picks).map(([id, choice]) => [id, { choice, version: versions.get(id) ?? 'unknown' }])))
+}
 const relationsText = (relations: TypedRelation[]): string => toYaml({ schema_version: 1, relations, analyzed: {} })
 
 /** A pre-push hook on machine A that makes machine B push first: once, or on every push of A. */
@@ -106,11 +113,20 @@ describe('SyncService', () => {
     expect(filesWithMarkers(m.b)).toEqual([])
     expect(await b.status()).toMatchObject({ phase: 'conflicts', conflicts: 1, ahead: 1, dirty: false })
     const [item] = await b.conflicts()
-    expect(item).toEqual({ id: 'file:papers/k/summary.md', kind: 'file', path: 'papers/k/summary.md', paperId: 'k', paperTitle: 'Kernel paper', ours: 'modified', theirs: 'modified' })
+    expect(item).toEqual({
+      id: 'file:papers/k/summary.md',
+      kind: 'file',
+      path: 'papers/k/summary.md',
+      paperId: 'k',
+      paperTitle: 'Kernel paper',
+      ours: 'modified',
+      theirs: 'modified',
+      version: VERSION
+    })
     expect(await b.diff(item.id)).toEqual({ files: [{ path: 'papers/k/summary.md', ours: 'from B\n', theirs: 'from A\n', unavailable: null }] })
     // An automatic sync leaves a pending decision alone.
     expect(await b.run({ auto: true })).toEqual({ ok: true, outcome: 'conflicts' })
-    expect(await b.resolve({ [item.id]: 'theirs' })).toEqual({ ok: true, outcome: 'synced' })
+    expect(await choose(b, { [item.id]: 'theirs' })).toEqual({ ok: true, outcome: 'synced' })
     expect(await readFile(join(m.projectB, 'papers/k/summary.md'), 'utf8')).toBe('from A\n')
     expect(await b.status()).toMatchObject({ phase: 'idle', conflicts: 0, ahead: 0 })
     // The version left out is still in the history, as the merge's first parent.
@@ -129,7 +145,7 @@ describe('SyncService', () => {
     expect(await b.status()).toMatchObject({ phase: 'idle', conflicts: 0, ahead: 1 })
     expect(await b.conflicts()).toEqual([])
     expect(await b.run({ auto: false })).toEqual({ ok: true, outcome: 'conflicts' })
-    expect(await b.resolve({ 'file:papers/k/summary.md': 'ours' })).toEqual({ ok: true, outcome: 'synced' })
+    expect(await choose(b, { 'file:papers/k/summary.md': 'ours' })).toEqual({ ok: true, outcome: 'synced' })
     expect(m.git(m.remote, 'show', 'main:papers/k/summary.md')).toBe('from B')
   })
 
@@ -142,10 +158,10 @@ describe('SyncService', () => {
     await applyFiles(m.projectB, { 'papers/k/notes.md': 'my notes\nedited on B\n' })
     expect(await b.run({ auto: false })).toEqual({ ok: true, outcome: 'conflicts' })
     expect(await b.conflicts()).toEqual([
-      { id: 'paper:k', kind: 'paper', path: 'papers/k/', paperId: 'k', paperTitle: 'Kernel paper', ours: 'edited', theirs: 'trashed' }
+      { id: 'paper:k', kind: 'paper', path: 'papers/k/', paperId: 'k', paperTitle: 'Kernel paper', ours: 'edited', theirs: 'trashed', version: VERSION }
     ])
     expect(await b.diff('paper:k')).toEqual({ files: [{ path: 'papers/k/notes.md', ours: 'my notes\nedited on B\n', theirs: 'my notes\n', unavailable: null }] })
-    expect(await b.resolve({ 'paper:k': 'ours' })).toEqual({ ok: true, outcome: 'synced' })
+    expect(await choose(b, { 'paper:k': 'ours' })).toEqual({ ok: true, outcome: 'synced' })
     expect(await readFile(join(m.projectB, 'papers/k/notes.md'), 'utf8')).toBe('my notes\nedited on B\n')
     expect(existsSync(join(m.projectB, '.trash/k'))).toBe(false)
     await a.run({ auto: false })
@@ -161,7 +177,7 @@ describe('SyncService', () => {
     await a.run({ auto: false })
     await applyFiles(m.projectB, { 'papers/k/notes.md': 'my notes\nedited on B\n' })
     await b.run({ auto: false })
-    expect(await b.resolve({ 'paper:k': 'theirs' })).toEqual({ ok: true, outcome: 'synced' })
+    expect(await choose(b, { 'paper:k': 'theirs' })).toEqual({ ok: true, outcome: 'synced' })
     expect(existsSync(join(m.projectB, 'papers/k'))).toBe(false)
     expect(await readFile(join(m.projectB, '.trash/k/notes.md'), 'utf8')).toBe('my notes\nedited on B\n')
   })
@@ -345,7 +361,7 @@ describe('SyncService', () => {
     expect(await a.run({ auto: false })).toEqual({ ok: true, outcome: 'conflicts' })
     // This machine only has the paper in .trash/: its own copy is read before the other machine's library.
     expect(await a.conflicts()).toEqual([
-      { id: 'paper:k', kind: 'paper', path: 'papers/k/', paperId: 'k', paperTitle: 'Kernel paper', ours: 'trashed', theirs: 'edited' }
+      { id: 'paper:k', kind: 'paper', path: 'papers/k/', paperId: 'k', paperTitle: 'Kernel paper', ours: 'trashed', theirs: 'edited', version: VERSION }
     ])
     const titled = service(m, m.projectA, { paperTitle: (key) => (key === 'k' ? 'From the index' : null) })
     expect(await titled.run({ auto: false })).toEqual({ ok: true, outcome: 'conflicts' })
@@ -361,10 +377,10 @@ describe('SyncService', () => {
     await applyFiles(m.projectB, { 'papers/k/summary.md': 'from B\n' })
     expect(await b.run({ auto: false })).toEqual({ ok: true, outcome: 'conflicts' })
     expect(await b.conflicts()).toEqual([
-      { id: 'file:papers/k/summary.md', kind: 'file', path: 'papers/k/summary.md', paperId: 'k', paperTitle: 'Kernel paper', ours: 'modified', theirs: 'deleted' }
+      { id: 'file:papers/k/summary.md', kind: 'file', path: 'papers/k/summary.md', paperId: 'k', paperTitle: 'Kernel paper', ours: 'modified', theirs: 'deleted', version: VERSION }
     ])
     expect(await b.diff('file:papers/k/summary.md')).toEqual({ files: [{ path: 'papers/k/summary.md', ours: 'from B\n', theirs: null, unavailable: null }] })
-    expect(await b.resolve({ 'file:papers/k/summary.md': 'theirs' })).toEqual({ ok: true, outcome: 'synced' })
+    expect(await choose(b, { 'file:papers/k/summary.md': 'theirs' })).toEqual({ ok: true, outcome: 'synced' })
     expect(existsSync(join(m.projectB, 'papers/k/summary.md'))).toBe(false)
   })
 
@@ -379,13 +395,13 @@ describe('SyncService', () => {
     expect(await b.diff('file:papers/k/summary.md')).toEqual({ files: [{ path: 'papers/k/summary.md', ours: 'B1\n', theirs: 'A1\n', unavailable: null }] })
     // The app saves a newer summary while the panel is open.
     await applyFiles(m.projectB, { 'papers/k/summary.md': 'B2\n' })
-    expect(await b.resolve({ 'file:papers/k/summary.md': 'theirs', 'file:papers/k/notes.md': 'theirs' })).toEqual({ ok: true, outcome: 'conflicts' })
+    expect(await choose(b, { 'file:papers/k/summary.md': 'theirs', 'file:papers/k/notes.md': 'theirs' })).toEqual({ ok: true, outcome: 'conflicts' })
     expect(await readFile(join(m.projectB, 'papers/k/summary.md'), 'utf8')).toBe('B2\n')
     expect((await b.conflicts()).map((c) => c.id)).toEqual(['file:papers/k/summary.md'])
     expect(await b.diff('file:papers/k/summary.md')).toEqual({ files: [{ path: 'papers/k/summary.md', ours: 'B2\n', theirs: 'A1\n', unavailable: null }] })
     expect(m.git(m.remote, 'show', 'main:papers/k/summary.md')).toBe('A1')
     // The unchanged notes decision is kept: only the new one is needed.
-    expect(await b.resolve({ 'file:papers/k/summary.md': 'ours' })).toEqual({ ok: true, outcome: 'synced' })
+    expect(await choose(b, { 'file:papers/k/summary.md': 'ours' })).toEqual({ ok: true, outcome: 'synced' })
     expect(m.git(m.remote, 'show', 'main:papers/k/summary.md')).toBe('B2')
     expect(m.git(m.remote, 'show', 'main:papers/k/notes.md')).toBe('A1 notes')
   })
@@ -399,7 +415,7 @@ describe('SyncService', () => {
     await applyFiles(m.projectB, { 'papers/k/summary.md': 'B1\n' })
     await b.run({ auto: false })
     await applyFiles(m.projectB, { 'papers/k/notes.md': 'unrelated\n' })
-    expect(await b.resolve({ 'file:papers/k/summary.md': 'theirs' })).toEqual({ ok: true, outcome: 'synced' })
+    expect(await choose(b, { 'file:papers/k/summary.md': 'theirs' })).toEqual({ ok: true, outcome: 'synced' })
     expect(m.git(m.remote, 'show', 'main:papers/k/summary.md')).toBe('A1')
     expect(m.git(m.remote, 'show', 'main:papers/k/notes.md')).toBe('unrelated')
   })
@@ -415,11 +431,54 @@ describe('SyncService', () => {
     // Machine A pushes a newer version after B was shown A1.
     await applyFiles(m.projectA, { 'papers/k/summary.md': 'A2\n' })
     await a.run({ auto: false })
-    expect(await b.resolve({ 'file:papers/k/summary.md': 'ours' })).toEqual({ ok: true, outcome: 'conflicts' })
+    expect(await choose(b, { 'file:papers/k/summary.md': 'ours' })).toEqual({ ok: true, outcome: 'conflicts' })
     expect(m.git(m.remote, 'show', 'main:papers/k/summary.md')).toBe('A2')
     expect(await b.diff('file:papers/k/summary.md')).toEqual({ files: [{ path: 'papers/k/summary.md', ours: 'B1\n', theirs: 'A2\n', unavailable: null }] })
-    expect(await b.resolve({ 'file:papers/k/summary.md': 'ours' })).toEqual({ ok: true, outcome: 'synced' })
+    expect(await choose(b, { 'file:papers/k/summary.md': 'ours' })).toEqual({ ok: true, outcome: 'synced' })
     expect(m.git(m.remote, 'show', 'main:papers/k/summary.md')).toBe('B1')
+  })
+
+  it('never applies a choice made for versions that a later sync replaced under the same id', async () => {
+    const m = await twoMachines({ 'papers/k/paper.yaml': PAPER, 'papers/k/summary.md': 'base\n' })
+    const a = service(m, m.projectA)
+    const b = service(m, m.projectB)
+    await applyFiles(m.projectA, { 'papers/k/summary.md': 'A1\n' })
+    await a.run({ auto: false })
+    await applyFiles(m.projectB, { 'papers/k/summary.md': 'B1\n' })
+    await b.run({ auto: false })
+    const [seen] = await b.conflicts()
+    // Machine A pushes a newer version, and another «Sincronizar» (e.g. before closing) lists the conflict again.
+    await applyFiles(m.projectA, { 'papers/k/summary.md': 'A2\n' })
+    await a.run({ auto: false })
+    expect(await b.run({ auto: false })).toEqual({ ok: true, outcome: 'conflicts' })
+    const [now] = await b.conflicts()
+    expect(now.id).toBe(seen.id)
+    expect(now.version).not.toBe(seen.version)
+    // The choice made for A1 is not applied to A2.
+    expect(await b.resolve({ [seen.id]: { choice: 'ours', version: seen.version } })).toEqual({ ok: true, outcome: 'conflicts' })
+    expect(m.git(m.remote, 'show', 'main:papers/k/summary.md')).toBe('A2')
+    expect(await readFile(join(m.projectB, 'papers/k/summary.md'), 'utf8')).toBe('B1\n')
+    expect((await b.conflicts()).map((c) => c.version)).toEqual([now.version])
+    expect(await b.resolve({ [now.id]: { choice: 'ours', version: now.version } })).toEqual({ ok: true, outcome: 'synced' })
+    expect(m.git(m.remote, 'show', 'main:papers/k/summary.md')).toBe('B1')
+  })
+
+  it('lets a mistyped remote URL be corrected while the branch has no upstream yet', async () => {
+    const m = await twoMachines()
+    const root = await tmpDir()
+    await applyFiles(root, { 'project.yaml': 'name: New\n' })
+    const fresh = service(m, root)
+    expect(await fresh.setup(null)).toEqual({ ok: false, error: { code: 'no_remote', paths: [] } })
+    identify(m.env, root, 'New Machine')
+    const typo = join(await tmpDir(), 'typo.git')
+    expect(await fresh.setup(typo)).toMatchObject({ ok: false, error: { code: 'remote_not_found' } })
+    expect((await fresh.status()).setup).toBe('no_upstream')
+    const empty = join(await tmpDir(), 'empty.git')
+    m.git(root, 'init', '--quiet', '--bare', '--initial-branch=main', empty)
+    expect(await fresh.setup(empty)).toEqual({ ok: true, outcome: 'synced' })
+    expect(m.git(root, 'remote', 'get-url', 'origin')).toBe(empty)
+    // Once the branch follows the remote, another URL is refused.
+    expect(await fresh.setup(typo)).toEqual({ ok: false, error: { code: 'remote_exists', paths: [] } })
   })
 
   it('refuses a remote with an unrelated history before following it', async () => {
@@ -445,9 +504,11 @@ describe('SyncService', () => {
     expect(m.git(m.a, 'remote')).toBe('')
     const offline = 'https://127.0.0.1:9/thesis.git'
     expect(await a.setup(offline)).toEqual({ ok: false, error: { code: 'offline', paths: [] } })
-    // A retry after going offline is not «that remote already exists».
+    // A retry after going offline is not «that remote already exists», and another URL corrects origin while the
+    // branch follows nothing yet.
     expect(await a.setup(offline)).toEqual({ ok: false, error: { code: 'offline', paths: [] } })
-    expect(await a.setup(m.remote)).toEqual({ ok: false, error: { code: 'remote_exists', paths: [] } })
+    expect(await a.setup(m.remote)).toEqual({ ok: true, outcome: 'synced' })
+    expect(m.git(m.a, 'remote', 'get-url', 'origin')).toBe(m.remote)
   })
 
   it('never holds the write gate while online, and pushes what the app wrote during the fetch', async () => {
@@ -487,7 +548,7 @@ describe('SyncService', () => {
     const first = a.run({ auto: false })
     expect(a.run({ auto: true })).toBe(first)
     // While a sync runs, choices and a URL are not taken: the caller gets that sync's result.
-    expect(a.resolve({ 'file:x': 'ours' })).toBe(first)
+    expect(a.resolve({ 'file:x': { choice: 'ours', version: '0123456789abcdef' } })).toBe(first)
     expect(a.setup('https://example.test/x.git')).toBe(first)
     expect(await first).toEqual({ ok: true, outcome: 'synced' })
     expect(m.git(m.a, 'remote')).toBe('origin')

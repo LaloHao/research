@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { SyncError } from '../../../shared/sync'
 import type { SyncState } from '../../hooks/useSyncStatus'
@@ -19,6 +19,15 @@ export function SyncView({ sync }: { sync: SyncState }): React.JSX.Element {
   const loaded = status !== null && status !== 'failed' ? status : null
   // The project folder is gone (an unplugged drive): the status says `no_repo`, but creating a repository would be wrong.
   const projectMissing = loaded?.error?.code === 'project_missing'
+  const conflicts = loaded?.conflicts ?? 0
+  const heading = useRef<HTMLHeadingElement>(null)
+  const hadConflicts = useRef(conflicts > 0)
+
+  // «Terminar» or «Cancelar» removes the conflicts panel with the focused button: bring the focus back to the view.
+  useEffect(() => {
+    if (hadConflicts.current && conflicts === 0 && document.activeElement === document.body) heading.current?.focus()
+    hadConflicts.current = conflicts > 0
+  }, [conflicts])
 
   const run = (): void => {
     if (busy) return
@@ -42,8 +51,17 @@ export function SyncView({ sync }: { sync: SyncState }): React.JSX.Element {
   return (
     <div className="sync">
       <header className="sync-header">
-        <h2>{t('sync.title')}</h2>
-        <p className={`sync-state tone-${indicator.tone}`}>{t(`sync.status.${indicator.state}`, { count: indicator.count })}</p>
+        <h2 ref={heading} tabIndex={-1}>
+          {t('sync.title')}
+        </h2>
+        <p className={`sync-state tone-${indicator.tone}`} aria-live="polite">
+          {t(`sync.status.${indicator.state}`, { count: indicator.count })}
+        </p>
+        {status === 'failed' && (
+          <div className="row">
+            <button onClick={refresh}>{t('sync.retry')}</button>
+          </div>
+        )}
         {loaded?.repoRoot && (
           <p className="muted small">
             {loaded.upstream
@@ -60,9 +78,10 @@ export function SyncView({ sync }: { sync: SyncState }): React.JSX.Element {
         )}
       </header>
       {loaded?.error && (loaded.phase === 'error' || projectMissing) && <SyncErrorNotice error={loaded.error} />}
-      {notice && <div className={`banner${notice.error ? ' error' : ''}`}>{notice.text}</div>}
+      {/* «Sincronizado.» belongs to the last manual run: a later failure (e.g. an automatic sync) replaces it. */}
+      {notice && !(notice.error === false && loaded?.phase === 'error') && <div className={`banner${notice.error ? ' error' : ''}`}>{notice.text}</div>}
       {loaded && loaded.setup !== 'ready' && !projectMissing && <SyncSetupPanel setup={loaded.setup} onDone={refresh} />}
-      {loaded && loaded.conflicts > 0 && <ConflictsPanel onDone={refresh} />}
+      {loaded && loaded.conflicts > 0 && <ConflictsPanel onDone={refresh} syncing={loaded.phase === 'syncing'} />}
     </div>
   )
 }
