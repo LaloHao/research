@@ -166,6 +166,65 @@ describe('Git', () => {
     10_000
   )
 
+  // Final review, I1: a long transfer that keeps reporting progress must not be cut off by a total timeout.
+  it('keeps a run alive past its idle limit while it keeps writing, and shows progress as a terminal would', async () => {
+    const dir = await tmpDir()
+    const script = [
+      'let n = 0;',
+      'const tick = setInterval(() => {',
+      '  process.stderr.write(`Writing objects: ${n * 10}% (${n}/10)\\r`);',
+      '  if (++n === 10) { clearInterval(tick); process.stderr.write("Writing objects: 100% (10/10), done.\\n", () => process.exit(0)); }',
+      '}, 60);'
+    ].join('\n')
+    const out = await new Git(dir, { bin: process.execPath }).run(['-e', script], { idleMs: 250, timeoutMs: 10_000 })
+    expect(out.code).toBe(0)
+    expect(out.stderr).toBe('Writing objects: 100% (10/10), done.\n')
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'times out a run that goes silent for its idle limit, killing its whole group',
+    async () => {
+      const dir = await tmpDir()
+      const pidFile = join(dir, 'sleeper.pid')
+      const script = [
+        "const { spawn } = require('node:child_process');",
+        "const fs = require('node:fs');",
+        "process.stderr.write('Receiving objects: 1%\\r');",
+        "const gc = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], { stdio: 'ignore' });",
+        `fs.writeFileSync(${JSON.stringify(pidFile)}, String(gc.pid));`,
+        'setTimeout(() => {}, 10000);'
+      ].join('\n')
+      const started = Date.now()
+      const run = new Git(dir, { bin: process.execPath }).run(['-e', script], { idleMs: 300, timeoutMs: 15_000 })
+      await expect(run).rejects.toMatchObject({ kind: 'timeout' })
+      expect(Date.now() - started).toBeLessThan(8_000)
+      const gcPid = Number(await waitForNonEmptyFile(pidFile))
+      await waitFor(() => !isAlive(gcPid))
+      expect(isAlive(gcPid)).toBe(false)
+    },
+    20_000
+  )
+
+  it('still stops a run that keeps writing once it reaches its hard cap', async () => {
+    const dir = await tmpDir()
+    const script = "setInterval(() => process.stderr.write('Counting objects\\r'), 20)"
+    await expect(new Git(dir, { bin: process.execPath }).run(['-e', script], { idleMs: 200, timeoutMs: 400 })).rejects.toMatchObject({ kind: 'timeout' })
+  })
+
+  it(
+    'keeps only the end of a long stderr: neither a failure nor its classification depends on how much progress came first',
+    async () => {
+      const dir = await tmpDir()
+      const progress = "const line = 'Writing objects:  50% (1/2), 1.00 MiB | 1.00 MiB/s\\r'; for (let i = 0; i < 200000; i++) process.stderr.write(line);"
+      const ok = await new Git(dir, { bin: process.execPath }).run(['-e', `${progress} process.stderr.write('done\\n', () => process.exit(0))`])
+      expect(ok.stderr.length).toBeLessThan(2 * 1024 * 1024)
+      expect(ok.stderr.endsWith('done\n')).toBe(true)
+      const failing = `${progress} process.stderr.write('\\ngit@host: Permission denied (publickey).\\nfatal: Could not read from remote repository.\\n', () => process.exit(128))`
+      await expect(new Git(dir, { bin: process.execPath }).run(['-e', failing])).rejects.toMatchObject({ kind: 'auth' })
+    },
+    20_000
+  )
+
   // Fix round 2, m3: on Windows, killing the process group goes through `taskkill`, which must not flash a console.
   it('passes windowsHide to the taskkill call on Windows', async () => {
     const dir = await tmpDir()
@@ -254,6 +313,11 @@ describe('gitEnv', () => {
       GCM_INTERACTIVE: 'never',
       GIT_OPTIONAL_LOCKS: '0'
     })
+  })
+
+  // Final review, I1: git-lfs reports progress (which keeps an idle timeout from firing) only to a terminal unless forced.
+  it('makes git-lfs report its progress without a terminal', () => {
+    expect(gitEnv({ PATH: '/usr/bin' }, 'linux').GIT_LFS_FORCE_PROGRESS).toBe('1')
   })
 
   // Fix round 2, I5: no default GIT_SSH_COMMAND — it would override a user's core.sshCommand (port, key, jump host).

@@ -3,8 +3,24 @@ import { existsSync } from 'node:fs'
 import type { SyncErrorCode } from '../../shared/sync'
 
 export const LOCAL_TIMEOUT_MS = 60_000
-export const NETWORK_TIMEOUT_MS = 180_000
+/**
+ * Final review (I1): limits for the runs that can legitimately take long. A fetch or push of a whole library (PDFs
+ * tracked in git) can take far longer than any fixed total, so those runs report progress and are stopped only after
+ * `idleMs` without a single byte of output, or at the hard cap `longMs`. `git add` of a big project reports nothing,
+ * so it gets a generous total of its own (`stageMs`).
+ */
+export interface GitLimits {
+  idleMs: number
+  longMs: number
+  stageMs: number
+}
+export const GIT_LIMITS: GitLimits = { idleMs: 180_000, longMs: 6 * 60 * 60_000, stageMs: 30 * 60_000 }
 const MAX_BUFFER = 256 * 1024 * 1024
+/**
+ * Final review (I1): stderr is only read for the error's last lines; with progress on, a long transfer writes megabytes
+ * of it, so only its end is kept (and it never counts toward MAX_BUFFER).
+ */
+const STDERR_KEEP = 1024 * 1024
 // Fix round 1 (I3): grace between SIGTERM and SIGKILL when a timeout or cancel has to kill the process group.
 const KILL_GRACE_MS = 2_000
 
@@ -28,6 +44,8 @@ export interface GitOptions {
   env?: Record<string, string>
   /** Another git binary (tests only). */
   bin?: string
+  /** Shorter limits for the long runs (tests only). */
+  limits?: Partial<GitLimits>
 }
 
 export interface GitRunOptions {
@@ -35,7 +53,10 @@ export interface GitRunOptions {
   env?: Record<string, string>
   /** Exit codes that are answers, not failures (e.g. 1 for `merge-tree` with conflicts). */
   okCodes?: number[]
+  /** The hard cap on the whole run. */
   timeoutMs?: number
+  /** Also stop the run after this long without any output on stdout or stderr (for runs that report progress). */
+  idleMs?: number
   signal?: AbortSignal
 }
 
@@ -65,6 +86,21 @@ const RULES: [RegExp, GitFailure][] = [
   [/would be (?:overwritten|removed) by (?:merge|checkout)|would lose untracked files/i, 'local_changes_block'],
   [/not a git repository/i, 'not_a_repo']
 ]
+
+/**
+ * Final review (I1): progress as a terminal would end up showing it. git and git-lfs redraw a progress line with `\r`;
+ * only the last state of each line is kept, so the error's last lines are git's messages, not progress updates.
+ */
+export function renderProgress(text: string): string {
+  if (!text.includes('\r')) return text
+  return text
+    .split('\n')
+    .map((line) => {
+      const parts = line.split('\r').filter((part) => part !== '')
+      return parts.length > 0 ? parts[parts.length - 1] : ''
+    })
+    .join('\n')
+}
 
 export function classifyGitError(output: string): GitFailure {
   return RULES.find(([pattern]) => pattern.test(output))?.[1] ?? 'git_failed'
@@ -119,6 +155,9 @@ export function gitEnv(base: NodeJS.ProcessEnv, platform: NodeJS.Platform, extra
     SSH_ASKPASS_REQUIRE: 'never',
     GCM_INTERACTIVE: 'never',
     GIT_OPTIONAL_LOCKS: '0',
+    // Final review (I1): git-lfs reports progress only to a terminal unless forced; that output keeps an idle timeout
+    // from stopping a long LFS transfer (a push, or the downloads during a fast-forward).
+    GIT_LFS_FORCE_PROGRESS: '1',
     ...extra
   }
   if (platform === 'darwin') {
@@ -140,12 +179,14 @@ export function gitEnv(base: NodeJS.ProcessEnv, platform: NodeJS.Platform, extra
  */
 export class Git {
   private readonly env: NodeJS.ProcessEnv
+  readonly limits: GitLimits
 
   constructor(
     readonly cwd: string,
     private readonly opts: GitOptions = {}
   ) {
     this.env = gitEnv(process.env, process.platform, opts.env)
+    this.limits = { ...GIT_LIMITS, ...opts.limits }
   }
 
   run(args: string[], o: GitRunOptions = {}): Promise<GitOutput> {
@@ -174,7 +215,7 @@ export class Git {
       })
 
       const stdoutChunks: Buffer[] = []
-      const stderrChunks: Buffer[] = []
+      let stderrChunks: Buffer[] = []
       let stdoutLen = 0
       let stderrLen = 0
 
@@ -190,11 +231,35 @@ export class Git {
         return len + data.length
       }
 
+      // Final review (I1): only the end of stderr is kept. Trimmed once it reaches twice the limit, so the copy is rare.
+      const collectStderr = (data: Buffer): void => {
+        stderrChunks.push(data)
+        stderrLen += data.length
+        if (stderrLen > 2 * STDERR_KEEP) {
+          const all = Buffer.concat(stderrChunks)
+          stderrChunks = [all.subarray(all.length - STDERR_KEEP)]
+          stderrLen = STDERR_KEEP
+        }
+      }
+
+      // Final review (I1): any output, progress included, shows the run is still alive.
+      let idleTimer: NodeJS.Timeout | undefined
+      const armIdle = (): void => {
+        if (o.idleMs === undefined || settled) return
+        clearTimeout(idleTimer)
+        idleTimer = setTimeout(() => {
+          timedOut = true
+          escalate()
+        }, o.idleMs)
+      }
+
       child.stdout?.on('data', (data: Buffer) => {
+        armIdle()
         stdoutLen = collect(stdoutChunks, stdoutLen, data)
       })
       child.stderr?.on('data', (data: Buffer) => {
-        stderrLen = collect(stderrChunks, stderrLen, data)
+        armIdle()
+        collectStderr(data)
       })
 
       // Fix round 2 (m5): detach the abort listener once the run is done, so a long-lived signal (e.g. one
@@ -209,6 +274,7 @@ export class Git {
       // Only clear it when the run was never escalated for a timeout/cancel/overflow in the first place.
       const clearTimers = (): void => {
         clearTimeout(timer)
+        clearTimeout(idleTimer)
         if (!escalated && killTimer) clearTimeout(killTimer)
       }
 
@@ -218,7 +284,7 @@ export class Git {
         clearTimers()
         detachAbortListener()
         const stdout = Buffer.concat(stdoutChunks)
-        const err = Buffer.concat(stderrChunks).toString('utf8')
+        const err = renderProgress(Buffer.concat(stderrChunks).toString('utf8'))
         // Fix round 2 (m1): the overflow can race a clean exit — git may write its last bytes and exit 0 just
         // before (or despite) the group kill the overflow triggered. A truncated/overflowing stdout must never
         // look like a success, whatever the exit code says.
@@ -236,7 +302,7 @@ export class Git {
         settled = true
         clearTimers()
         detachAbortListener()
-        const output = Buffer.concat(stderrChunks).toString('utf8')
+        const output = renderProgress(Buffer.concat(stderrChunks).toString('utf8'))
         // Fix round 1 (I1): node reports a missing cwd the same way as a missing git binary (ENOENT). An
         // unplugged drive or a deleted project folder must not tell the user to install git.
         if (error.code === 'ENOENT') return reject(new GitError(args, null, output, existsSync(this.cwd) ? 'git_missing' : 'project_missing'))
@@ -283,6 +349,7 @@ export class Git {
         timedOut = true
         escalate()
       }, timeoutMs)
+      armIdle()
 
       if (o.signal) {
         if (o.signal.aborted) {

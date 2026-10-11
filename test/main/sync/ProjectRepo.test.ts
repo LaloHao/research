@@ -3,7 +3,7 @@ import { existsSync, realpathSync } from 'node:fs'
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ProjectRepo } from '../../../src/main/sync/ProjectRepo'
-import { applyFiles, commitAll, identify, isolatedGitEnv, pathWithOnlyGit, runGit, twoMachines } from '../../helpers/git'
+import { applyFiles, commitAll, identify, isolatedGitEnv, pathWithOnlyGit, processAlive, runGit, slowRemote, twoMachines } from '../../helpers/git'
 import { tmpDir } from '../../helpers/tmp'
 
 const message = (): string => 'research: sync\n'
@@ -265,6 +265,45 @@ describe('ProjectRepo', () => {
     expect((await repo.info()).upstream).toEqual({ remote: 'backup', ref: 'refs/heads/main', short: 'backup/main' })
     expect((await repo.info()).remotes).toEqual(['backup', 'origin'])
   })
+
+  // Final review, I1: a big fetch or push is stopped only when it goes quiet, never for taking long while it reports.
+  it.skipIf(process.platform !== 'linux')(
+    'fetches and pushes through a remote that takes longer than the idle limit while it keeps reporting',
+    async () => {
+      const m = await twoMachines()
+      await applyFiles(m.b, { 'from-b.md': 'b\n' })
+      commitAll(m, m.b, 'from b')
+      m.git(m.b, 'push', '--quiet', 'origin', 'main')
+      const slow = await slowRemote(m, 'chatty', 1_200)
+      const repo = (await ProjectRepo.open(m.a, { env: slow.env, limits: { idleMs: 500, longMs: 20_000 } }))!
+      await repo.fetch('origin')
+      expect(m.git(m.a, 'rev-parse', 'origin/main')).toBe(m.git(m.b, 'rev-parse', 'HEAD'))
+      await repo.fastForward('origin/main')
+      await applyFiles(m.a, { 'from-a.md': 'a\n' })
+      commitAll(m, m.a, 'from a')
+      await repo.push('origin', 'refs/heads/main')
+      expect(m.git(m.remote, 'rev-parse', 'main')).toBe(m.git(m.a, 'rev-parse', 'HEAD'))
+    },
+    20_000
+  )
+
+  it.skipIf(process.platform !== 'linux')(
+    'gives up on a remote that goes silent for the idle limit, leaving no process behind',
+    async () => {
+      const m = await twoMachines()
+      const slow = await slowRemote(m, 'silent', 30_000)
+      const repo = (await ProjectRepo.open(m.a, { env: slow.env, limits: { idleMs: 500, longMs: 20_000 } }))!
+      const started = Date.now()
+      await expect(repo.fetch('origin')).rejects.toMatchObject({ kind: 'timeout' })
+      expect(Date.now() - started).toBeLessThan(10_000)
+      const pids = await slow.pids()
+      expect(pids).toHaveLength(1)
+      const deadline = Date.now() + 5_000
+      while (processAlive(pids[0]) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20))
+      expect(processAlive(pids[0])).toBe(false)
+    },
+    20_000
+  )
 
   it.skipIf(process.platform !== 'linux')('reports git-lfs as missing when git cannot find it', async () => {
     const m = await twoMachines()

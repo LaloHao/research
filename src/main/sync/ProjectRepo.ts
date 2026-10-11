@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
-import { Git, GitError, NETWORK_TIMEOUT_MS, type GitOptions } from './Git'
+import { Git, GitError, type GitOptions } from './Git'
 import {
   groupConflicts,
   looksBinary,
@@ -242,7 +242,8 @@ export class ProjectRepo {
     try {
       const head = await this.revParse('HEAD')
       await this.git.run(head ? ['read-tree', head] : ['read-tree', '--empty'], { env })
-      await this.git.run(['add', '--all', '--', this.spec], { env })
+      // A first commit of a big library (PDFs tracked in git) can take minutes on a slow disk, and `add` reports nothing.
+      await this.git.run(['add', '--all', '--', this.spec], { env, timeoutMs: this.git.limits.stageMs })
       // Named in `add`, an ignored .cache/ would make git fail; taken out of the temporary index instead, so it never
       // enters a commit even if someone removed it from .gitignore.
       await this.git.run(['rm', '-r', '--cached', '--quiet', '--ignore-unmatch', '--', this.cacheSpec], { env })
@@ -275,14 +276,22 @@ export class ProjectRepo {
     }
   }
 
+  /**
+   * Limits for a run that may move a whole library: with progress on (`--progress`, and git-lfs forced to report too),
+   * it is stopped only after a long silence or at a hard cap of hours, never for merely taking long.
+   */
+  private get transfer(): { idleMs: number; timeoutMs: number } {
+    return { idleMs: this.git.limits.idleMs, timeoutMs: this.git.limits.longMs }
+  }
+
   async fetch(remote: string, signal?: AbortSignal): Promise<void> {
-    await this.git.run(['fetch', '--quiet', remote], { timeoutMs: NETWORK_TIMEOUT_MS, signal })
+    await this.git.run(['fetch', '--progress', remote], { ...this.transfer, signal })
   }
 
   /** A plain push of HEAD to `ref` (never forced); `--porcelain` puts a rejection's reason where it can be classified. */
   async push(remote: string, ref: string, opts: { setUpstream?: boolean; signal?: AbortSignal } = {}): Promise<void> {
-    const args = ['push', '--porcelain', ...(opts.setUpstream ? ['--set-upstream'] : []), remote, `HEAD:${ref}`]
-    await this.git.run(args, { timeoutMs: NETWORK_TIMEOUT_MS, signal: opts.signal })
+    const args = ['push', '--porcelain', '--progress', ...(opts.setUpstream ? ['--set-upstream'] : []), remote, `HEAD:${ref}`]
+    await this.git.run(args, { ...this.transfer, signal: opts.signal })
   }
 
   /** The merge of two commits, computed apart from the working tree and the index. */
@@ -371,9 +380,12 @@ export class ProjectRepo {
     return [...new Set(local.filter(hit))].sort()
   }
 
-  /** Moves the branch and the working tree to `target`, a descendant of HEAD. */
+  /**
+   * Moves the branch and the working tree to `target`, a descendant of HEAD. Writing many files, or git-lfs
+   * downloading the PDFs it checks out, can take long: it runs with the transfer limits.
+   */
   async fastForward(target: string): Promise<void> {
     // --no-autostash: the user's merge.autoStash must not stash and reapply around the app's fast-forward.
-    await this.git.run(['merge', '--ff-only', '--no-autostash', '--quiet', target])
+    await this.git.run(['merge', '--ff-only', '--no-autostash', '--no-stat', '--progress', target], this.transfer)
   }
 }

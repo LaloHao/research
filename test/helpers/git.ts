@@ -139,3 +139,30 @@ export async function hangingRemote(m: Machines): Promise<{ env: GitEnv; pids: (
   }
   return { env: { ...m.env, GIT_SSH_COMMAND: script }, pids, kill }
 }
+
+/**
+ * Points machine A's remote at an ssh "server" that is slow to answer, then serves the real bare remote: in `chatty`
+ * mode it writes a line to stderr every 150 ms for `ms` (as git and git-lfs progress would), in `silent` mode it says
+ * nothing for `ms` (a sleep whose pid it records). No network is involved. Linux only (`sh`).
+ */
+export async function slowRemote(m: Machines, mode: 'chatty' | 'silent', ms: number): Promise<{ env: GitEnv; pids: () => Promise<number[]> }> {
+  const dir = await tmpDir()
+  const pidFile = join(dir, 'pids')
+  const script = join(dir, 'fake-ssh')
+  const wait =
+    mode === 'chatty'
+      ? `i=0\nwhile [ $i -lt ${Math.ceil(ms / 150)} ]; do echo "fake ssh: still working $i" >&2; sleep 0.15; i=$((i+1)); done`
+      : `sleep ${ms / 1000} &\necho $! >> '${pidFile}'\nwait`
+  // The simple ssh variant passes the host, then the command (`git-upload-pack '/path'`), last.
+  await writeFile(script, `#!/bin/sh\n${wait}\nfor a in "$@"; do last="$a"; done\nexec sh -c "git ${'${last#git-}'}"\n`)
+  await chmod(script, 0o755)
+  m.git(m.a, 'remote', 'set-url', 'origin', `ssh://fake${m.remote}`)
+  const pids = async (): Promise<number[]> => {
+    try {
+      return (await readFile(pidFile, 'utf8')).split('\n').filter(Boolean).map(Number)
+    } catch {
+      return []
+    }
+  }
+  return { env: { ...m.env, GIT_SSH_COMMAND: script, GIT_SSH_VARIANT: 'simple' }, pids }
+}
