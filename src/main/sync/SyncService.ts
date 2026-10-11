@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { parse } from 'yaml'
 import type { PdfPolicy } from '../../shared/schemas'
@@ -271,11 +272,14 @@ export class SyncService {
     return this.start(async () => {
       // Checked here too, whoever calls: a password must never reach .git/config.
       if (url !== null && !isRemoteUrl(url)) fail('invalid_remote_url')
+      // Before anything is created or committed: without git-lfs the PDFs would enter history as plain files.
+      const lfs = this.deps.pdfPolicy() === 'lfs'
+      if (lfs && existsSync(this.deps.root) && !(await ProjectRepo.lfsAvailableIn(this.deps.root, this.gitOptions))) fail('lfs_missing')
       let repo = await ProjectRepo.open(this.deps.root, this.gitOptions)
       if (!repo) {
         await ProjectRepo.init(this.deps.root, this.gitOptions)
         repo = (await ProjectRepo.open(this.deps.root, this.gitOptions)) ?? fail('not_a_repo')
-        if (this.deps.pdfPolicy() === 'lfs' && (await repo.lfsAvailable())) await repo.installLfs()
+        if (lfs) await repo.installLfs()
       }
       let info = await repo.info()
       // Before anything commits: connecting runs the first local commit.

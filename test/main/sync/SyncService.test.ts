@@ -314,6 +314,19 @@ describe('SyncService', () => {
     expect(await a.run({ auto: false })).toEqual({ ok: false, error: { code: 'lfs_missing', paths: [] } })
   })
 
+  it.skipIf(process.platform !== 'linux')('sets up nothing when the project keeps its PDFs in git LFS and git-lfs is missing', async () => {
+    const m = await twoMachines()
+    const root = await tmpDir()
+    await applyFiles(root, { 'project.yaml': 'name: New\n', 'papers/k/paper.pdf': '%PDF-1.4 fake\n' })
+    const empty = join(await tmpDir(), 'empty.git')
+    m.git(root, 'init', '--quiet', '--bare', '--initial-branch=main', empty)
+    const fresh = service(m, root, { pdfPolicy: () => 'lfs', gitEnv: { ...m.env, PATH: await pathWithOnlyGit() } })
+    // Committing first would put the PDFs in history as plain files, not LFS pointers.
+    expect(await fresh.setup(empty)).toEqual({ ok: false, error: { code: 'lfs_missing', paths: [] } })
+    expect(existsSync(join(root, '.git'))).toBe(false)
+    expect(m.git(empty, 'branch', '--list')).toBe('')
+  })
+
   it('does not commit while setting up a repository with a merge left half-done by hand', async () => {
     const m = await twoMachines()
     m.git(m.a, 'branch', '--unset-upstream')

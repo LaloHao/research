@@ -161,8 +161,13 @@ export class ProjectRepo {
   }
 
   async lfsAvailable(): Promise<boolean> {
+    return ProjectRepo.lfsAvailableIn(this.top, this.git)
+  }
+
+  /** Whether git-lfs is installed, asked from any folder (before a repository exists there). */
+  static async lfsAvailableIn(root: string, git: Git | GitOptions = {}): Promise<boolean> {
     try {
-      await this.git.run(['lfs', 'version'])
+      await (git instanceof Git ? git : new Git(root, git)).run(['lfs', 'version'])
       return true
     } catch {
       return false
