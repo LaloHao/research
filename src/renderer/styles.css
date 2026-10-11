@@ -155,6 +155,13 @@ mark { background: rgba(250, 204, 21, 0.45); }
 .content-notice { padding: 8px 20px 0; }
 .content-view::highlight(evidence) { background: rgba(250, 204, 21, 0.45); }
 .text-tab { min-height: 100%; }
+.pdf-drop { position: relative; display: flex; flex-direction: column; min-height: 100%; }
+.pdf-drop > .center { flex: 1; height: auto; }
+.pdf-drop.dragging > :not(.drop-overlay) { opacity: 0.5; }
+.pdf-toolbar { position: sticky; top: 0; z-index: 2; display: flex; justify-content: flex-end; gap: 8px; padding: 6px 20px; background: var(--bg); border-bottom: 1px solid var(--border); }
+.pdf-drop > .drop-overlay { z-index: 3; }
+.center.column { flex-direction: column; gap: 4px; }
+.attach-confirm, .attach-notice { margin: 8px 20px; }
 .text-toolbar { position: sticky; top: 0; z-index: 1; display: flex; flex-direction: column; gap: 6px; padding: 8px 20px; background: var(--bg); border-bottom: 1px solid var(--border); }
 .text-toolbar input[type='number'] { width: 5em; }
 .text-toolbar input[type='search'] { flex: 1; min-width: 12em; max-width: 28em; }

@@ -1,3 +1,4 @@
+import { isAbsolute, win32 } from 'node:path'
 import { z } from 'zod'
 import { CANDIDATE_DIRECTIONS, OPENALEX_ID } from '../shared/relations'
 import { PDF_POLICIES } from '../shared/schemas'
@@ -15,6 +16,9 @@ export const ipcArgs = {
   optionalText: z.string().optional(),
   hash: z.string().nullable(),
   paths: z.array(z.string().min(1)),
+  /** A file the user picked or dropped: absolute on POSIX or Windows. */
+  absolutePath: z.string().min(1).refine((p) => isAbsolute(p) || win32.isAbsolute(p)),
+  flag: z.boolean(),
   jobId: z.number().int().nonnegative(),
   /** `lastProjectPath` is managed by the main process only. */
   settingsPatch: z.strictObject({ contactEmail: z.string().optional(), openalexApiKey: z.string().optional() }),

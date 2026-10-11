@@ -4,6 +4,7 @@ import type { PaperDetail as Detail } from '../../../shared/library'
 import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
 import { paperTabs, type Tab } from '../../lib/paperTabs'
+import { AttachPdfStatus, useAttachPdf } from './AttachPdf'
 import { ContentView, type ContentFocus } from './ContentView'
 import { MetadataCompletion } from './MetadataCompletion'
 import { NotesEditor } from './NotesEditor'
@@ -39,10 +40,50 @@ function PdfTab({ id, hasPdf, focus }: { id: string; hasPdf: boolean; focus: Pdf
     }
   }, [id, hasPdf, t])
 
-  if (state.status === 'ready') return <PdfViewer data={state.data} focus={focus} />
-  if (state.status === 'loading') return <div className="center muted">{t('paper.pdf_loading')}</div>
-  if (state.status === 'error') return <div className="center error">{t('paper.pdf_error', { message: state.message })}</div>
-  return <div className="center muted">{t('paper.no_pdf')}</div>
+  const missing = state.status === 'missing'
+  const attach = useAttachPdf(id, !missing)
+  return (
+    <div className={`pdf-drop${attach.dragging ? ' dragging' : ''}`} {...attach.dropProps}>
+      {!missing && (
+        <div className="pdf-toolbar">
+          <button className="small" disabled={attach.busy} onClick={attach.pick}>
+            {t('paper.attach.replace')}
+          </button>
+        </div>
+      )}
+      <AttachPdfStatus attach={attach} />
+      {state.status === 'ready' && <PdfViewer data={state.data} focus={focus} />}
+      {state.status === 'loading' && <div className="center muted">{t('paper.pdf_loading')}</div>}
+      {state.status === 'error' && <div className="center error">{t('paper.pdf_error', { message: state.message })}</div>}
+      {missing && (
+        <div className="center muted column">
+          <p>{t('paper.no_pdf')}</p>
+          <button disabled={attach.busy} onClick={attach.pick}>
+            {t('paper.attach.attach')}
+          </button>
+        </div>
+      )}
+      {attach.dragging && <div className="drop-overlay">{t(missing ? 'paper.attach.drop_hint' : 'paper.attach.drop_hint_replace')}</div>}
+    </div>
+  )
+}
+
+/** The Contenido tab of a web page without a PDF: its text, plus a way to attach one. */
+function ContentTab({ id, content, focus }: { id: string; content: string; focus: ContentFocus | null }): React.JSX.Element {
+  const { t } = useTranslation()
+  const attach = useAttachPdf(id, false)
+  return (
+    <div className={`pdf-drop${attach.dragging ? ' dragging' : ''}`} {...attach.dropProps}>
+      <div className="pdf-toolbar">
+        <button className="small" disabled={attach.busy} onClick={attach.pick}>
+          {t('paper.attach.attach')}
+        </button>
+      </div>
+      <AttachPdfStatus attach={attach} />
+      <ContentView content={content} focus={focus} />
+      {attach.dragging && <div className="drop-overlay">{t('paper.attach.drop_hint')}</div>}
+    </div>
+  )
 }
 
 export function PaperDetail({
@@ -157,9 +198,15 @@ export function PaperDetail({
       </nav>
       <div className="tab-body">
         {active === 'summary' && <SummaryTab key={detail.id} detail={detail} onOpenEvidence={openEvidence} />}
-        {active === 'pdf' && <PdfTab key={id} id={id} hasPdf={detail.hasPdf} focus={focus} />}
+        {/* Keyed by the PDF hash too, so a replaced PDF is loaded again. */}
+        {active === 'pdf' && <PdfTab key={`${id}:${paper.pdf_sha256 ?? ''}`} id={id} hasPdf={detail.hasPdf} focus={focus} />}
         {active === 'text' && <TextTab key={id} id={id} />}
-        {active === 'content' && <ContentView key={id} content={detail.content ?? ''} focus={contentFocus} />}
+        {active === 'content' &&
+          (detail.hasPdf ? (
+            <ContentView key={id} content={detail.content ?? ''} focus={contentFocus} />
+          ) : (
+            <ContentTab key={id} id={id} content={detail.content ?? ''} focus={contentFocus} />
+          ))}
         {active === 'relations' && (
           <RelationsTab key={id} paperId={id} title={paper.title} onOpenEvidence={openEvidence} onOpenCandidates={onOpenCandidates} onSelectPaper={onSelectPaper} />
         )}

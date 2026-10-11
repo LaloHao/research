@@ -111,6 +111,49 @@ export class LibraryService {
     }
   }
 
+  /**
+   * Attaches the PDF at `path` to an existing paper, or replaces its PDF when `replace` is set. Only the PDF and
+   * `pdf_sha256` change: no metadata is resolved or merged. Its text is extracted and indexed in place of the old
+   * one; summaries are left as they are. Serialized with ingests so a merge never races with it.
+   */
+  attachPdf(id: string, path: string, { replace }: { replace: boolean }, signal?: AbortSignal): Promise<{ status: 'pdf_attached'; paperId: string }> {
+    const run = this.addQueue.then(() => this.attachNow(id, path, replace, signal))
+    this.addQueue = run.catch(() => undefined)
+    return run
+  }
+
+  private async attachNow(id: string, path: string, replace: boolean, signal?: AbortSignal): Promise<{ status: 'pdf_attached'; paperId: string }> {
+    const { store, extractor } = this.deps
+    try {
+      if (!store.paperExists(id)) throw new UserFacingError('file_problem')
+      const read = await store.readPaper(id)
+      if (!read.ok) throw new UserFacingError('file_problem')
+      const existing = store.resolvePdf(id)
+      if (existing && !replace) throw new UserFacingError('pdf_exists')
+      const bytes = new Uint8Array(await readFile(path))
+      if (!isPdf(bytes)) throw new UserFacingError('not_a_pdf')
+      // Parsed before anything is written: a corrupt file leaves the paper as it was.
+      const text = await extractor.extract(bytes)
+      signal?.throwIfAborted()
+      // A copy in the paper folder is found before one in the cache, so a replacement must land there too.
+      const inPaperFolder = existing === store.pdfLocation(id, { redownloadable: false })
+      const sha = await store.writePdf(id, bytes, { redownloadable: Boolean(read.value.oa_pdf_url) && !inPaperFolder })
+      this.extracted.set(sha, text)
+      try {
+        if (read.value.pdf_sha256 !== sha) {
+          await store.writePaper({ ...read.value, pdf_sha256: sha, updated_at: this.now().toISOString() }, read.hash)
+        }
+        await this.afterWrite(id)
+      } finally {
+        this.extracted.delete(sha)
+      }
+      return { status: 'pdf_attached', paperId: id }
+    } catch (error) {
+      if (signal?.aborted) throw error
+      throw toUserFacing(error)
+    }
+  }
+
   /** The local PDF, downloading the open-access copy first when only its URL is known. Concurrent calls for one id share the download. */
   readPdf(id: string, signal?: AbortSignal): Promise<Uint8Array | null> {
     const pending = this.reading.get(id)

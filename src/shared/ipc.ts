@@ -29,6 +29,8 @@ export const IPC = {
   libraryDetail: 'library:detail',
   libraryAddIdentifier: 'library:add-identifier',
   libraryAddPdfs: 'library:add-pdfs',
+  libraryAttachPdf: 'library:attach-pdf',
+  libraryChoosePdf: 'library:choose-pdf',
   libraryUpdateMetadata: 'library:update-metadata',
   libraryReadPdf: 'library:read-pdf',
   libraryReadNotes: 'library:read-notes',
@@ -138,6 +140,10 @@ export interface ResearchApi {
     /** Queue jobs; progress arrives through 'jobs-changed'. */
     addIdentifier(input: string): Promise<void>
     addPdfs(paths: string[]): Promise<void>
+    /** Queues attaching the PDF at `path` to paper `id` (replacing its PDF only when `replace` is set). */
+    attachPdf(id: string, path: string, replace: boolean): Promise<void>
+    /** Asks for a PDF file; null when the user cancels. */
+    choosePdf(): Promise<string | null>
     updateMetadata(id: string, input?: string): Promise<void>
     readPdf(id: string): Promise<PdfReadResult>
     readNotes(id: string): Promise<{ text: string; hash: string | null }>

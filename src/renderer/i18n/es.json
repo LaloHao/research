@@ -181,6 +181,7 @@
     "cancel": "Cancelar",
     "ingest_identifier": "Agregar {{input}}",
     "ingest_pdf": "Agregar {{file}}",
+    "attach_pdf": "Adjuntar PDF a {{id}}",
     "update_metadata": "Completar metadatos de {{id}}",
     "summarize": "Resumir {{id}}",
     "citations": "Citas de {{id}}",
@@ -199,6 +200,7 @@
       "added": "agregado",
       "merged": "actualizado",
       "duplicate": "ya estaba en la biblioteca",
+      "pdf_attached": "PDF adjuntado",
       "summarized": "resumido",
       "citations_updated": "citas actualizadas",
       "citations_unresolved": "no se encontró en OpenAlex",
@@ -237,6 +239,7 @@
     "operation_budget": "La operación llegó a su tope por paper y se detuvo. Sube «Tope por paper (USD est.)» en Ajustes → Claude o reintenta con otro modelo.",
     "agent_tools_unavailable": "No se pudieron preparar las herramientas de búsqueda de la biblioteca para Claude. Reintenta; si sigue fallando, reinicia la app.",
     "relations_conflict": "relations.yaml tiene un conflicto de git o un error; resuélvelo antes de cambiar relaciones.",
+    "pdf_exists": "Este paper ya tiene PDF. Usa «Reemplazar PDF…» si quieres cambiarlo.",
     "unknown": "Ocurrió un error inesperado."
   },
   "paper": {
@@ -276,7 +279,19 @@
       "next_result": "Resultado siguiente",
       "empty_page": "Esta página no tiene texto."
     },
-    "no_pdf": "Este paper no tiene PDF. Arrastra el archivo a la biblioteca para adjuntarlo.",
+    "no_pdf": "Este paper no tiene PDF. Usa «Adjuntar PDF…» o suelta el archivo aquí.",
+    "attach": {
+      "attach": "Adjuntar PDF…",
+      "replace": "Reemplazar PDF…",
+      "confirm": "Se reemplaza el PDF y se vuelve a extraer el texto. Los resúmenes no cambian.",
+      "confirm_file": "Archivo: {{file}}",
+      "confirm_replace": "Reemplazar",
+      "cancel": "Cancelar",
+      "queued": "PDF en cola. El resultado aparece en Actividad.",
+      "drop_hint": "Suelta el PDF para adjuntarlo a este paper",
+      "drop_hint_replace": "Suelta el PDF para reemplazar el de este paper",
+      "only_one_pdf": "Suelta un solo archivo PDF."
+    },
     "pdf_loading": "Cargando PDF…",
     "pdf_error": "No se pudo cargar el PDF: {{message}}",
     "not_found": "Este paper ya no está en la biblioteca.",

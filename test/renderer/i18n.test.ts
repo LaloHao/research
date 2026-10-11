@@ -73,7 +73,10 @@ describe('es.json covers every code the UI can receive', () => {
     'review.relation_shortcuts',
     'review.decided',
     'settings.auto_suggest_relations',
-    'settings.auto_suggest_relations_help'
+    'settings.auto_suggest_relations_help',
+    'jobs.attach_pdf',
+    'paper.no_pdf',
+    ...['attach', 'replace', 'confirm', 'confirm_file', 'confirm_replace', 'cancel', 'queued', 'drop_hint', 'drop_hint_replace', 'only_one_pdf'].map((k) => `paper.attach.${k}`)
   ])('%s', (path) => {
     expect(typeof lookup(path)).toBe('string')
   })

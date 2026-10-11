@@ -3,6 +3,7 @@ import type { LlmModel } from './summary'
 export type JobSpec =
   | { type: 'ingest_identifier'; input: string }
   | { type: 'ingest_pdf'; path: string }
+  | { type: 'attach_pdf'; paperId: string; path: string; replace: boolean }
   | { type: 'update_metadata'; paperId: string; input?: string }
   | { type: 'summarize'; paperId: string; batchId?: string; force?: boolean; model?: LlmModel }
   | { type: 'citations'; paperId: string; batchId?: string }
@@ -19,7 +20,7 @@ export interface JobRecord {
   id: number
   spec: JobSpec
   state: JobState
-  /** An outcome ('added' | 'merged' | 'duplicate'), an error code, or a raw error message. */
+  /** An outcome ('added' | 'merged' | 'duplicate' | 'pdf_attached' …), an error code, or a raw error message. */
   message: string | null
   /** 0..1 while a running job reports progress (e.g. a model download); null otherwise. */
   progress: number | null

@@ -71,6 +71,20 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     const { queue } = app.requireSession()
     for (const path of arg(ipcArgs.paths, paths, 'paths')) queue.enqueue({ type: 'ingest_pdf', path })
   })
+  ipcMain.handle(IPC.libraryAttachPdf, (_e, paperId: unknown, path: unknown, replace: unknown) => {
+    app.requireSession().queue.enqueue({
+      type: 'attach_pdf',
+      paperId: arg(ipcArgs.paperId, paperId, 'id'),
+      path: arg(ipcArgs.absolutePath, path, 'path'),
+      replace: arg(ipcArgs.flag, replace, 'replace')
+    })
+  })
+  ipcMain.handle(IPC.libraryChoosePdf, async (): Promise<string | null> => {
+    const window = getWindow()
+    const options: Electron.OpenDialogOptions = { properties: ['openFile'], filters: [{ name: 'PDF', extensions: ['pdf'] }] }
+    const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
   ipcMain.handle(IPC.libraryUpdateMetadata, (_e, paperId: unknown, input: unknown) => {
     app.requireSession().queue.enqueue({
       type: 'update_metadata',

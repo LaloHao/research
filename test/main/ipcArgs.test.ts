@@ -18,6 +18,15 @@ describe('IPC argument validation', () => {
     expect(arg(ipcArgs.optionalText, undefined, 'input')).toBeUndefined()
   })
 
+  it('accepts only an absolute path and a boolean for attaching a PDF', () => {
+    expect(arg(ipcArgs.absolutePath, '/home/me/paper.pdf', 'path')).toBe('/home/me/paper.pdf')
+    expect(arg(ipcArgs.absolutePath, 'C:\\Users\\me\\paper.pdf', 'path')).toBe('C:\\Users\\me\\paper.pdf')
+    for (const bad of ['', 'paper.pdf', '../paper.pdf', 3, null]) expect(() => arg(ipcArgs.absolutePath, bad, 'path')).toThrow()
+    expect(arg(ipcArgs.flag, true, 'replace')).toBe(true)
+    expect(() => arg(ipcArgs.flag, 'true', 'replace')).toThrow()
+    expect(() => arg(ipcArgs.flag, undefined, 'replace')).toThrow()
+  })
+
   it('lets the renderer change only the contact email', () => {
     expect(arg(ipcArgs.settingsPatch, { contactEmail: 'me@uni.test' }, 'patch')).toEqual({ contactEmail: 'me@uni.test' })
     expect(() => arg(ipcArgs.settingsPatch, { lastProjectPath: '/elsewhere' }, 'patch')).toThrow()

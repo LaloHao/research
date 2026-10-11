@@ -309,6 +309,11 @@ export async function runJob(
       return s.similarity.downloadModel(signal, report)
     case 'suggest_relations':
       return s.relations.run(spec.paperId, { force: spec.force, batchId: spec.batchId, model: spec.model, signal })
+    case 'attach_pdf': {
+      // Only the PDF and its text change: summaries, citations and embeddings stay as they are.
+      const outcome = await s.library.attachPdf(spec.paperId, spec.path, { replace: spec.replace }, signal)
+      return { paperId: outcome.paperId, message: outcome.status }
+    }
     case 'ingest_identifier':
     case 'ingest_pdf':
     case 'update_metadata': {

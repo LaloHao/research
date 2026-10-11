@@ -61,6 +61,7 @@ export const USER_ERROR_CODES = [
   'operation_budget',
   'agent_tools_unavailable',
   'relations_conflict',
+  'pdf_exists',
   'unknown'
 ] as const
 export type UserErrorCode = (typeof USER_ERROR_CODES)[number]
@@ -75,6 +76,7 @@ export type IngestStatus = (typeof INGEST_STATUSES)[number]
 /** What a finished job reports in `message`; each has a translation under `jobs.outcome.<value>`. */
 export const JOB_OUTCOMES = [
   ...INGEST_STATUSES,
+  'pdf_attached',
   'summarized',
   'citations_updated',
   'citations_unresolved',

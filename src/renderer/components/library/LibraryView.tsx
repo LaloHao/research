@@ -71,7 +71,6 @@ export function LibraryView({
 
   const onDrop = (e: React.DragEvent): void => {
     e.preventDefault()
-    setDragging(false)
     const paths = Array.from(e.dataTransfer.files)
       .filter((f) => f.name.toLowerCase().endsWith('.pdf'))
       .map((f) => window.research.pathForFile(f))
@@ -138,13 +137,13 @@ export function LibraryView({
   return (
     <div
       className={`library${dragging ? ' dragging' : ''}`}
-      onDragOver={(e) => {
-        e.preventDefault()
-        setDragging(true)
-      }}
+      // A paper's own drop zone (its PDF or Contenido tab) takes the file instead, and stops the drop reaching the library.
+      onDragOverCapture={(e) => setDragging(!(e.target instanceof Element && e.target.closest('[data-pdf-drop]')))}
+      onDragOver={(e) => e.preventDefault()}
       onDragLeave={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false)
       }}
+      onDropCapture={() => setDragging(false)}
       onDrop={onDrop}
     >
       <aside className="library-list">
