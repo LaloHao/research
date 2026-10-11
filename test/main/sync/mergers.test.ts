@@ -50,6 +50,30 @@ describe('relations.yaml', () => {
     expect(merged.analyzed).toEqual({ he2017drain: newer, zhu2020loghub: older })
   })
 
+  it('keeps a one-sided edit even when its clock is behind the base (no clock-skew data loss)', () => {
+    const base = relationsText([{ ...EXTENDS, updated_at: '2026-10-11T10:00:00.000Z' }])
+    const ours = base
+    const theirs = relationsText([{ ...EXTENDS, status: 'confirmed', updated_at: '2026-10-11T09:50:00.000Z' }])
+    const merged = parse(mergeRelationsText({ base, ours, theirs })!) as { relations: TypedRelation[] }
+    expect(merged.relations[0].status).toBe('confirmed')
+  })
+
+  it('the mirror case: our edit survives behind the base clock too', () => {
+    const base = relationsText([{ ...EXTENDS, updated_at: '2026-10-11T10:00:00.000Z' }])
+    const ours = relationsText([{ ...EXTENDS, status: 'confirmed', updated_at: '2026-10-11T09:50:00.000Z' }])
+    const theirs = base
+    const merged = parse(mergeRelationsText({ base, ours, theirs })!) as { relations: TypedRelation[] }
+    expect(merged.relations[0].status).toBe('confirmed')
+  })
+
+  it('keeps a one-sided analysis update despite clock skew too', () => {
+    const base = relationsText([], { he2017drain: { candidates: ['a'], at: '2026-10-11T10:00:00.000Z' } })
+    const ours = base
+    const theirs = relationsText([], { he2017drain: { candidates: ['a', 'b'], at: '2026-10-11T09:50:00.000Z' } })
+    const merged = parse(mergeRelationsText({ base, ours, theirs })!) as { analyzed: Record<string, unknown> }
+    expect(merged.analyzed.he2017drain).toEqual({ candidates: ['a', 'b'], at: '2026-10-11T09:50:00.000Z' })
+  })
+
   it('leaves to the user a side with invalid entries, another format or broken YAML', () => {
     const ours = relationsText([EXTENDS])
     expect(mergeRelationsText({ base: null, ours, theirs: toYaml({ schema_version: 1, relations: [{ id: 'nope' }], analyzed: {} }) })).toBeNull()

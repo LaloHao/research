@@ -30,9 +30,28 @@ const byId = (list: TypedRelation[]): Map<string, TypedRelation> => new Map(list
 const foreignVersion = (side: LenientSide): boolean => side.raw.schema_version !== undefined && side.raw.schema_version !== 1
 
 /**
+ * When an id is in `base`, a side that left it exactly as the base had it is not a real edit: the other side's
+ * version (if any) must win no matter what the timestamps say, because clock skew between machines can otherwise
+ * make the untouched copy outrank a genuine one-sided edit. Mutates `ours` and `theirs` in place; only entries
+ * both sides still have are touched, so removals (handled separately by `removedIds`) are unaffected.
+ */
+function preferChangedSide<T>(base: ReadonlyMap<string, T>, ours: Map<string, T>, theirs: Map<string, T>): void {
+  for (const [id, before] of base) {
+    const o = ours.get(id)
+    const t = theirs.get(id)
+    if (o === undefined || t === undefined) continue
+    const oChanged = !isDeepStrictEqual(o, before)
+    const tChanged = !isDeepStrictEqual(t, before)
+    if (!oChanged && tChanged) ours.set(id, t)
+    else if (oChanged && !tChanged) theirs.set(id, o)
+  }
+}
+
+/**
  * relations.yaml: the same resolution as «Resolver automáticamente» (union by id, the newest `updated_at` wins, the same
- * for `analyzed`), plus the merge base so a removal one machine made and the other did not touch stays removed. Never
- * merged when a side has invalid entries (they would be dropped silently) or another schema version.
+ * for `analyzed`), plus the merge base so a removal one machine made and the other did not touch stays removed, and so
+ * a one-sided edit always beats an untouched copy regardless of clock skew. Never merged when a side has invalid
+ * entries (they would be dropped silently) or another schema version.
  */
 export function mergeRelationsText({ base, ours, theirs }: MergeInput): string | null {
   const o = lenientSide(ours)
@@ -41,12 +60,20 @@ export function mergeRelationsText({ base, ours, theirs }: MergeInput): string |
   if (!o || !t || (base !== null && !b)) return null
   const sides = b ? [o, t, b] : [o, t]
   if (sides.some((s) => s.dropped > 0 || foreignVersion(s))) return null
-  const goneRelations = b ? removedIds(byId(b.relations), byId(o.relations), byId(t.relations)) : new Set<string>()
-  const goneAnalyses = b
-    ? removedIds(new Map(Object.entries(b.analyzed)), new Map(Object.entries(o.analyzed)), new Map(Object.entries(t.analyzed)))
-    : new Set<string>()
-  const relations = mergeRelations(o.relations, t.relations).filter((r) => !goneRelations.has(r.id))
-  const analyzed = Object.fromEntries(Object.entries(mergeAnalyzed(o.analyzed, t.analyzed)).filter(([key]) => !goneAnalyses.has(key)))
+  const oRelations = byId(o.relations)
+  const tRelations = byId(t.relations)
+  const oAnalyzed = new Map(Object.entries(o.analyzed))
+  const tAnalyzed = new Map(Object.entries(t.analyzed))
+  const goneRelations = b ? removedIds(byId(b.relations), oRelations, tRelations) : new Set<string>()
+  const goneAnalyses = b ? removedIds(new Map(Object.entries(b.analyzed)), oAnalyzed, tAnalyzed) : new Set<string>()
+  if (b) {
+    preferChangedSide(byId(b.relations), oRelations, tRelations)
+    preferChangedSide(new Map(Object.entries(b.analyzed)), oAnalyzed, tAnalyzed)
+  }
+  const relations = mergeRelations([...oRelations.values()], [...tRelations.values()]).filter((r) => !goneRelations.has(r.id))
+  const analyzed = Object.fromEntries(
+    Object.entries(mergeAnalyzed(Object.fromEntries(oAnalyzed), Object.fromEntries(tAnalyzed))).filter(([key]) => !goneAnalyses.has(key))
+  )
   const file = RelationsFileSchema.safeParse({ ...t.raw, ...o.raw, schema_version: 1, relations: sortRelations(relations), analyzed })
   return file.success ? toYaml(file.data) : null
 }
