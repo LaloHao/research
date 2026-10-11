@@ -42,6 +42,12 @@ describe('git output', () => {
       { status: 'A', path: '.trash/k/paper.yaml' },
       { status: 'M', path: 'papers/j/notes.md' }
     ])
+    // Fix round 1, M5: a rename or copy status carries three fields (status, old path, new path), not two.
+    expect(parseNameStatus('R100\0papers/old.md\0papers/new.md\0M\0papers/j/notes.md\0')).toEqual([
+      { status: 'R100', path: 'papers/new.md' },
+      { status: 'M', path: 'papers/j/notes.md' }
+    ])
+    expect(parseNameStatus('C75\0papers/a.md\0papers/b.md\0')).toEqual([{ status: 'C75', path: 'papers/b.md' }])
     expect(parseLsTree([`100644 blob ${OID('a')}\tpapers/k/notes.md`, `100755 blob ${OID('b')}\trun.sh`, ''].join('\0'))).toEqual([
       { mode: '100644', type: 'blob', oid: OID('a'), path: 'papers/k/notes.md' },
       { mode: '100755', type: 'blob', oid: OID('b'), path: 'run.sh' }

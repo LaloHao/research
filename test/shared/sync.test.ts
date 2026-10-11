@@ -24,6 +24,12 @@ describe('remote URLs', () => {
     expect(hasPasswordInUrl('git@github.com:me/x.git')).toBe(false)
   })
 
+  it('finds a password even with a raw @ in the user name (fix round 1, M6)', () => {
+    expect(hasPasswordInUrl('https://me@corp.com:secret@host/x.git')).toBe(true)
+    expect(hasPasswordInUrl('ssh://git@host:2222/thesis.git')).toBe(false)
+    expect(hasPasswordInUrl('https://host:8443/x.git')).toBe(false)
+  })
+
   it('names conflicts by file or by paper', () => {
     expect(CONFLICT_ID.test('file:papers/he2017drain/summary.md')).toBe(true)
     expect(CONFLICT_ID.test('paper:he2017drain')).toBe(true)

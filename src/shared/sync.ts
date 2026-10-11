@@ -8,6 +8,9 @@ export type SyncPhase = (typeof SYNC_PHASES)[number]
 /** Why a sync stopped; each has a Spanish text under `sync.errors.<code>`. */
 export const SYNC_ERROR_CODES = [
   'git_missing',
+  // The project folder itself is missing or unmounted (e.g. an unplugged drive), not that git is uninstalled.
+  // Fix round 1 (I1): added, no Spanish text under sync.errors yet — a later UI task picks a message for it.
+  'project_missing',
   'lfs_missing',
   'not_a_repo',
   'no_remote',
@@ -102,9 +105,15 @@ export type CloseDecision = (typeof CLOSE_DECISIONS)[number]
 /** Bounds of the automatic sync interval, in minutes (a per-device setting). */
 export const AUTO_SYNC_MINUTES = { min: 5, max: 120, default: 10 } as const
 
-/** `scheme://user:password@host…`: git would keep the password in .git/config. */
+/**
+ * `scheme://user:password@host…`: git would keep the password in .git/config.
+ * Fix round 1 (M6): the user part may itself contain an `@` (`https://me@corp.com:secret@host/x.git`), so the
+ * password is whatever sits between the last `:` and the last `@` of the authority — not anchored to `[^/@]`,
+ * which a raw `@` in the user name would defeat. `ssh://git@host:2222/…` and a bare `host:port` still don't match:
+ * neither has a `@` after the `:`.
+ */
 export function hasPasswordInUrl(url: string): boolean {
-  return /^[a-z][a-z0-9+.-]*:\/\/[^/@]*:[^/@]*@/i.test(url)
+  return /^[a-z][a-z0-9+.-]*:\/\/[^/]*:[^/]*@/i.test(url)
 }
 
 /** A remote the user typed: never read as an option, no whitespace or control characters, no password in it. */

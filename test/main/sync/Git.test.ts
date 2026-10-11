@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { classifyGitError, Git, gitEnv } from '../../../src/main/sync/Git'
 import { tmpDir } from '../../helpers/tmp'
@@ -27,6 +29,29 @@ describe('Git', () => {
     abort.abort()
     await expect(run).rejects.toMatchObject({ kind: 'cancelled' })
   })
+
+  // Fix round 1, I1: a missing or unmounted project folder is not "git not installed".
+  it('tells a missing project folder apart from a missing git binary', async () => {
+    await expect(new Git('/nonexistent/project-dir').run(['status'])).rejects.toMatchObject({ kind: 'project_missing' })
+  })
+
+  // Fix round 1, I3: a timeout or cancel kills the whole process group, not just git itself.
+  it.skipIf(process.platform === 'win32')('kills the whole process group on timeout, including a grandchild', async () => {
+    const dir = await tmpDir()
+    const pidFile = join(dir, 'grandchild.pid')
+    const script = [
+      "const { spawn } = require('node:child_process');",
+      "const fs = require('node:fs');",
+      `const gc = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], { stdio: 'ignore' });`,
+      `fs.writeFileSync(${JSON.stringify(pidFile)}, String(gc.pid));`,
+      'setTimeout(() => {}, 5000);'
+    ].join('\n')
+    const slow = new Git(dir, { bin: process.execPath })
+    await expect(slow.run(['-e', script], { timeoutMs: 100 })).rejects.toMatchObject({ kind: 'timeout' })
+    await new Promise((r) => setTimeout(r, 300))
+    const gcPid = Number(await readFile(pidFile, 'utf8'))
+    expect(() => process.kill(gcPid, 0)).toThrow()
+  })
 })
 
 describe('classifyGitError', () => {
@@ -47,9 +72,20 @@ describe('classifyGitError', () => {
     ['error: Your local changes to the following files would be overwritten by merge:\n\tthesis.tex', 'local_changes_block'],
     ['error: The following untracked working tree files would be overwritten by merge:\n\tnew.md', 'local_changes_block'],
     ['fatal: not a git repository (or any of the parent directories): .git', 'not_a_repo'],
-    ['fatal: something nobody expected', 'git_failed']
+    ['fatal: something nobody expected', 'git_failed'],
+    // Fix round 1, M3: the two missing local_changes_block messages.
+    ['error: Your local changes to the following files would be removed by merge:\n\tthesis.tex', 'local_changes_block'],
+    ['Updating the following directories would lose untracked files in them:\n\tpapers/x', 'local_changes_block']
   ])('%s', (output, kind) => {
     expect(classifyGitError(output)).toBe(kind)
+  })
+
+  // Fix round 1, M1: a local ref-lock race (no remote involved) must not look like a rejected push.
+  it('does not classify a local lock race as a push failure or auth', () => {
+    const kind = classifyGitError("error: cannot lock ref 'HEAD': is at a23 but expected 84f")
+    expect(kind).not.toBe('push_behind')
+    expect(kind).not.toBe('push_rejected')
+    expect(kind).not.toBe('auth')
   })
 })
 
@@ -62,5 +98,53 @@ describe('gitEnv', () => {
   it('adds where Homebrew installs git and git-lfs on macOS, once', () => {
     expect(gitEnv({ PATH: '/usr/bin:/bin' }, 'darwin').PATH).toBe('/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin')
     expect(gitEnv({ PATH: '/usr/local/bin:/usr/bin' }, 'darwin').PATH).toBe('/usr/local/bin:/usr/bin:/opt/homebrew/bin')
+  })
+
+  // Fix round 1, I2 + M7: never a credential dialog, ssh batch mode by default, no racing the user's own git for the index lock.
+  it('never lets git or ssh prompt for a credential, and avoids racing the index lock', () => {
+    const env = gitEnv({ PATH: '/usr/bin' }, 'linux')
+    expect(env).toMatchObject({
+      GIT_ASKPASS: '',
+      SSH_ASKPASS_REQUIRE: 'never',
+      GCM_INTERACTIVE: 'never',
+      GIT_SSH_COMMAND: 'ssh -o BatchMode=yes',
+      GIT_OPTIONAL_LOCKS: '0'
+    })
+  })
+
+  it('leaves an already-set GIT_SSH_COMMAND or GIT_SSH alone', () => {
+    expect(gitEnv({ PATH: '/usr/bin', GIT_SSH_COMMAND: 'ssh -o something' }, 'linux').GIT_SSH_COMMAND).toBe('ssh -o something')
+    expect(gitEnv({ PATH: '/usr/bin', GIT_SSH: '/usr/bin/plink' }, 'linux').GIT_SSH_COMMAND).toBeUndefined()
+  })
+
+  // Fix round 1, I4: inherited repository-locating variables must not leak into git's env, but explicit overrides still win.
+  it('strips inherited repository-locating variables but keeps an explicit override', () => {
+    const base = {
+      PATH: '/usr/bin',
+      GIT_DIR: '/other/.git',
+      GIT_WORK_TREE: '/other',
+      GIT_INDEX_FILE: '/other/.git/index',
+      GIT_OBJECT_DIRECTORY: '/other/.git/objects',
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: '/other/alt',
+      GIT_COMMON_DIR: '/other/.git',
+      GIT_PREFIX: 'sub/',
+      GIT_NAMESPACE: 'ns',
+      GIT_CEILING_DIRECTORIES: '/other'
+    }
+    const env = gitEnv(base, 'linux')
+    for (const key of [
+      'GIT_DIR',
+      'GIT_WORK_TREE',
+      'GIT_INDEX_FILE',
+      'GIT_OBJECT_DIRECTORY',
+      'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+      'GIT_COMMON_DIR',
+      'GIT_PREFIX',
+      'GIT_NAMESPACE',
+      'GIT_CEILING_DIRECTORIES'
+    ]) {
+      expect(env[key]).toBeUndefined()
+    }
+    expect(gitEnv(base, 'linux', { GIT_INDEX_FILE: '/tmp/my.index' }).GIT_INDEX_FILE).toBe('/tmp/my.index')
   })
 })

@@ -1,9 +1,12 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import type { SyncErrorCode } from '../../shared/sync'
 
 export const LOCAL_TIMEOUT_MS = 60_000
 export const NETWORK_TIMEOUT_MS = 180_000
 const MAX_BUFFER = 256 * 1024 * 1024
+// Fix round 1 (I3): grace between SIGTERM and SIGKILL when a timeout or cancel has to kill the process group.
+const KILL_GRACE_MS = 2_000
 
 /** A sync error code, or `push_behind`: the remote moved since the fetch (the sync tries once more). */
 export type GitFailure = SyncErrorCode | 'push_behind'
@@ -45,7 +48,9 @@ export interface GitOutput {
 /** First match wins; the output is git's (LC_ALL=C) stderr plus the start of its stdout (`push --porcelain` reports there). */
 const RULES: [RegExp, GitFailure][] = [
   [/'git-lfs' was not found|git-lfs: (?:command )?not found|'lfs' is not a git command/i, 'lfs_missing'],
-  [/\((?:fetch first|non-fast-forward|stale info)\)|cannot lock ref|failed to update ref/i, 'push_behind'],
+  // Fix round 1 (M1): anchored to the remote side, so a local ref-lock race (`update-ref HEAD <new> <old>`,
+  // or a concurrent fetch) does not look like a rejected push; that falls through to push_rejected or git_failed.
+  [/\((?:fetch first|non-fast-forward|stale info)\)|remote: error: cannot lock ref|\[remote rejected\] \(failed to update ref\)/i, 'push_behind'],
   [/\[remote rejected\]|\[rejected\]|hook declined|protected branch/i, 'push_rejected'],
   [/terminal prompts disabled|could not read (?:Username|Password)|Authentication failed|Permission denied \(publickey|Host key verification failed|Access denied|returned error: 40[13]/i, 'auth'],
   [
@@ -56,7 +61,8 @@ const RULES: [RegExp, GitFailure][] = [
   [/Could not read from remote repository/i, 'auth'],
   [/Please tell me who you are|empty ident name|unable to auto-detect email|no email was given/i, 'identity_missing'],
   [/refusing to merge unrelated histories/i, 'unrelated_histories'],
-  [/would be overwritten by (?:merge|checkout)/i, 'local_changes_block'],
+  // Fix round 1 (M3): also the two messages for an untracked file or directory a merge/checkout would clobber.
+  [/would be (?:overwritten|removed) by (?:merge|checkout)|would lose untracked files/i, 'local_changes_block'],
   [/not a git repository/i, 'not_a_repo']
 ]
 
@@ -64,9 +70,50 @@ export function classifyGitError(output: string): GitFailure {
   return RULES.find(([pattern]) => pattern.test(output))?.[1] ?? 'git_failed'
 }
 
-/** git never prompts (a missing credential fails instead of hanging) and speaks English, so its errors can be classified. */
+// Fix round 1 (I4): git variables that locate another repository, index or object store. An app started from a
+// git hook, a `git` alias, or some editor terminals can inherit these; left alone, every command (including
+// `update-ref HEAD` and `commit-tree`) would act on that other repository instead of the project's.
+const GIT_LOCATION_VARS = [
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_INDEX_FILE',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_COMMON_DIR',
+  'GIT_PREFIX',
+  'GIT_NAMESPACE',
+  'GIT_CEILING_DIRECTORIES'
+] as const
+
+/**
+ * git never prompts and speaks English, so its errors can be classified.
+ *
+ * Fix round 1 (I2, M7): `GIT_TERMINAL_PROMPT=0` alone does not stop every prompt — `GIT_ASKPASS`/`SSH_ASKPASS`
+ * can still open a GUI, ssh does not read `GIT_TERMINAL_PROMPT` at all, and Git Credential Manager has its own
+ * interactive mode. `GIT_OPTIONAL_LOCKS=0` keeps a background `status` from racing the user's own git for the
+ * index lock. The caller (`Git.run`) spawns detached on POSIX, which already denies ssh a controlling terminal;
+ * `GIT_SSH_COMMAND` is set to batch mode too, but only when the caller has not set `GIT_SSH_COMMAND`/`GIT_SSH`
+ * itself (this function cannot see `core.sshCommand`, a git config value, without running git first).
+ *
+ * Fix round 1 (I4): strips the git variables that locate another repository (see `GIT_LOCATION_VARS`) out of
+ * `base` before applying `extra`, so an explicit override — e.g. the temporary index a sync commit is built in —
+ * still wins.
+ */
 export function gitEnv(base: NodeJS.ProcessEnv, platform: NodeJS.Platform, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...base, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C', LANGUAGE: 'C', ...extra }
+  const cleaned: NodeJS.ProcessEnv = { ...base }
+  for (const key of GIT_LOCATION_VARS) delete cleaned[key]
+  const env: NodeJS.ProcessEnv = {
+    ...cleaned,
+    GIT_TERMINAL_PROMPT: '0',
+    LC_ALL: 'C',
+    LANGUAGE: 'C',
+    GIT_ASKPASS: '',
+    SSH_ASKPASS_REQUIRE: 'never',
+    GCM_INTERACTIVE: 'never',
+    GIT_OPTIONAL_LOCKS: '0',
+    ...extra
+  }
+  if (!env.GIT_SSH_COMMAND && !env.GIT_SSH) env.GIT_SSH_COMMAND = 'ssh -o BatchMode=yes'
   if (platform === 'darwin') {
     // An app started from the Finder gets a minimal PATH: add where Homebrew installs git and git-lfs.
     const parts = (env.PATH ?? '').split(':').filter(Boolean)
@@ -76,7 +123,14 @@ export function gitEnv(base: NodeJS.ProcessEnv, platform: NodeJS.Platform, extra
   return env
 }
 
-/** Runs git in `cwd` with `execFile` (no shell). It never receives credentials: those stay with the system's git. */
+/**
+ * Runs git in `cwd` without a shell. It never receives credentials: those stay with the system's git.
+ *
+ * Fix round 1 (I3): built on `spawn`, not `execFile` — `execFile`'s own options do not include `detached`
+ * (confirmed against its running process: without it, the child stays in this process's own process group),
+ * so it could not give a timeout or cancel the thing it needs to kill a whole process group. `spawn` is used
+ * directly and stdout/stderr are buffered here instead.
+ */
 export class Git {
   private readonly env: NodeJS.ProcessEnv
 
@@ -89,30 +143,123 @@ export class Git {
 
   run(args: string[], o: GitRunOptions = {}): Promise<GitOutput> {
     return new Promise((resolve, reject) => {
-      const child = execFile(
-        this.opts.bin ?? 'git',
-        args,
-        {
-          cwd: this.cwd,
-          env: o.env ? { ...this.env, ...o.env } : this.env,
-          encoding: 'buffer',
-          maxBuffer: MAX_BUFFER,
-          timeout: o.timeoutMs ?? LOCAL_TIMEOUT_MS,
-          signal: o.signal,
-          windowsHide: true
-        },
-        (error, stdout, stderr) => {
-          const err = stderr.toString('utf8')
-          if (!error) return resolve({ code: 0, stdout, stderr: err })
-          const exit = error.code
-          if (typeof exit === 'number' && o.okCodes?.includes(exit)) return resolve({ code: exit, stdout, stderr: err })
-          const output = `${err}\n${stdout.toString('utf8', 0, Math.min(stdout.length, 65536))}`
-          if (exit === 'ENOENT') return reject(new GitError(args, null, output, 'git_missing'))
-          if (error.name === 'AbortError') return reject(new GitError(args, null, output, 'cancelled'))
-          if (error.killed) return reject(new GitError(args, null, output, 'timeout'))
-          reject(new GitError(args, typeof exit === 'number' ? exit : null, output, classifyGitError(output)))
+      const timeoutMs = o.timeoutMs ?? LOCAL_TIMEOUT_MS
+      // Fix round 1 (I3): a plain kill signal/timeout only reaches git itself; ssh, git-lfs and pack-objects
+      // can outlive it. These flags let the exit handler tell a real timeout/cancel from any other exit.
+      let timedOut = false
+      let cancelled = false
+      let settled = false
+      let killTimer: NodeJS.Timeout | undefined
+      let bufferExceeded = false
+
+      const child = spawn(this.opts.bin ?? 'git', args, {
+        cwd: this.cwd,
+        env: o.env ? { ...this.env, ...o.env } : this.env,
+        windowsHide: true,
+        // Fix round 1 (I2, I3): a new process group on POSIX denies ssh a controlling terminal (so a
+        // passphrase or host-key prompt fails instead of hanging) and lets a timeout/cancel kill the whole
+        // group — ssh, git-lfs, pack-objects — not just git's own pid.
+        detached: process.platform !== 'win32'
+      })
+
+      const stdoutChunks: Buffer[] = []
+      const stderrChunks: Buffer[] = []
+      let stdoutLen = 0
+      let stderrLen = 0
+
+      const collect = (chunks: Buffer[], len: number, data: Buffer): number => {
+        if (len >= MAX_BUFFER) {
+          if (!bufferExceeded) {
+            bufferExceeded = true
+            escalate()
+          }
+          return len
         }
-      )
+        chunks.push(data)
+        return len + data.length
+      }
+
+      child.stdout?.on('data', (data: Buffer) => {
+        stdoutLen = collect(stdoutChunks, stdoutLen, data)
+      })
+      child.stderr?.on('data', (data: Buffer) => {
+        stderrLen = collect(stderrChunks, stderrLen, data)
+      })
+
+      const finish = (exitCode: number | null): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        if (killTimer) clearTimeout(killTimer)
+        const stdout = Buffer.concat(stdoutChunks)
+        const err = Buffer.concat(stderrChunks).toString('utf8')
+        if (exitCode === 0) return resolve({ code: 0, stdout, stderr: err })
+        if (typeof exitCode === 'number' && o.okCodes?.includes(exitCode)) return resolve({ code: exitCode, stdout, stderr: err })
+        const output = `${err}\n${stdout.toString('utf8', 0, Math.min(stdout.length, 65536))}`
+        if (timedOut) return reject(new GitError(args, exitCode, output, 'timeout'))
+        if (cancelled) return reject(new GitError(args, exitCode, output, 'cancelled'))
+        reject(new GitError(args, exitCode, output, classifyGitError(output)))
+      }
+
+      child.on('error', (error: NodeJS.ErrnoException) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        if (killTimer) clearTimeout(killTimer)
+        const output = Buffer.concat(stderrChunks).toString('utf8')
+        // Fix round 1 (I1): node reports a missing cwd the same way as a missing git binary (ENOENT). An
+        // unplugged drive or a deleted project folder must not tell the user to install git.
+        if (error.code === 'ENOENT') return reject(new GitError(args, null, output, existsSync(this.cwd) ? 'git_missing' : 'project_missing'))
+        reject(new GitError(args, null, output, classifyGitError(output)))
+      })
+
+      child.on('close', (code) => finish(code))
+
+      const killGroup = (signal: 'SIGTERM' | 'SIGKILL'): void => {
+        if (settled || !child.pid) return
+        if (process.platform === 'win32') {
+          // `/T` kills the whole tree; `/F` forces it. taskkill failing (e.g. already exited) is not our problem.
+          execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], () => undefined)
+        } else {
+          try {
+            // The negative pid targets the process group (its id equals the leader's pid when spawned detached).
+            process.kill(-child.pid, signal)
+          } catch {
+            try {
+              child.kill(signal)
+            } catch {
+              // Already gone.
+            }
+          }
+        }
+      }
+
+      function escalate(): void {
+        killGroup('SIGTERM')
+        killTimer = setTimeout(() => killGroup('SIGKILL'), KILL_GRACE_MS)
+      }
+
+      const timer = setTimeout(() => {
+        timedOut = true
+        escalate()
+      }, timeoutMs)
+
+      if (o.signal) {
+        if (o.signal.aborted) {
+          cancelled = true
+          escalate()
+        } else {
+          o.signal.addEventListener(
+            'abort',
+            () => {
+              cancelled = true
+              escalate()
+            },
+            { once: true }
+          )
+        }
+      }
+
       // git may exit before reading all its input (e.g. on an error): a broken pipe is not a failure of its own.
       child.stdin?.on('error', () => undefined)
       child.stdin?.end(o.input ?? '')

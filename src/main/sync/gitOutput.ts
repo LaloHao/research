@@ -73,11 +73,27 @@ export function parseStatus(out: string): string[] {
   return paths
 }
 
-/** `git diff --name-status -z --no-renames`: status and path alternate. */
+const RENAME_OR_COPY_STATUS = /^[RC]\d*$/
+
+/**
+ * `git diff --name-status -z`: status and path alternate, except a rename or copy status (`R100`, `C75`, …),
+ * which is followed by the old path and then the new one — the destination is reported.
+ */
 export function parseNameStatus(out: string): NameStatus[] {
   const parts = splitNul(out)
   const list: NameStatus[] = []
-  for (let i = 0; i + 1 < parts.length; i += 2) list.push({ status: parts[i], path: parts[i + 1] })
+  let i = 0
+  while (i < parts.length) {
+    const status = parts[i++]
+    if (RENAME_OR_COPY_STATUS.test(status)) {
+      if (i + 1 >= parts.length) break
+      i++ // the old path: the caller only wants the current one
+      list.push({ status, path: parts[i++] })
+    } else {
+      if (i >= parts.length) break
+      list.push({ status, path: parts[i++] })
+    }
+  }
   return list
 }
 
