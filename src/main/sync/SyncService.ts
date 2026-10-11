@@ -136,6 +136,10 @@ export class SyncService {
   private errorAuto = false
   private pending: Pending | null = null
   private running: Promise<SyncResult> | null = null
+  /** Whether `running` is an automatic sync. */
+  private runningAuto = false
+  /** A manual sync waiting for a running automatic one to end; later manual callers share it. */
+  private queuedManual: Promise<SyncResult> | null = null
   private readonly stopping = new AbortController()
 
   constructor(private readonly deps: SyncServiceDeps) {}
@@ -206,11 +210,23 @@ export class SyncService {
   }
 
   /**
-   * «Sincronizar», or the automatic sync (which leaves a pending decision alone). A sync already running is joined.
+   * «Sincronizar», or the automatic sync (which leaves a pending decision alone). A sync already running is joined,
+   * except that a manual one never joins an automatic one: that may be past its last commit, so edits saved since
+   * (e.g. flushed right before «Sincronizar y cerrar») would not be in what it reports as synced. The manual sync
+   * waits for it and then runs its own cycle; manual callers arriving meanwhile share that cycle.
    * Choices already made for conflicts that have not changed carry over.
    */
   run(opts: { auto: boolean }): Promise<SyncResult> {
-    if (this.running) return this.running
+    if (this.running) {
+      if (opts.auto || !this.runningAuto) return this.running
+      this.queuedManual ??= this.running
+        .catch(() => undefined)
+        .then(() => {
+          this.queuedManual = null
+          return this.run({ auto: false })
+        })
+      return this.queuedManual
+    }
     if (this.closed) return this.refused()
     if (opts.auto && this.pending) return Promise.resolve({ ok: true, outcome: 'conflicts' })
     const decided = new Map(this.pending?.decided)
@@ -333,6 +349,7 @@ export class SyncService {
 
   private start(work: () => Promise<SyncResult>, auto: boolean): Promise<SyncResult> {
     this.phase = 'syncing'
+    this.runningAuto = auto
     this.emit()
     const run = (async (): Promise<SyncResult> => {
       try {
@@ -354,6 +371,7 @@ export class SyncService {
         return { ok: false, error }
       } finally {
         this.running = null
+        this.runningAuto = false
         this.emit()
       }
     })()

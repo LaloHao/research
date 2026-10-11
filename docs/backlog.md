@@ -96,7 +96,6 @@
 - Retyping or reversing the same relation on both machines (the id is the unordered pair plus the type) can leave both the old and the new id in the merged `relations.yaml`.
 - Cost-log lines (`costs/<device>.jsonl`) are merged by deduplicating identical lines across both sides, without using the merge base as a reference; a retried write whose line differs only slightly from an equivalent one on the other side is not caught.
 - A trash operation (remove, restore, delete forever) that starts right after the automatic sync's periodic check runs anyway: each write stays atomic and hash-checked under the write gate, so nothing is corrupted, but a multi-paper operation can be split across two sync commits.
-- «Sincronizar y cerrar» can join a sync that the automatic scheduler already started and report `synced` from it; edits made after that sync's commit step but before it finishes stay uncommitted on disk even though the window is allowed to close.
 - A git command run by `status()`, `hasUnsynced()`, `conflicts()` or `diff()` (read-only) is not tracked for abort: closing the project or quitting does not wait for it or kill it, unlike `fetch`/`push`/local commit steps.
 - If the app is killed outright (a crash, a forced quit), a detached git/ssh process it started can outlive it; a clean close or quit always stops the sync's own processes first.
 - On macOS, an app started from the Finder finds git and git-lfs only in the system PATH plus `/opt/homebrew/bin` and `/usr/local/bin`.

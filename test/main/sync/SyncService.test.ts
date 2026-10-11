@@ -584,6 +584,39 @@ describe('SyncService', () => {
     expect(m.git(m.a, 'rev-parse', 'HEAD')).toBe(head)
   })
 
+  it('runs a manual sync of its own after an automatic one already past its last commit, so the latest edits are pushed', async () => {
+    const m = await twoMachines()
+    const a = service(m, m.projectA)
+    let release!: () => void
+    const held = new Promise<void>((r) => (release = r))
+    let pushing!: () => void
+    const pushStarted = new Promise<void>((r) => (pushing = r))
+    const push = ProjectRepo.prototype.push
+    let pushes = 0
+    vi.spyOn(ProjectRepo.prototype, 'push').mockImplementation(async function (this: ProjectRepo, ...args) {
+      if (pushes++ === 0) {
+        pushing()
+        await held
+      }
+      await push.apply(this, args)
+    })
+    await applyFiles(m.projectA, { 'notes.md': 'from A\n' })
+    const auto = a.run({ auto: true })
+    await pushStarted
+    // Written (and flushed) after the automatic sync's last commit, e.g. right before «Sincronizar y cerrar».
+    await applyFiles(m.projectA, { 'latest.md': 'just saved\n' })
+    const manual = a.run({ auto: false })
+    expect(manual).not.toBe(auto)
+    // Another manual caller meanwhile shares that same manual run; an automatic one still joins what is running.
+    expect(a.run({ auto: false })).toBe(manual)
+    expect(a.run({ auto: true })).toBe(auto)
+    release()
+    expect(await auto).toEqual({ ok: true, outcome: 'synced' })
+    expect(await manual).toEqual({ ok: true, outcome: 'synced' })
+    expect(m.git(m.remote, 'show', 'main:latest.md')).toBe('just saved')
+    expect(await a.status()).toMatchObject({ dirty: false, ahead: 0 })
+  })
+
   it('tells the session every time its state changes', async () => {
     const m = await twoMachines()
     let events = 0
