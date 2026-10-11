@@ -80,7 +80,12 @@ describe('es.json covers every code the UI can receive', () => {
     ...['attach', 'replace', 'confirm', 'confirm_file', 'confirm_replace', 'cancel', 'queued', 'drop_hint', 'drop_hint_replace', 'only_one_pdf'].map((k) => `paper.attach.${k}`),
     ...['title', 'search_placeholder', 'empty', 'no_results', 'select_visible', 'restore', 'restore_selected', 'delete_forever', 'delete_selected', 'empty_trash', 'delete_confirm_one', 'delete_confirm_other', 'empty_confirm_one', 'empty_confirm_other', 'conflict', 'merge', 'restored_one', 'restored_other', 'restored_as', 'restored_remnant', 'restored_index_failed', 'deleted_one', 'deleted_other', 'removed_on', 'unknown_date', 'problem'].map((k) => `trash.${k}`),
     ...TRASH_PROBLEMS.map((k) => `trash.problems.${k}`),
-    ...['this', 'other', 'unknown'].map((k) => `trash.device.${k}`)
+    ...['this', 'other', 'unknown'].map((k) => `trash.device.${k}`),
+    'paper.remove',
+    'paper.remove_confirm',
+    ...['remove_filtered', 'remove_filtered_hint', 'remove_confirm_one', 'remove_confirm_other'].map((k) => `library.${k}`),
+    ...['moved_one', 'moved_other', 'undo', 'undo_conflict'].map((k) => `trash.${k}`),
+    ...['in_trash', 'restore', 'restored', 'restore_conflict'].map((k) => `map.candidates.${k}`)
   ])('%s', (path) => {
     expect(typeof lookup(path)).toBe('string')
   })

@@ -1,4 +1,6 @@
+import type { TFunction } from 'i18next'
 import type { RestoreOutcome, TrashEntry } from '../../shared/trash'
+import { errorText } from './errorText'
 
 /** How long «N papers movidos a la papelera · Deshacer» stays on screen. */
 export const TRASH_UNDO_MS = 8000
@@ -55,4 +57,14 @@ export function trashedDay(iso: string | null): string | null {
 /** Papers that came back under another key (merged into another paper, or their key was taken): the notice names them. */
 export function movedKeys(outcome: RestoreOutcome): { id: string; key: string }[] {
   return outcome.restored.filter((r) => r.key !== r.id).map((r) => ({ id: r.id, key: r.key }))
+}
+
+/** What a restore did besides bringing papers back as they were (another key, a remnant, an index failure, errors): one sentence each. */
+export function restoreDetails(t: TFunction, outcome: RestoreOutcome): string[] {
+  return [
+    ...movedKeys(outcome).map((m) => t('trash.restored_as', m)),
+    ...outcome.restored.filter((x) => x.remnant).map((x) => t('trash.restored_remnant', { id: x.id })),
+    ...outcome.restored.filter((x) => x.warning === 'index_failed').map((x) => t('trash.restored_index_failed', { key: x.key })),
+    ...outcome.failed.map((f) => `${f.id}: ${errorText(t, f.error)}`)
+  ]
 }

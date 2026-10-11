@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { DeletePlan, RestoreConflict, TrashEntry, TrashTarget } from '../../shared/trash'
 import { useEvent } from '../hooks/useEvent'
 import { errorText } from '../lib/errorText'
-import { deviceKind, filterTrash, movedKeys, prune, shortDevice, toggle, toggleAll, trashedDay } from '../lib/trash'
+import { deviceKind, filterTrash, prune, restoreDetails, shortDevice, toggle, toggleAll, trashedDay } from '../lib/trash'
 
 type Notice = { error: boolean; text: string }
 
@@ -52,13 +52,7 @@ export function TrashView(): React.JSX.Element {
     window.research.trash.restore(ids, merge).then((r) => {
       setBusy(false)
       setConflicts((prev) => [...prev.filter((c) => !ids.includes(c.id)), ...r.conflicts])
-      const parts = [
-        ...(r.restored.length > 0 ? [t('trash.restored', { count: r.restored.length })] : []),
-        ...movedKeys(r).map((m) => t('trash.restored_as', m)),
-        ...r.restored.filter((x) => x.remnant).map((x) => t('trash.restored_remnant', { id: x.id })),
-        ...r.restored.filter((x) => x.warning === 'index_failed').map((x) => t('trash.restored_index_failed', { key: x.key })),
-        ...r.failed.map((f) => `${f.id}: ${errorText(t, f.error)}`)
-      ]
+      const parts = [...(r.restored.length > 0 ? [t('trash.restored', { count: r.restored.length })] : []), ...restoreDetails(t, r)]
       setNotice(parts.length > 0 ? { error: r.failed.length > 0, text: parts.join(' ') } : null)
       refresh()
     }, failed)

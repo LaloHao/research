@@ -1,5 +1,6 @@
+import type { TFunction } from 'i18next'
 import { describe, expect, it } from 'vitest'
-import { deviceKind, filterTrash, movedKeys, prune, shortDevice, toggle, toggleAll, trashedDay } from '../../src/renderer/lib/trash'
+import { deviceKind, filterTrash, movedKeys, prune, restoreDetails, shortDevice, toggle, toggleAll, trashedDay } from '../../src/renderer/lib/trash'
 import type { TrashEntry } from '../../src/shared/trash'
 
 const entry = (over: Partial<TrashEntry> = {}): TrashEntry => ({
@@ -47,5 +48,25 @@ describe('trash view', () => {
   it('lists the papers that came back under another key', () => {
     const outcome = { restored: [{ id: 'a1', key: 'a1' }, { id: 'b1', key: 'b1a' }], conflicts: [], failed: [] }
     expect(movedKeys(outcome)).toEqual([{ id: 'b1', key: 'b1a' }])
+  })
+
+  it('details what a restore did besides coming back: other keys, remnants, index failures and errors', () => {
+    const t = ((key: string, options?: Record<string, unknown>) => (options ? `${key} ${JSON.stringify(options)}` : key)) as unknown as TFunction
+    const outcome = {
+      restored: [
+        { id: 'a1', key: 'a1' },
+        { id: 'b1', key: 'b1a', remnant: true as const },
+        { id: 'c1', key: 'c1', warning: 'index_failed' as const }
+      ],
+      conflicts: [],
+      failed: [{ id: 'd1', error: 'not_in_trash' }]
+    }
+    expect(restoreDetails(t, outcome)).toEqual([
+      'trash.restored_as {"id":"b1","key":"b1a"}',
+      'trash.restored_remnant {"id":"b1"}',
+      'trash.restored_index_failed {"key":"c1"}',
+      'd1: errors.not_in_trash {"defaultValue":"not_in_trash"}'
+    ])
+    expect(restoreDetails(t, { restored: [{ id: 'a1', key: 'a1' }], conflicts: [], failed: [] })).toEqual([])
   })
 })

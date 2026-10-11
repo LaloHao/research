@@ -13,6 +13,7 @@ import { AddPaperBar } from './AddPaperBar'
 import { JobsPanel } from './JobsPanel'
 import { PaperList } from './PaperList'
 import { SummaryToolbar } from './SummaryToolbar'
+import { useTrashUndo } from '../TrashUndo'
 
 export function LibraryView({
   facetFilters,
@@ -39,6 +40,37 @@ export function LibraryView({
   const [relationsConfirm, setRelationsConfirm] = useState<{ ids: string[] | undefined; plan: RelationPlan } | null>(null)
   const [relationsBusy, setRelationsBusy] = useState(false)
   const [relationsNotice, setRelationsNotice] = useState<{ error: boolean; text: string } | null>(null)
+  const [removeConfirm, setRemoveConfirm] = useState<string[] | null>(null)
+  const [removeBusy, setRemoveBusy] = useState(false)
+  const [removeNotice, setRemoveNotice] = useState<{ error: boolean; text: string } | null>(null)
+  const undo = useTrashUndo()
+  const showUndo = undo.show
+
+  /** Papers just moved to the trash: the open one closes and «Deshacer» stays a few seconds. */
+  const onRemoved = useCallback(
+    (ids: string[]) => {
+      setSelected((current) => (current && ids.includes(current) ? null : current))
+      showUndo(ids)
+    },
+    [showUndo]
+  )
+
+  const removeVisible = (): void => {
+    if (!removeConfirm || removeBusy) return
+    setRemoveBusy(true)
+    window.research.library.trash(removeConfirm).then(
+      (r) => {
+        setRemoveBusy(false)
+        setRemoveConfirm(null)
+        if (r.moved.length > 0) onRemoved(r.moved)
+        setRemoveNotice(r.error ? { error: true, text: errorText(t, r.error) } : null)
+      },
+      () => {
+        setRemoveBusy(false)
+        setRemoveNotice({ error: true, text: errorText(t, 'unknown') })
+      }
+    )
+  }
 
   const facetIdsRequest = useRef(0)
   const loadFacetIds = useCallback(() => {
@@ -83,6 +115,9 @@ export function LibraryView({
   )
   useEffect(() => onVisibleChange?.(visibleRows.map((row) => row.id)), [visibleRows, onVisibleChange])
   const anyFilter = query.trim() !== '' || summaryFilter !== 'all' || modelFilter !== 'any' || facetFilters.length > 0
+  // A pending confirmation closes when the visible papers change (not when the list reloads the same), since its count would no longer hold.
+  const visibleKey = useMemo(() => visibleRows.map((row) => row.id).join(' '), [visibleRows])
+  useEffect(() => setRemoveConfirm(null), [visibleKey])
 
   const updateCitations = (): void => {
     setUpdatingCitations(true)
@@ -182,6 +217,11 @@ export function LibraryView({
           >
             {t('library.suggest_relations')}
           </button>
+          {anyFilter && visibleRows.length > 0 && (
+            <button className="small" disabled={removeBusy} onClick={() => setRemoveConfirm(visibleRows.map((row) => row.id))} title={t('library.remove_filtered_hint')}>
+              {t('library.remove_filtered')}
+            </button>
+          )}
         </div>
         {citationsNotice && <div className={`banner${citationsNotice.error ? ' error' : ''}`}>{citationsNotice.text}</div>}
         {relationsConfirm && (
@@ -200,6 +240,18 @@ export function LibraryView({
           </div>
         )}
         {relationsNotice && <div className={`banner${relationsNotice.error ? ' error' : ''}`}>{relationsNotice.text}</div>}
+        {removeConfirm && (
+          <div className="banner warning">
+            <span>{t('library.remove_confirm', { count: removeConfirm.length })}</span>
+            <button className="danger" disabled={removeBusy} onClick={removeVisible}>
+              {t('library.remove_filtered')}
+            </button>
+            <button disabled={removeBusy} onClick={() => setRemoveConfirm(null)}>
+              {t('jobs.cancel')}
+            </button>
+          </div>
+        )}
+        {removeNotice && <div className={`banner${removeNotice.error ? ' error' : ''}`}>{removeNotice.text}</div>}
         {reviewIds === null && <PaperList rows={visibleRows} query={query} selected={selected} onSelect={setSelected} />}
         <JobsPanel onSelectPaper={setSelected} />
       </aside>
@@ -207,12 +259,13 @@ export function LibraryView({
         {reviewIds !== null ? (
           <ReviewView ids={reviewIds} onExit={() => setReviewIds(null)} />
         ) : selected ? (
-          <PaperDetail id={selected} onOpenCandidates={onOpenCandidates} onSelectPaper={setSelected} />
+          <PaperDetail id={selected} onOpenCandidates={onOpenCandidates} onSelectPaper={setSelected} onRemoved={onRemoved} />
         ) : (
           <div className="center muted">{t('library.select_hint')}</div>
         )}
       </section>
       {dragging && <div className="drop-overlay">{t('library.drop_hint')}</div>}
+      {undo.element}
     </div>
   )
 }

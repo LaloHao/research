@@ -155,7 +155,11 @@
     "suggest_relations_all": "Pide a Claude relaciones tipadas para los papers cuyos candidatos cambiaron desde su último análisis.",
     "suggest_relations_filtered": "Pide a Claude relaciones tipadas para los papers que se ven con la búsqueda y los filtros actuales, si sus candidatos cambiaron desde su último análisis.",
     "relations_none": "No hay papers con candidatos nuevos por analizar.",
-    "relations_queued": "{{count}} papers en cola para sugerir relaciones."
+    "relations_queued": "{{count}} papers en cola para sugerir relaciones.",
+    "remove_filtered": "Quitar de la biblioteca",
+    "remove_filtered_hint": "Mueve a la papelera los papers que se ven con la búsqueda y los filtros activos",
+    "remove_confirm_one": "¿Quitar 1 paper de la biblioteca? Se mueve a la papelera y puedes restaurarlo cuando quieras.",
+    "remove_confirm_other": "¿Quitar {{count}} papers de la biblioteca? Se mueven a la papelera y puedes restaurarlos cuando quieras."
   },
   "badges": {
     "problem": "Error en archivo",
@@ -254,6 +258,8 @@
     "copied": "Copiado",
     "open_link": "Abrir enlace",
     "show_in_folder": "Mostrar en carpeta",
+    "remove": "Quitar de la biblioteca",
+    "remove_confirm": "¿Quitar «{{title}}» de la biblioteca? Se mueve a la papelera con su PDF, resumen y notas; sus relaciones quedan ocultas y puedes restaurarlo cuando quieras.",
     "problem_title": "No se puede leer paper.yaml",
     "problem_kinds": {
       "conflict_markers": "El archivo tiene marcas de conflicto de git sin resolver.",
@@ -466,6 +472,10 @@
       },
       "add": "Agregar",
       "dismiss": "Descartar",
+      "in_trash": "En la papelera",
+      "restore": "Restaurar",
+      "restored": "«{{title}}» volvió a la biblioteca.",
+      "restore_conflict": "Ese paper ya está otra vez en la biblioteca. Fusiónalos desde la Papelera.",
       "added": "«{{title}}» se agregará a la biblioteca; míralo en Actividad.",
       "none_value": "—"
     }
@@ -534,6 +544,10 @@
   },
   "trash": {
     "title": "Papelera",
+    "moved_one": "1 paper movido a la papelera",
+    "moved_other": "{{count}} papers movidos a la papelera",
+    "undo": "Deshacer",
+    "undo_conflict": "No se pudo deshacer todo: el mismo paper ya está otra vez en la biblioteca; resuélvelo en la Papelera.",
     "search_placeholder": "Buscar en la papelera",
     "empty": "La papelera está vacía.",
     "no_results": "Nada en la papelera coincide con «{{query}}».",
