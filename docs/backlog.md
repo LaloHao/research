@@ -81,3 +81,5 @@
 ## Paper trash technical minutiae
 
 - Removing a paper drops it from its neighbours' lists without backfilling: a paper that had it in its top 10 shows 9 neighbours until the next full recompute (end of a batch, project open).
+- A paper trashed on another machine that arrives through `git pull` while an untracked PDF keeps its `papers/<key>/` folder loses its cached text before the trash records it; restoring it extracts the text again.
+- Listing the trash and planning a delete wait behind a long ingest (a PDF download) on the same project.
