@@ -15,3 +15,8 @@ export function candidateTitle(c: Candidate): string {
 export function candidateLink(c: Candidate): string {
   return c.work?.doi ? `https://doi.org/${c.work.doi}` : `https://openalex.org/${c.openalexId}`
 }
+
+/** A work that is a paper in the trash is restored, never added a second time. */
+export function candidateAction(c: Candidate): 'add' | 'restore' {
+  return c.trashedId ? 'restore' : 'add'
+}
