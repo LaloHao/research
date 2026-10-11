@@ -360,6 +360,7 @@ export class LibraryService {
     return this.deps.relations
   }
 
+  /** Never call it from inside `serial` (an ingest, attachment or trash operation): its `syncTrash` waits in that queue. */
   async reindexAll(): Promise<void> {
     await this.syncTrash()
     const ids = await this.deps.store.listPaperIds()
@@ -420,6 +421,8 @@ export class LibraryService {
         await this.exclusive(id, async () => {
           // Anything queued since the cancellation above (an automatic trigger) must not run on the moved folder.
           this.deps.cancelQueued?.([id])
+          // A folder already in the trash under this key: refuse before the index changes.
+          if (store.trashExists(id)) throw new UserFacingError('trash_problem')
           const read = await store.readPaper(id).catch(() => null)
           const now = this.now()
           // The index first: a reindex racing the move must find the entry and keep the paper's text.
@@ -429,6 +432,8 @@ export class LibraryService {
           } catch (failure) {
             // The folder did not move: the index goes back to what is on disk.
             cache.takeFromTrash(id)
+            // A trash folder that appeared meanwhile under this key gets its entry back.
+            if (store.trashExists(id)) await this.syncTrashNow()
             await this.doIndex(id)
             throw failure
           }
@@ -482,7 +487,7 @@ export class LibraryService {
         try {
           const r = await this.restoreOne(id, opts.merge)
           if ('conflict' in r) outcome.conflicts.push(r.conflict)
-          else outcome.restored.push(r.remnant ? { id, key: r.key, remnant: true } : { id, key: r.key })
+          else outcome.restored.push({ id, key: r.key, ...(r.remnant ? { remnant: true as const } : {}), ...(r.indexFailed ? { warning: 'index_failed' as const } : {}) })
         } catch (failure) {
           outcome.failed.push({ id, error: toUserFacing(failure).code })
         }
@@ -495,7 +500,7 @@ export class LibraryService {
     })
   }
 
-  private async restoreOne(id: string, merge: boolean): Promise<{ key: string; remnant: boolean } | { conflict: RestoreConflict }> {
+  private async restoreOne(id: string, merge: boolean): Promise<{ key: string; remnant: boolean; indexFailed?: boolean } | { conflict: RestoreConflict }> {
     const { store, cache } = this.deps
     if (!store.trashExists(id)) throw new UserFacingError('not_in_trash')
     const read = await store.readTrashedPaper(id)
@@ -511,23 +516,30 @@ export class LibraryService {
       if (!paper) throw new UserFacingError('trash_problem')
       return this.restoreAs(id)
     }
-    const remnant = await this.exclusive(id, async () => {
+    return this.exclusive(id, async () => {
       const moved = await store.restorePaper(id)
-      // Only once the folder moved: this puts the paper's text state back into the index.
-      cache.takeFromTrash(id)
-      // A remnant (a subfolder) keeps its folder in the trash: the index lists it again, with its problem.
-      if (moved.remnant) await this.syncTrashNow()
-      await this.doIndex(id)
-      return moved.remnant
+      // The folder is back: from here on the paper counts as restored, even if indexing it fails.
+      try {
+        // Only once the folder moved: this puts the paper's text state back into the index.
+        cache.takeFromTrash(id)
+        // A remnant (a subfolder) keeps its folder in the trash: the index lists it again, with its problem.
+        if (moved.remnant) await this.syncTrashNow()
+        await this.doIndex(id)
+        return { key: id, remnant: moved.remnant }
+      } catch (failure) {
+        console.error('restore: index', id, failure)
+        return { key: id, remnant: moved.remnant, indexFailed: true }
+      }
     })
-    return { key: id, remnant }
   }
 
   /** Another paper took the key: this one comes back under the next free key, with paper.yaml, BibTeX and relations re-keyed. */
   private async restoreAs(id: string): Promise<{ key: string; remnant: boolean }> {
     const { store, cache } = this.deps
     const key = uniqueCitekey(id, (candidate) => existsSync(store.paperDir(candidate)) || store.trashExists(candidate))
-    // relations.yaml first: it refuses during a git conflict, before anything moved.
+    // relations.yaml first: it refuses during a git conflict, before anything moved. Relations naming `id` are
+    // ambiguous here (the trashed paper's, or ones made for the library paper that took the key since): all of them
+    // follow the restored paper, as the trashed paper is the one they were made for unless the user relinked meanwhile.
     await this.deps.relations?.rekey(id, key)
     let remnant: boolean
     try {
@@ -558,6 +570,17 @@ export class LibraryService {
     const target = await store.readPaper(targetId).catch(() => null)
     if (!target?.ok) throw new UserFacingError('file_problem')
     if (id !== targetId) await this.deps.relations?.rekey(id, targetId)
+    try {
+      return await this.mergeFilesFromTrash(id, trashed, targetId)
+    } catch (failure) {
+      // The entry stays in the trash: its relations go back to its own key.
+      if (id !== targetId) await this.deps.relations?.rekey(targetId, id).catch((undo: unknown) => console.error('relations back to', id, undo))
+      throw failure
+    }
+  }
+
+  private mergeFilesFromTrash(id: string, trashed: Paper, targetId: string): Promise<boolean> {
+    const { store, cache } = this.deps
     return this.exclusive(targetId, async () => {
       const taken: string[] = []
       let pdfAdopted = false
@@ -599,7 +622,8 @@ export class LibraryService {
   async deletePlan(target: TrashTarget): Promise<DeletePlan> {
     await this.syncTrash()
     const ids = this.trashTargets(target)
-    return { ids, papers: ids.length, relations: ids.length > 0 ? await this.requireRelations().countTouching(ids) : 0 }
+    const owned = this.relationOwners(ids)
+    return { ids, papers: ids.length, relations: owned.length > 0 ? await this.requireRelations().countTouching(owned) : 0 }
   }
 
   /**
@@ -615,7 +639,8 @@ export class LibraryService {
       const targets = this.trashTargets(ids)
       if (targets.length === 0) return 0
       try {
-        await relations.removeTouching(targets)
+        const owned = this.relationOwners(targets)
+        if (owned.length > 0) await relations.removeTouching(owned)
         for (const id of targets) {
           await store.deleteTrashed(id)
           // A library paper that took the same key keeps its own cached PDF.
@@ -629,6 +654,11 @@ export class LibraryService {
       }
       return targets.length
     })
+  }
+
+  /** Trashed keys whose relations go with them: a key a library paper also uses (e.g. after a restore left a remnant) keeps its relations. */
+  private relationOwners(ids: string[]): string[] {
+    return ids.filter((id) => !this.deps.store.paperExists(id))
   }
 
   /** Keys of the target that are in the trash ('all': the whole trash, named explicitly). */

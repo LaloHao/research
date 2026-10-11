@@ -41,8 +41,11 @@ export interface RestoreConflict {
 
 export interface RestoreOutcome {
   /** `key` is where the paper now is: its own key, a free one (another paper took it), or the paper it was merged into. */
-  /** `remnant`: something it could not take (a subfolder) stayed in the trash, which keeps an entry under `id`. */
-  restored: { id: string; key: string; remnant?: true }[]
+  /**
+   * `remnant`: something it could not take (a subfolder) stayed in the trash, which keeps an entry under `id`.
+   * `warning: 'index_failed'`: the folder is back but indexing it failed; the next reindex picks it up.
+   */
+  restored: { id: string; key: string; remnant?: true; warning?: 'index_failed' }[]
   /** Papers left in the trash until the user picks «Fusionar» or «Cancelar». */
   conflicts: RestoreConflict[]
   failed: { id: string; error: string }[]

@@ -179,6 +179,65 @@ describe('LibraryService trash', () => {
     expect(await library.listTrash()).toEqual([expect.objectContaining({ id: ID, problem: 'missing_paper_yaml', trashed_at: AT })])
   })
 
+  it('never counts or removes the relations of a key a library paper also uses', async () => {
+    const { library, store, fake } = await withDrain()
+    await library.trash([ID])
+    await mkdir(join(store.trashDir(ID), 'figures'), { recursive: true })
+    await writeFile(join(store.trashDir(ID), 'figures', 'a.png'), 'x')
+    await mkdir(store.paperDir(ID), { recursive: true })
+    await library.restore([ID], { merge: false })
+    expect(await library.deletePlan('all')).toEqual({ ids: [ID], papers: 1, relations: 0 })
+    expect(await library.deleteForever([ID])).toBe(1)
+    expect(fake.calls).toEqual([])
+    expect(store.trashExists(ID)).toBe(false)
+    expect(store.paperExists(ID)).toBe(true)
+    expect(library.list().map((r) => r.id)).toEqual([ID])
+  })
+
+  it('refuses to trash a paper whose key already has a trash folder, leaving that entry listed', async () => {
+    const { library, store } = await withDrain()
+    await mkdir(join(store.trashDir(ID), 'figures'), { recursive: true })
+    await library.syncTrash()
+    expect(await library.trash([ID])).toEqual({ moved: [], error: 'trash_problem' })
+    expect(library.list().map((r) => r.id)).toEqual([ID])
+    expect(await library.listTrash()).toEqual([expect.objectContaining({ id: ID, problem: 'missing_paper_yaml' })])
+  })
+
+  it('counts a restore whose indexing failed as restored, with a warning, and exports the bibliography', async () => {
+    const { library, cache, root } = await withDrain()
+    await library.trash([ID])
+    const original = cache.upsertPaper.bind(cache)
+    cache.upsertPaper = () => {
+      throw new Error('disk full')
+    }
+    const errors = console.error
+    console.error = () => {}
+    try {
+      expect(await library.restore([ID], { merge: false })).toEqual({ restored: [{ id: ID, key: ID, warning: 'index_failed' }], conflicts: [], failed: [] })
+    } finally {
+      cache.upsertPaper = original
+      console.error = errors
+    }
+    expect(await readFile(join(root, 'exports/library.bib'), 'utf8')).toContain(ID)
+  })
+
+  it('moves the relations back when a merge into another key fails', async () => {
+    const { library, store, fake } = await withDrain()
+    await library.trash([ID])
+    expect((await library.ingestIdentifier('10.1109/icws.2017.13')).paperId).toBe('he2017draina')
+    const original = store.finishMerge.bind(store)
+    store.finishMerge = async () => {
+      throw new Error('disk full')
+    }
+    try {
+      expect((await library.restore([ID], { merge: true })).failed).toEqual([{ id: ID, error: 'unknown' }])
+    } finally {
+      store.finishMerge = original
+    }
+    expect(fake.calls).toEqual([`rekey:${ID}>he2017draina`, `rekey:he2017draina>${ID}`])
+    expect(store.trashExists(ID)).toBe(true)
+  })
+
   it('reports a merge that left a subfolder in the trash', async () => {
     const { library, store } = await withDrain()
     await library.trash([ID])
