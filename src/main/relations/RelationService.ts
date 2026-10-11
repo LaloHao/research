@@ -26,6 +26,8 @@ import {
   mergeSuggestions,
   rekeyRelations,
   relationReviewItems,
+  removeAnalyzedCandidates,
+  renameAnalyzedCandidate,
   retype,
   reverse,
   revertChange,
@@ -316,12 +318,14 @@ export class RelationService {
     const wanted = new Set(ids)
     const file = await this.currentFile()
     const touched = file.relations.length - withoutPapers(file.relations, wanted).length
-    if (touched === 0 && !ids.some((id) => file.analyzed[id])) return 0
+    const hasAnalyzed = ids.some((id) => file.analyzed[id])
+    const othersReferencing = Object.values(file.analyzed).some((a) => a.candidates.some((c) => wanted.has(c)))
+    if (touched === 0 && !hasAnalyzed && !othersReferencing) return 0
     let removed = 0
     await this.mutateFile((f) => {
       const relations = withoutPapers(f.relations, wanted)
       removed = f.relations.length - relations.length
-      return { ...f, relations, analyzed: withoutKeys(f.analyzed, wanted) }
+      return { ...f, relations, analyzed: removeAnalyzedCandidates(withoutKeys(f.analyzed, wanted), wanted) }
     })
     this.deps.emit()
     return removed
@@ -330,8 +334,14 @@ export class RelationService {
   /** A trashed paper merged into the library paper `to` on restore: its relations follow it there (same guarantees as removeTouching). */
   async rekey(from: string, to: string): Promise<void> {
     const file = await this.currentFile()
-    if (!file.relations.some((r) => r.from === from || r.to === from) && !file.analyzed[from]) return
-    await this.mutateFile((f) => ({ ...f, relations: rekeyRelations(f.relations, from, to, this.now()), analyzed: withoutKeys(f.analyzed, new Set([from])) }))
+    const touchesFrom = file.relations.some((r) => r.from === from || r.to === from)
+    const othersReferencing = Object.values(file.analyzed).some((a) => a.candidates.includes(from))
+    if (!touchesFrom && !file.analyzed[from] && !othersReferencing) return
+    await this.mutateFile((f) => ({
+      ...f,
+      relations: rekeyRelations(f.relations, from, to, this.now()),
+      analyzed: renameAnalyzedCandidate(withoutKeys(f.analyzed, new Set([from])), from, to)
+    }))
     this.deps.emit()
   }
 

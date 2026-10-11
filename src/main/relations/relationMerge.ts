@@ -5,6 +5,7 @@ import {
   otherEnd,
   relationId,
   SYMMETRIC_TYPES,
+  type PaperAnalysis,
   type PaperRelations,
   type RelationChange,
   type RelationEvidence,
@@ -184,10 +185,28 @@ export function withoutPapers(list: TypedRelation[], ids: ReadonlySet<string>): 
 
 const reviewed = (r: TypedRelation): boolean => r.status !== 'suggested' || r.edited
 
+/** A `replaced` id with `from` rewritten to `to` in whichever end it names (null when that leaves it a relation with itself). */
+function rekeyReplacedId(id: string, from: string, to: string): string | null {
+  const m = /^([a-z][a-z0-9]*)__([a-z][a-z0-9]*)__(.+)$/.exec(id)
+  if (!m) return id
+  const [, a, b, type] = m
+  const x = a === from ? to : a
+  const y = b === from ? to : b
+  return x === y ? null : relationId(x, y, type as RelationType)
+}
+
+/** `replaced` with `from` rewritten to `to` in every id, deduped; `undefined` when nothing is left. */
+function rekeyReplaced(replaced: string[] | undefined, from: string, to: string): string[] | undefined {
+  const next = [...new Set((replaced ?? []).flatMap((id) => rekeyReplacedId(id, from, to) ?? []))]
+  return next.length > 0 ? next : undefined
+}
+
 /**
  * A trashed paper `from` merged into the library paper `to`: each of its relations is moved onto `to` (re-oriented,
- * re-keyed, evidence and origin renamed), a relation of `to` with itself is dropped, and on an id both already have the
- * reviewed one wins, otherwise the one that was there.
+ * re-keyed, evidence, origin and `replaced` ids renamed), a relation of `to` with itself is dropped, and on an id both
+ * already have the reviewed one wins (their `replaced` histories combined either way), otherwise the one that was
+ * there. A moved unreviewed suggestion whose new id a kept entry already lists in `replaced` is dropped: that id was
+ * retyped away on purpose and a merge must not bring it back.
  */
 export function rekeyRelations(list: TypedRelation[], from: string, to: string, now: string): TypedRelation[] {
   const byId = new Map<string, TypedRelation>()
@@ -196,21 +215,50 @@ export function rekeyRelations(list: TypedRelation[], from: string, to: string, 
     if (r.from === from || r.to === from) moving.push(r)
     else byId.set(r.id, r)
   }
+  const retypedAway = new Set([...byId.values()].flatMap((r) => r.replaced ?? []))
   for (const r of moving) {
     const a = r.from === from ? to : r.from
     const b = r.to === from ? to : r.to
     if (a === b) continue
     const ends = orient(a, b, r.type)
+    const { replaced: _oldReplaced, ...rest } = r
+    const replaced = rekeyReplaced(r.replaced, from, to)
     const next: TypedRelation = {
-      ...r,
+      ...rest,
       ...ends,
       id: relationId(ends.from, ends.to, r.type),
       evidence: r.evidence.map((e) => (e.paper === from ? { ...e, paper: to } : e)),
       ...(r.origin?.paper === from ? { origin: { ...r.origin, paper: to } } : {}),
+      ...(replaced ? { replaced } : {}),
       updated_at: now
     }
+    if (!reviewed(next) && retypedAway.has(next.id)) continue
     const current = byId.get(next.id)
-    if (!current || (reviewed(next) && !reviewed(current))) byId.set(next.id, next)
+    if (!current) {
+      byId.set(next.id, next)
+      continue
+    }
+    const combinedReplaced = [...new Set([...(current.replaced ?? []), ...(next.replaced ?? [])])]
+    const winner = reviewed(next) && !reviewed(current) ? next : current
+    byId.set(next.id, combinedReplaced.length > 0 ? { ...winner, replaced: combinedReplaced } : winner)
   }
   return sortRelations([...byId.values()])
+}
+
+/** Other papers' analyzed candidates with `from` renamed to `to` (deduped): a candidate it already saw moved there too. */
+export function renameAnalyzedCandidate(analyzed: Record<string, PaperAnalysis>, from: string, to: string): Record<string, PaperAnalysis> {
+  return Object.fromEntries(
+    Object.entries(analyzed).map(([paperId, a]) =>
+      a.candidates.includes(from) ? [paperId, { ...a, candidates: [...new Set(a.candidates.map((c) => (c === from ? to : c)))] }] : [paperId, a]
+    )
+  )
+}
+
+/** Other papers' analyzed candidates with `ids` removed: those papers no longer exist (deleted for good). */
+export function removeAnalyzedCandidates(analyzed: Record<string, PaperAnalysis>, ids: ReadonlySet<string>): Record<string, PaperAnalysis> {
+  return Object.fromEntries(
+    Object.entries(analyzed).map(([paperId, a]) =>
+      a.candidates.some((c) => ids.has(c)) ? [paperId, { ...a, candidates: a.candidates.filter((c) => !ids.has(c)) }] : [paperId, a]
+    )
+  )
 }
