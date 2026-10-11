@@ -176,3 +176,41 @@ export function typedEdges(list: TypedRelation[]): TypedEdge[] {
     r.status === 'rejected' ? [] : [{ id: r.id, source: r.from, target: r.to, type: r.type, status: r.status, directed: !SYMMETRIC_TYPES.has(r.type) }]
   )
 }
+
+/** Relations with neither end among `ids` (deleting papers for good). */
+export function withoutPapers(list: TypedRelation[], ids: ReadonlySet<string>): TypedRelation[] {
+  return list.filter((r) => !ids.has(r.from) && !ids.has(r.to))
+}
+
+const reviewed = (r: TypedRelation): boolean => r.status !== 'suggested' || r.edited
+
+/**
+ * A trashed paper `from` merged into the library paper `to`: each of its relations is moved onto `to` (re-oriented,
+ * re-keyed, evidence and origin renamed), a relation of `to` with itself is dropped, and on an id both already have the
+ * reviewed one wins, otherwise the one that was there.
+ */
+export function rekeyRelations(list: TypedRelation[], from: string, to: string, now: string): TypedRelation[] {
+  const byId = new Map<string, TypedRelation>()
+  const moving: TypedRelation[] = []
+  for (const r of list) {
+    if (r.from === from || r.to === from) moving.push(r)
+    else byId.set(r.id, r)
+  }
+  for (const r of moving) {
+    const a = r.from === from ? to : r.from
+    const b = r.to === from ? to : r.to
+    if (a === b) continue
+    const ends = orient(a, b, r.type)
+    const next: TypedRelation = {
+      ...r,
+      ...ends,
+      id: relationId(ends.from, ends.to, r.type),
+      evidence: r.evidence.map((e) => (e.paper === from ? { ...e, paper: to } : e)),
+      ...(r.origin?.paper === from ? { origin: { ...r.origin, paper: to } } : {}),
+      updated_at: now
+    }
+    const current = byId.get(next.id)
+    if (!current || (reviewed(next) && !reviewed(current))) byId.set(next.id, next)
+  }
+  return sortRelations([...byId.values()])
+}
