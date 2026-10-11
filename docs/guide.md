@@ -44,7 +44,7 @@ On startup with no project open, the app asks you to create a new one (a name an
 
 ### Syncing the project between machines
 
-The project folder is plain text (YAML, Markdown), meant to be versioned with git or synced with a tool like Syncthing. Files reload on their own when they change from outside the app (a `git pull`, a sync, an external editor) — no restart needed. If two machines edit the same file at the same time, the app detects it as a conflict (see "Common problems" below).
+The project folder is plain text (YAML, Markdown), meant to be versioned with git or synced with a tool like Syncthing. Files reload on their own when they change from outside the app (a `git pull`, a sync, an external editor) — no restart needed. If two machines edit the same file at the same time, the app detects it as a conflict (see "Common problems" below). The trash (`.trash/`) syncs too: a paper you remove on one machine shows up in the other's «Papelera» (Trash) after a `git pull`, and can be restored or deleted there the same way.
 
 ## Adding papers
 
@@ -95,6 +95,32 @@ The list on the left shows every paper matching the active search and filters.
   - *Resumir pendientes* (Summarize pending): queues papers with no summary (or a stale or failed one) within the batch budget, using the model chosen in the «Modelo del lote» (Batch model) selector. The confirmation shows the number of papers, the estimated cost and the batch cap; if none are pending, it warns «No hay papers pendientes de resumir.» (There are no papers pending summarization.).
   - *Regenerar filtrados con…* (Regenerate filtered with…): with an active status filter (not «Todos» (All)), regenerates with the model chosen in its own selector every visible paper that has indexed text.
 - **Activity panel**: lists running and recent jobs (adding an identifier or PDF, attaching a PDF to a paper, completing metadata, summarizing, citations, who cites a paper, a paper's similarity, downloading the similarity model, sugerir relaciones (suggest relations)), with their status (queued, running, done, failed, cancelled) and, when applicable, the outcome (added, updated, was already in the library, PDF attached, summarized, citations updated, not found in OpenAlex, incoming citations updated, model downloaded, relaciones sugeridas (relations suggested), sin candidatos para analizar (no candidates to analyze)). The model download shows its progress as a percentage. A queued or running job can be cancelled. Tapping a job's name opens its paper.
+
+## Removing papers and the trash
+
+**«Quitar de la biblioteca»** (Remove from library) deletes nothing: it moves the paper's whole folder (`paper.yaml`, PDF, summary, extraction, notes and text) from `papers/<key>/` to `.trash/<key>/`, inside the project, and records when and on which machine in `.trash/<key>/trashed.yaml`.
+
+- **One paper:** in its detail (in the library or the graph), «Quitar de la biblioteca» asks for confirmation with its title.
+- **Several:** with a search or any filter active, the list's «Quitar de la biblioteca» button removes every visible paper; the confirmation says how many. Without a search or filter, the button doesn't show.
+- Its pending jobs (summary, citations, citing works, similarity, relations and attaching a PDF) are cancelled before it moves.
+- For a few seconds «N papers movidos a la papelera» (N papers moved to the trash) shows with **«Deshacer»** (Undo), which restores them.
+
+A paper in the trash disappears from the library, search, graph, charts, similar papers, Review mode and `exports/library.bib`. Its typed relations stay in `relations.yaml`, but they're hidden (in the app and from Claude) until you restore it. Its key stays reserved: a new paper never reuses it.
+
+If another program has one of the paper's files open (say, its PDF in a viewer), the app retries for a moment and, if it's still busy, shows «Otro programa tiene abierto un archivo de ese paper…» (Another program has a file of that paper open…).
+
+### Trash
+
+The **«Papelera»** (Trash) view (🗑 in the side rail) lists removed papers with title, authors, year, the day they were removed and on which machine («este equipo», this machine, or «otro equipo», another machine), with a simple search and checkboxes to pick several.
+
+- **«Restaurar»** (Restore) puts the folder back in `papers/<key>/` exactly as it was, relations included; if its PDF didn't change, its text isn't extracted again.
+- If meanwhile **a different paper** took that key, it comes back under the next free one (e.g. `he2017draina`), with its BibTeX and relations adjusted; the notice says which key it got.
+- If **the same paper** (same DOI, arXiv id or title) came back to the library, the app warns and offers **«Fusionar»** (Merge) or **«Cancelar»** (Cancel). Merging leaves a single paper, the library's: it joins both notes (the trashed ones at the end), keeps the summary and extraction with more verified or edited entries, takes the trashed files the library lacks, and moves its relations to the library key. No differing copy is lost: the one that doesn't win stays beside the other as `<name>.trashed.<ext>` (from the trash) or `<name>.before-merge.<ext>` (from the library), e.g. `paper.trashed.pdf`.
+- If a `papers/<key>/` folder without `paper.yaml` was left behind (by a sync), restoring moves the files into it without overwriting any: a clashing one is kept as `<name>.trashed.<ext>`.
+- **«Eliminar definitivamente»** (Delete permanently, one or several) and **«Vaciar papelera»** (Empty trash) ask for confirmation with the number of papers and of relations that will be removed from `relations.yaml`, and delete exactly those papers. If `relations.yaml` has a git conflict, nothing is deleted until it's resolved. Deleted papers can only be recovered from git history, and PDFs you keep out of git («Guardarlos fuera de git» or «No guardarlos» policy) can't be recovered.
+- A trash folder that can't be restored shows the reason, e.g. «No se puede restaurar: le falta paper.yaml.» (Can't be restored: paper.yaml is missing.); check it in the project's `.trash` folder.
+
+In **«Candidatos»** (Candidates, Map view), a work that matches a paper in your trash (by OpenAlex id or DOI) shows «En la papelera» (In the trash) with **«Restaurar»** (Restore) instead of «Agregar» (Add).
 
 ## Paper detail
 
@@ -164,7 +190,7 @@ OpenAlex limits requests per day. Without a key it's plenty for a few hundred pa
 - **«Referencias de tus papers»** (References of your papers): are cited by at least N of your papers.
 - **«Trabajos que citan a tus papers»** (Works citing your papers): cite at least N of your papers. To see them, first tap «Buscar quién cita a mis papers» (Find who cites my papers), which asks OpenAlex who cites each paper (one job per paper, in the activity panel). Papers looked up in the last 7 days are skipped, so tapping it again doesn't spend the daily budget twice; after that week it looks them up again.
 
-The table shows title (linking to the DOI or OpenAlex), year, authors, «Citado por tus papers» (Cited by your papers), «Cita a tus papers» (Cites your papers) and «Citas en OpenAlex» (Citations in OpenAlex). **«Agregar»** (Add) ingests it like any DOI (or by OpenAlex id when it has no DOI); **«Descartar»** (Dismiss) stores it in `project.yaml` so it never shows up again (on any machine). Works already in your library (by OpenAlex id or DOI) never show up.
+The table shows title (linking to the DOI or OpenAlex), year, authors, «Citado por tus papers» (Cited by your papers), «Cita a tus papers» (Cites your papers) and «Citas en OpenAlex» (Citations in OpenAlex). **«Agregar»** (Add) ingests it like any DOI (or by OpenAlex id when it has no DOI); **«Descartar»** (Dismiss) stores it in `project.yaml` so it never shows up again (on any machine). Works already in your library (by OpenAlex id or DOI) never show up. A work that is in your trash shows «En la papelera» (In the trash) and comes back with «Restaurar» (Restore); see "Removing papers and the trash".
 
 ## Similarity
 
@@ -301,9 +327,11 @@ papers/<key>/              one paper per folder; <key> is its citation key and n
   notes.md                 your notes
   content.md               readable text (grey literature, pages without a PDF)
   paper.pdf                the PDF, per the configured policy
+.trash/<key>/              a paper removed from the library, with all its files
+  trashed.yaml             when and on which machine it was removed
 costs/<device>.jsonl       estimated costs of each call to Claude, one per device (so syncing between machines never conflicts)
 exports/library.bib        BibTeX for the whole library; generated, don't edit it
-.cache/                    local search index, PDFs downloaded on demand, incoming citations, candidate data, vectors, similar papers and the relations index; can be deleted without losing anything, rebuilds itself
+.cache/                    local search index, PDFs downloaded on demand, incoming citations, candidate data, vectors, similar papers, the relations index and the trash index; can be deleted without losing anything, rebuilds itself
 ```
 
 Everything above, except `.cache/`, is meant to be versioned with git or synced between machines. `notes.md` and `project.yaml` (outside `extraction_form`) can be edited by hand with confidence; `paper.yaml`, `summary.md` and `extraction.yaml` too, but carefully, so as not to break their format. A file edited from outside the app (or updated by a sync) reloads on its own, without restarting the app.
@@ -324,6 +352,15 @@ Claude didn't return a response the app could parse (a summary tries twice; a re
 
 **«Claude tardó demasiado y se canceló.»** (Claude took too long and was cancelled.)
 Every call to Claude has a 5-minute limit (10 for suggesting relations); if it's exceeded, it cancels itself and its cost is logged as the per-paper cap (estimated). Retry.
+
+**«No se pudo mover ese paper: su carpeta en la papelera está dañada…»** (That paper couldn't be moved: its trash folder is damaged…)
+The folder in `.trash/` has no `paper.yaml`, or one with that key already exists. Check it by hand in the project's `.trash` folder (or recover it from git history).
+
+**«Otro programa tiene abierto un archivo de ese paper (por ejemplo, su PDF). Ciérralo y vuelve a intentarlo.»** (Another program has a file of that paper open, e.g. its PDF. Close it and try again.)
+This happens mostly on Windows, which won't move a folder with an open file. Close the viewer or editor and repeat the action.
+
+**«Ese paper ya no está en la papelera (quizás ya se restauró).»** (That paper is no longer in the trash; maybe it was already restored.)
+«Deshacer» (Undo) or «Restaurar» (Restore) came too late: the paper is already back in the library (from here or from another machine).
 
 **The paper is too long**
 The summarize button is disabled and «Forzar» (Force) appears, which summarizes using only the beginning of the text up to the configured maximum size (see "Maximum input size" under Settings → Claude). The resulting summary is marked as made from truncated text.

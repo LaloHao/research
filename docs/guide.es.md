@@ -44,7 +44,7 @@ Al arrancar sin un proyecto abierto, la app pide crear uno nuevo (nombre y una c
 
 ### Sincronizar el proyecto entre equipos
 
-La carpeta del proyecto es texto plano (YAML, Markdown) pensado para versionarse con git o sincronizarse con una herramienta como Syncthing. Los archivos se recargan solos cuando cambian por fuera de la app (un `git pull`, una sincronización, un editor externo) — no hace falta reiniciar. Si dos equipos editan el mismo archivo a la vez, la app lo detecta como conflicto (ver «Problemas comunes» más abajo).
+La carpeta del proyecto es texto plano (YAML, Markdown) pensado para versionarse con git o sincronizarse con una herramienta como Syncthing. Los archivos se recargan solos cuando cambian por fuera de la app (un `git pull`, una sincronización, un editor externo) — no hace falta reiniciar. Si dos equipos editan el mismo archivo a la vez, la app lo detecta como conflicto (ver «Problemas comunes» más abajo). La papelera (`.trash/`) también se sincroniza: un paper que quitas en un equipo aparece en la Papelera del otro tras un `git pull`, y desde ahí se restaura o se elimina igual.
 
 ## Agregar papers
 
@@ -95,6 +95,32 @@ La lista de la izquierda muestra todos los papers que coinciden con la búsqueda
   - *Resumir pendientes*: encola los papers sin resumen (o con resumen desactualizado o fallido) dentro del presupuesto por lote, usando el modelo elegido en el selector «Modelo del lote». La confirmación muestra la cantidad de papers, el costo estimado y el tope del lote; si no hay ninguno pendiente, avisa «No hay papers pendientes de resumir.».
   - *Regenerar filtrados con…*: con un filtro de estado activo (no «Todos»), regenera con el modelo elegido en su propio selector todos los papers visibles que tengan texto indexado.
 - **Panel de actividad**: lista los trabajos en curso y recientes (agregar un identificador o PDF, adjuntar un PDF a un paper, completar metadatos, resumir, citas, quién cita a un paper, similitud de un paper, descargar el modelo de similitud, sugerir relaciones), con su estado (en cola, en curso, listo, falló, cancelado) y, si corresponde, el resultado (agregado, actualizado, ya estaba en la biblioteca, PDF adjuntado, resumido, citas actualizadas, no se encontró en OpenAlex, citas entrantes actualizadas, modelo descargado, relaciones sugeridas, sin candidatos para analizar). La descarga del modelo muestra su avance en porcentaje. Un trabajo en cola o en curso se puede cancelar. Tocar el nombre de un trabajo abre su paper.
+
+## Quitar papers y papelera
+
+**Quitar de la biblioteca** no borra nada: mueve la carpeta completa del paper (`paper.yaml`, PDF, resumen, extracción, notas y texto) de `papers/<clave>/` a `.trash/<clave>/`, dentro del proyecto, y anota cuándo y en qué equipo en `.trash/<clave>/trashed.yaml`.
+
+- **Un paper:** en su detalle (en la biblioteca o en el grafo), «Quitar de la biblioteca» pide confirmación con su título.
+- **Varios:** con una búsqueda o algún filtro activo, el botón «Quitar de la biblioteca» de la lista quita todos los papers visibles; la confirmación dice cuántos son. Sin búsqueda ni filtro, el botón no aparece.
+- Antes de moverlo se cancelan sus trabajos pendientes (resumen, citas, quién lo cita, similitud, relaciones y adjuntar PDF).
+- Durante unos segundos aparece «N papers movidos a la papelera» con **Deshacer**, que los restaura.
+
+Un paper en la papelera desaparece de la biblioteca, la búsqueda, el grafo, las gráficas, los similares, el modo Revisar y `exports/library.bib`. Sus relaciones tipadas se conservan en `relations.yaml`, pero quedan ocultas (en la app y para Claude) hasta que lo restaures. Su clave queda reservada: un paper nuevo nunca la reutiliza.
+
+Si otro programa tiene abierto un archivo del paper (por ejemplo, su PDF en un visor), la app reintenta unos instantes y, si sigue ocupado, avisa «Otro programa tiene abierto un archivo de ese paper…».
+
+### Papelera
+
+La vista **Papelera** (🗑 en la barra lateral) lista los papers quitados con título, autores, año, el día en que se quitaron y en qué equipo («este equipo» u «otro equipo»), con una búsqueda simple y casillas para elegir varios.
+
+- **Restaurar** devuelve la carpeta a `papers/<clave>/` tal como estaba, con sus relaciones; si su PDF no cambió, no se vuelve a extraer el texto.
+- Si mientras tanto **otro paper distinto** tomó esa clave, se restaura con la siguiente libre (por ejemplo `he2017draina`), con su BibTeX y sus relaciones ajustados; el aviso dice con qué clave quedó.
+- Si **el mismo paper** (mismo DOI, arXiv o título) volvió a la biblioteca, la app avisa y ofrece **Fusionar** o **Cancelar**. Fusionar deja un solo paper, el de la biblioteca: junta ambas notas (las de la papelera al final), se queda con el resumen y la extracción con más entradas verificadas o editadas, toma los archivos de la papelera que la biblioteca no tiene y pasa sus relaciones a la clave de la biblioteca. Ninguna copia distinta se pierde: la que no gana queda junto a la otra como `<nombre>.trashed.<ext>` (de la papelera) o `<nombre>.before-merge.<ext>` (de la biblioteca), por ejemplo `paper.trashed.pdf`.
+- Si quedó una carpeta `papers/<clave>/` sin `paper.yaml` (restos de una sincronización), restaurar mete los archivos en ella sin pisar ninguno: el que choca queda como `<nombre>.trashed.<ext>`.
+- **Eliminar definitivamente** (uno o varios) y **Vaciar papelera** piden confirmación con el número de papers y de relaciones que se borrarán de `relations.yaml`, y se borran exactamente esos papers. Si `relations.yaml` tiene un conflicto de git, no se borra nada hasta resolverlo. Lo eliminado solo se recupera desde el historial de git, y los PDF que guardas fuera de git (política «Guardarlos fuera de git» o «No guardarlos») no se pueden recuperar.
+- Una carpeta de la papelera que no se puede restaurar aparece con el motivo, por ejemplo «No se puede restaurar: le falta paper.yaml.»; revísala en la carpeta `.trash` del proyecto.
+
+En **Candidatos** (vista Mapa), un trabajo que corresponde a un paper de tu papelera (por id de OpenAlex o DOI) aparece «En la papelera» con **Restaurar** en lugar de «Agregar».
 
 ## Detalle del paper
 
@@ -164,7 +190,7 @@ OpenAlex limita las consultas por día. Sin clave alcanza de sobra para unos cie
 - **Referencias de tus papers**: son citados por al menos N de tus papers.
 - **Trabajos que citan a tus papers**: citan al menos N de tus papers. Para verlos, primero toca «Buscar quién cita a mis papers», que consulta en OpenAlex quién cita cada paper (un trabajo por paper, en el panel de actividad). Se saltan los papers consultados en los últimos 7 días, así que volver a tocarlo no gasta dos veces el presupuesto diario; pasada esa semana los vuelve a consultar.
 
-La tabla muestra título (enlace al DOI o a OpenAlex), año, autores, «Citado por tus papers», «Cita a tus papers» y «Citas en OpenAlex». **Agregar** lo ingresa como cualquier DOI (o por su id de OpenAlex si no tiene DOI); **Descartar** lo guarda en `project.yaml` y no vuelve a aparecer (en ningún equipo). Los que ya están en tu biblioteca (por id de OpenAlex o DOI) nunca aparecen.
+La tabla muestra título (enlace al DOI o a OpenAlex), año, autores, «Citado por tus papers», «Cita a tus papers» y «Citas en OpenAlex». **Agregar** lo ingresa como cualquier DOI (o por su id de OpenAlex si no tiene DOI); **Descartar** lo guarda en `project.yaml` y no vuelve a aparecer (en ningún equipo). Los que ya están en tu biblioteca (por id de OpenAlex o DOI) nunca aparecen. Un trabajo que está en tu papelera aparece «En la papelera» y se restaura con «Restaurar» (ver «Quitar papers y papelera»).
 
 ## Similitud
 
@@ -299,9 +325,11 @@ papers/<clave>/            un paper por carpeta; <clave> es su clave de cita y n
   notes.md                 tus notas
   content.md               texto legible (literatura gris, páginas sin PDF)
   paper.pdf                el PDF, según la política configurada
+.trash/<clave>/            un paper quitado de la biblioteca, con todos sus archivos
+  trashed.yaml             cuándo y en qué equipo se quitó
 costs/<dispositivo>.jsonl  costos estimados de cada llamada a Claude, uno por dispositivo (para que sincronizar entre equipos nunca choque)
 exports/library.bib        BibTeX de toda la biblioteca; generado, no lo edites
-.cache/                    índice local de búsqueda, PDFs descargados bajo demanda, citas entrantes, datos de candidatos, vectores, similares y el índice de relaciones; se puede borrar sin perder nada, se reconstruye solo
+.cache/                    índice local de búsqueda, PDFs descargados bajo demanda, citas entrantes, datos de candidatos, vectores, el índice de relaciones y el de la papelera; se puede borrar sin perder nada, se reconstruye solo
 ```
 
 Todo lo de arriba, salvo `.cache/`, está pensado para versionarse con git o sincronizarse entre equipos. `notes.md` y `project.yaml` (fuera de `extraction_form`) se pueden editar a mano con confianza; `paper.yaml`, `summary.md` y `extraction.yaml` también, pero con cuidado de no romper su formato. Un archivo editado por fuera de la app (o actualizado por una sincronización) se recarga solo, sin reiniciar la app.
@@ -322,6 +350,15 @@ Claude no devolvió una respuesta que la app pudiera interpretar (un resumen lo 
 
 **«Claude tardó demasiado y se canceló.»**
 Cada llamada a Claude tiene un límite de 5 minutos (10 para sugerir relaciones); si lo supera, se cancela sola y se registra su costo como el tope por paper (estimado). Reintenta.
+
+**«No se pudo mover ese paper: su carpeta en la papelera está dañada…»**
+La carpeta en `.trash/` no tiene `paper.yaml` o ya existe una con esa clave. Revísala a mano en la carpeta `.trash` del proyecto (o recupérala del historial de git).
+
+**«Otro programa tiene abierto un archivo de ese paper (por ejemplo, su PDF). Ciérralo y vuelve a intentarlo.»**
+Pasa sobre todo en Windows, que no deja mover una carpeta con un archivo abierto. Cierra el visor o el editor y repite la acción.
+
+**«Ese paper ya no está en la papelera (quizás ya se restauró).»**
+«Deshacer» o «Restaurar» llegaron tarde: el paper ya volvió a la biblioteca (desde aquí o desde otro equipo).
 
 **El paper es demasiado largo**
 El botón para resumir se deshabilita y aparece «Forzar», que resume usando solo el comienzo del texto hasta el tamaño máximo configurado (ver «Tamaño máximo de entrada» en Ajustes → Claude). El resumen queda marcado como hecho con texto truncado.
