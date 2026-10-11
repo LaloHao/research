@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { appendFile, mkdir, readdir, readFile } from 'node:fs/promises'
+import { appendFile, mkdir, readdir, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PaperSchema, ProjectConfigSchema, type Paper, type ProjectConfig } from '../../shared/schemas'
 import { parse } from 'yaml'
@@ -155,6 +155,11 @@ export class ProjectStore {
   async writePdf(id: string, bytes: Uint8Array, opts: { redownloadable: boolean }): Promise<string> {
     await atomicWrite(this.pdfLocation(id, opts), bytes)
     return sha256(bytes)
+  }
+
+  /** Drops the on-demand copy in the cache, once a PDF in the paper folder takes its place. */
+  async removeCachedPdf(id: string): Promise<void> {
+    await rm(join(this.cacheDir, 'pdfs', `${id}.pdf`), { force: true })
   }
 
   async writeContent(id: string, markdown: string): Promise<void> {

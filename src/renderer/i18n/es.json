@@ -239,6 +239,7 @@
     "operation_budget": "La operación llegó a su tope por paper y se detuvo. Sube «Tope por paper (USD est.)» en Ajustes → Claude o reintenta con otro modelo.",
     "agent_tools_unavailable": "No se pudieron preparar las herramientas de búsqueda de la biblioteca para Claude. Reintenta; si sigue fallando, reinicia la app.",
     "relations_conflict": "relations.yaml tiene un conflicto de git o un error; resuélvelo antes de cambiar relaciones.",
+    "file_too_large": "El archivo pesa más de 200 MB.",
     "pdf_exists": "Este paper ya tiene PDF. Usa «Reemplazar PDF…» si quieres cambiarlo.",
     "unknown": "Ocurrió un error inesperado."
   },

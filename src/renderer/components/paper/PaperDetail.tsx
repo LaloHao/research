@@ -44,7 +44,7 @@ function PdfTab({ id, hasPdf, focus }: { id: string; hasPdf: boolean; focus: Pdf
   const attach = useAttachPdf(id, !missing)
   return (
     <div className={`pdf-drop${attach.dragging ? ' dragging' : ''}`} {...attach.dropProps}>
-      {!missing && (
+      {state.status === 'ready' && (
         <div className="pdf-toolbar">
           <button className="small" disabled={attach.busy} onClick={attach.pick}>
             {t('paper.attach.replace')}
@@ -52,17 +52,19 @@ function PdfTab({ id, hasPdf, focus }: { id: string; hasPdf: boolean; focus: Pdf
         </div>
       )}
       <AttachPdfStatus attach={attach} />
-      {state.status === 'ready' && <PdfViewer data={state.data} focus={focus} />}
-      {state.status === 'loading' && <div className="center muted">{t('paper.pdf_loading')}</div>}
-      {state.status === 'error' && <div className="center error">{t('paper.pdf_error', { message: state.message })}</div>}
-      {missing && (
-        <div className="center muted column">
-          <p>{t('paper.no_pdf')}</p>
-          <button disabled={attach.busy} onClick={attach.pick}>
-            {t('paper.attach.attach')}
-          </button>
-        </div>
-      )}
+      <div className="pdf-drop-scroll">
+        {state.status === 'ready' && <PdfViewer data={state.data} focus={focus} />}
+        {state.status === 'loading' && <div className="center muted">{t('paper.pdf_loading')}</div>}
+        {state.status === 'error' && <div className="center error">{t('paper.pdf_error', { message: state.message })}</div>}
+        {missing && (
+          <div className="center muted column">
+            <p>{t('paper.no_pdf')}</p>
+            <button disabled={attach.busy} onClick={attach.pick}>
+              {t('paper.attach.attach')}
+            </button>
+          </div>
+        )}
+      </div>
       {attach.dragging && <div className="drop-overlay">{t(missing ? 'paper.attach.drop_hint' : 'paper.attach.drop_hint_replace')}</div>}
     </div>
   )
@@ -80,7 +82,9 @@ function ContentTab({ id, content, focus }: { id: string; content: string; focus
         </button>
       </div>
       <AttachPdfStatus attach={attach} />
-      <ContentView content={content} focus={focus} />
+      <div className="pdf-drop-scroll">
+        <ContentView content={content} focus={focus} />
+      </div>
       {attach.dragging && <div className="drop-overlay">{t('paper.attach.drop_hint')}</div>}
     </div>
   )

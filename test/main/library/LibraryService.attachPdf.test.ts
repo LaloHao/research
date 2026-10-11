@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { readFile, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { readFile, truncate, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PdfjsExtractor } from '../../../src/main/extract/PdfExtractor'
 import { sha256 } from '../../../src/main/project/atomicWrite'
@@ -80,13 +81,62 @@ describe('LibraryService.attachPdf', () => {
     expect(await readFile(join(store.paperDir('he2017drain'), 'summary.md'), 'utf8')).toBe(summaryBefore)
   })
 
-  it('replaces the copy that is shown when the paper folder already holds one under download_on_demand', async () => {
+  it('keeps an attached PDF in the paper folder and drops the old cached copy under download_on_demand', async () => {
     const { store, library } = await setupLibrary({ policy: 'download_on_demand' })
     await store.writePaper(samplePaper({ oa_pdf_url: 'https://example.test/drain.pdf' }), null)
-    await store.writePdf('he2017drain', await makePdf([['The old copy.']]), { redownloadable: false })
+    await store.writePdf('he2017drain', await makePdf([['The old downloaded copy.']]), { redownloadable: true })
+    const cached = join(store.cacheDir, 'pdfs', 'he2017drain.pdf')
+    expect(existsSync(cached)).toBe(true)
     const path = await pdfFile(['The new copy.'])
     await library.attachPdf('he2017drain', path, { replace: true })
+    expect(store.resolvePdf('he2017drain')).toBe(join(store.paperDir('he2017drain'), 'paper.pdf'))
     expect(new Uint8Array(await readFile(store.resolvePdf('he2017drain')!))).toEqual(new Uint8Array(await readFile(path)))
+    expect(existsSync(cached)).toBe(false)
+  })
+
+  it('records the hash even when paper.yaml changes while the PDF is being read', async () => {
+    const pdfjs = new PdfjsExtractor()
+    let edit: (() => Promise<void>) | null = null
+    const extractor = {
+      extract: async (data: Uint8Array) => {
+        await edit?.()
+        return pdfjs.extract(data)
+      }
+    }
+    const { store, library } = await withPaper({ extractor })
+    edit = async () => {
+      const read = await store.readPaper('he2017drain')
+      if (read.ok) await store.writePaper({ ...read.value, venue: 'Edited meanwhile' }, read.hash)
+    }
+    const path = await pdfFile(['Pseudonymization keeps referential integrity in production logs.'])
+    await library.attachPdf('he2017drain', path, { replace: false })
+    const read = await store.readPaper('he2017drain')
+    expect(read.ok && read.value).toMatchObject({ venue: 'Edited meanwhile', pdf_sha256: sha256(new Uint8Array(await readFile(path))) })
+    expect(library.list('pseudonymization').map((r) => r.id)).toEqual(['he2017drain'])
+  })
+
+  it('indexes the written PDF even when recording its hash fails', async () => {
+    const { store, cache, library } = await withPaper()
+    const writePaper = store.writePaper.bind(store)
+    store.writePaper = async () => {
+      throw new Error('disk full')
+    }
+    const path = await pdfFile(['Pseudonymization keeps referential integrity in production logs.'])
+    await expect(library.attachPdf('he2017drain', path, { replace: false })).rejects.toBeTruthy()
+    store.writePaper = writePaper
+    expect(cache.getPaper('he2017drain')).toMatchObject({ has_pdf: true, text_status: 'ok' })
+  })
+
+  it('rejects a directory and a file over 200 MB, for attaching and for ingesting', async () => {
+    const { library } = await withPaper()
+    const dir = await tmpDir()
+    await expect(library.attachPdf('he2017drain', dir, { replace: false })).rejects.toMatchObject({ code: 'not_a_pdf' })
+    await expect(library.ingestPdf(dir)).rejects.toMatchObject({ code: 'not_a_pdf' })
+    const big = join(await tmpDir(), 'big.pdf')
+    await writeFile(big, '%PDF-1.7\n')
+    await truncate(big, 200 * 1024 * 1024 + 1)
+    await expect(library.attachPdf('he2017drain', big, { replace: false })).rejects.toMatchObject({ code: 'file_too_large' })
+    await expect(library.ingestPdf(big)).rejects.toMatchObject({ code: 'file_too_large' })
   })
 
   it('extracts the attached PDF only once', async () => {

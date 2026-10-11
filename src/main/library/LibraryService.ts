@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import type { IngestStatus, PaperDetail, PaperRow } from '../../shared/library'
 import type { Paper } from '../../shared/schemas'
@@ -104,7 +104,7 @@ export class LibraryService {
 
   async ingestPdf(path: string, signal?: AbortSignal): Promise<IngestOutcome> {
     try {
-      const bytes = new Uint8Array(await readFile(path))
+      const bytes = await readPdfFile(path)
       return await this.ingestPdfBytes(bytes, basename(path), undefined, signal)
     } catch (error) {
       throw toUserFacing(error)
@@ -126,31 +126,43 @@ export class LibraryService {
     const { store, extractor } = this.deps
     try {
       if (!store.paperExists(id)) throw new UserFacingError('file_problem')
-      const read = await store.readPaper(id)
-      if (!read.ok) throw new UserFacingError('file_problem')
-      const existing = store.resolvePdf(id)
-      if (existing && !replace) throw new UserFacingError('pdf_exists')
-      const bytes = new Uint8Array(await readFile(path))
-      if (!isPdf(bytes)) throw new UserFacingError('not_a_pdf')
+      const before = await store.readPaper(id)
+      if (!before.ok) throw new UserFacingError('file_problem')
+      if (store.resolvePdf(id) && !replace) throw new UserFacingError('pdf_exists')
+      const bytes = await readPdfFile(path)
       // Parsed before anything is written: a corrupt file leaves the paper as it was.
       const text = await extractor.extract(bytes)
       signal?.throwIfAborted()
-      // A copy in the paper folder is found before one in the cache, so a replacement must land there too.
-      const inPaperFolder = existing === store.pdfLocation(id, { redownloadable: false })
-      const sha = await store.writePdf(id, bytes, { redownloadable: Boolean(read.value.oa_pdf_url) && !inPaperFolder })
+      // A file the user chose can't be downloaded again: it always goes in the paper folder, and a cached copy would only shadow nothing.
+      const sha = await store.writePdf(id, bytes, { redownloadable: false })
       this.extracted.set(sha, text)
       try {
-        if (read.value.pdf_sha256 !== sha) {
-          await store.writePaper({ ...read.value, pdf_sha256: sha, updated_at: this.now().toISOString() }, read.hash)
-        }
-        await this.afterWrite(id)
+        await store.removeCachedPdf(id)
+        await this.recordPdfHash(id, sha)
       } finally {
-        this.extracted.delete(sha)
+        // Whatever happened to paper.yaml, the index and the UI must match the PDF now on disk.
+        await this.afterWrite(id).finally(() => this.extracted.delete(sha))
       }
       return { status: 'pdf_attached', paperId: id }
     } catch (error) {
       if (signal?.aborted) throw error
       throw toUserFacing(error)
+    }
+  }
+
+  /** Writes `pdf_sha256` from a fresh read of paper.yaml, retrying once if it changed between that read and the write. */
+  private async recordPdfHash(id: string, sha: string): Promise<void> {
+    const { store } = this.deps
+    for (let attempt = 0; ; attempt++) {
+      const read = await store.readPaper(id)
+      if (!read.ok) throw new UserFacingError('file_problem')
+      if (read.value.pdf_sha256 === sha) return
+      try {
+        await store.writePaper({ ...read.value, pdf_sha256: sha, updated_at: this.now().toISOString() }, read.hash)
+        return
+      } catch (error) {
+        if (!(error instanceof ConflictError) || attempt > 0) throw error
+      }
     }
   }
 
@@ -465,6 +477,19 @@ export class LibraryService {
     }
     if (cache.getPaper(id)?.text_status !== 'no_source') cache.setText(id, null, 'no_source', [])
   }
+}
+
+/** Largest PDF accepted from the user's disk. */
+export const MAX_PDF_BYTES = 200 * 1024 * 1024
+
+/** A PDF the user picked or dropped: a regular file of a sane size that starts like a PDF. */
+async function readPdfFile(path: string): Promise<Uint8Array> {
+  const info = await stat(path)
+  if (!info.isFile()) throw new UserFacingError('not_a_pdf')
+  if (info.size > MAX_PDF_BYTES) throw new UserFacingError('file_too_large')
+  const bytes = new Uint8Array(await readFile(path))
+  if (!isPdf(bytes)) throw new UserFacingError('not_a_pdf')
+  return bytes
 }
 
 export function isPdf(bytes: Uint8Array): boolean {

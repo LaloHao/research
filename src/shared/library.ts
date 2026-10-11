@@ -62,6 +62,7 @@ export const USER_ERROR_CODES = [
   'agent_tools_unavailable',
   'relations_conflict',
   'pdf_exists',
+  'file_too_large',
   'unknown'
 ] as const
 export type UserErrorCode = (typeof USER_ERROR_CODES)[number]
