@@ -7,6 +7,7 @@ import { MapView } from './components/map/MapView'
 import { Rail } from './components/Rail'
 import { RelationsFileBanner } from './components/RelationsFileBanner'
 import { SettingsView } from './components/SettingsView'
+import { CloseSyncDialog } from './components/sync/CloseSyncDialog'
 import { SyncView } from './components/sync/SyncView'
 import { TrashView } from './components/TrashView'
 import { WelcomeView } from './components/WelcomeView'
@@ -28,11 +29,22 @@ export function App(): React.JSX.Element {
   useEvent('flush-request', () => {
     void flushAll().finally(() => window.research.flushDone())
   })
+  const openSync = useCallback(() => setView('sync'), [])
 
-  if (project === undefined) return <div className="center muted">{t('app.loading')}</div>
-  if (project === null) return <WelcomeView />
-  // Keyed by the project folder: filters, visible rows and the candidates' paper of one project never reach the next.
-  return <ProjectShell key={project.root} project={project} view={view} onViewChange={setView} />
+  return (
+    <>
+      {project === undefined ? (
+        <div className="center muted">{t('app.loading')}</div>
+      ) : project === null ? (
+        <WelcomeView />
+      ) : (
+        // Keyed by the project folder: filters, visible rows and the candidates' paper of one project never reach the next.
+        <ProjectShell key={project.root} project={project} view={view} onViewChange={setView} />
+      )}
+      {/* Outside the shell: the main process waits for its answer even if the project closes meanwhile. */}
+      <CloseSyncDialog onOpenSync={openSync} />
+    </>
+  )
 }
 
 interface ProjectShellProps {

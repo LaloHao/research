@@ -279,3 +279,8 @@ button.danger { color: var(--error); border-color: var(--error); }
 .sync-diff-table td { padding: 1px 6px; white-space: pre-wrap; overflow-wrap: anywhere; vertical-align: top; }
 .sync-diff-table td:first-child { border-right: 1px solid var(--border); }
 .sync-diff-table tr.diff-changed td, .sync-diff-table tr.diff-removed td:first-child, .sync-diff-table tr.diff-added td:last-child { background: var(--warning-soft); }
+
+/* «Hay cambios sin sincronizar» on close. */
+.modal-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 0.35); display: flex; align-items: center; justify-content: center; z-index: 30; }
+.modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 20px; margin: 16px; max-width: 480px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 4px 16px rgb(0 0 0 / 0.3); }
+.modal h3, .modal p { margin: 0; }

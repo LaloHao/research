@@ -122,7 +122,9 @@ describe('es.json covers every code the UI can receive', () => {
       'diff_deleted',
       'diff_binary',
       'diff_too_large'
-    ].map((k) => `sync.conflicts.${k}`)
+    ].map((k) => `sync.conflicts.${k}`),
+    ...['title', 'body', 'sync_and_close', 'close_anyway', 'cancel', 'syncing', 'conflicts', 'open_sync'].map((k) => `sync.close.${k}`),
+    ...['title', 'enabled', 'enabled_help', 'minutes', 'minutes_help'].map((k) => `sync.auto.${k}`)
   ])('%s', (path) => {
     expect(typeof lookup(path)).toBe('string')
   })

@@ -701,6 +701,23 @@
       "diff_deleted": "(borrado)",
       "diff_binary": "Es un archivo binario (por ejemplo, un PDF): no se puede comparar aquí.",
       "diff_too_large": "Es demasiado grande para compararlo aquí."
+    },
+    "close": {
+      "title": "Hay cambios sin sincronizar",
+      "body": "Este proyecto tiene cambios que todavía no subiste al remoto.",
+      "sync_and_close": "Sincronizar y cerrar",
+      "close_anyway": "Cerrar sin sincronizar",
+      "cancel": "Cancelar",
+      "syncing": "Sincronizando…",
+      "conflicts": "La sincronización encontró conflictos. Resuélvelos en Sincronización antes de cerrar, o cierra sin sincronizar (tus cambios quedan en un commit local).",
+      "open_sync": "Ver sincronización"
+    },
+    "auto": {
+      "title": "Sincronización",
+      "enabled": "Sincronizar automáticamente",
+      "enabled_help": "Al abrir el proyecto y cada cierto tiempo, si el repositorio tiene remoto. Es un ajuste de este equipo; no se guarda en project.yaml.",
+      "minutes": "Cada (minutos)",
+      "minutes_help": "Un número entero entre 5 y 120."
     }
   }
 }
