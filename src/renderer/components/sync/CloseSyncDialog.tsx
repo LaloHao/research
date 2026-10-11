@@ -92,7 +92,8 @@ export function CloseSyncDialog({ onOpenSync }: { onOpenSync: () => void }): Rea
               {t('sync.close.open_sync')}
             </button>
           )}
-          <button disabled={busy} onClick={() => answer('close')}>
+          {/* Enabled while syncing: a big first sync can take long, and closing aborts its network step cleanly. */}
+          <button onClick={() => answer('close')}>
             {t('sync.close.close_anyway')}
           </button>
           <button disabled={busy} onClick={() => answer('cancel')}>
