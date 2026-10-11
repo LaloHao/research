@@ -61,7 +61,7 @@ Agregar un identificador o PDF que ya está en la biblioteca actualiza el paper 
 
 ### Adjuntar o reemplazar un PDF
 
-Para agregar el PDF de un paper que ya está en la biblioteca (por ejemplo, uno agregado por DOI sin PDF de acceso abierto), abre el paper y, en su pestaña **PDF**, toca «Adjuntar PDF…» para elegir el archivo, o suéltalo sobre la pestaña. En una página web sin PDF, el botón «Adjuntar PDF…» está arriba en la pestaña **Contenido**, que también acepta el archivo soltado. Se acepta un solo archivo `.pdf` a la vez.
+Para agregar el PDF de un paper que ya está en la biblioteca (por ejemplo, uno agregado por DOI sin PDF de acceso abierto), abre el paper y, en su pestaña **PDF**, toca «Adjuntar PDF…» para elegir el archivo, o suéltalo sobre la pestaña. En una página web sin PDF, el botón «Adjuntar PDF…» está arriba en la pestaña **Contenido**, que también acepta el archivo soltado. Se acepta un solo archivo `.pdf` a la vez, de hasta 200 MB. Un PDF soltado sobre una pestaña PDF o Contenido abierta se adjunta a ese paper en vez de agregarse como paper nuevo. Un PDF adjuntado siempre se guarda en la carpeta del paper (`papers/<clave>/paper.pdf`, versionado o ignorado por git según la política de PDFs), incluso con «No guardarlos: descargarlos al abrirlos», porque no se puede volver a descargar; la copia descargada antes en `.cache/` se borra.
 
 Cuando el paper ya tiene PDF, la pestaña PDF tiene arriba un botón «Reemplazar PDF…» (también puedes soltar el archivo ahí). Antes de reemplazarlo, la app pregunta: «Se reemplaza el PDF y se vuelve a extraer el texto. Los resúmenes no cambian.».
 

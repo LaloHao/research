@@ -61,7 +61,7 @@ Adding an identifier or PDF that's already in the library updates the existing p
 
 ### Attaching or replacing a PDF
 
-To add the PDF of a paper that's already in the library (for example one added by DOI without an open-access PDF), open the paper and, in its **PDF** tab, tap «Adjuntar PDF…» (Attach PDF…) to pick the file, or drop the file on the tab. For a web page without a PDF, the «Adjuntar PDF…» button is at the top of the **Contenido** (Content) tab, which also accepts the dropped file. Only one `.pdf` file at a time is accepted.
+To add the PDF of a paper that's already in the library (for example one added by DOI without an open-access PDF), open the paper and, in its **PDF** tab, tap «Adjuntar PDF…» (Attach PDF…) to pick the file, or drop the file on the tab. For a web page without a PDF, the «Adjuntar PDF…» button is at the top of the **Contenido** (Content) tab, which also accepts the dropped file. Only one `.pdf` file at a time is accepted, up to 200 MB. A PDF dropped on an open PDF or Contenido tab is attached to that paper instead of being added as a new paper. An attached PDF is always kept in the paper's folder (`papers/<key>/paper.pdf`, tracked or ignored by git per the PDF policy), even with «No guardarlos: descargarlos al abrirlos» (Don't store them: download on open), since it can't be downloaded again; a previously downloaded copy in `.cache/` is removed.
 
 When the paper already has a PDF, the PDF tab has a «Reemplazar PDF…» (Replace PDF…) button at the top (dropping a file there works too). Before replacing it, the app asks: «Se reemplaza el PDF y se vuelve a extraer el texto. Los resúmenes no cambian.» (The PDF is replaced and its text extracted again. Summaries don't change.).
 
