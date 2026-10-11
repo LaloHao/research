@@ -1,13 +1,18 @@
 import { app, BrowserWindow, ipcMain, session, shell, type IpcMainEvent } from 'electron'
 import { join } from 'node:path'
 import { eventChannel, IPC } from '../shared/ipc'
+import type { CloseDecision } from '../shared/sync'
 import { AppController } from './AppController'
+import { confirmClose } from './closeFlow'
 import { UtilityEmbeddingRuntime } from './embeddings/UtilityEmbeddingRuntime'
 import { waitForFlush } from './flush'
 import { registerIpc } from './ipc'
+import { arg, ipcArgs } from './ipcArgs'
 
 let mainWindow: BrowserWindow | null = null
 let quitting = false
+/** The close prompt in progress, shared by closing the window and quitting, so it is never shown twice. */
+let leaving: Promise<boolean> | null = null
 
 // The local model lives with the app's data, never in a project folder.
 const embeddings = new UtilityEmbeddingRuntime(join(app.getPath('userData'), 'models'), join(__dirname, 'embeddings.js'))
@@ -36,6 +41,49 @@ function flushRenderer(win: BrowserWindow | null): Promise<void> {
   )
 }
 
+/** Shows «Hay cambios sin sincronizar» in the window and waits for the answer; a window that is gone counts as `close`. */
+function askCloseDecision(win: BrowserWindow): Promise<CloseDecision> {
+  return new Promise((resolve) => {
+    const contents = win.webContents
+    let answered = false
+    const finish = (decision: CloseDecision): void => {
+      if (answered) return
+      answered = true
+      ipcMain.removeListener(IPC.closeDecision, onAnswer)
+      contents.removeListener('render-process-gone', onGone)
+      contents.removeListener('destroyed', onGone)
+      resolve(decision)
+    }
+    function onAnswer(event: IpcMainEvent, raw: unknown): void {
+      if (event.sender !== contents) return
+      try {
+        finish(arg(ipcArgs.closeDecision, raw, 'decision'))
+      } catch {
+        finish('cancel')
+      }
+    }
+    function onGone(): void {
+      finish('close')
+    }
+    ipcMain.on(IPC.closeDecision, onAnswer)
+    contents.on('render-process-gone', onGone)
+    contents.on('destroyed', onGone)
+    contents.send(eventChannel('close-request'))
+  })
+}
+
+/** Saves pending edits, then asks only when the project has changes not synced; true when the window may go. */
+function confirmLeave(win: BrowserWindow): Promise<boolean> {
+  leaving ??= confirmClose({
+    flush: () => flushRenderer(win),
+    unsynced: () => controller.hasUnsyncedChanges(),
+    ask: () => (win.isDestroyed() ? Promise.resolve<CloseDecision>('close') : askCloseDecision(win))
+  }).finally(() => {
+    leaving = null
+  })
+  return leaving
+}
+
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
@@ -49,14 +97,15 @@ function createWindow(): BrowserWindow {
     }
   })
   win.on('ready-to-show', () => win.show())
-  let flushed = false
+  let allowClose = false
   win.on('close', (event) => {
-    // On quit, before-quit has already flushed and closed the project.
-    if (flushed || quitting) return
+    // On quit, before-quit has already asked, flushed and closed the project.
+    if (allowClose || quitting) return
     event.preventDefault()
-    flushed = true
-    void flushRenderer(win).finally(() => {
-      if (!win.isDestroyed()) win.close()
+    void confirmLeave(win).then((ok) => {
+      if (!ok || win.isDestroyed()) return
+      allowClose = true
+      win.close()
     })
   })
   win.on('closed', () => {
@@ -104,11 +153,17 @@ function start(): void {
   app.on('before-quit', (event) => {
     if (quitting) return
     event.preventDefault()
-    quitting = true
-    void flushRenderer(mainWindow)
-      .then(() => controller.shutdown())
+    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+    void (win ? confirmLeave(win) : Promise.resolve(true))
+      .then(async (ok) => {
+        if (!ok || quitting) return
+        quitting = true
+        await controller.shutdown()
+      })
       .catch((error) => console.error('shutdown', error))
-      .finally(() => app.quit())
+      .finally(() => {
+        if (quitting) app.quit()
+      })
   })
 
   app.on('window-all-closed', () => {
