@@ -21,13 +21,15 @@ describe('withManagedBlock', () => {
 })
 
 describe('policy lines', () => {
-  it('ignores the cache always and PDFs only when untracked', () => {
+  it('ignores the cache always and PDFs (in the library, in the trash and kept copies) only when untracked', () => {
     expect(gitignoreLines('track')).toEqual(['.cache/'])
-    expect(gitignoreLines('untracked')).toEqual(['.cache/', 'papers/*/paper.pdf'])
+    expect(gitignoreLines('untracked')).toEqual(['.cache/', 'papers/*/paper.pdf', 'papers/*/paper.*.pdf', '.trash/*/paper.pdf', '.trash/*/paper.*.pdf'])
   })
 
-  it('routes PDFs through LFS only for the lfs policy', () => {
-    expect(gitattributesLines('lfs')).toEqual(['papers/*/paper.pdf filter=lfs diff=lfs merge=lfs -text'])
+  it('routes those PDFs through LFS only for the lfs policy', () => {
+    expect(gitattributesLines('lfs')).toEqual(
+      ['papers/*/paper.pdf', 'papers/*/paper.*.pdf', '.trash/*/paper.pdf', '.trash/*/paper.*.pdf'].map((p) => `${p} filter=lfs diff=lfs merge=lfs -text`)
+    )
     expect(gitattributesLines('track')).toEqual([])
   })
 })

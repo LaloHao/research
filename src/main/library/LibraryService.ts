@@ -419,21 +419,22 @@ export class LibraryService {
     )
     let paper = buildPaper(meta, id, this.now())
     if (extras.pdf) {
-      paper = { ...paper, pdf_sha256: await store.writePdf(id, extras.pdf, { redownloadable: Boolean(paper.oa_pdf_url) }) }
+      paper = { ...paper, pdf_sha256: await store.writePdf(id, extras.pdf, { redownloadable: Boolean(paper.oa_pdf_url), newPaper: true }) }
     } else if (meta.oa_pdf_url && store.config.pdfs.policy !== 'download_on_demand') {
-      const sha = await this.downloadPdf(id, meta.oa_pdf_url).catch(() => null)
+      const sha = await this.downloadPdf(id, meta.oa_pdf_url, undefined, { newPaper: true }).catch(() => null)
       if (sha) paper = { ...paper, pdf_sha256: sha }
     }
-    if (extras.content) await store.writeContent(id, extras.content)
+    if (extras.content) await store.writeContent(id, extras.content, { newPaper: true })
     await store.writePaper(paper, null)
     await this.afterWrite(id)
     return { status: 'added', paperId: id }
   }
 
-  protected async downloadPdf(id: string, url: string, signal?: AbortSignal): Promise<string> {
+  /** `newPaper`: the PDF of a paper whose paper.yaml is written right after. */
+  protected async downloadPdf(id: string, url: string, signal?: AbortSignal, opts: { newPaper?: boolean } = {}): Promise<string> {
     const bytes = await this.deps.http.bytes(url, 'application/pdf', signal)
     if (!isPdf(bytes)) throw new UserFacingError('not_a_pdf')
-    return this.deps.store.writePdf(id, bytes, { redownloadable: true })
+    return this.deps.store.writePdf(id, bytes, { redownloadable: true, newPaper: opts.newPaper })
   }
 
   protected async afterWrite(id: string): Promise<void> {

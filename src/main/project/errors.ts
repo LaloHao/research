@@ -11,7 +11,7 @@ export class ConflictError extends Error {
 export class ProjectError extends Error {
   constructor(
     message: string,
-    readonly code?: 'project_exists' | 'not_a_project' | 'invalid_project'
+    readonly code?: 'project_exists' | 'not_a_project' | 'invalid_project' | 'paper_exists' | 'trash_problem' | 'folder_busy'
   ) {
     super(message)
     this.name = 'ProjectError'
