@@ -566,7 +566,7 @@
     "restored_one": "1 paper restaurado.",
     "restored_other": "{{count}} papers restaurados.",
     "restored_as": "{{id}} quedó en la biblioteca como {{key}}.",
-    "restored_remnant": "Algo de {{id}} (una subcarpeta) no se pudo incorporar y sigue en la papelera.",
+    "restored_remnant": "Algo de {{id}} (un archivo o una subcarpeta que la app no mueve) sigue en la papelera.",
     "restored_index_failed": "{{key}} volvió a la biblioteca, pero no se pudo indexar; la próxima reindexación lo incluirá.",
     "deleted_one": "1 paper eliminado definitivamente.",
     "deleted_other": "{{count}} papers eliminados definitivamente.",

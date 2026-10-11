@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { DeletePlan, RestoreConflict, TrashEntry, TrashTarget } from '../../shared/trash'
 import { useEvent } from '../hooks/useEvent'
 import { errorText } from '../lib/errorText'
-import { deviceKind, filterTrash, prune, restoreDetails, shortDevice, toggle, toggleAll, trashedDay } from '../lib/trash'
+import { deviceKind, filterTrash, prune, restorable, restoreDetails, shortDevice, toggle, toggleAll, trashedDay } from '../lib/trash'
 
 type Notice = { error: boolean; text: string }
 
@@ -39,6 +39,8 @@ export function TrashView(): React.JSX.Element {
 
   const visible = useMemo(() => filterTrash(entries ?? [], query), [entries, query])
   const chosen = useMemo(() => [...selected], [selected])
+  // An entry with a problem cannot be restored (its own button is disabled): the batch leaves it out too.
+  const restorableChosen = useMemo(() => restorable(entries ?? [], selected), [entries, selected])
   const failed = (): void => {
     setBusy(false)
     setNotice({ error: true, text: errorText(t, 'unknown') })
@@ -63,9 +65,12 @@ export function TrashView(): React.JSX.Element {
     setBusy(true)
     setNotice(null)
     setConfirm(null)
-    window.research.trash.deletePlan(target).then((plan) => {
+    window.research.trash.deletePlan(target).then((r) => {
       setBusy(false)
-      if (plan.papers > 0) setConfirm({ all: target === 'all', plan })
+      if (!r.ok) setNotice({ error: true, text: errorText(t, r.error) })
+      else if (r.plan.papers > 0) setConfirm({ all: target === 'all', plan: r.plan })
+      // Nothing left to delete (another machine already did): the list catches up.
+      else refresh()
     }, failed)
   }
 
@@ -92,8 +97,8 @@ export function TrashView(): React.JSX.Element {
             <input type="checkbox" checked={allVisibleSelected} disabled={visible.length === 0} onChange={() => setSelected((prev) => toggleAll(prev, visible))} />{' '}
             {t('trash.select_visible')}
           </label>
-          <button disabled={busy || chosen.length === 0} onClick={() => restore(chosen, false)}>
-            {t('trash.restore_selected', { count: chosen.length })}
+          <button disabled={busy || restorableChosen.length === 0} onClick={() => restore(restorableChosen, false)}>
+            {t('trash.restore_selected', { count: restorableChosen.length })}
           </button>
           <button disabled={busy || chosen.length === 0} onClick={() => planDelete(chosen)}>
             {t('trash.delete_selected', { count: chosen.length })}

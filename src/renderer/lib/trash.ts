@@ -1,4 +1,5 @@
 import type { TFunction } from 'i18next'
+import type { FacetFilter } from '../../shared/relations'
 import type { RestoreOutcome, TrashEntry } from '../../shared/trash'
 import { errorText } from './errorText'
 
@@ -39,6 +40,24 @@ export function toggleAll(set: ReadonlySet<string>, visible: TrashEntry[]): Set<
 export function prune(set: ReadonlySet<string>, entries: TrashEntry[]): ReadonlySet<string> {
   const present = new Set(entries.map((e) => e.id))
   return [...set].every((id) => present.has(id)) ? set : new Set([...set].filter((id) => present.has(id)))
+}
+
+/** «Restaurar (N)»: the selected entries that can be restored (an entry with a problem is not, as its own button says). */
+export function restorable(entries: TrashEntry[], selected: ReadonlySet<string>): string[] {
+  return entries.filter((e) => selected.has(e.id) && e.problem === null).map((e) => e.id)
+}
+
+/** Identifies the facet filters a set of facet paper ids was loaded for. */
+export function facetKey(filters: FacetFilter[]): string {
+  return JSON.stringify(filters)
+}
+
+/**
+ * The library's batch «Quitar de la biblioteca» acts on the visible rows, so it is offered only once those rows were
+ * loaded for the current search and, with facet filters, the facet ids for those filters: never on a stale, larger set.
+ */
+export function batchRemoveReady(state: { query: string; rowsQuery: string | null; facetFilters: FacetFilter[]; facetIdsKey: string | null }): boolean {
+  return state.rowsQuery === state.query && (state.facetFilters.length === 0 || state.facetIdsKey === facetKey(state.facetFilters))
 }
 
 export function deviceKind(e: TrashEntry): 'this' | 'other' | 'unknown' {

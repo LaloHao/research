@@ -10,6 +10,8 @@ export function useTrashUndo(): { show: (ids: string[]) => void; element: React.
   const [notice, setNotice] = useState<{ error: boolean; text: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // A newer removal replaces the toast: an undo that resolves after it must leave the newer «Deshacer» alone.
+  const request = useRef(0)
 
   const stopTimer = (): void => {
     if (timer.current) clearTimeout(timer.current)
@@ -19,6 +21,7 @@ export function useTrashUndo(): { show: (ids: string[]) => void; element: React.
 
   const show = useCallback(
     (ids: string[]) => {
+      request.current++
       stopTimer()
       setNotice(null)
       setUndo({ ids, text: t('trash.moved', { count: ids.length }) })
@@ -38,9 +41,11 @@ export function useTrashUndo(): { show: (ids: string[]) => void; element: React.
   const revert = (): void => {
     if (!undo || busy) return
     setBusy(true)
+    const token = request.current
     window.research.trash.restore(undo.ids, false).then(
       (r) => {
         setBusy(false)
+        if (token !== request.current) return
         const parts = [...restoreDetails(t, r), ...(r.conflicts.length > 0 ? [t('trash.undo_conflict')] : [])]
         if (parts.length > 0) report(r.failed.length > 0 || r.conflicts.length > 0, parts.join(' '))
         else {
@@ -50,6 +55,7 @@ export function useTrashUndo(): { show: (ids: string[]) => void; element: React.
       },
       () => {
         setBusy(false)
+        if (token !== request.current) return
         report(true, errorText(t, 'unknown'))
       }
     )

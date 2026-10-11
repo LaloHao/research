@@ -4,7 +4,7 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { CountResult } from '../shared/relations'
 import type { FormImpact } from '../shared/summary'
-import type { DeletePlan, RestoreOutcome, TrashOutcome } from '../shared/trash'
+import type { DeletePlanResult, RestoreOutcome, TrashOutcome } from '../shared/trash'
 import {
   IPC,
   type ActionResult,
@@ -118,9 +118,13 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     const merge = arg(ipcArgs.flag, rawMerge, 'merge')
     return app.requireSession().restore(ids, { merge })
   })
-  ipcMain.handle(IPC.trashDeletePlan, (_e, rawTarget: unknown): Promise<DeletePlan> => {
+  ipcMain.handle(IPC.trashDeletePlan, async (_e, rawTarget: unknown): Promise<DeletePlanResult> => {
     const target = arg(ipcArgs.trashTarget, rawTarget, 'target')
-    return app.requireSession().deletePlan(target)
+    try {
+      return { ok: true, plan: await app.requireSession().deletePlan(target) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).code }
+    }
   })
   ipcMain.handle(IPC.trashDeleteForever, async (_e, rawIds: unknown): Promise<CountResult> => {
     const ids = arg(ipcArgs.trashIds, rawIds, 'ids')

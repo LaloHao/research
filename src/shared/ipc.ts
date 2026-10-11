@@ -15,7 +15,7 @@ import type {
 import type { PdfPolicy } from './schemas'
 import type { AppSettings } from './settings'
 import type { ExtractionForm, FormImpact, FormInfo, LlmConfig, LlmModel, ReviewItem, Section, SummaryPlan, ThesisContext } from './summary'
-import type { DeletePlan, RestoreOutcome, TrashEntry, TrashOutcome, TrashTarget } from './trash'
+import type { DeletePlanResult, RestoreOutcome, TrashEntry, TrashOutcome, TrashTarget } from './trash'
 import type { PaperRelations, RelationPlan, RelationsFileState, RelationStatus, RelationType } from './typedRelations'
 
 export const IPC = {
@@ -167,7 +167,7 @@ export interface ResearchApi {
     /** Without `merge`, a paper whose key is taken or that was added again comes back as a conflict and stays in the trash. */
     restore(ids: string[], merge: boolean): Promise<RestoreOutcome>
     /** What deleting these papers (or 'all': «Vaciar papelera») would remove, for the confirmation; `ids` is what it counted. */
-    deletePlan(target: TrashTarget): Promise<DeletePlan>
+    deletePlan(target: TrashTarget): Promise<DeletePlanResult>
     /** Deletes exactly `ids` (from deletePlan): the trash is never recomputed when the user confirms. */
     deleteForever(ids: string[]): Promise<CountResult>
   }

@@ -1,6 +1,6 @@
 import type { TFunction } from 'i18next'
 import { describe, expect, it } from 'vitest'
-import { deviceKind, filterTrash, movedKeys, prune, restoreDetails, shortDevice, toggle, toggleAll, trashedDay } from '../../src/renderer/lib/trash'
+import { batchRemoveReady, deviceKind, facetKey, filterTrash, movedKeys, prune, restorable, restoreDetails, shortDevice, toggle, toggleAll, trashedDay } from '../../src/renderer/lib/trash'
 import type { TrashEntry } from '../../src/shared/trash'
 
 const entry = (over: Partial<TrashEntry> = {}): TrashEntry => ({
@@ -68,5 +68,24 @@ describe('trash view', () => {
       'd1: errors.not_in_trash {"defaultValue":"not_in_trash"}'
     ])
     expect(restoreDetails(t, { restored: [{ id: 'a1', key: 'a1' }], conflicts: [], failed: [] })).toEqual([])
+  })
+
+  it('restores in batch only the selected entries without a problem', () => {
+    const list = [entry({ id: 'a1' }), entry({ id: 'b1', problem: 'invalid_yaml' }), entry({ id: 'c1' })]
+    expect(restorable(list, new Set(['b1', 'c1', 'gone']))).toEqual(['c1'])
+    expect(restorable(list, new Set(['b1']))).toEqual([])
+  })
+
+  it('offers the batch removal only once the rows and facet ids match the current search and filters', () => {
+    const filters = [{ facet: 'technique', value: 'ner' }]
+    const key = facetKey(filters)
+    expect(batchRemoveReady({ query: 'drain', rowsQuery: 'drain', facetFilters: [], facetIdsKey: null })).toBe(true)
+    // Rows still loading for the new search.
+    expect(batchRemoveReady({ query: 'drain', rowsQuery: '', facetFilters: [], facetIdsKey: null })).toBe(false)
+    expect(batchRemoveReady({ query: '', rowsQuery: null, facetFilters: [], facetIdsKey: null })).toBe(false)
+    // Facet ids not loaded yet, or loaded for the previous filters.
+    expect(batchRemoveReady({ query: '', rowsQuery: '', facetFilters: filters, facetIdsKey: null })).toBe(false)
+    expect(batchRemoveReady({ query: '', rowsQuery: '', facetFilters: filters, facetIdsKey: facetKey([]) })).toBe(false)
+    expect(batchRemoveReady({ query: '', rowsQuery: '', facetFilters: filters, facetIdsKey: key })).toBe(true)
   })
 })

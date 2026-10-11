@@ -73,7 +73,7 @@ export function CandidatesTab({ paperId, onClearPaper }: { paperId: string | nul
           if (r.failed.length > 0) setNotice({ error: true, text: details.join(' ') })
           else if (r.conflicts.length > 0) setNotice({ error: true, text: t('map.candidates.restore_conflict') })
           else {
-            // The reload goes first: it clears old notices, and this one must outlive it.
+            // load(false) reloads the list without clearing notices, so this one stays.
             load(false)
             setNotice({ error: false, text: [t('map.candidates.restored', { title: candidateTitle(c) }), ...details].join(' ') })
           }

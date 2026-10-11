@@ -58,5 +58,8 @@ export interface DeletePlan {
   relations: number
 }
 
+/** `deletePlan` over IPC: reading relations.yaml can fail (a git conflict), and the error travels as a `UserErrorCode`. */
+export type DeletePlanResult = { ok: true; plan: DeletePlan } | { ok: false; error: string }
+
 /** Some trashed papers, or the whole trash named explicitly (never an empty list). Only for planning a deletion. */
 export type TrashTarget = string[] | 'all'
