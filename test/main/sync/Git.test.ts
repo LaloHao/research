@@ -1,10 +1,19 @@
-import { readFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { getEventListeners } from 'node:events'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi, type Mock } from 'vitest'
 import { classifyGitError, Git, gitEnv } from '../../../src/main/sync/Git'
 import { tmpDir } from '../../helpers/tmp'
 
+// Fix round 2, m3: only the taskkill call (Windows) goes through execFile; spawn (used for git itself) stays real.
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  return { ...actual, execFile: vi.fn(actual.execFile) }
+})
+
 const SLEEP = ['-e', 'setTimeout(() => {}, 5000)']
+const SHORT_SLEEP = ['-e', 'setTimeout(() => {}, 300)']
 
 describe('Git', () => {
   it('runs git without a shell, feeding its standard input', async () => {
@@ -51,6 +60,79 @@ describe('Git', () => {
     await new Promise((r) => setTimeout(r, 300))
     const gcPid = Number(await readFile(pidFile, 'utf8'))
     expect(() => process.kill(gcPid, 0)).toThrow()
+  })
+
+  // Fix round 2, m2: the scheduled SIGKILL must not be dropped just because git itself already exited — a
+  // group member that ignores SIGTERM and has already closed its pipes needs that SIGKILL to actually die.
+  it(
+    'keeps the scheduled SIGKILL alive after git itself has exited, for a group member that ignores SIGTERM',
+    async () => {
+      const dir = await tmpDir()
+      const pidFile = join(dir, 'ignorer.pid')
+      const gcScript = join(dir, 'ignorer.js')
+      await writeFile(gcScript, "process.on('SIGTERM', () => {});\nsetTimeout(() => {}, 5000);\n")
+      const mainScript = [
+        "const { spawn } = require('node:child_process');",
+        "const fs = require('node:fs');",
+        `const gc = spawn(process.execPath, [${JSON.stringify(gcScript)}], { stdio: 'ignore' });`,
+        `fs.writeFileSync(${JSON.stringify(pidFile)}, String(gc.pid));`,
+        'setTimeout(() => {}, 5000);'
+      ].join('\n')
+      const slow = new Git(dir, { bin: process.execPath })
+      await expect(slow.run(['-e', mainScript], { timeoutMs: 100 })).rejects.toMatchObject({ kind: 'timeout' })
+      const gcPid = Number(await readFile(pidFile, 'utf8'))
+      // The main process dies on SIGTERM right away; the ignorer, by design, does not.
+      expect(() => process.kill(gcPid, 0)).not.toThrow()
+      // Give the SIGKILL scheduled after the grace period time to land.
+      await new Promise((r) => setTimeout(r, 2_500))
+      expect(() => process.kill(gcPid, 0)).toThrow()
+    },
+    10_000
+  )
+
+  // Fix round 2, m1: a truncated/overflowing stdout must never look like a success. Ignoring SIGTERM makes the
+  // process exit 0 on its own (instead of dying from the group kill the overflow triggers), which is what the
+  // review's race looks like once SIGTERM loses.
+  it(
+    'rejects once the output limit is exceeded, even if the process then exits 0 on its own',
+    async () => {
+      const dir = await tmpDir()
+      const script = [
+        "process.on('SIGTERM', () => {});",
+        'process.stdout.write(Buffer.alloc(256 * 1024 * 1024 + 5 * 1024 * 1024, 97), () => process.exit(0));'
+      ].join('\n')
+      await expect(new Git(dir, { bin: process.execPath }).run(['-e', script])).rejects.toMatchObject({ kind: 'git_failed' })
+    },
+    10_000
+  )
+
+  // Fix round 2, m3: on Windows, killing the process group goes through `taskkill`, which must not flash a console.
+  it('passes windowsHide to the taskkill call on Windows', async () => {
+    const dir = await tmpDir()
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    try {
+      const slow = new Git(dir, { bin: process.execPath })
+      // On this (non-Windows) test host `taskkill` does not exist, so it is a no-op and the process just runs
+      // its course — only whether the call itself was made correctly is being checked here, not the outcome.
+      await slow.run(SHORT_SLEEP, { timeoutMs: 50 }).catch(() => undefined)
+      const taskkillCalls = (execFile as unknown as Mock).mock.calls.filter((call: unknown[]) => call[0] === 'taskkill')
+      expect(taskkillCalls.length).toBeGreaterThan(0)
+      expect(taskkillCalls[0][2]).toMatchObject({ windowsHide: true })
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    }
+  })
+
+  // Fix round 2, m5: a run that finishes normally must remove its own abort listener, or a long-lived signal
+  // shared across many runs (e.g. one shutdown signal for the whole app) would accumulate listeners forever.
+  it('removes the abort listener once a run finishes, so a shared AbortSignal does not leak listeners', async () => {
+    const dir = await tmpDir()
+    const git = new Git(dir)
+    const controller = new AbortController()
+    await git.text(['hash-object', '--stdin'], { input: 'hi\n', signal: controller.signal })
+    await git.text(['hash-object', '--stdin'], { input: 'bye\n', signal: controller.signal })
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0)
   })
 })
 
@@ -100,21 +182,27 @@ describe('gitEnv', () => {
     expect(gitEnv({ PATH: '/usr/local/bin:/usr/bin' }, 'darwin').PATH).toBe('/usr/local/bin:/usr/bin:/opt/homebrew/bin')
   })
 
-  // Fix round 1, I2 + M7: never a credential dialog, ssh batch mode by default, no racing the user's own git for the index lock.
+  // Fix round 1, I2 + M7 (amended by fix round 2, I5): never a credential dialog, no racing the user's own git
+  // for the index lock. No default GIT_SSH_COMMAND any more — the detached spawn plus SSH_ASKPASS_REQUIRE=never
+  // already make ssh non-interactive, and a default would silently override a user's own core.sshCommand.
   it('never lets git or ssh prompt for a credential, and avoids racing the index lock', () => {
     const env = gitEnv({ PATH: '/usr/bin' }, 'linux')
     expect(env).toMatchObject({
       GIT_ASKPASS: '',
+      SSH_ASKPASS: '',
       SSH_ASKPASS_REQUIRE: 'never',
       GCM_INTERACTIVE: 'never',
-      GIT_SSH_COMMAND: 'ssh -o BatchMode=yes',
       GIT_OPTIONAL_LOCKS: '0'
     })
   })
 
-  it('leaves an already-set GIT_SSH_COMMAND or GIT_SSH alone', () => {
+  // Fix round 2, I5: no default GIT_SSH_COMMAND — it would override a user's core.sshCommand (port, key, jump host).
+  it('leaves GIT_SSH_COMMAND unset when the base env has none, and keeps an inherited GIT_SSH_COMMAND or GIT_SSH', () => {
+    expect(gitEnv({ PATH: '/usr/bin' }, 'linux').GIT_SSH_COMMAND).toBeUndefined()
     expect(gitEnv({ PATH: '/usr/bin', GIT_SSH_COMMAND: 'ssh -o something' }, 'linux').GIT_SSH_COMMAND).toBe('ssh -o something')
-    expect(gitEnv({ PATH: '/usr/bin', GIT_SSH: '/usr/bin/plink' }, 'linux').GIT_SSH_COMMAND).toBeUndefined()
+    const withSsh = gitEnv({ PATH: '/usr/bin', GIT_SSH: '/usr/bin/plink' }, 'linux')
+    expect(withSsh.GIT_SSH_COMMAND).toBeUndefined()
+    expect(withSsh.GIT_SSH).toBe('/usr/bin/plink')
   })
 
   // Fix round 1, I4: inherited repository-locating variables must not leak into git's env, but explicit overrides still win.

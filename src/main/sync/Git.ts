@@ -91,9 +91,16 @@ const GIT_LOCATION_VARS = [
  * Fix round 1 (I2, M7): `GIT_TERMINAL_PROMPT=0` alone does not stop every prompt — `GIT_ASKPASS`/`SSH_ASKPASS`
  * can still open a GUI, ssh does not read `GIT_TERMINAL_PROMPT` at all, and Git Credential Manager has its own
  * interactive mode. `GIT_OPTIONAL_LOCKS=0` keeps a background `status` from racing the user's own git for the
- * index lock. The caller (`Git.run`) spawns detached on POSIX, which already denies ssh a controlling terminal;
- * `GIT_SSH_COMMAND` is set to batch mode too, but only when the caller has not set `GIT_SSH_COMMAND`/`GIT_SSH`
- * itself (this function cannot see `core.sshCommand`, a git config value, without running git first).
+ * index lock.
+ *
+ * Fix round 2 (I5): there is no default `GIT_SSH_COMMAND` any more. The caller (`Git.run`) spawns detached on
+ * POSIX, which denies ssh a controlling terminal, and that together with `SSH_ASKPASS_REQUIRE=never` was
+ * confirmed (against a real sshd, an encrypted key and an unknown host) to already fail closed instead of
+ * prompting — a missing host key or an encrypted key both fail within a couple hundred ms, with askpass never
+ * called. A default `GIT_SSH_COMMAND` would instead win over the user's own `core.sshCommand` (git gives
+ * `GIT_SSH_COMMAND` precedence over it), silently ignoring a port, identity file or jump host they configured;
+ * that was confirmed too. `SSH_ASKPASS` is set to `''` regardless, as a no-cost fallback for pre-8.4 OpenSSH,
+ * which ignores `SSH_ASKPASS_REQUIRE`.
  *
  * Fix round 1 (I4): strips the git variables that locate another repository (see `GIT_LOCATION_VARS`) out of
  * `base` before applying `extra`, so an explicit override — e.g. the temporary index a sync commit is built in —
@@ -108,12 +115,12 @@ export function gitEnv(base: NodeJS.ProcessEnv, platform: NodeJS.Platform, extra
     LC_ALL: 'C',
     LANGUAGE: 'C',
     GIT_ASKPASS: '',
+    SSH_ASKPASS: '',
     SSH_ASKPASS_REQUIRE: 'never',
     GCM_INTERACTIVE: 'never',
     GIT_OPTIONAL_LOCKS: '0',
     ...extra
   }
-  if (!env.GIT_SSH_COMMAND && !env.GIT_SSH) env.GIT_SSH_COMMAND = 'ssh -o BatchMode=yes'
   if (platform === 'darwin') {
     // An app started from the Finder gets a minimal PATH: add where Homebrew installs git and git-lfs.
     const parts = (env.PATH ?? '').split(':').filter(Boolean)
@@ -186,13 +193,32 @@ export class Git {
         stderrLen = collect(stderrChunks, stderrLen, data)
       })
 
+      // Fix round 2 (m5): detach the abort listener once the run is done, so a long-lived signal (e.g. one
+      // shutdown signal shared by every run in the app) does not accumulate a listener per run.
+      let abortListener: (() => void) | undefined
+      const detachAbortListener = (): void => {
+        if (abortListener) o.signal?.removeEventListener('abort', abortListener)
+      }
+
+      // Fix round 2 (m2): clearing killTimer on settle would cancel a SIGKILL that is still needed — a group
+      // member that ignores SIGTERM and has already closed its own pipes would otherwise survive forever.
+      // Only clear it when the run was never escalated for a timeout/cancel/overflow in the first place.
+      const clearTimers = (): void => {
+        clearTimeout(timer)
+        if (!timedOut && !cancelled && !bufferExceeded && killTimer) clearTimeout(killTimer)
+      }
+
       const finish = (exitCode: number | null): void => {
         if (settled) return
         settled = true
-        clearTimeout(timer)
-        if (killTimer) clearTimeout(killTimer)
+        clearTimers()
+        detachAbortListener()
         const stdout = Buffer.concat(stdoutChunks)
         const err = Buffer.concat(stderrChunks).toString('utf8')
+        // Fix round 2 (m1): the overflow can race a clean exit — git may write its last bytes and exit 0 just
+        // before (or despite) the group kill the overflow triggered. A truncated/overflowing stdout must never
+        // look like a success, whatever the exit code says.
+        if (bufferExceeded) return reject(new GitError(args, exitCode, `${err}\n${stdout.toString('utf8', 0, Math.min(stdout.length, 65536))}`, 'git_failed'))
         if (exitCode === 0) return resolve({ code: 0, stdout, stderr: err })
         if (typeof exitCode === 'number' && o.okCodes?.includes(exitCode)) return resolve({ code: exitCode, stdout, stderr: err })
         const output = `${err}\n${stdout.toString('utf8', 0, Math.min(stdout.length, 65536))}`
@@ -204,8 +230,8 @@ export class Git {
       child.on('error', (error: NodeJS.ErrnoException) => {
         if (settled) return
         settled = true
-        clearTimeout(timer)
-        if (killTimer) clearTimeout(killTimer)
+        clearTimers()
+        detachAbortListener()
         const output = Buffer.concat(stderrChunks).toString('utf8')
         // Fix round 1 (I1): node reports a missing cwd the same way as a missing git binary (ENOENT). An
         // unplugged drive or a deleted project folder must not tell the user to install git.
@@ -216,10 +242,13 @@ export class Git {
       child.on('close', (code) => finish(code))
 
       const killGroup = (signal: 'SIGTERM' | 'SIGKILL'): void => {
-        if (settled || !child.pid) return
+        // Fix round 2 (m2): no `settled` guard here any more — git exiting does not mean every group member
+        // did. A pid that is already gone just answers ESRCH, which is caught below.
+        if (!child.pid) return
         if (process.platform === 'win32') {
-          // `/T` kills the whole tree; `/F` forces it. taskkill failing (e.g. already exited) is not our problem.
-          execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], () => undefined)
+          // `/T` kills the whole tree; `/F` forces it; `windowsHide` keeps it from flashing a console (m3).
+          // taskkill failing (e.g. already exited) is not our problem.
+          execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, () => undefined)
         } else {
           try {
             // The negative pid targets the process group (its id equals the leader's pid when spawned detached).
@@ -249,14 +278,11 @@ export class Git {
           cancelled = true
           escalate()
         } else {
-          o.signal.addEventListener(
-            'abort',
-            () => {
-              cancelled = true
-              escalate()
-            },
-            { once: true }
-          )
+          abortListener = () => {
+            cancelled = true
+            escalate()
+          }
+          o.signal.addEventListener('abort', abortListener, { once: true })
         }
       }
 
