@@ -195,8 +195,17 @@ export class LibraryService {
       }
       await this.afterWrite(id)
     }
-    const path = store.resolvePdf(id)
-    return path ? new Uint8Array(await readFile(path)) : null
+    // A replacement may remove the cached copy between resolving and reading it: resolve once more before giving up.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const path = store.resolvePdf(id)
+      if (!path) return null
+      try {
+        return new Uint8Array(await readFile(path))
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+    }
+    return null
   }
 
   /** Re-resolves metadata from the paper's DOI/arXiv id, or from one the user typed. The id never changes. */

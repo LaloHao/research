@@ -191,3 +191,22 @@ describe('LibraryService.attachPdf', () => {
     expect(store.resolvePdf('he2017drain')).not.toBeNull()
   })
 })
+
+describe('LibraryService.readPdf while a PDF is replaced', () => {
+  it('reads the new copy when the resolved cache copy disappears before it is read', async () => {
+    const { store, library } = await withPaper()
+    const bytes = await makePdf([['The copy in the paper folder.']])
+    await store.writePdf('he2017drain', bytes, { redownloadable: false })
+    const resolve = store.resolvePdf.bind(store)
+    let calls = 0
+    // The first resolutions still see the cached copy that attachPdf is about to remove.
+    store.resolvePdf = (id: string) => (++calls <= 2 ? join(store.cacheDir, 'pdfs', `${id}.pdf`) : resolve(id))
+    expect(await library.readPdf('he2017drain')).toEqual(bytes)
+  })
+
+  it('still reports no PDF when the copy is gone for good', async () => {
+    const { store, library } = await withPaper()
+    store.resolvePdf = (id: string) => join(store.cacheDir, 'pdfs', `${id}.pdf`)
+    await expect(library.readPdf('he2017drain')).resolves.toBeNull()
+  })
+})
