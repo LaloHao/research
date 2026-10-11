@@ -734,9 +734,10 @@ export class LibraryService {
       await this.afterWrite(dup.id)
       return { status: changed ? 'merged' : 'duplicate', paperId: dup.id }
     }
-    // A key in the trash stays reserved: restoring it later must not collide with a new paper.
+    // A key in the trash stays reserved: restoring it later must not collide with a new paper. So does a folder without
+    // paper.yaml (an untracked PDF left by a sync): a new paper must not inherit its files.
     const id = uniqueCitekey(baseCitekey({ authors: meta.authors, year: meta.year, title: meta.title, site: meta.web?.site }), (candidate) =>
-      store.paperExists(candidate) || store.trashExists(candidate)
+      existsSync(store.paperDir(candidate)) || store.trashExists(candidate)
     )
     let paper = buildPaper(meta, id, this.now())
     if (extras.pdf) {

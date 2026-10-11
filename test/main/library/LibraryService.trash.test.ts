@@ -5,8 +5,10 @@ import { join } from 'node:path'
 import { PdfjsExtractor, type PdfExtractor } from '../../../src/main/extract/PdfExtractor'
 import type { TrashRelations } from '../../../src/main/library/LibraryService'
 import { UserFacingError } from '../../../src/main/library/UserFacingError'
+import { JobQueue } from '../../../src/main/jobs/JobQueue'
 import { DRAIN, setupLibrary } from '../../helpers/library'
 import { samplePaper } from '../../helpers/papers'
+import { typedRelation } from '../../helpers/relations'
 import { makePdf } from '../../helpers/pdf'
 import { sampleSummary } from '../../helpers/summaries'
 
@@ -154,6 +156,17 @@ describe('LibraryService trash', () => {
     expect(store.trashExists(ID)).toBe(false)
   })
 
+  it('never writes a new paper into a folder without paper.yaml that a sync left behind', async () => {
+    const { library, store } = await withDrain()
+    await library.trash([ID])
+    expect(await library.deleteForever([ID])).toBe(1)
+    await mkdir(store.paperDir(ID), { recursive: true })
+    await writeFile(join(store.paperDir(ID), 'paper.pdf'), 'stale')
+    expect((await library.ingestIdentifier('10.1109/icws.2017.13')).paperId).toBe('he2017draina')
+    expect(store.resolvePdf('he2017draina')).toBeNull()
+    expect(await readFile(join(store.paperDir(ID), 'paper.pdf'), 'utf8')).toBe('stale')
+  })
+
   it('keeps a trashed key reserved, finds the paper added again under another key and merges into it only on request', async () => {
     const { library, store, fake } = await withDrain()
     await library.trash([ID])
@@ -177,6 +190,31 @@ describe('LibraryService trash', () => {
     expect(await library.restore([ID], { merge: false })).toEqual({ restored: [{ id: ID, key: ID, remnant: true }], conflicts: [], failed: [] })
     expect(library.list().map((r) => r.id)).toEqual([ID])
     expect(await library.listTrash()).toEqual([expect.objectContaining({ id: ID, problem: 'missing_paper_yaml', trashed_at: AT })])
+  })
+
+  it('treats a paper restored next to a remnant as a library paper: its jobs run and its relations are visible', async () => {
+    const { library, store, cache } = await withDrain()
+    cache.upsertPaper(samplePaper({ id: 'zhu2020loghub', title: 'Loghub', identifiers: { doi: '10.5555/loghub' } }), 'h', false)
+    cache.replaceTypedRelations([typedRelation({ from: 'zhu2020loghub', to: ID })])
+    await library.trash([ID])
+    expect(cache.typedRelations()).toEqual([])
+    await writeFile(join(store.trashDir(ID), '.DS_Store'), 'x')
+    await mkdir(store.paperDir(ID), { recursive: true })
+    expect(await library.restore([ID], { merge: false })).toEqual({ restored: [{ id: ID, key: ID, remnant: true }], conflicts: [], failed: [] })
+    expect(await library.listTrash()).toEqual([expect.objectContaining({ id: ID })])
+    expect(cache.isTrashed(ID)).toBe(false)
+    expect(cache.typedRelations(ID)).toHaveLength(1)
+    expect(library.list().find((r) => r.id === ID)?.relations_pending).toBe(1)
+    const ran: string[] = []
+    const queue = new JobQueue(cache, async (s) => {
+      ran.push(`${s.type}:${'paperId' in s ? s.paperId : ''}`)
+      return {}
+    })
+    const job = queue.enqueue({ type: 'summarize', paperId: ID })
+    queue.start()
+    await queue.whenIdle()
+    expect(ran).toEqual([`summarize:${ID}`])
+    expect(queue.list().find((j) => j.id === job)?.state).toBe('done')
   })
 
   it('never counts or removes the relations of a key a library paper also uses', async () => {

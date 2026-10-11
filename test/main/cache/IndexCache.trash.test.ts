@@ -85,6 +85,27 @@ describe('IndexCache trash', () => {
     expect(cache.typedRelations()).toHaveLength(1)
   })
 
+  it('treats a key that is both in the trash and in the library (a restore that left a remnant) as not trashed', async () => {
+    const cache = await open()
+    seed(cache)
+    cache.upsertPaper(samplePaper({ id: 'zhu2020loghub', title: 'Loghub' }), 'h', false)
+    cache.replaceTypedRelations([relation('zhu2020loghub', ID)])
+    cache.moveToTrash(row())
+    // A remnant stays in .trash/<key>/ after the paper came back under the same key.
+    cache.replaceTrash([row({ problem: 'missing_paper_yaml' })])
+    cache.upsertPaper(samplePaper(), 'h', true)
+    expect(cache.isTrashed(ID)).toBe(false)
+    expect([...cache.trashedIds()]).toEqual([])
+    expect(cache.typedRelations(ID)).toHaveLength(1)
+    expect(cache.getPaper('zhu2020loghub')?.relations_pending).toBe(1)
+    expect(cache.getPaper(ID)?.relations_pending).toBe(1)
+    expect(cache.trashEntries().map((e) => e.id)).toEqual([ID])
+    // The library paper leaves again: the remnant's trash row still keeps the text.
+    cache.removePaper(ID)
+    expect(cache.isTrashed(ID)).toBe(true)
+    expect(cache.chunksFor(ID)).toHaveLength(1)
+  })
+
   it('mirrors .trash/ keeping the text of listed entries and dropping text nobody owns', async () => {
     const cache = await open()
     seed(cache)

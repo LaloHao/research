@@ -85,13 +85,19 @@ CREATE TABLE trash (id TEXT PRIMARY KEY, title TEXT NOT NULL, authors_label TEXT
   trashed_at TEXT, device TEXT, problem TEXT, text_hash TEXT, text_status TEXT, text_chars INTEGER NOT NULL DEFAULT 0);
 `
 
+/**
+ * Keys that count as trashed: a trash entry whose key no library paper uses. A restore or merge that leaves a remnant
+ * in .trash/<key>/ keeps a trash row next to the library paper; that paper is not in the trash.
+ */
+const TRASHED_IDS = 'SELECT id FROM trash WHERE id NOT IN (SELECT id FROM papers)'
+
 /** A typed relation with an end in the trash stays in relations.yaml but is hidden from every read. */
-const VISIBLE_RELATION = 'from_id NOT IN (SELECT id FROM trash) AND to_id NOT IN (SELECT id FROM trash)'
+const VISIBLE_RELATION = `from_id NOT IN (${TRASHED_IDS}) AND to_id NOT IN (${TRASHED_IDS})`
 
 const PAPER_COLUMNS =
   'id, title, authors_label, year, venue, kind, doi, arxiv, metadata_status, has_pdf, problem, added_at, text_status, summary_status, pending_review, summary_model, citations_status, ' +
   "(SELECT COUNT(*) FROM typed_relations r WHERE r.status = 'suggested' AND (r.from_id = papers.id OR r.to_id = papers.id) " +
-  'AND r.from_id NOT IN (SELECT id FROM trash) AND r.to_id NOT IN (SELECT id FROM trash)) AS relations_pending'
+  `AND r.from_id NOT IN (${TRASHED_IDS}) AND r.to_id NOT IN (${TRASHED_IDS})) AS relations_pending`
 
 export interface RelationRow {
   id: string
@@ -204,7 +210,8 @@ export class IndexCache {
 
   /** A paper left the library; a paper in the trash keeps its chunks, vector and citing works for a restore. */
   removePaper(id: string): void {
-    this.tx(() => this.dropPaperRows(id, this.isTrashed(id)))
+    // The papers row is still there, so ask for the raw trash row: a remnant of the same key keeps the text.
+    this.tx(() => this.dropPaperRows(id, this.hasTrashRow(id)))
   }
 
   fileHash(id: string): string | null {
@@ -570,12 +577,18 @@ export class IndexCache {
     })
   }
 
+  /** In the trash and not in the library (a key both have is a library paper with a remnant in the trash). */
   isTrashed(id: string): boolean {
+    return Boolean(this.db.prepare('SELECT 1 FROM trash WHERE id = ? AND id NOT IN (SELECT id FROM papers)').get(id))
+  }
+
+  /** Whether `.trash/<id>/` has an entry, whether or not a library paper also uses the key. */
+  hasTrashRow(id: string): boolean {
     return Boolean(this.db.prepare('SELECT 1 FROM trash WHERE id = ?').get(id))
   }
 
   trashedIds(): Set<string> {
-    return new Set((this.db.prepare('SELECT id FROM trash').all() as { id: string }[]).map((r) => r.id))
+    return new Set((this.db.prepare(TRASHED_IDS).all() as { id: string }[]).map((r) => r.id))
   }
 
   /** Most recently removed first; entries without a date (no trashed.yaml) last. */
