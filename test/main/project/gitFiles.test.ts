@@ -21,9 +21,17 @@ describe('withManagedBlock', () => {
 })
 
 describe('policy lines', () => {
-  it('ignores the cache always and PDFs (in the library, in the trash and kept copies) only when untracked', () => {
-    expect(gitignoreLines('track')).toEqual(['.cache/'])
-    expect(gitignoreLines('untracked')).toEqual(['.cache/', 'papers/*/paper.pdf', 'papers/*/paper.*.pdf', '.trash/*/paper.pdf', '.trash/*/paper.*.pdf'])
+  it('ignores the cache and the temp files atomicWrite/moveDir leave behind always, and PDFs (in the library, in the trash and kept copies) only when untracked', () => {
+    expect(gitignoreLines('track')).toEqual(['.cache/', '.*.tmp', '.*.moving'])
+    expect(gitignoreLines('untracked')).toEqual([
+      '.cache/',
+      '.*.tmp',
+      '.*.moving',
+      'papers/*/paper.pdf',
+      'papers/*/paper.*.pdf',
+      '.trash/*/paper.pdf',
+      '.trash/*/paper.*.pdf'
+    ])
   })
 
   it('routes those PDFs through LFS only for the lfs policy', () => {

@@ -17,6 +17,7 @@ import {
 import { TrashedFileSchema, type TrashedFile } from '../../shared/trash'
 import { RelationsFileSchema, type RelationsFile } from '../../shared/typedRelations'
 import { atomicWrite, MOVE_RETRYABLE, moveDir, sha256 } from './atomicWrite'
+import { renderLibraryBib } from '../export/BibExporter'
 import { ConflictError, ProjectError, type ReadResult } from './errors'
 import { gitattributesLines, gitignoreLines, withManagedBlock } from './gitFiles'
 import { RELATIONS_FILE, resolveConflictText, sortRelations } from './relationsFile'
@@ -68,7 +69,8 @@ export class ProjectStore {
     'keepPaperFileAs',
     'finishMerge',
     'deleteTrashed',
-    'appendCost'
+    'appendCost',
+    'writeBib'
   ] as const
 
   static {
@@ -431,6 +433,19 @@ export class ProjectStore {
     const dir = join(this.root, 'costs')
     await mkdir(dir, { recursive: true })
     await appendFile(join(dir, `${deviceId}.jsonl`), `${JSON.stringify(entry)}\n`)
+  }
+
+  /**
+   * `exports/library.bib` is generated but tracked (only `.cache/` is ignored), so the sync commit reads it: writing
+   * it bypasses the gate otherwise, exactly like any other project write. True when the content changed.
+   */
+  async writeBib(papers: Pick<Paper, 'id' | 'bibtex'>[]): Promise<boolean> {
+    const path = join(this.exportsDir, 'library.bib')
+    const text = renderLibraryBib(papers)
+    const current = await readOptional(path)
+    if (current === text) return false
+    await atomicWrite(path, text)
+    return true
   }
 
   async readCosts(): Promise<CostEntry[]> {

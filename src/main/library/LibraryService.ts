@@ -1,13 +1,12 @@
 import { existsSync } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { basename } from 'node:path'
 import { authorsLabel } from '../../shared/format'
 import type { IngestStatus, PaperDetail, PaperRow } from '../../shared/library'
 import type { Paper } from '../../shared/schemas'
 import type { ExtractionFile, FacetDef } from '../../shared/summary'
 import type { DeletePlan, RestoreConflict, RestoreOutcome, TrashEntry, TrashOutcome, TrashProblem, TrashTarget } from '../../shared/trash'
 import type { IndexCache, TrashRow } from '../cache/IndexCache'
-import { writeLibraryBib } from '../export/BibExporter'
 import { chunkSegments } from '../extract/chunker'
 import { isTextless, type PdfExtractor, type PdfText } from '../extract/PdfExtractor'
 import { rekeyBibtex } from '../ingest/bibtex'
@@ -395,7 +394,7 @@ export class LibraryService {
       const read = await store.readPaper(id)
       if (read.ok) papers.push(read.value)
     }
-    await writeLibraryBib(join(store.exportsDir, 'library.bib'), papers)
+    await store.writeBib(papers)
   }
 
   /**

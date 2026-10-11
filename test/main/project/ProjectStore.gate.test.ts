@@ -51,4 +51,71 @@ describe('ProjectStore write gate', () => {
   it('lists only methods the store has', () => {
     for (const name of ProjectStore.GATED_WRITES) expect(typeof ProjectStore.prototype[name]).toBe('function')
   })
+
+  /**
+   * Every method on the prototype must be gated or explicitly known to not write (a read, a path/name helper, or
+   * `reloadConfig`/`removeCachedPdf`/`exclusive`/`constructor`). A new writer added without being listed in either
+   * place fails this test, instead of silently bypassing the gate the way `writeBib` once did.
+   */
+  const UNGATED = [
+    'constructor',
+    'exclusive',
+    'reloadConfig',
+    'paperDir',
+    'paperExists',
+    'listPaperIds',
+    'readPaper',
+    'readNotes',
+    'pdfLocation',
+    'resolvePdf',
+    'removeCachedPdf',
+    'readContent',
+    'readSummary',
+    'readExtraction',
+    'readRelations',
+    'trashDir',
+    'trashExists',
+    'listTrash',
+    'readTrashedPaper',
+    'listTrashedFiles',
+    'readTrashedFile',
+    'readPaperFile',
+    'freeSibling',
+    'readCosts',
+    // Private helpers called only from inside an already-gated method; wrapping them again would deadlock.
+    'requirePaper',
+    'move',
+    'readTrashedInfo',
+    'moveOutOfTrash',
+    'removeTrashDirIfDone',
+    'writeChecked',
+    'syncIgnoreFiles'
+  ]
+
+  it('accounts for every prototype method as gated or explicitly non-writing', () => {
+    for (const name of Object.getOwnPropertyNames(ProjectStore.prototype)) {
+      const descriptor = Object.getOwnPropertyDescriptor(ProjectStore.prototype, name)!
+      if (typeof descriptor.value !== 'function') continue // getters (config, cacheDir, exportsDir) only compute a value
+      expect([...ProjectStore.GATED_WRITES, ...UNGATED]).toContain(name)
+    }
+  })
+
+  it('holds the bibliography write while the sync has the folder', async () => {
+    const store = await ProjectStore.create(await tmpDir(), 'Thesis')
+    let release!: () => void
+    const held = new Promise<void>((r) => (release = r))
+    const sync = store.exclusive(() => held)
+    let wrote = false
+    const write = store.writeBib([{ id: ID, bibtex: '@misc{he2017drain,\n  title = {Drain}\n}' }]).then((changed) => {
+      wrote = changed
+    })
+    await tick()
+    expect(wrote).toBe(false)
+    expect(existsSync(join(store.exportsDir, 'library.bib'))).toBe(false)
+    release()
+    await sync
+    await write
+    expect(wrote).toBe(true)
+    expect(existsSync(join(store.exportsDir, 'library.bib'))).toBe(true)
+  })
 })
