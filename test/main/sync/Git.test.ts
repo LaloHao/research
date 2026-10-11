@@ -15,6 +15,40 @@ vi.mock('node:child_process', async (importOriginal) => {
 const SLEEP = ['-e', 'setTimeout(() => {}, 5000)']
 const SHORT_SLEEP = ['-e', 'setTimeout(() => {}, 300)']
 
+// Fix round 3, I6: a fixed timeoutMs races the child's own startup (spawning a grandchild, installing a
+// handler) under load — the re-review reproduced this failing 3/5 runs under 48 busy loops on 24 cores. These
+// poll for an explicit readiness signal instead, so the test only aborts once the child is actually ready.
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 5_000, intervalMs = 10): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    if (await predicate()) return
+    if (Date.now() >= deadline) throw new Error('timed out waiting for condition')
+    await new Promise((r) => setTimeout(r, intervalMs))
+  }
+}
+
+async function waitForNonEmptyFile(path: string, timeoutMs = 5_000): Promise<string> {
+  let content = ''
+  await waitFor(async () => {
+    try {
+      content = (await readFile(path, 'utf8')).trim()
+      return content.length > 0
+    } catch {
+      return false
+    }
+  }, timeoutMs)
+  return content
+}
+
 describe('Git', () => {
   it('runs git without a shell, feeding its standard input', async () => {
     const git = new Git(await tmpDir())
@@ -44,50 +78,76 @@ describe('Git', () => {
     await expect(new Git('/nonexistent/project-dir').run(['status'])).rejects.toMatchObject({ kind: 'project_missing' })
   })
 
-  // Fix round 1, I3: a timeout or cancel kills the whole process group, not just git itself.
-  it.skipIf(process.platform === 'win32')('kills the whole process group on timeout, including a grandchild', async () => {
-    const dir = await tmpDir()
-    const pidFile = join(dir, 'grandchild.pid')
-    const script = [
-      "const { spawn } = require('node:child_process');",
-      "const fs = require('node:fs');",
-      `const gc = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], { stdio: 'ignore' });`,
-      `fs.writeFileSync(${JSON.stringify(pidFile)}, String(gc.pid));`,
-      'setTimeout(() => {}, 5000);'
-    ].join('\n')
-    const slow = new Git(dir, { bin: process.execPath })
-    await expect(slow.run(['-e', script], { timeoutMs: 100 })).rejects.toMatchObject({ kind: 'timeout' })
-    await new Promise((r) => setTimeout(r, 300))
-    const gcPid = Number(await readFile(pidFile, 'utf8'))
-    expect(() => process.kill(gcPid, 0)).toThrow()
-  })
+  // Fix round 1, I3 (made deterministic by fix round 3, I6): a timeout or cancel kills the whole process
+  // group, not just git itself — including a grandchild. Cancelled through an AbortController once the
+  // grandchild's pid is known, instead of racing a fixed timeoutMs against the child's own startup.
+  it.skipIf(process.platform === 'win32')(
+    'kills the whole process group on cancel, including a grandchild',
+    async () => {
+      const dir = await tmpDir()
+      const pidFile = join(dir, 'grandchild.pid')
+      const script = [
+        "const { spawn } = require('node:child_process');",
+        "const fs = require('node:fs');",
+        "const gc = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], { stdio: 'ignore' });",
+        `fs.writeFileSync(${JSON.stringify(pidFile)}, String(gc.pid));`,
+        'setTimeout(() => {}, 10000);'
+      ].join('\n')
+      const slow = new Git(dir, { bin: process.execPath })
+      const controller = new AbortController()
+      const run = slow.run(['-e', script], { signal: controller.signal, timeoutMs: 15_000 })
+      const gcPid = Number(await waitForNonEmptyFile(pidFile))
+      controller.abort()
+      await expect(run).rejects.toMatchObject({ kind: 'cancelled' })
+      await waitFor(() => !isAlive(gcPid))
+      expect(isAlive(gcPid)).toBe(false)
+    },
+    20_000
+  )
 
-  // Fix round 2, m2: the scheduled SIGKILL must not be dropped just because git itself already exited — a
-  // group member that ignores SIGTERM and has already closed its pipes needs that SIGKILL to actually die.
+  // Fix round 2, m2 (made deterministic by fix round 3, I6): the scheduled SIGKILL must not be dropped just
+  // because git itself already exited — a group member that ignores SIGTERM and has already closed its pipes
+  // needs that SIGKILL to actually die. The ignorer writes a ready file only after its SIGTERM handler is
+  // installed, and the test waits for that (not a fixed delay) before cancelling, so the handler is always in
+  // place before the signal arrives, even under load.
   it(
     'keeps the scheduled SIGKILL alive after git itself has exited, for a group member that ignores SIGTERM',
     async () => {
       const dir = await tmpDir()
       const pidFile = join(dir, 'ignorer.pid')
+      const readyFile = join(dir, 'ignorer.ready')
       const gcScript = join(dir, 'ignorer.js')
-      await writeFile(gcScript, "process.on('SIGTERM', () => {});\nsetTimeout(() => {}, 5000);\n")
+      await writeFile(
+        gcScript,
+        [
+          "const fs = require('node:fs');",
+          "process.on('SIGTERM', () => {});",
+          `fs.writeFileSync(${JSON.stringify(readyFile)}, '1');`,
+          'setTimeout(() => {}, 10000);'
+        ].join('\n')
+      )
       const mainScript = [
         "const { spawn } = require('node:child_process');",
         "const fs = require('node:fs');",
         `const gc = spawn(process.execPath, [${JSON.stringify(gcScript)}], { stdio: 'ignore' });`,
         `fs.writeFileSync(${JSON.stringify(pidFile)}, String(gc.pid));`,
-        'setTimeout(() => {}, 5000);'
+        'setTimeout(() => {}, 10000);'
       ].join('\n')
       const slow = new Git(dir, { bin: process.execPath })
-      await expect(slow.run(['-e', mainScript], { timeoutMs: 100 })).rejects.toMatchObject({ kind: 'timeout' })
-      const gcPid = Number(await readFile(pidFile, 'utf8'))
+      const controller = new AbortController()
+      const run = slow.run(['-e', mainScript], { signal: controller.signal, timeoutMs: 15_000 })
+      const gcPid = Number(await waitForNonEmptyFile(pidFile))
+      // Wait for the ignorer's own SIGTERM handler to actually be installed before signalling the group.
+      await waitForNonEmptyFile(readyFile)
+      controller.abort()
+      await expect(run).rejects.toMatchObject({ kind: 'cancelled' })
       // The main process dies on SIGTERM right away; the ignorer, by design, does not.
-      expect(() => process.kill(gcPid, 0)).not.toThrow()
-      // Give the SIGKILL scheduled after the grace period time to land.
-      await new Promise((r) => setTimeout(r, 2_500))
-      expect(() => process.kill(gcPid, 0)).toThrow()
+      expect(isAlive(gcPid)).toBe(true)
+      // Wait for the SIGKILL scheduled after the grace period to land (poll instead of a fixed sleep).
+      await waitFor(() => !isAlive(gcPid), 5_000)
+      expect(isAlive(gcPid)).toBe(false)
     },
-    10_000
+    20_000
   )
 
   // Fix round 2, m1: a truncated/overflowing stdout must never look like a success. Ignoring SIGTERM makes the

@@ -158,6 +158,10 @@ export class Git {
       let settled = false
       let killTimer: NodeJS.Timeout | undefined
       let bufferExceeded = false
+      // Fix round 3 (m8): escalate() can otherwise run more than once (e.g. an overflow followed by a timeout),
+      // each time sending another SIGTERM and replacing killTimer, orphaning the previous one. Harmless, but
+      // this makes it idempotent.
+      let escalated = false
 
       const child = spawn(this.opts.bin ?? 'git', args, {
         cwd: this.cwd,
@@ -205,7 +209,7 @@ export class Git {
       // Only clear it when the run was never escalated for a timeout/cancel/overflow in the first place.
       const clearTimers = (): void => {
         clearTimeout(timer)
-        if (!timedOut && !cancelled && !bufferExceeded && killTimer) clearTimeout(killTimer)
+        if (!escalated && killTimer) clearTimeout(killTimer)
       }
 
       const finish = (exitCode: number | null): void => {
@@ -264,8 +268,15 @@ export class Git {
       }
 
       function escalate(): void {
+        // Fix round 3 (m8): idempotent — a second call (overflow then timeout, or timeout then abort) must not
+        // send another SIGTERM or orphan the previous killTimer.
+        if (escalated) return
+        escalated = true
         killGroup('SIGTERM')
-        killTimer = setTimeout(() => killGroup('SIGKILL'), KILL_GRACE_MS)
+        // Fix round 3 (m7): on Windows the first taskkill already ran with /T /F, which kills the whole tree.
+        // A second, delayed call is redundant and, since Windows recycles pids quickly once a process handle is
+        // released, risks hitting an unrelated process tree that happens to reuse the same pid by then.
+        if (process.platform !== 'win32') killTimer = setTimeout(() => killGroup('SIGKILL'), KILL_GRACE_MS)
       }
 
       const timer = setTimeout(() => {
