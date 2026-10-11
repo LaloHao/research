@@ -41,7 +41,8 @@ export interface RestoreConflict {
 
 export interface RestoreOutcome {
   /** `key` is where the paper now is: its own key, a free one (another paper took it), or the paper it was merged into. */
-  restored: { id: string; key: string }[]
+  /** `remnant`: something it could not take (a subfolder) stayed in the trash, which keeps an entry under `id`. */
+  restored: { id: string; key: string; remnant?: true }[]
   /** Papers left in the trash until the user picks «Fusionar» or «Cancelar». */
   conflicts: RestoreConflict[]
   failed: { id: string; error: string }[]

@@ -4,7 +4,7 @@ import { PdfjsExtractor, type PdfExtractor } from '../../src/main/extract/PdfExt
 import { HttpClient, HttpError } from '../../src/main/ingest/http'
 import type { MetadataSource } from '../../src/main/ingest/MetadataResolver'
 import type { ResolvedMetadata } from '../../src/main/ingest/types'
-import { LibraryService } from '../../src/main/library/LibraryService'
+import { LibraryService, type TrashRelations } from '../../src/main/library/LibraryService'
 import { ProjectStore } from '../../src/main/project/ProjectStore'
 import type { PdfPolicy } from '../../src/shared/schemas'
 import { routeFetch, type Route } from './fakeFetch'
@@ -82,7 +82,18 @@ export class FakeResolver implements MetadataSource {
   }
 }
 
-export async function setupLibrary(opts: { resolver?: Record<string, ResolvedMetadata>; routes?: Route[]; policy?: PdfPolicy; extractor?: PdfExtractor } = {}) {
+export async function setupLibrary(
+  opts: {
+    resolver?: Record<string, ResolvedMetadata>
+    routes?: Route[]
+    policy?: PdfPolicy
+    extractor?: PdfExtractor
+    deviceId?: string
+    cancelJobs?: (ids: string[]) => Promise<unknown>
+    cancelQueued?: (ids: string[]) => unknown
+    relations?: TrashRelations
+  } = {}
+) {
   const root = await tmpDir()
   const store = await ProjectStore.create(root, 'Thesis')
   if (opts.policy) await store.updateConfig({ pdfs: { policy: opts.policy } })
@@ -96,7 +107,11 @@ export async function setupLibrary(opts: { resolver?: Record<string, ResolvedMet
     resolver,
     http,
     extractor: opts.extractor ?? new PdfjsExtractor(),
-    now: () => new Date('2026-10-07T12:00:00.000Z')
+    now: () => new Date('2026-10-07T12:00:00.000Z'),
+    deviceId: opts.deviceId,
+    cancelJobs: opts.cancelJobs,
+    cancelQueued: opts.cancelQueued,
+    relations: opts.relations
   })
   return { root, store, cache, resolver, library, fetch }
 }
