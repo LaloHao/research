@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { existsSync, realpathSync } from 'node:fs'
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ProjectRepo } from '../../../src/main/sync/ProjectRepo'
 import { applyFiles, commitAll, identify, isolatedGitEnv, pathWithOnlyGit, runGit, twoMachines } from '../../helpers/git'
@@ -110,15 +110,21 @@ describe('ProjectRepo', () => {
   })
 
   it('names the local files a fast-forward would overwrite, ignored ones included', async () => {
-    const m = await twoMachines({ '.gitignore': '*.pdf\n', 'a.md': 'a\n' })
-    await applyFiles(m.a, { 'a.md': 'a from A\n', 'k/paper.pdf': '%PDF A' })
-    m.git(m.a, 'add', '--force', 'k/paper.pdf')
+    const m = await twoMachines({ '.gitignore': '*.pdf\n*.log\n', 'a.md': 'a\n' })
+    await applyFiles(m.a, { 'a.md': 'a from A\n', 'k/paper.pdf': '%PDF A', 'n.log/x': 'a dir there\n', 'd.log': 'a file there\n' })
+    m.git(m.a, 'add', '--force', 'k/paper.pdf', 'n.log/x', 'd.log')
     commitAll(m, m.a, 'A')
     m.git(m.a, 'push', '--quiet')
-    await applyFiles(m.b, { 'a.md': 'a, not committed\n', 'k/paper.pdf': '%PDF B, ignored here' })
+    await applyFiles(m.b, {
+      'a.md': 'a, not committed\n',
+      'k/paper.pdf': '%PDF B, ignored here',
+      // An ignored file where the other machine added a folder, and an ignored folder where it added a file.
+      'n.log': 'ignored file\n',
+      'd.log/y': 'ignored folder\n'
+    })
     const repo = await open(m.b, m.env)
     await repo.fetch('origin')
-    expect(await repo.blockedPaths((await repo.revParse('HEAD'))!, (await repo.revParse('@{upstream}'))!)).toEqual(['a.md', 'k/paper.pdf'])
+    expect(await repo.blockedPaths((await repo.revParse('HEAD'))!, (await repo.revParse('@{upstream}'))!)).toEqual(['a.md', 'd.log/', 'k/paper.pdf', 'n.log'])
   })
 
   it('tells text from binary and too large for the diff view', async () => {
@@ -136,6 +142,118 @@ describe('ProjectRepo', () => {
     await writeFile(join(m.a, '.git', 'MERGE_HEAD'), `${await repo.revParse('HEAD')}\n`)
     expect(await repo.operationInProgress()).toBe(true)
     expect(await repo.hasUnmerged()).toBe(false)
+  })
+
+  it('notices a rebase left half-done by hand', async () => {
+    const m = await twoMachines()
+    const repo = await open(m.a, m.env)
+    await mkdir(join(m.a, '.git', 'rebase-merge'))
+    expect(await repo.operationInProgress()).toBe(true)
+  })
+
+  it('repairs the real index when a commit could not update it, and does not fail once the branch moved', async () => {
+    const m = await twoMachines({ 'f.md': 'v1\n' })
+    const repo = await open(m.a, m.env)
+    await applyFiles(m.a, { 'f.md': 'v2\n' })
+    // The user's own git holds the index while the app commits.
+    const lock = join(m.a, '.git', 'index.lock')
+    await writeFile(lock, '')
+    expect(await repo.commitProject(message)).toEqual(['f.md'])
+    await rm(lock)
+    expect(m.git(m.a, 'log', '-1', '--format=%s')).toBe('research: sync')
+    expect(await repo.commitProject(message)).toBeNull()
+    expect(m.git(m.a, 'status', '--porcelain')).toBe('')
+    expect(await repo.dirtyInProject()).toBe(false)
+  })
+
+  it('never commits with an identity git guessed instead of one the user configured', async () => {
+    const env = await isolatedGitEnv()
+    const root = await tmpDir()
+    await ProjectRepo.init(root, { env })
+    await applyFiles(root, { 'project.yaml': 'x\n' })
+    // EMAIL is one of git's guesses (like user@host.domain); the test does not set user.useConfigOnly itself.
+    const repo = await open(root, { ...env, EMAIL: 'guess@host.example' })
+    await expect(repo.commitProject(message)).rejects.toMatchObject({ kind: 'identity_missing' })
+    expect(await repo.revParse('HEAD')).toBeNull()
+    // The temporary index is gone after the failure.
+    expect((await readdir(repo.gitDir)).filter((name) => name.startsWith('research-'))).toEqual([])
+  })
+
+  it('runs tree edits side by side without sharing a temporary index', async () => {
+    const m = await twoMachines({ 'a.md': 'a\n' })
+    const repo = await open(m.a, m.env)
+    const base = (await repo.revParse('HEAD'))!
+    const ids = [0, 1, 2, 3, 4, 5]
+    const trees = await Promise.all(ids.map(async (i) => repo.editTree(base, [{ path: `f${i}.md`, mode: '100644', oid: await repo.writeBlob(`${i}\n`) }])))
+    for (const i of ids) expect((await repo.lsTree(trees[i], ['.'])).map((e) => e.path)).toEqual(['a.md', `f${i}.md`])
+    expect((await readdir(repo.gitDir)).filter((name) => name.startsWith('research-'))).toEqual([])
+  })
+
+  it('treats a project folder whose name looks like pathspec magic as a plain folder', async () => {
+    const m = await twoMachines({ 'project.yaml': 'x\n' }, { sub: ':x', outside: { 'x/o': 'o1\n' } })
+    const repo = await open(m.projectA, m.env)
+    expect(repo.prefix).toBe(':x/')
+    await applyFiles(m.a, { 'x/o': 'o2\n', ':x/notes.md': 'n\n', ':x/.cache/index.sqlite': 'rebuildable\n' })
+    expect(await repo.commitProject(message)).toEqual([':x/notes.md'])
+    expect(m.git(m.a, 'diff', '--name-only')).toBe('x/o')
+    expect(m.git(m.a, 'diff', '--cached', '--name-only')).toBe('')
+    expect(await repo.dirtyInProject()).toBe(false)
+    expect((await repo.lsTree('HEAD', [':x/'])).map((e) => e.path)).toEqual([':x/notes.md', ':x/project.yaml'])
+  })
+
+  it('handles project and file names with spaces and accents', async () => {
+    const m = await twoMachines({ 'project.yaml': 'x\n' }, { sub: 'mi tesis ñ' })
+    const repo = await open(m.projectA, m.env)
+    expect(repo.prefix).toBe('mi tesis ñ/')
+    await applyFiles(m.projectA, { 'papers/zhang2019/notas ú.md': 'n\n' })
+    expect(await repo.commitProject(message)).toEqual(['mi tesis ñ/papers/zhang2019/notas ú.md'])
+    const head = (await repo.revParse('HEAD'))!
+    expect(await repo.nameStatus('HEAD~1', head, ['mi tesis ñ/papers/'])).toEqual([{ status: 'A', path: 'mi tesis ñ/papers/zhang2019/notas ú.md' }])
+    expect(await repo.readFileAt(head, 'mi tesis ñ/papers/zhang2019/notas ú.md')).toEqual(Buffer.from('n\n'))
+  })
+
+  it('fast-forwards a project in a subfolder, stopping first for a local file in the way', async () => {
+    const m = await twoMachines({ 'a.md': 'a\n' }, { sub: 'research' })
+    await applyFiles(m.projectA, { 'a.md': 'a from A\n', 'new.md': 'new from A\n' })
+    commitAll(m, m.a, 'A')
+    m.git(m.a, 'push', '--quiet')
+    await applyFiles(m.projectB, { 'new.md': 'untracked on B\n' })
+    const repo = await open(m.projectB, m.env)
+    await repo.fetch('origin')
+    const head = (await repo.revParse('HEAD'))!
+    const theirs = (await repo.revParse('@{upstream}'))!
+    expect(await repo.blockedPaths(head, theirs)).toEqual(['research/new.md'])
+    await rm(join(m.projectB, 'new.md'))
+    expect(await repo.blockedPaths(head, theirs)).toEqual([])
+    await repo.fastForward(theirs)
+    expect(await readFile(join(m.projectB, 'a.md'), 'utf8')).toBe('a from A\n')
+    expect(await readFile(join(m.projectB, 'new.md'), 'utf8')).toBe('new from A\n')
+  })
+
+  it('reads the branch even when a tag has the same name', async () => {
+    const m = await twoMachines()
+    const repo = await open(m.a, m.env)
+    m.git(m.a, 'tag', 'main')
+    expect(await repo.info()).toEqual({ branch: 'main', upstream: { remote: 'origin', ref: 'refs/heads/main', short: 'origin/main' }, remotes: ['origin'] })
+  })
+
+  it('counts a .cache/ committed by hand as a change, since the next sync commit takes it out', async () => {
+    const m = await twoMachines({ 'project.yaml': 'x\n', '.cache/index.sqlite': 'committed by hand\n' })
+    const repo = await open(m.a, m.env)
+    expect(await repo.dirtyInProject()).toBe(true)
+    expect(await repo.commitProject(message)).toEqual(['.cache/index.sqlite'])
+    expect(await repo.dirtyInProject()).toBe(false)
+    expect(existsSync(join(m.a, '.cache', 'index.sqlite'))).toBe(true)
+  })
+
+  it('tells a missing file from a commit that is not there', async () => {
+    const m = await twoMachines({ 'a.md': 'a\n', 'd/b.md': 'b\n' })
+    const repo = await open(m.a, m.env)
+    expect(await repo.readFileAt('HEAD', 'nope.md')).toBeNull()
+    expect(await repo.oidAt('HEAD', 'nope.md')).toBeNull()
+    expect(await repo.readFileAt('HEAD', 'd')).toBeNull()
+    await expect(repo.readFileAt('0'.repeat(40), 'a.md')).rejects.toThrow()
+    await expect(repo.oidAt('0'.repeat(40), 'a.md')).rejects.toThrow()
   })
 
   it('adds a remote and points the branch at it', async () => {

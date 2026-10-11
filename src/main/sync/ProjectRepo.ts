@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
@@ -39,6 +40,14 @@ export interface MergeResult {
   conflicts: ConflictPaths[]
 }
 
+/**
+ * A path from the repository root as a pathspec that git takes literally: a folder named `:x` or `[draft]` is never
+ * read as pathspec magic or a glob. `.` (everything) stays as it is.
+ */
+function literal(path: string): string {
+  return path === '.' ? '.' : `:(literal)${path}`
+}
+
 /** A merge, rebase, cherry-pick or revert started by hand and not finished. */
 const IN_PROGRESS = ['MERGE_HEAD', 'rebase-merge', 'rebase-apply', 'CHERRY_PICK_HEAD', 'REVERT_HEAD']
 
@@ -74,17 +83,34 @@ export class ProjectRepo {
 
   /** The project folder as a pathspec from the root. */
   private get spec(): string {
-    return this.prefix === '' ? '.' : this.prefix
+    return this.prefix === '' ? '.' : literal(this.prefix)
+  }
+
+  /** The project's `.cache` as a literal pathspec. */
+  private get cacheSpec(): string {
+    return literal(`${this.prefix}.cache`)
   }
 
   /** `.cache/` is rebuildable: it never counts as a change to sync. */
   private get cacheExclude(): string {
-    return `:(exclude)${this.prefix}.cache`
+    return `:(exclude,literal)${this.prefix}.cache`
+  }
+
+  /** A temporary index of the app's own, unique per call so a lock left by a killed git never blocks the next one. */
+  private tempIndex(kind: 'sync' | 'merge'): string {
+    return join(this.gitDir, `research-${kind}-${randomUUID()}.index`)
+  }
+
+  private static async removeIndex(index: string): Promise<void> {
+    await rm(index, { force: true })
+    await rm(`${index}.lock`, { force: true })
   }
 
   async info(): Promise<RepoInfo> {
-    const symbolic = await this.git.run(['symbolic-ref', '--quiet', '--short', 'HEAD'], { okCodes: [1] })
-    const branch = symbolic.code === 0 ? symbolic.stdout.toString('utf8').trim() : null
+    // Not `--short`: with a tag of the same name it prints `heads/main`.
+    const symbolic = await this.git.run(['symbolic-ref', '--quiet', 'HEAD'], { okCodes: [1] })
+    const ref = symbolic.code === 0 ? symbolic.stdout.toString('utf8').trim() : ''
+    const branch = ref.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : null
     const remotes = (await this.git.text(['remote'])).split('\n').filter(Boolean).sort()
     return { branch, upstream: branch ? await this.upstreamOf(branch) : null, remotes }
   }
@@ -144,9 +170,14 @@ export class ProjectRepo {
     return out.code === 0 ? out.stdout.toString('utf8').trim() : null
   }
 
+  /** The entry at `path` in a commit or tree; null when it is not there. A commit that does not exist is an error. */
+  private async entryAt(commit: string, path: string): Promise<LsTreeEntry | null> {
+    const out = await this.git.run(['ls-tree', '-z', '--full-tree', commit, '--', literal(path)])
+    return parseLsTree(out.stdout.toString('utf8')).find((e) => e.path === path) ?? null
+  }
+
   async oidAt(commit: string, path: string): Promise<string | null> {
-    const out = await this.git.run(['rev-parse', '--verify', '--quiet', `${commit}:${path}`], { okCodes: [1, 128] })
-    return out.code === 0 ? out.stdout.toString('utf8').trim() : null
+    return (await this.entryAt(commit, path))?.oid ?? null
   }
 
   async isAncestor(a: string, b: string): Promise<boolean> {
@@ -158,10 +189,15 @@ export class ProjectRepo {
     return out.code === 0 ? out.stdout.toString('utf8').trim() : null
   }
 
-  /** Uncommitted changes (new files included) inside the project folder. */
+  /**
+   * Uncommitted changes (new files included) inside the project folder. A `.cache/` committed by hand counts too:
+   * the next `commitProject` takes it out of the branch.
+   */
   async dirtyInProject(): Promise<boolean> {
     const out = await this.git.run(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', this.spec, this.cacheExclude])
-    return out.stdout.length > 0
+    if (out.stdout.length > 0) return true
+    if (!(await this.revParse('HEAD'))) return false
+    return (await this.git.run(['ls-tree', '-z', '--full-tree', 'HEAD', '--', this.cacheSpec])).stdout.length > 0
   }
 
   /** Local commits the upstream does not have (all of them before the first push). */
@@ -178,25 +214,42 @@ export class ProjectRepo {
    * project's paths. Returns the committed paths, or null when there was nothing to commit.
    */
   async commitProject(message: (paths: string[]) => string): Promise<string[] | null> {
-    const index = join(this.gitDir, 'research-sync.index')
+    const index = this.tempIndex('sync')
     const env = { GIT_INDEX_FILE: index }
-    await rm(index, { force: true })
+    let paths: string[]
     try {
       const head = await this.revParse('HEAD')
       await this.git.run(head ? ['read-tree', head] : ['read-tree', '--empty'], { env })
       await this.git.run(['add', '--all', '--', this.spec], { env })
       // Named in `add`, an ignored .cache/ would make git fail; taken out of the temporary index instead, so it never
       // enters a commit even if someone removed it from .gitignore.
-      await this.git.run(['rm', '-r', '--cached', '--quiet', '--ignore-unmatch', '--', `${this.prefix}.cache`], { env })
-      const paths = splitNul((await this.git.run(['diff', '--cached', '--name-only', '-z', '--no-renames'], { env })).stdout.toString('utf8'))
-      if (paths.length === 0) return null
-      const tree = (await this.git.text(['write-tree'], { env })).trim()
-      const commit = await this.commitTree(tree, head ? [head] : [], message(paths))
-      await this.git.run(['update-ref', '-m', 'research: sync', 'HEAD', commit, head ?? ''])
-      await this.git.run(['reset', '--quiet', '--', this.spec])
-      return paths
+      await this.git.run(['rm', '-r', '--cached', '--quiet', '--ignore-unmatch', '--', this.cacheSpec], { env })
+      paths = splitNul((await this.git.run(['diff', '--cached', '--name-only', '-z', '--no-renames'], { env })).stdout.toString('utf8'))
+      if (paths.length > 0) {
+        const tree = (await this.git.text(['write-tree'], { env })).trim()
+        const commit = await this.commitTree(tree, head ? [head] : [], message(paths))
+        await this.git.run(['update-ref', '-m', 'research: sync', 'HEAD', commit, head ?? ''])
+      }
     } finally {
-      await rm(index, { force: true })
+      await ProjectRepo.removeIndex(index)
+    }
+    // The commit is done once HEAD moved; the real index catching up is best effort, retried on every call.
+    await this.syncIndex()
+    return paths.length > 0 ? paths : null
+  }
+
+  /**
+   * Brings the real index back in line with HEAD for the project's paths. A `reset` that failed after a sync commit
+   * (e.g. the user's own git held `index.lock`) would leave it staging the reverse of that commit, which the user's
+   * next `git commit` would quietly record. Never throws: the next call tries again.
+   */
+  private async syncIndex(): Promise<void> {
+    try {
+      if (!(await this.revParse('HEAD'))) return
+      const diff = await this.git.run(['diff', '--cached', '--quiet', 'HEAD', '--', this.spec], { okCodes: [1] })
+      if (diff.code === 1) await this.git.run(['reset', '--quiet', '--', this.spec])
+    } catch {
+      // Left for the next call.
     }
   }
 
@@ -225,10 +278,10 @@ export class ProjectRepo {
     return (await this.readBlob(oid)).toString('utf8')
   }
 
-  /** A file as a commit (or tree) has it; null when it is not there. */
+  /** A file as a commit (or tree) has it; null when it is not there (or is a folder). A missing commit is an error. */
   async readFileAt(commit: string, path: string): Promise<Buffer | null> {
-    const out = await this.git.run(['cat-file', 'blob', `${commit}:${path}`], { okCodes: [128] })
-    return out.code === 0 ? out.stdout : null
+    const entry = await this.entryAt(commit, path)
+    return entry && entry.type === 'blob' ? this.readBlob(entry.oid) : null
   }
 
   /** A blob for the side-by-side view, or why it cannot be shown. */
@@ -246,15 +299,14 @@ export class ProjectRepo {
 
   /** Every file under `dirs` (from the root; `.` for all) in a commit or tree. */
   async lsTree(treeish: string, dirs: string[]): Promise<LsTreeEntry[]> {
-    const out = await this.git.run(['ls-tree', '-r', '-z', '--full-tree', treeish, '--', ...dirs])
+    const out = await this.git.run(['ls-tree', '-r', '-z', '--full-tree', treeish, '--', ...dirs.map(literal)])
     return parseLsTree(out.stdout.toString('utf8'))
   }
 
   /** `base` with `edits` applied, written as a new tree through a temporary index. */
   async editTree(base: string, edits: TreeEdit[]): Promise<string> {
-    const index = join(this.gitDir, 'research-merge.index')
+    const index = this.tempIndex('merge')
     const env = { GIT_INDEX_FILE: index }
-    await rm(index, { force: true })
     try {
       await this.git.run(['read-tree', base], { env })
       const zero = '0'.repeat(base.length)
@@ -262,18 +314,22 @@ export class ProjectRepo {
       await this.git.run(['update-index', '-z', '--index-info'], { env, input: `${input}\0` })
       return (await this.git.text(['write-tree'], { env })).trim()
     } finally {
-      await rm(index, { force: true })
+      await ProjectRepo.removeIndex(index)
     }
   }
 
-  /** A commit of `tree` with the user's git identity (commit hooks do not run). */
+  /**
+   * A commit of `tree` with the user's configured git identity (commit hooks do not run). `user.useConfigOnly` stops
+   * git from guessing one (user@host.domain, $EMAIL): a wrong author pushed to a shared remote cannot be undone
+   * without rewriting history, so a missing identity fails with `identity_missing` instead.
+   */
   async commitTree(tree: string, parents: string[], message: string): Promise<string> {
-    const args = ['commit-tree', tree, ...parents.flatMap((p) => ['-p', p]), '-F', '-']
+    const args = ['-c', 'user.useConfigOnly=true', 'commit-tree', tree, ...parents.flatMap((p) => ['-p', p]), '-F', '-']
     return (await this.git.text(args, { input: message })).trim()
   }
 
   async nameStatus(from: string, to: string, dirs: string[]): Promise<NameStatus[]> {
-    const out = await this.git.run(['diff', '--name-status', '-z', '--no-renames', from, to, '--', ...dirs])
+    const out = await this.git.run(['diff', '--name-status', '-z', '--no-renames', from, to, '--', ...dirs.map(literal)])
     return parseNameStatus(out.stdout.toString('utf8'))
   }
 
@@ -284,12 +340,18 @@ export class ProjectRepo {
   async blockedPaths(from: string, to: string): Promise<string[]> {
     const changed = splitNul((await this.git.run(['diff', '--name-only', '-z', '--no-renames', from, to])).stdout.toString('utf8'))
     const local = parseStatus((await this.git.run(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=matching'])).stdout.toString('utf8'))
-    const hit = (path: string): boolean => (path.endsWith('/') ? changed.some((c) => c.startsWith(path)) : changed.includes(path))
+    // A local path is in the way when the target changes it, something under it (a local file or folder where the
+    // target puts a folder), or a folder above it (a local folder where the target puts a file).
+    const hit = (path: string): boolean => {
+      const p = path.endsWith('/') ? path.slice(0, -1) : path
+      return changed.some((c) => c === p || c.startsWith(`${p}/`) || p.startsWith(`${c}/`))
+    }
     return [...new Set(local.filter(hit))].sort()
   }
 
   /** Moves the branch and the working tree to `target`, a descendant of HEAD. */
   async fastForward(target: string): Promise<void> {
-    await this.git.run(['merge', '--ff-only', '--quiet', target])
+    // --no-autostash: the user's merge.autoStash must not stash and reapply around the app's fast-forward.
+    await this.git.run(['merge', '--ff-only', '--no-autostash', '--quiet', target])
   }
 }
