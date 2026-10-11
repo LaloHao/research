@@ -140,4 +140,21 @@ describe('watchProject after files are replaced', () => {
     expect(relations).toBe(1)
     expect(configs).toBe(0)
   })
+
+  it('reports folders moving in and out of .trash/', async () => {
+    const root = await tmpDir()
+    await mkdir(join(root, 'papers/he2017drain'), { recursive: true })
+    let trash = 0
+    const papers: string[] = []
+    const stop = watchProject(root, { onPaper: (id) => papers.push(id), onConfig: () => undefined, onTrash: () => trash++ }, 50)
+    await new Promise((r) => setTimeout(r, 100))
+    await mkdir(join(root, '.trash'))
+    await rename(join(root, 'papers/he2017drain'), join(root, '.trash/he2017drain'))
+    await waitFor(() => trash > 0 && papers.includes('he2017drain'))
+    await new Promise((r) => setTimeout(r, 150))
+    const before = trash
+    await rename(join(root, '.trash/he2017drain'), join(root, 'papers/he2017drain'))
+    await waitFor(() => trash > before)
+    stop()
+  })
 })

@@ -1,6 +1,7 @@
 import { readdirSync, statSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import { RELATIONS_FILE } from './relationsFile'
+import { TRASH_DIR } from './trashPaths'
 
 export interface WatchHandlers {
   /** `files` are the names changed inside `papers/<id>/` during the debounce window; the folder itself is `PAPER_FOLDER`. */
@@ -8,6 +9,8 @@ export interface WatchHandlers {
   onConfig(): void
   /** relations.yaml at the project root changed. */
   onRelations?(): void
+  /** `.trash/` appeared or went away, or a folder moved in or out of it (a removal or restore, here or through git). */
+  onTrash?(): void
 }
 
 export const PAPER_FOLDER = '.'
@@ -92,21 +95,47 @@ export function watchProject(root: string, handlers: WatchHandlers, debounceMs =
     for (const id of subfolders(papersDir)) syncPaper(id)
   }
 
+  const trashDir = join(root, TRASH_DIR)
+  let trashWatcher: FSWatcher | null = null
+  const trashChanged = (): void => schedule(TRASH_DIR, () => handlers.onTrash?.())
+  const closeTrashDir = (): void => {
+    trashWatcher?.close()
+    trashWatcher = null
+  }
+
+  /** Watches `.trash/` itself (not its paper folders: what matters is which keys are in it). */
+  const syncTrashDir = (notify: boolean): void => {
+    if (closed) return
+    if (!isDir(trashDir)) closeTrashDir()
+    else
+      trashWatcher ??= watchDir(
+        trashDir,
+        (name) => {
+          if (!name.startsWith('.')) trashChanged()
+        },
+        closeTrashDir
+      )
+    if (notify) trashChanged()
+  }
+
   const rootWatcher = watchDir(
     root,
     (name) => {
       if (name === PROJECT_FILE) schedule(PROJECT_FILE, () => handlers.onConfig())
       else if (name === RELATIONS_FILE) schedule(RELATIONS_FILE, () => handlers.onRelations?.())
+      else if (name === TRASH_DIR) syncTrashDir(true)
       else if (name === 'papers') syncPapersDir()
     },
     () => undefined
   )
   syncPapersDir()
+  syncTrashDir(false)
 
   return () => {
     closed = true
     rootWatcher?.close()
     closePapersDir()
+    closeTrashDir()
     for (const timer of timers.values()) clearTimeout(timer)
     timers.clear()
   }

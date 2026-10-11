@@ -2,6 +2,7 @@ import { join } from 'node:path'
 import type { JobSpec } from '../../shared/jobs'
 import type { PaperDetail } from '../../shared/library'
 import type { ReviewItem } from '../../shared/summary'
+import type { DeletePlan, RestoreOutcome, TrashEntry, TrashOutcome, TrashTarget } from '../../shared/trash'
 import { IndexCache } from '../cache/IndexCache'
 import { CitationService } from '../citations/CitationService'
 import { OpenAlexCitations } from '../citations/OpenAlexCitations'
@@ -25,7 +26,7 @@ import { RelationSuggester } from '../relations/RelationSuggester'
 import { SimilarityService } from '../relations/SimilarityService'
 import { Summarizer } from '../summary/Summarizer'
 import { SummaryService } from '../summary/SummaryService'
-import { LibraryService } from './LibraryService'
+import { DEFAULT_DEVICE_ID, LibraryService } from './LibraryService'
 
 export interface SessionOptions {
   contactEmail: string
@@ -44,8 +45,6 @@ export interface SessionOptions {
   /** Pause before each OpenAlex request of a citations job; tests pass 0. */
   citationPauseMs?: number
 }
-
-const DEFAULT_DEVICE_ID = '00000000-0000-0000-0000-000000000000'
 
 type SessionEvent = 'library' | 'jobs' | 'project'
 
@@ -82,8 +81,26 @@ export class ProjectSession {
   private static async start(store: ProjectStore, opts: SessionOptions): Promise<ProjectSession> {
     const cache = IndexCache.open(join(store.cacheDir, 'index.sqlite'))
     const http = new HttpClient({ fetch: opts.fetch, contactEmail: opts.contactEmail, openalexApiKey: opts.openalexApiKey })
-    const library = new LibraryService({ store, cache, resolver: new MetadataResolver(http), http, extractor: opts.extractor ?? new PdfjsExtractor() })
-    const ledger = new CostLedger(store, opts.deviceId ?? DEFAULT_DEVICE_ID)
+    // An empty id (settings not loaded yet) counts as none.
+    const deviceId = opts.deviceId || DEFAULT_DEVICE_ID
+    const library = new LibraryService({
+      store,
+      cache,
+      resolver: new MetadataResolver(http),
+      http,
+      extractor: opts.extractor ?? new PdfjsExtractor(),
+      // trashed.yaml names the same device as the cost log.
+      deviceId,
+      // Called later, once the queue and the relations service below exist.
+      cancelJobs: (ids) => queue.cancelPapers(ids),
+      cancelQueued: (ids) => queue.cancelQueuedPapers(ids),
+      relations: {
+        countTouching: (ids) => relations.countTouching(ids),
+        removeTouching: (ids) => relations.removeTouching(ids),
+        rekey: (from, to) => relations.rekey(from, to)
+      }
+    })
+    const ledger = new CostLedger(store, deviceId)
     // Agent runs cost more than a summary: their estimate starts higher and grows on its own.
     const budget = new BudgetGuard(
       () => limitsFromConfig(store.config.llm),
@@ -191,6 +208,11 @@ export class ProjectSession {
               })
             )
             .catch((error) => console.error('relations.yaml', error))
+        },
+        onTrash: () => {
+          void session
+            .track(library.syncTrash().then(() => session.emit('library')))
+            .catch((error) => console.error('trash', error))
         }
       })
     }
@@ -239,6 +261,38 @@ export class ProjectSession {
 
   detail(id: string): Promise<PaperDetail> {
     return this.track(this.library.detail(id))
+  }
+
+  /** «Quitar de la biblioteca»; the neighbours of the moved papers are updated afterwards. */
+  async trash(ids: string[]): Promise<TrashOutcome> {
+    const outcome = await this.track(this.library.trash(ids))
+    for (const id of outcome.moved) await this.track(this.similarity.paperChanged(id)).catch(logged('neighbours'))
+    return outcome
+  }
+
+  /** «Restaurar» or «Fusionar»; restored papers get their vector (if it changed) and neighbours back. */
+  async restore(ids: string[], opts: { merge: boolean }): Promise<RestoreOutcome> {
+    const outcome = await this.track(this.library.restore(ids, opts))
+    // Where each paper now is: its own key, a free one, or the library paper it was merged into.
+    const keys = [...new Set(outcome.restored.map((r) => r.key))]
+    if (keys.length > 0) {
+      await this.track(this.similarity.enqueueStale(keys)).catch(logged('embeddings'))
+      for (const key of keys) await this.track(this.similarity.paperChanged(key)).catch(logged('neighbours'))
+    }
+    return outcome
+  }
+
+  listTrash(): Promise<TrashEntry[]> {
+    return this.track(this.library.listTrash())
+  }
+
+  deletePlan(target: TrashTarget): Promise<DeletePlan> {
+    return this.track(this.library.deletePlan(target))
+  }
+
+  /** Exactly the ids a confirmation showed (from deletePlan). */
+  deleteForever(ids: string[]): Promise<number> {
+    return this.track(this.library.deleteForever(ids))
   }
 
   async close(): Promise<void> {
