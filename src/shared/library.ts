@@ -28,6 +28,8 @@ export interface PaperRow {
   summary_model: string | null
   /** Whether citations were fetched from OpenAlex ('none' until the first try). */
   citations_status: CitationsStatus
+  /** Suggested typed relations (not yet confirmed or rejected) that involve this paper. */
+  relations_pending: number
 }
 
 /** Error codes the main process hands to the UI; each has a translation under `errors.<code>`. */
@@ -56,6 +58,11 @@ export const USER_ERROR_CODES = [
   'openalex_limit',
   'model_missing',
   'model_error',
+  'operation_budget',
+  'agent_tools_unavailable',
+  'relations_conflict',
+  'pdf_exists',
+  'file_too_large',
   'unknown'
 ] as const
 export type UserErrorCode = (typeof USER_ERROR_CODES)[number]
@@ -70,12 +77,15 @@ export type IngestStatus = (typeof INGEST_STATUSES)[number]
 /** What a finished job reports in `message`; each has a translation under `jobs.outcome.<value>`. */
 export const JOB_OUTCOMES = [
   ...INGEST_STATUSES,
+  'pdf_attached',
   'summarized',
   'citations_updated',
   'citations_unresolved',
   'cited_by_updated',
   'embedded',
-  'model_downloaded'
+  'model_downloaded',
+  'relations_suggested',
+  'relations_no_candidates'
 ] as const
 
 export interface PaperDetail {

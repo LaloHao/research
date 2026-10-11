@@ -8,7 +8,7 @@ const args = process.argv.slice(2)
 
 let input = ''
 process.stdin.on('data', (d) => (input += d))
-process.stdin.on('end', () => {
+process.stdin.on('end', async () => {
   if (log) appendFileSync(log, JSON.stringify({ args, input }) + '\n')
   let call = 0
   if (counter) {
@@ -36,6 +36,22 @@ process.stdin.on('end', () => {
     case 'garbage':
       process.stdout.write('not json at all')
       return process.exit(1)
+    case 'agent': {
+      const configPath = args[args.indexOf('--mcp-config') + 1]
+      const server = Object.values(JSON.parse(readFileSync(configPath, 'utf8')).mcpServers)[0]
+      const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
+      const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js')
+      const client = new Client({ name: 'fake-claude', version: '1.0.0' })
+      await client.connect(new StreamableHTTPClientTransport(new URL(server.url), { requestInit: { headers: server.headers } }))
+      const toolResults = []
+      for (const call of JSON.parse(process.env.FAKE_CLAUDE_TOOL_CALLS ?? '[]')) toolResults.push(await client.callTool(call))
+      await client.close()
+      if (log) appendFileSync(log, JSON.stringify({ toolResults }) + '\n')
+      const agentBase = JSON.parse(readFileSync(new URL('../llm/agent-success.json', import.meta.url), 'utf8'))
+      const output = process.env.FAKE_CLAUDE_OUTPUT ? JSON.parse(process.env.FAKE_CLAUDE_OUTPUT) : agentBase.structured_output
+      process.stdout.write(JSON.stringify({ ...agentBase, structured_output: output }))
+      return process.exit(0)
+    }
     case 'hang':
       setInterval(() => {}, 1000)
       return

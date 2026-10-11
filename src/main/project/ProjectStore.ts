@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { appendFile, mkdir, readdir, readFile } from 'node:fs/promises'
+import { appendFile, mkdir, readdir, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PaperSchema, ProjectConfigSchema, type Paper, type ProjectConfig } from '../../shared/schemas'
 import { parse } from 'yaml'
@@ -14,9 +14,11 @@ import {
   type SummaryFile,
   type ThesisContext
 } from '../../shared/summary'
+import { RelationsFileSchema, type RelationsFile } from '../../shared/typedRelations'
 import { atomicWrite, sha256 } from './atomicWrite'
 import { ConflictError, ProjectError, type ReadResult } from './errors'
 import { gitattributesLines, gitignoreLines, withManagedBlock } from './gitFiles'
+import { RELATIONS_FILE, resolveConflictText, sortRelations } from './relationsFile'
 import { parseFrontmatterFile, parseYamlFile, toFrontmatter, toYaml } from './yamlFile'
 
 export const PROJECT_FILE = 'project.yaml'
@@ -155,6 +157,11 @@ export class ProjectStore {
     return sha256(bytes)
   }
 
+  /** Drops the on-demand copy in the cache, once a PDF in the paper folder takes its place. */
+  async removeCachedPdf(id: string): Promise<void> {
+    await rm(join(this.cacheDir, 'pdfs', `${id}.pdf`), { force: true })
+  }
+
   async writeContent(id: string, markdown: string): Promise<void> {
     await atomicWrite(join(this.paperDir(id), 'content.md'), markdown)
   }
@@ -181,6 +188,40 @@ export class ProjectStore {
   async writeExtraction(id: string, file: ExtractionFile, expectedHash: string | null): Promise<string> {
     const valid = ExtractionFileSchema.parse(file)
     return this.writeChecked(join(this.paperDir(id), 'extraction.yaml'), toYaml(valid), expectedHash)
+  }
+
+  /** relations.yaml at the project root; null when it does not exist yet. */
+  async readRelations(): Promise<ReadResult<RelationsFile> | null> {
+    const text = await readOptional(join(this.root, RELATIONS_FILE))
+    return text === null ? null : parseYamlFile(text, RelationsFileSchema)
+  }
+
+  /** Entries are always written sorted by id, so concurrent edits on two machines merge line by line. */
+  async writeRelations(file: RelationsFile, expectedHash: string | null): Promise<string> {
+    const valid = RelationsFileSchema.parse({ ...file, relations: sortRelations(file.relations) })
+    return this.writeChecked(join(this.root, RELATIONS_FILE), toYaml(valid), expectedHash)
+  }
+
+  /**
+   * Rewrites a relations.yaml with git conflict markers as the union of both sides (unknown keys kept);
+   * null (file untouched) when that is not possible — see `resolveConflictText`. `dropped` counts the
+   * invalid entries left out.
+   *
+   * `expectedHash`, when given, is the hash of the conflicted text the caller showed the user (e.g. from
+   * `readRelations()`'s `problem`); if the file changed on disk since then, this throws `ConflictError`
+   * instead of resolving content the user never saw. Omit it to resolve whatever is on disk right now.
+   */
+  async resolveRelationsConflict(expectedHash: string | null = null): Promise<{ dropped: number } | null> {
+    const path = join(this.root, RELATIONS_FILE)
+    const text = await readOptional(path)
+    if (text === null) return null
+    const currentHash = sha256(text)
+    if (expectedHash !== null && currentHash !== expectedHash) throw new ConflictError(path)
+    const merged = resolveConflictText(text)
+    if (!merged) return null
+    const valid = RelationsFileSchema.parse({ ...merged.file, relations: sortRelations(merged.file.relations) })
+    await this.writeChecked(path, toYaml(valid), currentHash)
+    return { dropped: merged.dropped }
   }
 
   /** Append-only, one file per device, so synced folders never conflict. */

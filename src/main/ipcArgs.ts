@@ -1,7 +1,9 @@
+import { isAbsolute, win32 } from 'node:path'
 import { z } from 'zod'
 import { CANDIDATE_DIRECTIONS, OPENALEX_ID } from '../shared/relations'
 import { PDF_POLICIES } from '../shared/schemas'
 import { ExtractionFormSchema, LLM_MODELS, ThesisContextSchema } from '../shared/summary'
+import { MAX_JUSTIFICATION, RELATION_ID, RELATION_STATUSES, RELATION_TYPES } from '../shared/typedRelations'
 
 const paperIdSchema = z.string().regex(/^[a-z][a-z0-9]*$/)
 const facetKeySchema = z.string().regex(/^[a-z][a-z0-9_]*$/)
@@ -14,6 +16,9 @@ export const ipcArgs = {
   optionalText: z.string().optional(),
   hash: z.string().nullable(),
   paths: z.array(z.string().min(1)),
+  /** A file the user picked or dropped: absolute on POSIX or Windows. */
+  absolutePath: z.string().min(1).refine((p) => isAbsolute(p) || win32.isAbsolute(p)),
+  flag: z.boolean(),
   jobId: z.number().int().nonnegative(),
   /** `lastProjectPath` is managed by the main process only. */
   settingsPatch: z.strictObject({ contactEmail: z.string().optional(), openalexApiKey: z.string().optional() }),
@@ -31,6 +36,7 @@ export const ipcArgs = {
   llmPatch: z.strictObject({
     model: z.enum(LLM_MODELS).optional(),
     auto_summarize: z.boolean().optional(),
+    auto_suggest_relations: z.boolean().optional(),
     max_input_chars: z.number().int().positive().optional(),
     budget: z
       .strictObject({
@@ -60,7 +66,13 @@ export const ipcArgs = {
   facetFilters: z.array(z.strictObject({ facet: facetKeySchema, value: z.string().min(1) })).max(4),
   /** A bare file name for the save dialog's default: never a path. */
   exportName: z.string().regex(/^[\w.-]{1,100}\.(png|svg|csv)$/),
-  exportData: z.union([z.string(), z.custom<Uint8Array>((v) => v instanceof Uint8Array)])
+  exportData: z.union([z.string(), z.custom<Uint8Array>((v) => v instanceof Uint8Array)]),
+  relationId: z.string().regex(RELATION_ID),
+  relationStatus: z.enum(RELATION_STATUSES),
+  relationType: z.enum(RELATION_TYPES),
+  /** Undo sends back only the token the main process handed out; never relation data. */
+  undoToken: z.uuid(),
+  justification: z.string().trim().min(1).max(MAX_JUSTIFICATION)
 }
 
 export class InvalidIpcArgument extends Error {

@@ -8,6 +8,8 @@ export function jobLabel(t: TFunction, job: JobRecord): string {
       return t('jobs.ingest_identifier', { input: job.spec.input })
     case 'ingest_pdf':
       return t('jobs.ingest_pdf', { file: job.spec.path.split(/[\\/]/).pop() })
+    case 'attach_pdf':
+      return t('jobs.attach_pdf', { id: job.spec.paperId })
     case 'update_metadata':
       return t('jobs.update_metadata', { id: job.spec.paperId })
     case 'summarize':
@@ -20,6 +22,8 @@ export function jobLabel(t: TFunction, job: JobRecord): string {
       return t('jobs.embed', { id: job.spec.paperId })
     case 'model_download':
       return t('jobs.model_download')
+    case 'suggest_relations':
+      return t('jobs.suggest_relations', { id: job.spec.paperId })
   }
 }
 

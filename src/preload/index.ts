@@ -18,6 +18,8 @@ const api: ResearchApi = {
     detail: (id) => ipcRenderer.invoke(IPC.libraryDetail, id),
     addIdentifier: (input) => ipcRenderer.invoke(IPC.libraryAddIdentifier, input),
     addPdfs: (paths) => ipcRenderer.invoke(IPC.libraryAddPdfs, paths),
+    attachPdf: (id, path, replace) => ipcRenderer.invoke(IPC.libraryAttachPdf, id, path, replace),
+    choosePdf: () => ipcRenderer.invoke(IPC.libraryChoosePdf),
     updateMetadata: (id, input) => ipcRenderer.invoke(IPC.libraryUpdateMetadata, id, input),
     readPdf: (id) => ipcRenderer.invoke(IPC.libraryReadPdf, id),
     readNotes: (id) => ipcRenderer.invoke(IPC.libraryReadNotes, id),
@@ -71,6 +73,20 @@ const api: ResearchApi = {
     info: () => ipcRenderer.invoke(IPC.modelsInfo),
     download: () => ipcRenderer.invoke(IPC.modelsDownload),
     remove: () => ipcRenderer.invoke(IPC.modelsRemove)
+  },
+  relations: {
+    forPaper: (id) => ipcRenderer.invoke(IPC.relationsForPaper, id),
+    suggest: (id) => ipcRenderer.invoke(IPC.relationsSuggest, id),
+    plan: (ids) => ipcRenderer.invoke(IPC.relationsPlan, ids),
+    suggestBatch: (ids) => ipcRenderer.invoke(IPC.relationsSuggestBatch, ids),
+    setStatus: (relationId, status) => ipcRenderer.invoke(IPC.relationsSetStatus, relationId, status),
+    changeType: (relationId, type) => ipcRenderer.invoke(IPC.relationsChangeType, relationId, type),
+    reverse: (relationId) => ipcRenderer.invoke(IPC.relationsReverse, relationId),
+    editJustification: (relationId, text) => ipcRenderer.invoke(IPC.relationsEditJustification, relationId, text),
+    revert: (undoToken) => ipcRenderer.invoke(IPC.relationsRevert, undoToken),
+    fileState: () => ipcRenderer.invoke(IPC.relationsFileState),
+    resolveConflict: () => ipcRenderer.invoke(IPC.relationsResolveConflict),
+    showFile: () => ipcRenderer.invoke(IPC.relationsShowFile)
   },
   exports: {
     save: (defaultName, data) => ipcRenderer.invoke(IPC.exportSave, defaultName, data)

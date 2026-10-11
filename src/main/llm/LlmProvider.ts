@@ -1,16 +1,29 @@
-export const LLM_ERROR_CODES = ['llm_unavailable', 'llm_quota', 'llm_invalid_output', 'llm_timeout', 'budget_exceeded'] as const
+/** `operation_budget`: the call reached its own --max-budget-usd (fails that paper only); `budget_exceeded`: a batch or monthly cap refused it. */
+export const LLM_ERROR_CODES = ['llm_unavailable', 'llm_quota', 'llm_invalid_output', 'llm_timeout', 'budget_exceeded', 'operation_budget'] as const
 export type LlmErrorCode = (typeof LLM_ERROR_CODES)[number]
 
-/** `message` is the code, so a failed job records it directly. */
+/**
+ * `message` is the code, so a failed job records it directly. `estimated`: the CLI was cut off (timeout) before it
+ * reported its cost, so `costUsd` is the per-operation cap it was allowed to spend.
+ */
 export class LlmError extends Error {
+  readonly estimated: boolean
   constructor(
     readonly code: LlmErrorCode,
     readonly costUsd = 0,
-    options?: { cause?: unknown }
+    options?: { cause?: unknown; estimated?: boolean }
   ) {
     super(code, options)
     this.name = 'LlmError'
+    this.estimated = options?.estimated ?? false
   }
+}
+
+/** What a failed call cost: an LlmError's cost, or the estimated cap a run cancelled after it started carries. */
+export function failedCallCost(error: unknown): { costUsd: number; estimated: boolean } {
+  if (!error || typeof error !== 'object') return { costUsd: 0, estimated: false }
+  const { costUsd, estimated } = error as { costUsd?: unknown; estimated?: unknown }
+  return typeof costUsd === 'number' && costUsd > 0 ? { costUsd, estimated: estimated === true } : { costUsd: 0, estimated: false }
 }
 
 export interface CompleteRequest {
@@ -31,6 +44,21 @@ export interface CompleteResult {
   model: string
 }
 
+/** A streamable-HTTP MCP server the agent may use, reached with a bearer token. */
+export interface McpEndpoint {
+  name: string
+  url: string
+  token: string
+}
+
+/** A run where Claude may call the tools of `mcp` (and nothing else) before answering in `schema`. */
+export interface AgentRequest extends CompleteRequest {
+  mcp: McpEndpoint
+  /** Hard cap on turns; enforced by the MCP server's call budget, and by the CLI when it supports --max-turns. */
+  maxTurns: number
+}
+
 export interface LlmProvider {
   complete(req: CompleteRequest): Promise<CompleteResult>
+  runAgent(req: AgentRequest): Promise<CompleteResult>
 }

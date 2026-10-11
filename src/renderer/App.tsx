@@ -5,6 +5,7 @@ import type { FacetFilter } from '../shared/relations'
 import { LibraryView } from './components/library/LibraryView'
 import { MapView } from './components/map/MapView'
 import { Rail } from './components/Rail'
+import { RelationsFileBanner } from './components/RelationsFileBanner'
 import { SettingsView } from './components/SettingsView'
 import { WelcomeView } from './components/WelcomeView'
 import { useEvent } from './hooks/useEvent'
@@ -82,6 +83,7 @@ function ProjectShell({ project, view, onViewChange: setView }: ProjectShellProp
         )}
         {view === 'settings' && <SettingsView project={project} />}
       </main>
+      <RelationsFileBanner />
     </div>
   )
 }

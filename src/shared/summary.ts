@@ -133,6 +133,7 @@ export type LlmModel = (typeof LLM_MODELS)[number]
 export const DEFAULT_LLM_CONFIG = {
   model: 'sonnet' as const,
   auto_summarize: false,
+  auto_suggest_relations: false,
   max_input_chars: 400000,
   budget: { per_operation_usd: 0.5, per_batch_usd: 10, per_month_usd: null as number | null }
 }
@@ -141,6 +142,7 @@ export const DEFAULT_LLM_CONFIG = {
 export const LlmConfigShape = z.object({
   model: z.enum(LLM_MODELS).default('sonnet'),
   auto_summarize: z.boolean().default(false),
+  auto_suggest_relations: z.boolean().default(false),
   max_input_chars: z.number().int().positive().default(400000),
   budget: z
     .object({
@@ -161,6 +163,7 @@ export const LlmConfigSchema = z
   .object({
     model: LlmConfigShape.shape.model.catch(DEFAULT_LLM_CONFIG.model),
     auto_summarize: LlmConfigShape.shape.auto_summarize.catch(DEFAULT_LLM_CONFIG.auto_summarize),
+    auto_suggest_relations: LlmConfigShape.shape.auto_suggest_relations.catch(DEFAULT_LLM_CONFIG.auto_suggest_relations),
     max_input_chars: LlmConfigShape.shape.max_input_chars.catch(DEFAULT_LLM_CONFIG.max_input_chars),
     budget: z
       .object({
@@ -176,6 +179,9 @@ export type LlmConfig = z.infer<typeof LlmConfigShape>
 export const SUMMARY_STATUSES = ['none', 'generated', 'reviewed', 'stale', 'too_long', 'failed'] as const
 export type SummaryStatus = (typeof SUMMARY_STATUSES)[number]
 
+export const COST_OPERATIONS = ['summarize', 'suggest_relations'] as const
+export type CostOperation = (typeof COST_OPERATIONS)[number]
+
 /** One line of costs/<device-id>.jsonl. */
 export interface CostEntry {
   at: string
@@ -183,17 +189,22 @@ export interface CostEntry {
   batch_id: string | null
   model: string
   cost_usd: number
-  operation: 'summarize'
+  operation: CostOperation
+  /** The call was cut off (timeout, cancel) before it reported its cost: `cost_usd` is the per-operation cap. */
+  estimated?: true
 }
 
 /** The `thesis` section has a single key, `relation`. */
 export type Section = 'fields' | 'facets' | 'thesis'
 
-/** One field, facet or thesis relation still waiting for the user's review. */
+/** A review item is a summary entry (Section) or a suggested typed relation ('relation', keyed by its id). */
+export type ReviewSection = Section | 'relation'
+
+/** One field, facet, thesis relation or suggested typed relation still waiting for the user's review. */
 export interface ReviewItem {
   paperId: string
   title: string
-  section: Section
+  section: ReviewSection
   key: string
 }
 

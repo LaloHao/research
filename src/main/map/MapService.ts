@@ -1,6 +1,7 @@
 import type { ChartData, ChartQuery, FacetFilter, FacetOption, GraphData, LinkedPaper, RelationsDetail } from '../../shared/relations'
 import type { IndexCache, RelationRow } from '../cache/IndexCache'
 import type { ProjectStore } from '../project/ProjectStore'
+import { typedEdges } from '../relations/relationMerge'
 import { loadForm } from '../summary/extractionForm'
 import { chartData, papersMatching } from './facetStats'
 
@@ -85,7 +86,8 @@ export class MapService {
         thesisScore: r.thesis_score
       })),
       citations,
-      similarities: [...pairs.values()]
+      similarities: [...pairs.values()],
+      typed: typedEdges(cache.typedRelations()).filter((e) => ids.has(e.source) && ids.has(e.target))
     }
   }
 

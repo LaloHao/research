@@ -46,3 +46,13 @@ EVAL_PROJECT=~/path/to/my/project pnpm eval:similarity
 ```
 
 The first run downloads the model (~470 MB) to `EVAL_MODELS_DIR` (default `~/.cache/research-eval-models`). `EVAL_FETCH_CITATIONS=1` refreshes citations from OpenAlex first (it uses part of OpenAlex's daily budget). Without `EVAL_PROJECT`, the test shows as skipped; `pnpm test`/`pnpm check` never include it.
+
+### Typed relations evaluation against real Claude
+
+`pnpm eval:relations` asks the real Claude CLI (as an agent with the read-only library tools) for typed relations for a few papers of a temporary, disposable copy of a real project, and prints, per paper, the candidates, the suggested relations and their types, the tool calls, how many quotes were found, what was dropped, the cost and the time. Nothing is written back:
+
+```bash
+EVAL_PROJECT=~/path/to/my/project pnpm eval:relations
+```
+
+**Uses real Claude quota.** Optional variables: `EVAL_MODEL` (default `sonnet`) and `EVAL_LIMIT` (papers to analyze, default 3). Without `EVAL_PROJECT`, the test shows as skipped; `pnpm test`/`pnpm check` never include it.

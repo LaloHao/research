@@ -52,6 +52,8 @@
     "model": "Modelo",
     "models": { "sonnet": "Sonnet (recomendado)", "haiku": "Haiku (más rápido, menor calidad)", "opus": "Opus (máxima calidad, consume más cuota)" },
     "auto_summarize": "Resumir automáticamente al agregar papers",
+    "auto_suggest_relations": "Sugerir relaciones automáticamente",
+    "auto_suggest_relations_help": "Al terminar el resumen o las citas de un paper, se analiza si ya tiene ambos y sus candidatos cambiaron desde su último análisis. Los análisis automáticos de cada día comparten el tope por lote; al alcanzarlo, se detienen hasta el día siguiente. Consume cuota de Claude.",
     "budget_operation": "Tope por paper (USD est.)",
     "budget_batch": "Tope por lote (USD est.)",
     "budget_month": "Tope mensual (USD est., vacío = sin tope)",
@@ -127,7 +129,15 @@
     "no_results": "Sin resultados para «{{query}}».",
     "count": "{{count}} papers",
     "select_hint": "Selecciona un paper para verlo.",
-    "summary_filter": { "all": "Todos", "none": "Sin resumen", "to_review": "Por revisar", "reviewed": "Revisados", "stale": "Desactualizados", "failed": "Con error" },
+    "summary_filter": {
+      "all": "Todos",
+      "none": "Sin resumen",
+      "to_review": "Por revisar",
+      "reviewed": "Revisados",
+      "stale": "Desactualizados",
+      "failed": "Con error",
+      "relations_to_review": "Con relaciones por revisar"
+    },
     "model_filter": { "label": "Resumido con", "any": "Cualquier modelo" },
     "summarize_pending": "Resumir pendientes",
     "batch_model": "Modelo del lote",
@@ -140,7 +150,12 @@
     "update_citations": "Actualizar citas",
     "update_citations_all": "Consulta en OpenAlex las citas de todos los papers.",
     "update_citations_filtered": "Consulta en OpenAlex las citas de los papers que se ven con la búsqueda y los filtros actuales.",
-    "citations_queued": "{{count}} papers en cola para actualizar sus citas."
+    "citations_queued": "{{count}} papers en cola para actualizar sus citas.",
+    "suggest_relations": "Sugerir relaciones",
+    "suggest_relations_all": "Pide a Claude relaciones tipadas para los papers cuyos candidatos cambiaron desde su último análisis.",
+    "suggest_relations_filtered": "Pide a Claude relaciones tipadas para los papers que se ven con la búsqueda y los filtros actuales, si sus candidatos cambiaron desde su último análisis.",
+    "relations_none": "No hay papers con candidatos nuevos por analizar.",
+    "relations_queued": "{{count}} papers en cola para sugerir relaciones."
   },
   "badges": {
     "problem": "Error en archivo",
@@ -166,12 +181,14 @@
     "cancel": "Cancelar",
     "ingest_identifier": "Agregar {{input}}",
     "ingest_pdf": "Agregar {{file}}",
+    "attach_pdf": "Adjuntar PDF a {{id}}",
     "update_metadata": "Completar metadatos de {{id}}",
     "summarize": "Resumir {{id}}",
     "citations": "Citas de {{id}}",
     "cited_by": "Quién cita a {{id}}",
     "embed": "Similitud de {{id}}",
     "model_download": "Descargar el modelo de similitud",
+    "suggest_relations": "Sugerir relaciones de {{id}}",
     "state": {
       "queued": "En cola",
       "running": "En curso",
@@ -183,12 +200,15 @@
       "added": "agregado",
       "merged": "actualizado",
       "duplicate": "ya estaba en la biblioteca",
+      "pdf_attached": "PDF adjuntado",
       "summarized": "resumido",
       "citations_updated": "citas actualizadas",
       "citations_unresolved": "no se encontró en OpenAlex",
       "cited_by_updated": "citas entrantes actualizadas",
       "embedded": "listo",
-      "model_downloaded": "modelo descargado"
+      "model_downloaded": "modelo descargado",
+      "relations_suggested": "relaciones sugeridas",
+      "relations_no_candidates": "sin candidatos para analizar"
     }
   },
   "errors": {
@@ -206,7 +226,7 @@
     "unreadable_pdf": "El PDF está dañado o protegido con contraseña.",
     "llm_unavailable": "No se pudo usar Claude: revisa que la CLI `claude` esté instalada y con sesión iniciada.",
     "llm_quota": "Se agotó la cuota de tu suscripción de Claude. Intenta más tarde.",
-    "llm_invalid_output": "Claude devolvió una respuesta inválida dos veces.",
+    "llm_invalid_output": "Claude devolvió una respuesta inválida. Vuelve a intentarlo o prueba con otro modelo.",
     "llm_timeout": "Claude tardó demasiado y se canceló.",
     "budget_exceeded": "Se alcanzó el presupuesto configurado.",
     "no_text": "Este paper no tiene texto para resumir.",
@@ -216,6 +236,11 @@
     "openalex_limit": "Se alcanzó el límite diario de OpenAlex. Reintenta mañana o agrega una clave de API en Ajustes.",
     "model_missing": "El modelo local de similitud no está descargado. Descárgalo en Ajustes → Aplicación.",
     "model_error": "No se pudo cargar el modelo local de similitud. Bórralo y vuelve a descargarlo en Ajustes → Aplicación.",
+    "operation_budget": "La operación llegó a su tope por paper y se detuvo. Sube «Tope por paper (USD est.)» en Ajustes → Claude o reintenta con otro modelo.",
+    "agent_tools_unavailable": "No se pudieron preparar las herramientas de búsqueda de la biblioteca para Claude. Reintenta; si sigue fallando, reinicia la app.",
+    "relations_conflict": "relations.yaml tiene un conflicto de git o un error; resuélvelo antes de cambiar relaciones.",
+    "file_too_large": "El archivo pesa más de 200 MB.",
+    "pdf_exists": "Este paper ya tiene PDF. Usa «Reemplazar PDF…» si quieres cambiarlo.",
     "unknown": "Ocurrió un error inesperado."
   },
   "paper": {
@@ -255,7 +280,19 @@
       "next_result": "Resultado siguiente",
       "empty_page": "Esta página no tiene texto."
     },
-    "no_pdf": "Este paper no tiene PDF. Arrastra el archivo a la biblioteca para adjuntarlo.",
+    "no_pdf": "Este paper no tiene PDF. Usa «Adjuntar PDF…» o suelta el archivo aquí.",
+    "attach": {
+      "attach": "Adjuntar PDF…",
+      "replace": "Reemplazar PDF…",
+      "confirm": "Se reemplaza el PDF y se vuelve a extraer el texto. Los resúmenes no cambian.",
+      "confirm_file": "Archivo: {{file}}",
+      "confirm_replace": "Reemplazar",
+      "cancel": "Cancelar",
+      "queued": "PDF en cola. El resultado aparece en Actividad.",
+      "drop_hint": "Suelta el PDF para adjuntarlo a este paper",
+      "drop_hint_replace": "Suelta el PDF para reemplazar el de este paper",
+      "only_one_pdf": "Suelta un solo archivo PDF."
+    },
     "pdf_loading": "Cargando PDF…",
     "pdf_error": "No se pudo cargar el PDF: {{message}}",
     "not_found": "Este paper ya no está en la biblioteca.",
@@ -316,7 +353,9 @@
     "passage_content": "Contenido de la página web",
     "passage_loading": "Cargando el texto…",
     "quote_not_in_pdf": "No se encontró la cita en el PDF; se muestra el texto extraído.",
-    "item_unavailable": "Este elemento ya no está disponible. Usa → para continuar."
+    "item_unavailable": "Este elemento ya no está disponible. Usa → para continuar.",
+    "relation_shortcuts": "V confirmar · R rechazar · E elegir otro tipo · U deshacer · → siguiente · ← anterior · Esc cerrar la lista o salir",
+    "decided": "Decisión guardada."
   },
   "notes": {
     "placeholder": "Escribe tus notas en Markdown…",
@@ -378,7 +417,10 @@
       "close_detail": "Cerrar",
       "model_missing": "Sin el modelo local, la similitud usa solo citas y facetas.",
       "download_model": "Descargar modelo",
-      "hover_hint": "Pasa el cursor por una arista punteada para ver por qué esos papers se parecen."
+      "typed": "Relaciones:",
+      "hide_suggested": "Ocultar sugeridas",
+      "typed_hover": "{{type}} ({{status}})",
+      "hover_hint": "Pasa el cursor por una arista punteada para ver por qué esos papers se parecen, o por una relación tipada para ver su tipo."
     },
     "charts": {
       "kind": "Gráfica",
@@ -422,6 +464,68 @@
       "dismiss": "Descartar",
       "added": "«{{title}}» se agregará a la biblioteca; míralo en Actividad.",
       "none_value": "—"
+    }
+  },
+  "typed": {
+    "title": "Relaciones tipadas",
+    "suggest": "Sugerir relaciones",
+    "suggest_again": "Volver a sugerir",
+    "suggest_queued": "Sugerencia pedida (incluye los pares ya analizados desde el otro paper); sigue su avance en Actividad.",
+    "pending_one": "{{count}} candidato por citas o similitud, sin analizar con Claude todavía.",
+    "pending_other": "{{count}} candidatos por citas o similitud, alguno sin analizar con Claude todavía.",
+    "up_to_date": "Ya se analizaron sus candidatos actuales; «Volver a sugerir» lo analiza de nuevo.",
+    "no_candidates": "No tiene candidatos: actualiza sus citas o resume más papers para que aparezcan similares.",
+    "suggested": "Sugeridas",
+    "confirmed": "Confirmadas",
+    "rejected": "Rechazadas ({{count}})",
+    "status": { "suggested": "sugerida", "confirmed": "confirmada" },
+    "none_suggested": "No hay sugerencias pendientes.",
+    "none_confirmed": "Aún no confirmaste ninguna relación.",
+    "confirm": "Confirmar",
+    "reject": "Rechazar",
+    "change_type": "Cambiar tipo",
+    "reverse": "Invertir dirección",
+    "edit_justification": "Editar justificación",
+    "back_to_suggested": "Devolver a sugerida",
+    "restore": "Restaurar",
+    "undo": "Deshacer",
+    "retry": "Reintentar",
+    "done": {
+      "confirmed": "Relación confirmada.",
+      "rejected": "Relación rechazada.",
+      "suggested": "La relación volvió a sugeridas.",
+      "retyped": "Tipo cambiado.",
+      "reversed": "Dirección invertida.",
+      "justified": "Justificación guardada."
+    },
+    "edited": "editada",
+    "evidence_in": "En «{{title}}»:",
+    "open_paper": "Abrir",
+    "generated_with": "Sugerida con {{model}} el {{date}}",
+    "types": {
+      "extends": "Extiende",
+      "uses_method_of": "Usa el método de",
+      "compares_with": "Compara con",
+      "contradicts": "Contradice",
+      "replicates": "Replica",
+      "same_problem": "Mismo problema"
+    },
+    "sentence": {
+      "extends": "{{from}} extiende a {{to}}",
+      "uses_method_of": "{{from}} usa el método de {{to}}",
+      "compares_with": "{{from}} y {{to}} se comparan entre sí",
+      "contradicts": "{{from}} contradice a {{to}}",
+      "replicates": "{{from}} replica a {{to}}",
+      "same_problem": "{{from}} y {{to}} abordan el mismo problema"
+    },
+    "file": {
+      "conflict": "relations.yaml tiene marcadores de conflicto de git: la app no lo modifica hasta que se resuelva.",
+      "invalid": "relations.yaml no se puede leer: {{message}}",
+      "resolve": "Resolver automáticamente",
+      "show": "Mostrar archivo",
+      "resolved_dropped_one": "Conflicto resuelto; se descartó {{count}} entrada inválida de relations.yaml.",
+      "resolved_dropped_other": "Conflicto resuelto; se descartaron {{count}} entradas inválidas de relations.yaml.",
+      "dismiss": "Cerrar"
     }
   }
 }

@@ -11,6 +11,7 @@ export function ClaudeSection(): React.JSX.Element {
   const { t } = useTranslation()
   const [model, setModel] = useState<LlmModel>('sonnet')
   const [autoSummarize, setAutoSummarize] = useState(false)
+  const [autoSuggest, setAutoSuggest] = useState(false)
   const [perOperation, setPerOperation] = useState('')
   const [perBatch, setPerBatch] = useState('')
   const [perMonth, setPerMonth] = useState('')
@@ -24,6 +25,7 @@ export function ClaudeSection(): React.JSX.Element {
       const config = info.config
       setModel(config.model)
       setAutoSummarize(config.auto_summarize)
+      setAutoSuggest(config.auto_suggest_relations)
       setPerOperation(String(config.budget.per_operation_usd))
       setPerBatch(String(config.budget.per_batch_usd))
       setPerMonth(config.budget.per_month_usd === null ? '' : String(config.budget.per_month_usd))
@@ -95,6 +97,19 @@ export function ClaudeSection(): React.JSX.Element {
         />
         <span>{t('settings.auto_summarize')}</span>
       </label>
+      <label className="field checkbox">
+        <input
+          type="checkbox"
+          checked={autoSuggest}
+          onChange={(e) => {
+            const next = e.target.checked
+            setAutoSuggest(next)
+            save({ auto_suggest_relations: next })
+          }}
+        />
+        <span>{t('settings.auto_suggest_relations')}</span>
+      </label>
+      <small className="muted">{t('settings.auto_suggest_relations_help')}</small>
       <NumberField
         id="budget-operation"
         label={t('settings.budget_operation')}

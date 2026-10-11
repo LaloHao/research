@@ -1,12 +1,24 @@
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { existsSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { CountResult } from '../shared/relations'
 import type { FormImpact } from '../shared/summary'
-import { IPC, type ActionResult, type LlmInfo, type ProjectInfo, type ProjectOpenResult, type RunBatchResult, type SaveResult } from '../shared/ipc'
+import {
+  IPC,
+  type ActionResult,
+  type LlmInfo,
+  type ProjectInfo,
+  type ProjectOpenResult,
+  type RelationDecisionResult,
+  type ResolveConflictResult,
+  type RunBatchResult,
+  type SaveResult
+} from '../shared/ipc'
 import type { AppController } from './AppController'
 import { arg, ipcArgs } from './ipcArgs'
 import { toUserFacing } from './library/UserFacingError'
+import { RELATIONS_FILE } from './project/relationsFile'
 
 /** Writes travel back as `{ ok }`; failures carry the code the UI translates. */
 async function actionResult(action: () => Promise<unknown>): Promise<ActionResult> {
@@ -58,6 +70,20 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
   ipcMain.handle(IPC.libraryAddPdfs, (_e, paths: unknown) => {
     const { queue } = app.requireSession()
     for (const path of arg(ipcArgs.paths, paths, 'paths')) queue.enqueue({ type: 'ingest_pdf', path })
+  })
+  ipcMain.handle(IPC.libraryAttachPdf, (_e, paperId: unknown, path: unknown, replace: unknown) => {
+    app.requireSession().queue.enqueue({
+      type: 'attach_pdf',
+      paperId: arg(ipcArgs.paperId, paperId, 'id'),
+      path: arg(ipcArgs.absolutePath, path, 'path'),
+      replace: arg(ipcArgs.flag, replace, 'replace')
+    })
+  })
+  ipcMain.handle(IPC.libraryChoosePdf, async (): Promise<string | null> => {
+    const window = getWindow()
+    const options: Electron.OpenDialogOptions = { properties: ['openFile'], filters: [{ name: 'PDF', extensions: ['pdf'] }] }
+    const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
+    return result.canceled ? null : (result.filePaths[0] ?? null)
   })
   ipcMain.handle(IPC.libraryUpdateMetadata, (_e, paperId: unknown, input: unknown) => {
     app.requireSession().queue.enqueue({
@@ -128,9 +154,11 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     const to = arg(ipcArgs.text, rawTo, 'to')
     return actionResult(() => app.requireSession().summaries.mapProposed(facetKey, from, to))
   })
-  ipcMain.handle(IPC.summaryReviewQueue, (_e, rawIds: unknown) =>
-    app.requireSession().summaries.reviewQueue(arg(ipcArgs.paperIds, rawIds, 'ids'))
-  )
+  ipcMain.handle(IPC.summaryReviewQueue, (_e, rawIds: unknown) => {
+    const ids = arg(ipcArgs.paperIds, rawIds, 'ids')
+    const session = app.requireSession()
+    return session.track(session.reviewQueue(ids))
+  })
   ipcMain.handle(IPC.summaryPageText, (_e, rawId: unknown, rawPage: unknown) => {
     const id = arg(ipcArgs.paperId, rawId, 'id')
     const page = arg(ipcArgs.pageNumber, rawPage, 'page')
@@ -222,6 +250,66 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
   ipcMain.handle(IPC.modelsInfo, () => app.modelInfo())
   ipcMain.handle(IPC.modelsDownload, (): Promise<ActionResult> => actionResult(() => app.requireSession().similarity.requestModelDownload()))
   ipcMain.handle(IPC.modelsRemove, (): Promise<ActionResult> => actionResult(() => app.removeModel()))
+
+  const decision = async (action: () => Promise<string>): Promise<RelationDecisionResult> => {
+    try {
+      return { ok: true, undoToken: await action() }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).code }
+    }
+  }
+  ipcMain.handle(IPC.relationsForPaper, (_e, rawId: unknown) => app.requireSession().relations.forPaper(arg(ipcArgs.paperId, rawId, 'id')))
+  ipcMain.handle(IPC.relationsSuggest, (_e, rawId: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.paperId, rawId, 'id')
+    return actionResult(() => app.requireSession().relations.request(id, { force: true }))
+  })
+  ipcMain.handle(IPC.relationsPlan, (_e, rawIds: unknown) => app.requireSession().relations.plan(arg(ipcArgs.paperIds, rawIds, 'ids')))
+  ipcMain.handle(IPC.relationsSuggestBatch, async (_e, rawIds: unknown): Promise<RunBatchResult> => {
+    const ids = arg(ipcArgs.paperIds, rawIds, 'ids')
+    try {
+      const { batchId, count } = await app.requireSession().relations.requestBatch({ ids })
+      return { ok: true, batchId, count }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).code }
+    }
+  })
+  ipcMain.handle(IPC.relationsSetStatus, (_e, rawId: unknown, rawStatus: unknown): Promise<RelationDecisionResult> => {
+    const id = arg(ipcArgs.relationId, rawId, 'id')
+    const status = arg(ipcArgs.relationStatus, rawStatus, 'status')
+    return decision(() => app.requireSession().relations.setStatus(id, status))
+  })
+  ipcMain.handle(IPC.relationsChangeType, (_e, rawId: unknown, rawType: unknown): Promise<RelationDecisionResult> => {
+    const id = arg(ipcArgs.relationId, rawId, 'id')
+    const type = arg(ipcArgs.relationType, rawType, 'type')
+    return decision(() => app.requireSession().relations.changeType(id, type))
+  })
+  ipcMain.handle(IPC.relationsReverse, (_e, rawId: unknown): Promise<RelationDecisionResult> => {
+    const id = arg(ipcArgs.relationId, rawId, 'id')
+    return decision(() => app.requireSession().relations.reverse(id))
+  })
+  ipcMain.handle(IPC.relationsEditJustification, (_e, rawId: unknown, rawText: unknown): Promise<RelationDecisionResult> => {
+    const id = arg(ipcArgs.relationId, rawId, 'id')
+    const text = arg(ipcArgs.justification, rawText, 'text')
+    return decision(() => app.requireSession().relations.editJustification(id, text))
+  })
+  ipcMain.handle(IPC.relationsRevert, (_e, rawToken: unknown): Promise<ActionResult> => {
+    const token = arg(ipcArgs.undoToken, rawToken, 'token')
+    return actionResult(() => app.requireSession().relations.revert(token))
+  })
+  ipcMain.handle(IPC.relationsFileState, () => app.requireSession().relations.fileState())
+  ipcMain.handle(IPC.relationsResolveConflict, async (): Promise<ResolveConflictResult> => {
+    try {
+      const { dropped } = await app.requireSession().relations.resolveConflict()
+      return { ok: true, dropped }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).code }
+    }
+  })
+  ipcMain.handle(IPC.relationsShowFile, () => {
+    const root = app.requireSession().store.root
+    const file = join(root, RELATIONS_FILE)
+    shell.showItemInFolder(existsSync(file) ? file : root)
+  })
 
   // A file the user chose to save (a chart, the graph, CSV data), wherever they picked; never written into the project on our own.
   ipcMain.handle(IPC.exportSave, async (_e, rawName: unknown, rawData: unknown): Promise<SaveResult> => {

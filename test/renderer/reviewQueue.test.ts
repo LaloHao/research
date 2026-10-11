@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ReviewItem } from '../../src/shared/summary'
-import { afterResolve, current, next, prev, progressLabel, type ReviewCursor } from '../../src/renderer/lib/reviewQueue'
+import { afterResolve, current, next, prev, progressLabel, reinsert, type ReviewCursor } from '../../src/renderer/lib/reviewQueue'
 
 const item = (paperId: string, key: string): ReviewItem => ({ paperId, title: `Title ${paperId}`, section: 'fields', key })
 
@@ -67,6 +67,13 @@ describe('reviewQueue', () => {
     const c: ReviewCursor = { items, index: 1 }
     const foreign: ReviewItem = { paperId: 'other', title: 'Other', section: 'fields', key: 'tldr' }
     expect(afterResolve(c, foreign)).toEqual(c)
+  })
+
+  it('reinsert puts an undone item back at the current position, or moves to it when it is still queued', () => {
+    const undone = item('p9', 'relation-id')
+    expect(reinsert({ items, index: 1 }, undone)).toEqual({ items: [items[0], undone, items[1], items[2]], index: 1 })
+    expect(reinsert({ items: [], index: 0 }, undone)).toEqual({ items: [undone], index: 0 })
+    expect(reinsert({ items, index: 0 }, items[2])).toEqual({ items, index: 2 })
   })
 
   it('progressLabel reports a 1-based position and the total', () => {

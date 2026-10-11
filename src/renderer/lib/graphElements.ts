@@ -1,4 +1,6 @@
 import type { GraphData, GraphNode } from '../../shared/relations'
+import type { RelationType } from '../../shared/typedRelations'
+import { TYPE_COLORS } from './typedRelations'
 
 export type Lens = { kind: 'area'; facet: string | null } | { kind: 'thesis' }
 
@@ -83,6 +85,9 @@ export interface GraphOptions {
   threshold: number
   /** Only these papers (the library's current filters), or all. */
   visibleIds: ReadonlySet<string> | null
+  /** Typed relation types shown; confirmed edges are solid, suggested ones dotted. */
+  typedTypes: ReadonlySet<RelationType>
+  showSuggested: boolean
 }
 
 export interface ElementDef {
@@ -110,6 +115,15 @@ export function buildElements(data: GraphData, opts: GraphOptions): ElementDef[]
       if (e.score < opts.threshold || !ids.has(e.source) || !ids.has(e.target)) continue
       out.push({ group: 'edges', data: { id: `s:${e.source}|${e.target}`, source: e.source, target: e.target, score: e.score, reasons: e.reasons }, classes: 'similarity' })
     }
+  }
+  for (const e of data.typed) {
+    if (!opts.typedTypes.has(e.type) || (e.status === 'suggested' && !opts.showSuggested) || !ids.has(e.source) || !ids.has(e.target)) continue
+    out.push({
+      group: 'edges',
+      // The direction is part of the id: cytoscape ignores a changed source/target, so a reversed relation is a new edge.
+      data: { id: `t:${e.id}:${e.source}`, source: e.source, target: e.target, color: TYPE_COLORS[e.type], type: e.type, status: e.status },
+      classes: `typed typed-${e.status}${e.directed ? ' typed-directed' : ''}`
+    })
   }
   return out
 }

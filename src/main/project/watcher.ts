@@ -1,10 +1,13 @@
 import { readdirSync, statSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
+import { RELATIONS_FILE } from './relationsFile'
 
 export interface WatchHandlers {
   /** `files` are the names changed inside `papers/<id>/` during the debounce window; the folder itself is `PAPER_FOLDER`. */
   onPaper(id: string, files: ReadonlySet<string>): void
   onConfig(): void
+  /** relations.yaml at the project root changed. */
+  onRelations?(): void
 }
 
 export const PAPER_FOLDER = '.'
@@ -93,6 +96,7 @@ export function watchProject(root: string, handlers: WatchHandlers, debounceMs =
     root,
     (name) => {
       if (name === PROJECT_FILE) schedule(PROJECT_FILE, () => handlers.onConfig())
+      else if (name === RELATIONS_FILE) schedule(RELATIONS_FILE, () => handlers.onRelations?.())
       else if (name === 'papers') syncPapersDir()
     },
     () => undefined

@@ -3,6 +3,7 @@ import { MapService } from '../../../src/main/map/MapService'
 import { DEFAULT_EXTRACTION_FORM } from '../../../src/main/summary/extractionForm'
 import { setupLibrary } from '../../helpers/library'
 import { samplePaper } from '../../helpers/papers'
+import { typedRelation } from '../../helpers/relations'
 import { sampleExtraction } from '../../helpers/summaries'
 
 const cit = (openalex_id: string, references: string[]) => ({
@@ -70,5 +71,21 @@ describe('MapService', () => {
     })
     expect(map.facetPaperIds([{ facet: 'task', value: 'log_parsing' }])).toEqual(['he2017drain'])
     expect(map.facetOptions().map((f) => f.key)).toEqual(['sanitization_technique', 'data_type', 'llm_usage', 'task'])
+  })
+
+  it('draws typed relations between library papers as edges, never rejected ones', async () => {
+    const { store, cache, library } = await setupLibrary()
+    for (const p of [samplePaper(), samplePaper({ id: 'zhu2020loghub', title: 'Loghub', identifiers: {} })]) {
+      await store.writePaper(p, null)
+      await library.indexPaper(p.id)
+    }
+    cache.replaceTypedRelations([
+      typedRelation(),
+      typedRelation({ type: 'replicates', status: 'rejected' }),
+      typedRelation({ from: 'am2019x', to: 'zhu2020loghub', type: 'same_problem' })
+    ])
+    expect(new MapService({ store, cache }).graph().typed).toEqual([
+      { id: 'he2017drain__zhu2020loghub__extends', source: 'zhu2020loghub', target: 'he2017drain', type: 'extends', status: 'suggested', directed: true }
+    ])
   })
 })

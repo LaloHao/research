@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { TFunction } from 'i18next'
-import { filterByIds, filterByModel, filterBySummary, rowBadges } from '../../src/renderer/lib/badges'
+import { filterByIds, filterByModel, filterBySummary, reviewCount, rowBadges } from '../../src/renderer/lib/badges'
 import { errorText } from '../../src/renderer/lib/errorText'
 import { jobDetail, jobLabel, jobProgress, visibleJobs } from '../../src/renderer/lib/jobLabel'
 import { nextRqId } from '../../src/renderer/lib/thesis'
@@ -40,6 +40,7 @@ const row = (over: Partial<PaperRow>): PaperRow => ({
   pending_review: 0,
   summary_model: null,
   citations_status: 'none',
+  relations_pending: 0,
   ...over
 })
 
@@ -48,11 +49,13 @@ describe('jobLabel', () => {
     expect(jobLabel(t, job({}))).toBe('jobs.ingest_identifier {"input":"10.1/x"}')
     expect(jobLabel(t, job({ spec: { type: 'ingest_pdf', path: '/home/me/Downloads/paper.pdf' } }))).toBe('jobs.ingest_pdf {"file":"paper.pdf"}')
     expect(jobLabel(t, job({ spec: { type: 'update_metadata', paperId: 'he2017drain' } }))).toBe('jobs.update_metadata {"id":"he2017drain"}')
+    expect(jobLabel(t, job({ spec: { type: 'attach_pdf', paperId: 'he2017drain', path: '/x/a.pdf', replace: true } }))).toBe('jobs.attach_pdf {"id":"he2017drain"}')
     expect(jobLabel(t, job({ spec: { type: 'summarize', paperId: 'he2017drain' } }))).toBe('jobs.summarize {"id":"he2017drain"}')
     expect(jobLabel(t, job({ spec: { type: 'citations', paperId: 'he2017drain' } }))).toBe('jobs.citations {"id":"he2017drain"}')
     expect(jobLabel(t, job({ spec: { type: 'cited_by', paperId: 'he2017drain' } }))).toBe('jobs.cited_by {"id":"he2017drain"}')
     expect(jobLabel(t, job({ spec: { type: 'embed', paperId: 'he2017drain' } }))).toBe('jobs.embed {"id":"he2017drain"}')
     expect(jobLabel(t, job({ spec: { type: 'model_download' } }))).toBe('jobs.model_download')
+    expect(jobLabel(t, job({ spec: { type: 'suggest_relations', paperId: 'he2017drain' } }))).toBe('jobs.suggest_relations {"id":"he2017drain"}')
   })
 })
 
@@ -118,6 +121,19 @@ describe('filterBySummary', () => {
     expect(filterBySummary(rows, 'reviewed').map((r) => r.id)).toEqual(['c'])
     expect(filterBySummary(rows, 'stale').map((r) => r.id)).toEqual(['d'])
     expect(filterBySummary(rows, 'failed').map((r) => r.id)).toEqual(['e'])
+  })
+})
+
+describe('relations to review', () => {
+  it('counts suggested relations in "Por revisar" and shows the badge for them too', () => {
+    expect(reviewCount(row({ pending_review: 3, relations_pending: 2 }))).toBe(5)
+    expect(rowBadges(row({ summary_status: 'reviewed', relations_pending: 1 }))).toEqual(['reviewed', 'to_review'])
+    expect(rowBadges(row({ summary_status: 'generated', relations_pending: 1 }))).toEqual(['to_review'])
+  })
+
+  it('filters the papers with relations to review', () => {
+    const rows = [row({ id: 'a', relations_pending: 0 }), row({ id: 'b', relations_pending: 2 })]
+    expect(filterBySummary(rows, 'relations_to_review').map((r) => r.id)).toEqual(['b'])
   })
 })
 

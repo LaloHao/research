@@ -77,6 +77,7 @@ describe('LlmConfigSchema', () => {
     expect(LlmConfigSchema.parse({})).toEqual({
       model: 'sonnet',
       auto_summarize: false,
+      auto_suggest_relations: false,
       max_input_chars: 400000,
       budget: { per_operation_usd: 0.5, per_batch_usd: 10, per_month_usd: null }
     })
@@ -90,8 +91,13 @@ describe('LlmConfigSchema', () => {
   it('falls back field by field: one bad value keeps the others', () => {
     expect(
       LlmConfigSchema.parse({ model: 'gpt', auto_summarize: true, max_input_chars: 1000, budget: { per_operation_usd: -1, per_batch_usd: 3, per_month_usd: 20 } })
-    ).toEqual({ model: 'sonnet', auto_summarize: true, max_input_chars: 1000, budget: { per_operation_usd: 0.5, per_batch_usd: 3, per_month_usd: 20 } })
+    ).toEqual({ model: 'sonnet', auto_summarize: true, auto_suggest_relations: false, max_input_chars: 1000, budget: { per_operation_usd: 0.5, per_batch_usd: 3, per_month_usd: 20 } })
     expect(LlmConfigSchema.parse({ model: 'opus', budget: 'oops' })).toMatchObject({ model: 'opus', budget: { per_operation_usd: 0.5, per_batch_usd: 10, per_month_usd: null } })
+  })
+
+  it('keeps auto_suggest_relations and falls back to false when invalid', () => {
+    expect(LlmConfigSchema.parse({ auto_suggest_relations: true }).auto_suggest_relations).toBe(true)
+    expect(LlmConfigSchema.parse({ auto_suggest_relations: 'yes' }).auto_suggest_relations).toBe(false)
   })
 })
 

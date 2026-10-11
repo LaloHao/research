@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { TypedEdge } from './typedRelations'
 
 /** OpenAlex work ids are stored bare ("W2741809807"), never as URLs. */
 export const OPENALEX_ID = /^W\d+$/
@@ -112,6 +113,8 @@ export interface GraphData {
   citations: { source: string; target: string }[]
   /** One per unordered pair, with the higher score of both directions. */
   similarities: { source: string; target: string; score: number; reasons: SimilarityReason[] }[]
+  /** Suggested and confirmed typed relations (never rejected ones). */
+  typed: TypedEdge[]
 }
 
 /** A single/multi facet of the extraction form. */

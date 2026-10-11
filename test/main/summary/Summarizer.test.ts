@@ -126,6 +126,13 @@ describe('Summarizer', () => {
     expect(await ledger.monthTotal()).toBeCloseTo(0.5)
   })
 
+  it('records a timed-out call at the per-operation cap, marked as estimated', async () => {
+    const { summarizer, store, budget } = await setupSummaries({ responses: [new LlmError('llm_timeout', 0.5, { estimated: true })] })
+    await expect(summarizer.summarize({ paperId: 'he2017drain' })).rejects.toMatchObject({ code: 'llm_timeout' })
+    expect((await store.readCosts()).map((c) => [c.cost_usd, c.estimated])).toEqual([[0.5, true]])
+    expect(budget.currentEstimate()).toBe(0.05)
+  })
+
   it('refuses without text, with an invalid form, or when the text is too long unless forced', async () => {
     const noText = await setupSummaries()
     noText.cache.setText('he2017drain', null, 'no_text', [])
