@@ -3,16 +3,15 @@ import { join } from 'node:path'
 import { eventChannel, IPC } from '../shared/ipc'
 import type { CloseDecision } from '../shared/sync'
 import { AppController } from './AppController'
-import { confirmClose } from './closeFlow'
+import { confirmClose, decideQuit, once } from './closeFlow'
 import { UtilityEmbeddingRuntime } from './embeddings/UtilityEmbeddingRuntime'
 import { waitForFlush } from './flush'
 import { registerIpc } from './ipc'
 import { arg, ipcArgs } from './ipcArgs'
 
 let mainWindow: BrowserWindow | null = null
-let quitting = false
-/** The close prompt in progress, shared by closing the window and quitting, so it is never shown twice. */
-let leaving: Promise<boolean> | null = null
+let quitting = false // a shutdown is confirmed and running
+let shutDown = false // the shutdown finished: the next `before-quit` may go straight through
 
 // The local model lives with the app's data, never in a project folder.
 const embeddings = new UtilityEmbeddingRuntime(join(app.getPath('userData'), 'models'), join(__dirname, 'embeddings.js'))
@@ -26,8 +25,8 @@ const controller = new AppController(
 )
 
 /** Lets the renderer save pending edits (e.g. notes still in their autosave delay) before its window goes away. */
-function flushRenderer(win: BrowserWindow | null): Promise<void> {
-  if (!win || win.isDestroyed()) return Promise.resolve()
+function flushRenderer(win: BrowserWindow | null): Promise<boolean> {
+  if (!win || win.isDestroyed()) return Promise.resolve(true)
   const contents = win.webContents
   return waitForFlush(
     () => contents.send(eventChannel('flush-request')),
@@ -41,7 +40,7 @@ function flushRenderer(win: BrowserWindow | null): Promise<void> {
   )
 }
 
-/** Shows «Hay cambios sin sincronizar» in the window and waits for the answer; a window that is gone counts as `close`. */
+/** Shows «Hay cambios sin sincronizar» in the window and waits for the answer; a window that is gone or stuck counts as `close`. */
 function askCloseDecision(win: BrowserWindow): Promise<CloseDecision> {
   return new Promise((resolve) => {
     const contents = win.webContents
@@ -52,6 +51,7 @@ function askCloseDecision(win: BrowserWindow): Promise<CloseDecision> {
       ipcMain.removeListener(IPC.closeDecision, onAnswer)
       contents.removeListener('render-process-gone', onGone)
       contents.removeListener('destroyed', onGone)
+      contents.removeListener('unresponsive', onGone)
       resolve(decision)
     }
     function onAnswer(event: IpcMainEvent, raw: unknown): void {
@@ -68,21 +68,29 @@ function askCloseDecision(win: BrowserWindow): Promise<CloseDecision> {
     ipcMain.on(IPC.closeDecision, onAnswer)
     contents.on('render-process-gone', onGone)
     contents.on('destroyed', onGone)
-    contents.send(eventChannel('close-request'))
+    contents.on('unresponsive', onGone)
+    try {
+      contents.send(eventChannel('close-request'))
+    } catch {
+      finish('close')
+    }
   })
 }
 
-/** Saves pending edits, then asks only when the project has changes not synced; true when the window may go. */
-function confirmLeave(win: BrowserWindow): Promise<boolean> {
-  leaving ??= confirmClose({
+/**
+ * Saves pending edits, then asks only when the renderer answered the flush (it is alive) and the
+ * project has changes not synced; true when the window may go. Shared by the window's `close` and
+ * `before-quit`, which always act on the single `mainWindow`, so concurrent callers join one prompt.
+ */
+const confirmLeave = once((): Promise<boolean> => {
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+  if (!win) return Promise.resolve(true)
+  return confirmClose({
     flush: () => flushRenderer(win),
     unsynced: () => controller.hasUnsyncedChanges(),
     ask: () => (win.isDestroyed() ? Promise.resolve<CloseDecision>('close') : askCloseDecision(win))
-  }).finally(() => {
-    leaving = null
   })
-  return leaving
-}
+})
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -102,8 +110,8 @@ function createWindow(): BrowserWindow {
     // On quit, before-quit has already asked, flushed and closed the project.
     if (allowClose || quitting) return
     event.preventDefault()
-    void confirmLeave(win).then((ok) => {
-      if (!ok || win.isDestroyed()) return
+    void confirmLeave().then((ok) => {
+      if (!ok || allowClose || win.isDestroyed()) return
       allowClose = true
       win.close()
     })
@@ -150,19 +158,29 @@ function start(): void {
     })
   })
 
+  // Several `before-quit` (one per Cmd+Q / File > Quit, plus the one `window-all-closed` triggers) can
+  // arrive while the first is still confirming or shutting down. Only the arrival that starts the
+  // shutdown ever calls `app.quit()` again, and only once `shutdown()` actually finished — every other
+  // arrival here just prevents the default and waits for that one to finish and quit for it.
   app.on('before-quit', (event) => {
-    if (quitting) return
+    const action = decideQuit({ quitting, shutDown })
+    if (action === 'allow') return
     event.preventDefault()
-    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
-    void (win ? confirmLeave(win) : Promise.resolve(true))
+    if (action === 'join') return
+    quitting = true
+    void confirmLeave()
       .then(async (ok) => {
-        if (!ok || quitting) return
-        quitting = true
+        if (!ok) {
+          quitting = false
+          return
+        }
         await controller.shutdown()
+        shutDown = true
+        app.quit()
       })
-      .catch((error) => console.error('shutdown', error))
-      .finally(() => {
-        if (quitting) app.quit()
+      .catch((error) => {
+        console.error('shutdown', error)
+        quitting = false
       })
   })
 
