@@ -152,6 +152,11 @@ describe('watchProject after files are replaced', () => {
     await rename(join(root, 'papers/he2017drain'), join(root, '.trash/he2017drain'))
     await waitFor(() => trash > 0 && papers.includes('he2017drain'))
     await new Promise((r) => setTimeout(r, 150))
+    // A file git writes into the trashed folder later (trashed.yaml, paper.yaml) is reported too.
+    const beforeFile = trash
+    await writeFile(join(root, '.trash/he2017drain/trashed.yaml'), 'x')
+    await waitFor(() => trash > beforeFile)
+    await new Promise((r) => setTimeout(r, 150))
     const before = trash
     await rename(join(root, '.trash/he2017drain'), join(root, 'papers/he2017drain'))
     await waitFor(() => trash > before)

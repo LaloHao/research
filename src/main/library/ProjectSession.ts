@@ -181,9 +181,13 @@ export class ProjectSession {
           // notes.md does not feed the index or the bibliography; the event still lets an open editor pick up an external edit.
           const reindex = [...files].some((f) => f !== 'notes.md')
           const reexport = [...files].some((f) => BIB_FILES.has(f))
+          // A folder git moved into .trash/: the trash row has to exist before the library row goes, or the cache drops
+          // the text, vector and citing works it keeps for a restore (the .trash/ event may come later).
+          const trashedHere = files.has(PAPER_FOLDER) && store.trashExists(id)
           void session
             .track(
               (async () => {
+                if (trashedHere) await library.syncTrash()
                 if (reindex) await library.indexPaper(id)
                 if (reexport) await library.exportBib()
                 session.emit('library')
@@ -264,22 +268,30 @@ export class ProjectSession {
   }
 
   /** «Quitar de la biblioteca»; the neighbours of the moved papers are updated afterwards. */
-  async trash(ids: string[]): Promise<TrashOutcome> {
-    const outcome = await this.track(this.library.trash(ids))
-    for (const id of outcome.moved) await this.track(this.similarity.paperChanged(id)).catch(logged('neighbours'))
-    return outcome
+  trash(ids: string[]): Promise<TrashOutcome> {
+    return this.track(
+      (async () => {
+        const outcome = await this.library.trash(ids)
+        for (const id of outcome.moved) await this.similarity.paperChanged(id).catch(logged('neighbours'))
+        return outcome
+      })()
+    )
   }
 
   /** «Restaurar» or «Fusionar»; restored papers get their vector (if it changed) and neighbours back. */
-  async restore(ids: string[], opts: { merge: boolean }): Promise<RestoreOutcome> {
-    const outcome = await this.track(this.library.restore(ids, opts))
-    // Where each paper now is: its own key, a free one, or the library paper it was merged into.
-    const keys = [...new Set(outcome.restored.map((r) => r.key))]
-    if (keys.length > 0) {
-      await this.track(this.similarity.enqueueStale(keys)).catch(logged('embeddings'))
-      for (const key of keys) await this.track(this.similarity.paperChanged(key)).catch(logged('neighbours'))
-    }
-    return outcome
+  restore(ids: string[], opts: { merge: boolean }): Promise<RestoreOutcome> {
+    return this.track(
+      (async () => {
+        const outcome = await this.library.restore(ids, opts)
+        // Where each paper now is: its own key, a free one, or the library paper it was merged into.
+        const keys = [...new Set(outcome.restored.map((r) => r.key))]
+        if (keys.length > 0) {
+          await this.similarity.enqueueStale(keys).catch(logged('embeddings'))
+          for (const key of keys) await this.similarity.paperChanged(key).catch(logged('neighbours'))
+        }
+        return outcome
+      })()
+    )
   }
 
   listTrash(): Promise<TrashEntry[]> {

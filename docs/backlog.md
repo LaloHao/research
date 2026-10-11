@@ -78,3 +78,7 @@
 - Evidence of confirmed relations is not re-checked when a paper's text changes (a new PDF).
 - The review mode loads a relation item with three requests (the paper's relations and both papers' details), one after another.
 - Candidates use only the stored neighbours; a paper added after the last neighbour recompute is a candidate only once the neighbours are updated.
+
+## Paper trash technical minutiae
+
+- Removing a paper drops it from its neighbours' lists without backfilling: a paper that had it in its top 10 shows 9 neighbours until the next full recompute (end of a batch, project open).

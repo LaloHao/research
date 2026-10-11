@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, rename } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ProjectSession } from '../../../src/main/library/ProjectSession'
 import { libraryTools, ToolError } from '../../../src/main/mcp/libraryTools'
@@ -95,6 +95,11 @@ describe('ProjectSession trash', () => {
     await rename(s.store.paperDir(DRAIN_ID), trashed)
     await waitFor(() => s.cache.trashEntries().some((e) => e.id === DRAIN_ID) && !s.library.list().some((r) => r.id === DRAIN_ID))
     expect(s.map.graph().typed).toEqual([])
+    // The cache keeps the trashed paper's text for a restore, whichever of the two watcher events came first.
+    expect(s.cache.chunksFor(DRAIN_ID).length).toBeGreaterThan(0)
+    // git writes trashed.yaml into the folder after the move: the trash row picks it up.
+    await writeFile(join(trashed, 'trashed.yaml'), 'schema_version: 1\ntrashed_at: 2026-10-01T10:00:00.000Z\ndevice: other-device\n')
+    await waitFor(() => s.cache.trashEntries().some((e) => e.id === DRAIN_ID && e.trashed_at === '2026-10-01T10:00:00.000Z'))
     await rename(trashed, s.store.paperDir(DRAIN_ID))
     await waitFor(() => s.cache.trashEntries().length === 0 && s.library.list().some((r) => r.id === DRAIN_ID))
     await s.close()

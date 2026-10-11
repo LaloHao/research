@@ -97,24 +97,51 @@ export function watchProject(root: string, handlers: WatchHandlers, debounceMs =
 
   const trashDir = join(root, TRASH_DIR)
   let trashWatcher: FSWatcher | null = null
+  const trashEntryWatchers = new Map<string, FSWatcher>()
   const trashChanged = (): void => schedule(TRASH_DIR, () => handlers.onTrash?.())
+
+  const closeTrashEntry = (id: string): void => {
+    trashEntryWatchers.get(id)?.close()
+    trashEntryWatchers.delete(id)
+  }
+
   const closeTrashDir = (): void => {
     trashWatcher?.close()
     trashWatcher = null
+    for (const id of [...trashEntryWatchers.keys()]) closeTrashEntry(id)
   }
 
-  /** Watches `.trash/` itself (not its paper folders: what matters is which keys are in it). */
+  /** One level deep: git may write trashed.yaml or paper.yaml into a trashed folder after the folder itself arrived. */
+  const syncTrashEntry = (id: string): void => {
+    if (closed || id.startsWith('.')) return
+    if (!isDir(join(trashDir, id))) return closeTrashEntry(id)
+    if (trashEntryWatchers.has(id)) return
+    const w = watchDir(
+      join(trashDir, id),
+      (name) => {
+        if (!name.startsWith('.')) trashChanged()
+      },
+      () => closeTrashEntry(id)
+    )
+    if (w) trashEntryWatchers.set(id, w)
+  }
+
+  /** Watches `.trash/` and the top level of each folder in it. */
   const syncTrashDir = (notify: boolean): void => {
     if (closed) return
     if (!isDir(trashDir)) closeTrashDir()
-    else
+    else {
       trashWatcher ??= watchDir(
         trashDir,
         (name) => {
-          if (!name.startsWith('.')) trashChanged()
+          if (name.startsWith('.')) return
+          syncTrashEntry(name)
+          trashChanged()
         },
         closeTrashDir
       )
+      for (const id of subfolders(trashDir)) syncTrashEntry(id)
+    }
     if (notify) trashChanged()
   }
 
