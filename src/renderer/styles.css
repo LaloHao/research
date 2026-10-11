@@ -72,7 +72,6 @@ code { font-family: ui-monospace, 'JetBrains Mono', monospace; font-size: 12px; 
 .rail { width: 52px; display: flex; flex-direction: column; gap: 6px; padding: 10px 6px; border-right: 1px solid var(--border); background: var(--surface); }
 .rail-item { width: 40px; height: 40px; font-size: 18px; border: none; background: none; }
 .rail-item.active { background: var(--accent-soft); }
-.rail-item:last-child { margin-top: auto; }
 .view { min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
 
 .welcome { max-width: 420px; margin: 12vh auto; display: flex; flex-direction: column; gap: 14px; padding: 0 16px; }
@@ -254,3 +253,28 @@ button.danger { color: var(--error); border-color: var(--error); }
 .trash-row-title { display: flex; gap: 8px; align-items: flex-start; }
 .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border); box-shadow: 0 2px 8px rgb(0 0 0 / 0.25); z-index: 20; }
 .toast.error { color: var(--error); }
+
+/* Sync: the rail's button with a short status under it, and the Sincronización view. */
+.rail-sync { margin-top: auto; display: flex; flex-direction: column; align-items: center; gap: 2px; padding-bottom: 4px; border-radius: var(--radius); }
+.rail-sync.active { background: var(--accent-soft); }
+.rail-sync-label { font-size: 10px; line-height: 1.15; max-width: 44px; text-align: center; overflow-wrap: anywhere; }
+.tone-ok .rail-sync-label, .tone-off .rail-sync-label, .sync-state.tone-ok, .sync-state.tone-off { color: var(--muted); }
+.tone-pending .rail-sync-label, .sync-state.tone-pending { color: var(--warning); }
+.tone-error .rail-sync-label, .sync-state.tone-error { color: var(--error); }
+.tone-busy .rail-sync-label, .sync-state.tone-busy { color: var(--accent); }
+.tone-busy > .rail-item { animation: rail-spin 1.2s linear infinite; }
+@keyframes rail-spin { to { transform: rotate(360deg); } }
+.sync { display: flex; flex-direction: column; gap: 12px; height: 100%; overflow: auto; padding: 12px 16px 24px; }
+.sync-header { display: flex; flex-direction: column; gap: 6px; }
+.sync-header h2, .sync-state { margin: 0; }
+.sync-setup, .sync-conflicts { max-width: 760px; display: flex; flex-direction: column; gap: 8px; }
+.sync-conflicts h3 { margin: 4px 0; font-size: 15px; }
+.sync-conflict-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.sync-conflict { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; display: flex; flex-direction: column; gap: 6px; }
+.sync-conflict-title { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.sync-diff { display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow: auto; }
+.sync-diff-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-family: ui-monospace, 'JetBrains Mono', monospace; font-size: 12px; }
+.sync-diff-table th { text-align: left; font-family: system-ui, sans-serif; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+.sync-diff-table td { padding: 1px 6px; white-space: pre-wrap; overflow-wrap: anywhere; vertical-align: top; }
+.sync-diff-table td:first-child { border-right: 1px solid var(--border); }
+.sync-diff-table tr.diff-changed td, .sync-diff-table tr.diff-removed td:first-child, .sync-diff-table tr.diff-added td:last-child { background: var(--warning-soft); }

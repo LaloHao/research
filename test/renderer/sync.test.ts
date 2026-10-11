@@ -58,6 +58,11 @@ describe('sync indicator', () => {
     expect(syncIndicator(status({ phase: 'error', error: { code: 'auth', paths: [] } }), NOW)).toMatchObject({ state: 'error', tone: 'error' })
     expect(syncIndicator(status({ dirty: true, lastSyncAt: new Date(NOW).toISOString() }), NOW)).toMatchObject({ state: 'pending', tone: 'pending' })
     expect(syncIndicator(status({ ahead: 2 }), NOW)).toMatchObject({ state: 'pending', tone: 'pending' })
+    // A missing project folder is reported with setup 'no_repo', but it is an error to show, not a repository to create.
+    expect(syncIndicator(status({ setup: 'no_repo', phase: 'error', error: { code: 'project_missing', paths: [] }, repoRoot: null }), NOW)).toMatchObject({
+      state: 'error',
+      tone: 'error'
+    })
   })
 
   it('syncs from the rail when it can, and opens the Sync view when something needs explaining', () => {

@@ -1,29 +1,67 @@
 import { useTranslation } from 'react-i18next'
+import type { SyncState } from '../hooks/useSyncStatus'
 import type { View } from '../lib/navigation'
+import { railAction, syncIndicator } from '../lib/sync'
 
 const ITEMS: { view: View; icon: string }[] = [
   { view: 'library', icon: '📚' },
   { view: 'map', icon: '🕸' },
-  { view: 'trash', icon: '🗑' },
-  { view: 'settings', icon: '⚙' }
+  { view: 'trash', icon: '🗑' }
 ]
 
-export function Rail({ view, onSelect }: { view: View; onSelect: (view: View) => void }): React.JSX.Element {
+interface RailProps {
+  view: View
+  onSelect: (view: View) => void
+  sync: SyncState
+  /** A «Sincronizar» started from the rail is in flight. */
+  syncing: boolean
+  onSync: () => void
+}
+
+export function Rail({ view, onSelect, sync, syncing, onSync }: RailProps): React.JSX.Element {
   const { t } = useTranslation()
+  const indicator = syncIndicator(sync.status, sync.now)
+  const full = t(`sync.status.${indicator.state}`, { count: indicator.count })
+  const action = railAction(sync.status)
+
+  const item = (v: View, icon: string): React.JSX.Element => (
+    <button
+      key={v}
+      className={`rail-item${v === view ? ' active' : ''}`}
+      title={t(`rail.${v}`)}
+      aria-label={t(`rail.${v}`)}
+      aria-current={v === view ? 'page' : undefined}
+      onClick={() => onSelect(v)}
+    >
+      {icon}
+    </button>
+  )
+
   return (
     <nav className="rail">
-      {ITEMS.map((item) => (
+      {ITEMS.map((i) => item(i.view, i.icon))}
+      {/* «Sincronizar» and its status: a short line under the button, the full status as its tooltip. */}
+      <div className={`rail-sync tone-${indicator.tone}${view === 'sync' ? ' active' : ''}`}>
         <button
-          key={item.view}
-          className={`rail-item${item.view === view ? ' active' : ''}`}
-          title={t(`rail.${item.view}`)}
-          aria-label={t(`rail.${item.view}`)}
-          aria-current={item.view === view ? 'page' : undefined}
-          onClick={() => onSelect(item.view)}
+          className="rail-item"
+          title={t('sync.rail_title', { status: full })}
+          aria-label={t('sync.rail_title', { status: full })}
+          disabled={syncing || action === 'none'}
+          onClick={() => (action === 'sync' ? onSync() : onSelect('sync'))}
         >
-          {item.icon}
+          ⟳
         </button>
-      ))}
+        <button
+          className="link rail-sync-label"
+          title={full}
+          aria-label={t('rail.sync')}
+          aria-current={view === 'sync' ? 'page' : undefined}
+          onClick={() => onSelect('sync')}
+        >
+          {t(`sync.short.${indicator.state}`, { count: indicator.count })}
+        </button>
+      </div>
+      {item('settings', '⚙')}
     </nav>
   )
 }

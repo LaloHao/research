@@ -7,9 +7,11 @@ import { MapView } from './components/map/MapView'
 import { Rail } from './components/Rail'
 import { RelationsFileBanner } from './components/RelationsFileBanner'
 import { SettingsView } from './components/SettingsView'
+import { SyncView } from './components/sync/SyncView'
 import { TrashView } from './components/TrashView'
 import { WelcomeView } from './components/WelcomeView'
 import { useEvent } from './hooks/useEvent'
+import { useSyncStatus } from './hooks/useSyncStatus'
 import { flushAll } from './lib/flush'
 import type { MapTab, View } from './lib/navigation'
 
@@ -46,6 +48,9 @@ function ProjectShell({ project, view, onViewChange: setView }: ProjectShellProp
   const [facetFilters, setFacetFilters] = useState<FacetFilter[]>([])
   // The library's last visible rows, for the graph's "apply the library's filters"; null until the library is shown.
   const [visibleIds, setVisibleIds] = useState<string[] | null>(null)
+  const sync = useSyncStatus()
+  const refreshSync = sync.refresh
+  const [syncing, setSyncing] = useState(false)
 
   const openLibrary = useCallback(
     (filters: FacetFilter[]) => {
@@ -63,10 +68,27 @@ function ProjectShell({ project, view, onViewChange: setView }: ProjectShellProp
     },
     [setView]
   )
+  // The rail's «Sincronizar»: when it ends in conflicts or an error, the Sync view explains it. The automatic sync never switches views.
+  const runSync = useCallback(() => {
+    if (syncing) return
+    setSyncing(true)
+    window.research.sync.run().then(
+      (result) => {
+        setSyncing(false)
+        refreshSync()
+        if (!result.ok || result.outcome === 'conflicts') setView('sync')
+      },
+      () => {
+        setSyncing(false)
+        refreshSync()
+        setView('sync')
+      }
+    )
+  }, [syncing, refreshSync, setView])
 
   return (
     <div className="shell">
-      <Rail view={view} onSelect={setView} />
+      <Rail view={view} onSelect={setView} sync={sync} syncing={syncing} onSync={runSync} />
       <main className="view">
         {view === 'library' && (
           <LibraryView facetFilters={facetFilters} onFacetFiltersChange={setFacetFilters} onVisibleChange={setVisibleIds} onOpenCandidates={openCandidates} />
@@ -83,6 +105,7 @@ function ProjectShell({ project, view, onViewChange: setView }: ProjectShellProp
           />
         )}
         {view === 'trash' && <TrashView />}
+        {view === 'sync' && <SyncView sync={sync} />}
         {view === 'settings' && <SettingsView project={project} />}
       </main>
       <RelationsFileBanner />

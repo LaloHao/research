@@ -36,6 +36,8 @@ export function syncIndicator(status: SyncStatus | null | 'failed', now: number)
   if (status === 'failed') return of('unavailable', 'error')
   if (status.phase === 'syncing') return of('syncing', 'busy')
   if (status.conflicts > 0) return of('conflicts', 'error')
+  // The project folder is gone (an unplugged drive): the status says `no_repo`, but there is nothing to set up.
+  if (status.error?.code === 'project_missing') return of('error', 'error')
   if (status.setup !== 'ready') return of(status.setup, 'off')
   if (status.phase === 'error' && status.error) {
     return status.error.code === 'offline' || status.error.code === 'timeout' ? of('offline', 'error') : of('error', 'error')
