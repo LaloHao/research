@@ -30,6 +30,8 @@ export function App(): React.JSX.Element {
     void flushAll().finally(() => window.research.flushDone())
   })
   const openSync = useCallback(() => setView('sync'), [])
+  // While «Hay cambios sin sincronizar» shows, nothing behind it can be edited: the edits were flushed before asking.
+  const [closePrompt, setClosePrompt] = useState(false)
 
   return (
     <>
@@ -39,10 +41,10 @@ export function App(): React.JSX.Element {
         <WelcomeView />
       ) : (
         // Keyed by the project folder: filters, visible rows and the candidates' paper of one project never reach the next.
-        <ProjectShell key={project.root} project={project} view={view} onViewChange={setView} />
+        <ProjectShell key={project.root} project={project} view={view} onViewChange={setView} inert={closePrompt} />
       )}
       {/* Outside the shell: the main process waits for its answer even if the project closes meanwhile. */}
-      <CloseSyncDialog onOpenSync={openSync} />
+      <CloseSyncDialog onOpenSync={openSync} onVisibleChange={setClosePrompt} />
     </>
   )
 }
@@ -51,10 +53,12 @@ interface ProjectShellProps {
   project: ProjectInfo
   view: View
   onViewChange: (view: View) => void
+  /** Behind the close prompt: not focusable, clickable or read out. */
+  inert: boolean
 }
 
 /** Everything whose state belongs to the open project. */
-function ProjectShell({ project, view, onViewChange: setView }: ProjectShellProps): React.JSX.Element {
+function ProjectShell({ project, view, onViewChange: setView, inert }: ProjectShellProps): React.JSX.Element {
   const [mapTab, setMapTab] = useState<MapTab>('graph')
   const [candidatesPaper, setCandidatesPaper] = useState<string | null>(null)
   const [facetFilters, setFacetFilters] = useState<FacetFilter[]>([])
@@ -99,7 +103,7 @@ function ProjectShell({ project, view, onViewChange: setView }: ProjectShellProp
   }, [syncing, refreshSync, setView])
 
   return (
-    <div className="shell">
+    <div className="shell" inert={inert} aria-hidden={inert || undefined}>
       <Rail view={view} onSelect={setView} sync={sync} syncing={syncing} onSync={runSync} />
       <main className="view">
         {view === 'library' && (

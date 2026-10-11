@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { CloseDecision } from '../../../shared/sync'
 import { useEvent } from '../../hooks/useEvent'
@@ -10,11 +10,20 @@ type Stage = { kind: 'hidden' } | { kind: 'asking' } | { kind: 'syncing' } | { k
 /**
  * «Hay cambios sin sincronizar» when the window closes: «Sincronizar y cerrar» (the window closes only after a
  * successful sync; conflicts or an error keep it open and say why), «Cerrar sin sincronizar» or «Cancelar».
- * Mounted outside the project shell so the main process, which waits for the answer, always gets one.
+ * Mounted outside the project shell so the main process, which waits for the answer, always gets one. `onVisibleChange`
+ * lets the app make the shell inert while it shows: edits typed behind it would miss the flush that came before it.
  */
-export function CloseSyncDialog({ onOpenSync }: { onOpenSync: () => void }): React.JSX.Element | null {
+export function CloseSyncDialog({
+  onOpenSync,
+  onVisibleChange
+}: {
+  onOpenSync: () => void
+  onVisibleChange: (visible: boolean) => void
+}): React.JSX.Element | null {
   const { t } = useTranslation()
   const [stage, setStage] = useState<Stage>({ kind: 'hidden' })
+  const visible = stage.kind !== 'hidden'
+  useEffect(() => onVisibleChange(visible), [visible, onVisibleChange])
   const syncing = useRef(false)
   const request = useRef(0)
 
