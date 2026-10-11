@@ -1,3 +1,5 @@
+import { rename } from 'node:fs/promises'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
 import { toYaml } from '../../../src/main/project/yamlFile'
@@ -179,6 +181,97 @@ describe('planMerge', () => {
       { sub: 'research', outside: { 'thesis.tex': 'base\n' } }
     )
     expect(await plan()).toEqual({ kind: 'outside', paths: ['thesis.tex'] })
+  })
+})
+
+describe('planMerge with the shapes git gives a merge', () => {
+  const paths = async (repo: ProjectRepo, tree: string, dir = '.'): Promise<string[]> => (await repo.lsTree(tree, [dir])).map((e) => e.path)
+
+  it.each(['A', 'B'])('keeps a file that clashed with a folder the other machine added (file on %s), under a readable name', async (fileOn) => {
+    const asFile = (p: string) => applyFiles(p, { 'papers/k/figs': 'figure list\n' })
+    const asFolder = (p: string) => applyFiles(p, { 'papers/k/figs/a.md': 'figure a\n' })
+    const { plan, file, repo } = await diverged({ 'papers/k/paper.yaml': PAPER }, fileOn === 'A' ? asFile : asFolder, fileOn === 'A' ? asFolder : asFile)
+    const tree = clean(await plan())
+    expect(await file(tree, 'papers/k/figs/a.md')).toBe('figure a\n')
+    expect(await file(tree, 'papers/k/figs.conflict')).toBe('figure list\n')
+    expect((await paths(repo, tree)).filter((p) => p.includes('~'))).toEqual([])
+  })
+
+  it('keeps a file added under a folder the other machine renamed, where git put it', async () => {
+    const { plan, file, repo } = await diverged(
+      { 'project.yaml': 'x\n', 'notes/a.md': 'a\n', 'notes/c.md': 'c\n' },
+      async (p) => rename(join(p, 'notes'), join(p, 'drafts')),
+      (p) => applyFiles(p, { 'notes/b.md': 'b from B\n' })
+    )
+    const tree = clean(await plan())
+    expect(await file(tree, 'drafts/b.md')).toBe('b from B\n')
+    expect(await paths(repo, tree)).toEqual(['drafts/a.md', 'drafts/b.md', 'drafts/c.md', 'project.yaml'])
+  })
+
+  it('asks about a binary file edited on both machines and keeps the chosen bytes', async () => {
+    const pdf = (who: string): string => `%PDF-1.4\n\0\u0001\u0002 ${who}\n`
+    const { plan, file } = await diverged(
+      { 'papers/k/paper.yaml': PAPER, 'papers/k/paper.pdf': pdf('base') },
+      (p) => applyFiles(p, { 'papers/k/paper.pdf': pdf('A') }),
+      (p) => applyFiles(p, { 'papers/k/paper.pdf': pdf('B') })
+    )
+    expect(await plan()).toMatchObject({ kind: 'decisions', conflicts: [{ kind: 'file', id: 'file:papers/k/paper.pdf' }] })
+    expect(await file(clean(await plan({ 'file:papers/k/paper.pdf': 'ours' })), 'papers/k/paper.pdf')).toBe(pdf('B'))
+    expect(await file(clean(await plan({ 'file:papers/k/paper.pdf': 'theirs' })), 'papers/k/paper.pdf')).toBe(pdf('A'))
+  })
+
+  it('decides with the paper a conflict git carried through the move into the trash', async () => {
+    const { plan, file, repo } = await diverged(
+      { 'papers/k/paper.yaml': PAPER, 'papers/k/notes.md': 'line 1\nline 2\nline 3\n' },
+      (p) => applyFiles(p, { 'papers/k/notes.md': 'line 1\nline 2 from A\nline 3\n' }).then(() => trashOnDisk(p, 'k')),
+      (p) => applyFiles(p, { 'papers/k/notes.md': 'line 1\nline 2 from B\nline 3\n' })
+    )
+    expect(await plan()).toEqual({ kind: 'decisions', conflicts: [{ kind: 'paper', id: 'paper:k', key: 'k', trashedBy: 'theirs' }] })
+    const kept = clean(await plan({ 'paper:k': 'ours' }))
+    expect(await file(kept, 'papers/k/notes.md')).toBe('line 1\nline 2 from B\nline 3\n')
+    expect(await paths(repo, kept, '.trash')).toEqual([])
+    const removed = clean(await plan({ 'paper:k': 'theirs' }))
+    expect(await file(removed, '.trash/k/notes.md')).toBe('line 1\nline 2 from A\nline 3\n')
+    expect(await paths(repo, removed, 'papers')).toEqual([])
+  })
+
+  it('decides with the paper when git could not pair the moved file (rewritten, then trashed)', async () => {
+    const { plan, file, repo } = await diverged(
+      { 'papers/k/paper.yaml': PAPER, 'papers/k/notes.md': 'old notes\n' },
+      (p) => applyFiles(p, { 'papers/k/notes.md': 'completely different text written on A\n' }).then(() => trashOnDisk(p, 'k')),
+      (p) => applyFiles(p, { 'papers/k/notes.md': 'old notes\nand more from B\n' })
+    )
+    expect(await plan()).toEqual({ kind: 'decisions', conflicts: [{ kind: 'paper', id: 'paper:k', key: 'k', trashedBy: 'theirs' }] })
+    expect(await file(clean(await plan({ 'paper:k': 'ours' })), 'papers/k/notes.md')).toBe('old notes\nand more from B\n')
+    const removed = clean(await plan({ 'paper:k': 'theirs' }))
+    expect(await file(removed, '.trash/k/notes.md')).toBe('completely different text written on A\n')
+    expect(await paths(repo, removed, 'papers')).toEqual([])
+  })
+
+  it('merges a paper trashed on both machines with no decision, keeping the latest removal', async () => {
+    const { plan, file } = await diverged(
+      { 'papers/k/paper.yaml': PAPER, 'papers/k/notes.md': 'notes\n' },
+      (p) => trashOnDisk(p, 'k', '2026-10-11T10:00:00.000Z'),
+      (p) => trashOnDisk(p, 'k', '2026-10-11T12:00:00.000Z')
+    )
+    const tree = clean(await plan())
+    expect(await file(tree, 'papers/k/paper.yaml')).toBeNull()
+    expect(await file(tree, '.trash/k/notes.md')).toBe('notes\n')
+    expect(await file(tree, '.trash/k/trashed.yaml')).toBe(trashed('2026-10-11T12:00:00.000Z'))
+  })
+
+  it('moves into the trash a nested file the other machine added that git left in the library', async () => {
+    const { plan, file, repo } = await diverged(
+      { 'papers/k/paper.yaml': PAPER, 'papers/k/notes.md': 'notes\n' },
+      (p) => trashOnDisk(p, 'k'),
+      (p) => applyFiles(p, { 'papers/k/sub/new.md': 'nested on B\n' })
+    )
+    expect(await plan()).toMatchObject({ kind: 'decisions', conflicts: [{ kind: 'paper', id: 'paper:k' }] })
+    expect(await file(clean(await plan({ 'paper:k': 'ours' })), 'papers/k/sub/new.md')).toBe('nested on B\n')
+    const removed = clean(await plan({ 'paper:k': 'theirs' }))
+    expect(await paths(repo, removed, 'papers')).toEqual([])
+    expect(await file(removed, '.trash/k/sub/new.md')).toBe('nested on B\n')
+    expect(await file(removed, '.trash/k/notes.md')).toBe('notes\n')
   })
 })
 

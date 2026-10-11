@@ -1,5 +1,6 @@
 import type { ConflictChoice } from '../../shared/sync'
 import type { ConflictPaths, NameStatus, TreeEntry } from './gitOutput'
+import { siblingName } from '../project/trashPaths'
 import { mergerFor } from './mergers'
 import type { MergeResult, ProjectRepo, TreeEdit } from './ProjectRepo'
 
@@ -34,6 +35,52 @@ const LIBRARY_FILE = /^papers\/([a-z][a-z0-9]*)\/(.+)$/
 
 const sideEdit = (path: string, entry: TreeEntry | null): TreeEdit => (entry ? { path, mode: entry.mode, oid: entry.oid } : { path, remove: true })
 
+/** Where git puts a file that clashed with a folder: `<path>~<commit>`. */
+const RELOCATED = /~[0-9a-f]{40,64}$/
+
+/** The final tree as path → entry (null: removed), on top of the merged tree. */
+class TreeState {
+  private readonly changes = new Map<string, TreeEntry | null>()
+
+  constructor(
+    private readonly repo: ProjectRepo,
+    private readonly tree: string
+  ) {}
+
+  set(path: string, entry: TreeEntry | null): void {
+    this.changes.set(path, entry)
+  }
+
+  async has(path: string): Promise<boolean> {
+    const change = this.changes.get(path)
+    return change !== undefined ? change !== null : (await this.repo.oidAt(this.tree, path)) !== null
+  }
+
+  /** The first free `<dir>/<name>.conflict[-n]` beside `path` (a `~<commit>` suffix git added taken off first). */
+  async freeSibling(path: string): Promise<string> {
+    const slash = path.lastIndexOf('/') + 1
+    const name = path.slice(slash).replace(RELOCATED, '')
+    for (let n = 1; ; n++) {
+      const candidate = `${path.slice(0, slash)}${siblingName(name, 'conflict', n)}`
+      if (!(await this.has(candidate))) return candidate
+    }
+  }
+
+  /** Puts `entry` at `path`; a path git relocated with `~<commit>` moves to a readable sibling the app accepts. */
+  async place(path: string, entry: TreeEntry | null): Promise<void> {
+    if (entry && RELOCATED.test(path)) {
+      this.set(path, null)
+      this.set(await this.freeSibling(path), entry)
+    } else {
+      this.set(path, entry)
+    }
+  }
+
+  edits(): TreeEdit[] {
+    return [...this.changes].map(([path, entry]) => sideEdit(path, entry))
+  }
+}
+
 /** Keys of papers a side moved from the library to the trash (paper.yaml deleted from papers/, added to .trash/). */
 export function trashedKeys(changes: NameStatus[], prefix: string): Set<string> {
   const left = new Set<string>()
@@ -61,7 +108,11 @@ export function editedKeys(changes: NameStatus[], prefix: string): Set<string> {
   return new Set([...touched].filter((key) => !gone.has(key)))
 }
 
-/** Papers one machine trashed while the other edited them (git may have merged that cleanly, carrying the edit into .trash/). */
+/**
+ * Papers one machine trashed while the other edited them (git may have merged that cleanly, carrying the edit into
+ * .trash/). A paper trashed and deleted for good before the sync is not one of them: its edited files become per-file
+ * decisions, and a file the other machine added stays in a library folder with no paper.yaml, which the app ignores.
+ */
 async function trashedWhileEdited(repo: ProjectRepo, c: MergeCommits): Promise<TrashedPaper[]> {
   const dirs = [`${repo.prefix}papers/`, `${repo.prefix}.trash/`]
   const ours = await repo.nameStatus(c.base, c.ours, dirs)
@@ -77,26 +128,36 @@ async function trashedWhileEdited(repo: ProjectRepo, c: MergeCommits): Promise<T
 /**
  * The tree edits for a decided paper. Keep: the library folder exactly as the machine that edited it has it, and no
  * trash entry. Accept the removal: what git merged stays (an edit it could carry into .trash/ included); a file it could
- * not merge takes the version of the machine that trashed the paper, except a file only the editing machine added
- * (git places it in .trash/ as a conflict): it stays in the trashed copy, like the edits git carried there.
+ * not merge takes the version of the machine that trashed the paper, except a file only the editing machine added: it
+ * stays, like the edits git carried. Whatever is still left in the library folder then (a file git did not carry, e.g.
+ * one added in a new subfolder) moves to the same place in the trashed copy, beside what is there.
  */
-async function paperEdits(repo: ProjectRepo, merged: MergeResult, paper: TrashedPaper, keep: boolean, c: MergeCommits): Promise<TreeEdit[]> {
-  const folders = [`${repo.prefix}papers/${paper.key}/`, `${repo.prefix}.trash/${paper.key}/`]
+async function paperEdits(repo: ProjectRepo, merged: MergeResult, paper: TrashedPaper, keep: boolean, c: MergeCommits, state: TreeState): Promise<void> {
+  const [library, trash] = [`${repo.prefix}papers/${paper.key}/`, `${repo.prefix}.trash/${paper.key}/`]
   if (keep) {
     const editor = paper.trashedBy === 'ours' ? c.theirs : c.ours
-    const edits: TreeEdit[] = (await repo.lsTree(merged.tree, folders)).map((e) => ({ path: e.path, remove: true }))
-    for (const e of await repo.lsTree(editor, [folders[0]])) edits.push({ path: e.path, mode: e.mode, oid: e.oid })
-    return edits
+    for (const e of await repo.lsTree(merged.tree, [library, trash])) state.set(e.path, null)
+    for (const e of await repo.lsTree(editor, [library])) state.set(e.path, { mode: e.mode, oid: e.oid })
+    return
   }
-  return merged.conflicts
-    .filter((x) => folders.some((folder) => x.path.startsWith(folder)))
-    .map((x) => {
-      const [trasher, editor] = paper.trashedBy === 'ours' ? [x.ours, x.theirs] : [x.theirs, x.ours]
-      return sideEdit(x.path, !x.base && !trasher ? editor : trasher)
-    })
+  const left = new Map<string, TreeEntry | null>()
+  for (const e of await repo.lsTree(merged.tree, [library])) left.set(e.path, { mode: e.mode, oid: e.oid })
+  for (const x of merged.conflicts) {
+    if (!x.path.startsWith(library) && !x.path.startsWith(trash)) continue
+    const [trasher, editor] = paper.trashedBy === 'ours' ? [x.ours, x.theirs] : [x.theirs, x.ours]
+    const entry = !x.base && !trasher ? editor : trasher
+    if (x.path.startsWith(library)) left.set(x.path, entry)
+    else await state.place(x.path, entry)
+  }
+  for (const [path, entry] of left) {
+    state.set(path, null)
+    if (!entry) continue
+    const target = `${trash}${path.slice(library.length).replace(RELOCATED, '')}`
+    state.set((await state.has(target)) ? await state.freeSibling(target) : target, entry)
+  }
 }
 
-async function autoMerged(repo: ProjectRepo, x: ConflictPaths): Promise<TreeEdit | null> {
+async function autoMerged(repo: ProjectRepo, x: ConflictPaths): Promise<TreeEntry | null> {
   if (!x.ours || !x.theirs) return null
   const merger = mergerFor(x.path.slice(repo.prefix.length))
   if (!merger) return null
@@ -105,7 +166,7 @@ async function autoMerged(repo: ProjectRepo, x: ConflictPaths): Promise<TreeEdit
     ours: await repo.readText(x.ours.oid),
     theirs: await repo.readText(x.theirs.oid)
   })
-  return text === null ? null : { path: x.path, mode: x.ours.mode, oid: await repo.writeBlob(text) }
+  return text === null ? null : { mode: x.ours.mode, oid: await repo.writeBlob(text) }
 }
 
 /**
@@ -117,7 +178,7 @@ export async function planMerge(repo: ProjectRepo, c: MergeCommits): Promise<Mer
   const outside = merged.conflicts.filter((x) => !x.path.startsWith(repo.prefix)).map((x) => x.path)
   if (outside.length > 0) return { kind: 'outside', paths: outside }
 
-  const edits = new Map<string, TreeEdit>()
+  const state = new TreeState(repo, merged.tree)
   const pending: PendingConflict[] = []
   const papers = await trashedWhileEdited(repo, c)
   for (const paper of papers) {
@@ -128,7 +189,7 @@ export async function planMerge(repo: ProjectRepo, c: MergeCommits): Promise<Mer
       continue
     }
     // Choosing the machine that edited the paper keeps it.
-    for (const edit of await paperEdits(repo, merged, paper, choice !== paper.trashedBy, c)) edits.set(edit.path, edit)
+    await paperEdits(repo, merged, paper, choice !== paper.trashedBy, c, state)
   }
 
   const paperKeys = new Set(papers.map((p) => p.key))
@@ -136,17 +197,24 @@ export async function planMerge(repo: ProjectRepo, c: MergeCommits): Promise<Mer
     const key = PAPER_PATH.exec(x.path.slice(repo.prefix.length))?.[1]
     // Decided (or waiting) with its paper.
     if (key && paperKeys.has(key)) continue
+    // Added on one side only, and relocated by git (a file/folder clash, a folder the other side renamed): the other
+    // side never had it, so there is nothing to decide and nothing to drop.
+    if (!x.base && (x.ours === null) !== (x.theirs === null)) {
+      await state.place(x.path, x.ours ?? x.theirs)
+      continue
+    }
     const auto = await autoMerged(repo, x)
     if (auto) {
-      edits.set(x.path, auto)
+      state.set(x.path, auto)
       continue
     }
     const id = fileConflictId(x.path)
     const choice = c.choices.get(id)
-    if (choice) edits.set(x.path, sideEdit(x.path, choice === 'ours' ? x.ours : x.theirs))
+    if (choice) await state.place(x.path, choice === 'ours' ? x.ours : x.theirs)
     else pending.push({ kind: 'file', id, path: x.path, base: x.base, ours: x.ours, theirs: x.theirs })
   }
 
   if (pending.length > 0) return { kind: 'decisions', conflicts: pending }
-  return { kind: 'clean', tree: edits.size > 0 ? await repo.editTree(merged.tree, [...edits.values()]) : merged.tree }
+  const edits = state.edits()
+  return { kind: 'clean', tree: edits.length > 0 ? await repo.editTree(merged.tree, edits) : merged.tree }
 }
