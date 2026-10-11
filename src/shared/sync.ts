@@ -16,6 +16,8 @@ export const SYNC_ERROR_CODES = [
   'no_remote',
   'no_upstream',
   'remote_exists',
+  // A remote URL that fails `isRemoteUrl` (a password in it, a leading `-`, whitespace or control characters).
+  'invalid_remote_url',
   'detached_head',
   'merge_in_progress',
   'unmerged_files',

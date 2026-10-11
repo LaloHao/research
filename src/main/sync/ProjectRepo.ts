@@ -133,6 +133,12 @@ export class ProjectRepo {
     await this.git.run(['config', `branch.${branch}.merge`, `refs/heads/${branch}`])
   }
 
+  /** The URL of remote `name`; null when there is no such remote. */
+  async remoteUrl(name: string): Promise<string | null> {
+    const out = await this.git.run(['remote', 'get-url', '--', name], { okCodes: [2] })
+    return out.code === 0 ? out.stdout.toString('utf8').trim() : null
+  }
+
   /** `url` is what the user typed (checked by `isRemoteUrl`); `--` keeps git from ever reading it as an option. */
   async addRemote(name: string, url: string): Promise<void> {
     await this.git.run(['remote', 'add', '--', name, url])

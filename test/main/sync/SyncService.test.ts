@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { parse } from 'yaml'
 import { toYaml } from '../../../src/main/project/yamlFile'
+import { ProjectRepo } from '../../../src/main/sync/ProjectRepo'
 import { SyncService, type SyncServiceDeps } from '../../../src/main/sync/SyncService'
 import type { TypedRelation } from '../../../src/shared/typedRelations'
 import { applyFiles, commitAll, identify, pathWithOnlyGit, trashOnDisk, twoMachines, type Machines } from '../../helpers/git'
@@ -47,6 +48,10 @@ async function raceFromB(m: Machines, mode: 'once' | 'always'): Promise<void> {
 }
 
 describe('SyncService', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it('commits the project and pushes it; the other machine pulls it; nothing to do makes no commit', async () => {
     const m = await twoMachines()
     const a = service(m, m.projectA)
@@ -249,7 +254,9 @@ describe('SyncService', () => {
     identify(m.env, root, 'New Machine')
     expect(await fresh.setup(null)).toEqual({ ok: true, outcome: 'synced' })
     expect(m.git(empty, 'log', '--format=%s', 'main')).toBe('research: sync from laptop')
-    expect(await fresh.setup(empty)).toEqual({ ok: false, error: { code: 'remote_exists', paths: [] } })
+    // The same URL again is a retry; another one is refused while origin exists.
+    expect(await fresh.setup(empty)).toEqual({ ok: true, outcome: 'synced' })
+    expect(await fresh.setup(join(root, 'elsewhere.git'))).toEqual({ ok: false, error: { code: 'remote_exists', paths: [] } })
   })
 
   it('follows the remote branch when it already exists', async () => {
@@ -359,6 +366,145 @@ describe('SyncService', () => {
     expect(await b.diff('file:papers/k/summary.md')).toEqual({ files: [{ path: 'papers/k/summary.md', ours: 'from B\n', theirs: null, unavailable: null }] })
     expect(await b.resolve({ 'file:papers/k/summary.md': 'theirs' })).toEqual({ ok: true, outcome: 'synced' })
     expect(existsSync(join(m.projectB, 'papers/k/summary.md'))).toBe(false)
+  })
+
+  it('never applies a choice to a newer local version than the one shown, and keeps the choices still valid', async () => {
+    const m = await twoMachines({ 'papers/k/paper.yaml': PAPER, 'papers/k/summary.md': 'base\n', 'papers/k/notes.md': 'base\n' })
+    const a = service(m, m.projectA)
+    const b = service(m, m.projectB)
+    await applyFiles(m.projectA, { 'papers/k/summary.md': 'A1\n', 'papers/k/notes.md': 'A1 notes\n' })
+    await a.run({ auto: false })
+    await applyFiles(m.projectB, { 'papers/k/summary.md': 'B1\n', 'papers/k/notes.md': 'B1 notes\n' })
+    expect(await b.run({ auto: false })).toEqual({ ok: true, outcome: 'conflicts' })
+    expect(await b.diff('file:papers/k/summary.md')).toEqual({ files: [{ path: 'papers/k/summary.md', ours: 'B1\n', theirs: 'A1\n', unavailable: null }] })
+    // The app saves a newer summary while the panel is open.
+    await applyFiles(m.projectB, { 'papers/k/summary.md': 'B2\n' })
+    expect(await b.resolve({ 'file:papers/k/summary.md': 'theirs', 'file:papers/k/notes.md': 'theirs' })).toEqual({ ok: true, outcome: 'conflicts' })
+    expect(await readFile(join(m.projectB, 'papers/k/summary.md'), 'utf8')).toBe('B2\n')
+    expect((await b.conflicts()).map((c) => c.id)).toEqual(['file:papers/k/summary.md'])
+    expect(await b.diff('file:papers/k/summary.md')).toEqual({ files: [{ path: 'papers/k/summary.md', ours: 'B2\n', theirs: 'A1\n', unavailable: null }] })
+    expect(m.git(m.remote, 'show', 'main:papers/k/summary.md')).toBe('A1')
+    // The unchanged notes decision is kept: only the new one is needed.
+    expect(await b.resolve({ 'file:papers/k/summary.md': 'ours' })).toEqual({ ok: true, outcome: 'synced' })
+    expect(m.git(m.remote, 'show', 'main:papers/k/summary.md')).toBe('B2')
+    expect(m.git(m.remote, 'show', 'main:papers/k/notes.md')).toBe('A1 notes')
+  })
+
+  it('keeps a decision when the app only wrote other files while the panel was open', async () => {
+    const m = await twoMachines({ 'papers/k/paper.yaml': PAPER, 'papers/k/summary.md': 'base\n' })
+    const a = service(m, m.projectA)
+    const b = service(m, m.projectB)
+    await applyFiles(m.projectA, { 'papers/k/summary.md': 'A1\n' })
+    await a.run({ auto: false })
+    await applyFiles(m.projectB, { 'papers/k/summary.md': 'B1\n' })
+    await b.run({ auto: false })
+    await applyFiles(m.projectB, { 'papers/k/notes.md': 'unrelated\n' })
+    expect(await b.resolve({ 'file:papers/k/summary.md': 'theirs' })).toEqual({ ok: true, outcome: 'synced' })
+    expect(m.git(m.remote, 'show', 'main:papers/k/summary.md')).toBe('A1')
+    expect(m.git(m.remote, 'show', 'main:papers/k/notes.md')).toBe('unrelated')
+  })
+
+  it('asks again instead of reusing a choice when the remote moved before the push', async () => {
+    const m = await twoMachines({ 'papers/k/paper.yaml': PAPER, 'papers/k/summary.md': 'base\n' })
+    const a = service(m, m.projectA)
+    const b = service(m, m.projectB)
+    await applyFiles(m.projectA, { 'papers/k/summary.md': 'A1\n' })
+    await a.run({ auto: false })
+    await applyFiles(m.projectB, { 'papers/k/summary.md': 'B1\n' })
+    await b.run({ auto: false })
+    // Machine A pushes a newer version after B was shown A1.
+    await applyFiles(m.projectA, { 'papers/k/summary.md': 'A2\n' })
+    await a.run({ auto: false })
+    expect(await b.resolve({ 'file:papers/k/summary.md': 'ours' })).toEqual({ ok: true, outcome: 'conflicts' })
+    expect(m.git(m.remote, 'show', 'main:papers/k/summary.md')).toBe('A2')
+    expect(await b.diff('file:papers/k/summary.md')).toEqual({ files: [{ path: 'papers/k/summary.md', ours: 'B1\n', theirs: 'A2\n', unavailable: null }] })
+    expect(await b.resolve({ 'file:papers/k/summary.md': 'ours' })).toEqual({ ok: true, outcome: 'synced' })
+    expect(m.git(m.remote, 'show', 'main:papers/k/summary.md')).toBe('B1')
+  })
+
+  it('refuses a remote with an unrelated history before following it', async () => {
+    const m = await twoMachines()
+    const root = await tmpDir()
+    m.git(root, 'init', '--quiet', '--initial-branch=main')
+    identify(m.env, root, 'Other')
+    await applyFiles(root, { 'project.yaml': 'name: Other\n' })
+    const other = service(m, root)
+    expect(await other.setup(m.remote)).toEqual({ ok: false, error: { code: 'unrelated_histories', paths: [] } })
+    expect(await other.status()).toMatchObject({ setup: 'no_upstream', upstream: null })
+    expect(await other.hasUnsynced()).toBe(false)
+    expect(m.git(m.remote, 'log', '--format=%s', 'main')).toBe('init')
+  })
+
+  it('refuses a remote URL with a password or that reads as an option, and retries the same origin', async () => {
+    const m = await twoMachines()
+    m.git(m.a, 'remote', 'remove', 'origin')
+    const a = service(m, m.projectA)
+    for (const url of ['https://me:secret@example.test/x.git', '-uhack', 'a b']) {
+      expect(await a.setup(url)).toEqual({ ok: false, error: { code: 'invalid_remote_url', paths: [] } })
+    }
+    expect(m.git(m.a, 'remote')).toBe('')
+    const offline = 'https://127.0.0.1:9/thesis.git'
+    expect(await a.setup(offline)).toEqual({ ok: false, error: { code: 'offline', paths: [] } })
+    // A retry after going offline is not «that remote already exists».
+    expect(await a.setup(offline)).toEqual({ ok: false, error: { code: 'offline', paths: [] } })
+    expect(await a.setup(m.remote)).toEqual({ ok: false, error: { code: 'remote_exists', paths: [] } })
+  })
+
+  it('never holds the write gate while online, and pushes what the app wrote during the fetch', async () => {
+    const m = await twoMachines()
+    let held = false
+    const online: boolean[] = []
+    const a = service(m, m.projectA, {
+      exclusive: async (fn) => {
+        held = true
+        try {
+          return await fn()
+        } finally {
+          held = false
+        }
+      }
+    })
+    const fetch = ProjectRepo.prototype.fetch
+    vi.spyOn(ProjectRepo.prototype, 'fetch').mockImplementation(async function (this: ProjectRepo, ...args) {
+      online.push(held)
+      await fetch.apply(this, args)
+      await applyFiles(m.projectA, { 'during.md': 'written while fetching\n' })
+    })
+    const push = ProjectRepo.prototype.push
+    vi.spyOn(ProjectRepo.prototype, 'push').mockImplementation(async function (this: ProjectRepo, ...args) {
+      online.push(held)
+      await push.apply(this, args)
+    })
+    await applyFiles(m.projectA, { 'notes.md': 'from A\n' })
+    expect(await a.run({ auto: false })).toEqual({ ok: true, outcome: 'synced' })
+    expect(online).toEqual([false, false])
+    expect(m.git(m.remote, 'show', 'main:during.md')).toBe('written while fetching')
+  })
+
+  it('joins a sync already running, and stops for good once closed', async () => {
+    const m = await twoMachines()
+    const a = service(m, m.projectA)
+    const first = a.run({ auto: false })
+    expect(a.run({ auto: true })).toBe(first)
+    // While a sync runs, choices and a URL are not taken: the caller gets that sync's result.
+    expect(a.resolve({ 'file:x': 'ours' })).toBe(first)
+    expect(a.setup('https://example.test/x.git')).toBe(first)
+    expect(await first).toEqual({ ok: true, outcome: 'synced' })
+    expect(m.git(m.a, 'remote')).toBe('origin')
+
+    const fetch = ProjectRepo.prototype.fetch
+    vi.spyOn(ProjectRepo.prototype, 'fetch').mockImplementation(async function (this: ProjectRepo, ...args) {
+      void a.close()
+      await fetch.apply(this, args)
+    })
+    await applyFiles(m.projectA, { 'notes.md': 'from A\n' })
+    expect(await a.run({ auto: false })).toEqual({ ok: false, error: { code: 'cancelled', paths: [] } })
+    vi.restoreAllMocks()
+    const head = m.git(m.a, 'rev-parse', 'HEAD')
+    await applyFiles(m.projectA, { 'more.md': 'after close\n' })
+    expect(await a.run({ auto: false })).toEqual({ ok: false, error: { code: 'cancelled', paths: [] } })
+    expect(await a.setup(null)).toEqual({ ok: false, error: { code: 'cancelled', paths: [] } })
+    expect(m.git(m.a, 'rev-parse', 'HEAD')).toBe(head)
   })
 
   it('tells the session every time its state changes', async () => {

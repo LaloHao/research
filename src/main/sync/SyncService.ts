@@ -1,24 +1,25 @@
 import { hostname } from 'node:os'
 import { parse } from 'yaml'
 import type { PdfPolicy } from '../../shared/schemas'
-import type {
-  ConflictChoice,
-  ConflictDiff,
-  ConflictItem,
-  ConflictSide,
-  DiffFile,
-  SyncError,
-  SyncErrorCode,
-  SyncPhase,
-  SyncResult,
-  SyncSetup,
-  SyncStatus
+import {
+  isRemoteUrl,
+  type ConflictChoice,
+  type ConflictDiff,
+  type ConflictItem,
+  type ConflictSide,
+  type DiffFile,
+  type SyncError,
+  type SyncErrorCode,
+  type SyncPhase,
+  type SyncResult,
+  type SyncSetup,
+  type SyncStatus
 } from '../../shared/sync'
 import { GitError, type GitOptions } from './Git'
 import type { TreeEntry } from './gitOutput'
 import { mergeCommitMessage, syncCommitMessage } from './messages'
 import { ProjectRepo, type RepoInfo, type Upstream } from './ProjectRepo'
-import { planMerge, type PendingConflict } from './syncMerge'
+import { planMerge, type MergePlan, type PendingConflict } from './syncMerge'
 
 /** Larger files are not shown side by side. */
 export const MAX_DIFF_BYTES = 512 * 1024
@@ -75,11 +76,41 @@ function toSyncError(error: unknown): SyncError {
 
 const side = (base: TreeEntry | null, entry: TreeEntry | null): ConflictSide => (entry === null ? 'deleted' : base === null ? 'added' : 'modified')
 
+/** A choice bound to the versions the user saw when making it. */
+interface Decided {
+  choice: ConflictChoice
+  fingerprint: string
+}
+
+interface Commits {
+  ours: string
+  theirs: string
+  base: string
+}
+
 interface Pending {
   head: string
   theirs: string
   base: string
   conflicts: PendingConflict[]
+  /** What each listed conflict looks like (its versions), by id: a choice applies only to these exact versions. */
+  fingerprints: Map<string, string>
+  /** Choices already made that still match their conflict; they carry over to the next «Terminar sincronización». */
+  decided: Map<string, Decided>
+}
+
+/**
+ * The versions a conflict is about: a file's base, mine and theirs; for a paper, who trashed it and its library and
+ * trash folders in the three commits. A choice is reused only while this stays the same.
+ */
+async function fingerprint(repo: ProjectRepo, c: PendingConflict, commits: Commits): Promise<string> {
+  const entry = (e: TreeEntry | null): string => (e ? `${e.mode}:${e.oid}` : '-')
+  if (c.kind === 'file') return `file ${entry(c.base)} ${entry(c.ours)} ${entry(c.theirs)}`
+  const parts = [`paper ${c.trashedBy}`]
+  for (const commit of [commits.base, commits.ours, commits.theirs]) {
+    for (const folder of ['papers', '.trash']) parts.push((await repo.oidAt(commit, `${repo.prefix}${folder}/${c.key}`)) ?? '-')
+  }
+  return parts.join(' ')
 }
 
 interface Ready {
@@ -153,28 +184,51 @@ export class SyncService {
     }
   }
 
-  /** Something to sync before closing: changes not committed or not pushed, or decisions waiting, in a project with a remote. */
+  /**
+   * Something to sync before closing: changes not committed or not pushed, or decisions waiting, in a project with a
+   * remote. A state that cannot be read counts as nothing to sync, so it never keeps the window from closing.
+   */
   async hasUnsynced(): Promise<boolean> {
-    const s = await this.status()
-    return s.setup === 'ready' && (s.dirty || s.ahead > 0 || s.conflicts > 0)
+    try {
+      const s = await this.status()
+      return s.setup === 'ready' && (s.dirty || s.ahead > 0 || s.conflicts > 0)
+    } catch (error) {
+      console.error('sync', error)
+      return false
+    }
   }
 
-  /** «Sincronizar», or the automatic sync (which leaves a pending decision alone). A sync already running is joined. */
+  /**
+   * «Sincronizar», or the automatic sync (which leaves a pending decision alone). A sync already running is joined.
+   * Choices already made for conflicts that have not changed carry over.
+   */
   run(opts: { auto: boolean }): Promise<SyncResult> {
     if (this.running) return this.running
+    if (this.closed) return this.refused()
     if (opts.auto && this.pending) return Promise.resolve({ ok: true, outcome: 'conflicts' })
-    return this.start(() => this.cycle(new Map()), opts.auto)
+    const decided = new Map(this.pending?.decided)
+    return this.start(() => this.cycle(decided), opts.auto)
   }
 
-  /** «Terminar sincronización»: merges with the choices; a decision still missing (or a new one) keeps the conflicts open. */
+  /**
+   * «Terminar sincronización»: merges with the choices, each bound to the versions listed now. A decision still missing,
+   * a new one, or one whose versions changed since (a newer local save, the remote moving) keeps the conflicts open.
+   * While a sync runs the choices are not taken: the caller gets that sync's result (the UI disables the button).
+   */
   resolve(choices: Readonly<Record<string, ConflictChoice>>): Promise<SyncResult> {
     if (this.running) return this.running
+    if (this.closed) return this.refused()
     const pending = this.pending
     if (!pending) return this.run({ auto: false })
-    return this.start(() => this.cycle(new Map(Object.entries(choices)), pending.theirs), false)
+    const decided = new Map(pending.decided)
+    for (const [id, choice] of Object.entries(choices)) {
+      const seen = pending.fingerprints.get(id)
+      if (seen !== undefined) decided.set(id, { choice, fingerprint: seen })
+    }
+    return this.start(() => this.cycle(decided, pending.theirs), false)
   }
 
-  /** «Cancelar»: forgets the decisions; the local commit stays, unpushed. */
+  /** «Cancelar»: forgets the decisions; the local commit stays, unpushed. A no-op while a sync runs (the UI disables it). */
   abort(): void {
     if (this.running || !this.pending) return
     this.pending = null
@@ -184,11 +238,15 @@ export class SyncService {
 
   /**
    * First use: `git init` when the folder is not in a repository, `url` as origin when given, then the first sync
-   * (following the remote's branch when it exists, publishing this one otherwise).
+   * (following the remote's branch when it exists, publishing this one otherwise). While a sync runs the URL is not
+   * taken: the caller gets that sync's result.
    */
   setup(url: string | null): Promise<SyncResult> {
     if (this.running) return this.running
+    if (this.closed) return this.refused()
     return this.start(async () => {
+      // Checked here too, whoever calls: a password must never reach .git/config.
+      if (url !== null && !isRemoteUrl(url)) fail('invalid_remote_url')
       let repo = await ProjectRepo.open(this.deps.root, this.gitOptions)
       if (!repo) {
         await ProjectRepo.init(this.deps.root, this.gitOptions)
@@ -199,9 +257,13 @@ export class SyncService {
       // Before anything commits: connecting runs the first local commit.
       await this.checkClean(repo, info)
       if (url !== null) {
-        if (info.remotes.includes('origin')) fail('remote_exists')
-        await repo.addRemote('origin', url)
-        info = await repo.info()
+        if (!info.remotes.includes('origin')) {
+          await repo.addRemote('origin', url)
+          info = await repo.info()
+        } else if ((await repo.remoteUrl('origin')) !== url) {
+          // The same URL again is a retry (e.g. after the first attempt went offline).
+          fail('remote_exists')
+        }
       }
       if (info.remotes.length === 0) return { ok: false, error: { code: 'no_remote', paths: [] } }
       if (!info.upstream) await this.connect(repo, info)
@@ -239,10 +301,23 @@ export class SyncService {
     return { files }
   }
 
-  /** The project is closing: cuts a fetch or push short and waits for the sync to end. */
+  /** The project is closing: cuts a fetch or push short and waits for the sync to end; no sync starts after it. */
   async close(): Promise<void> {
     this.stopping.abort()
     await this.running?.catch(() => undefined)
+  }
+
+  private get closed(): boolean {
+    return this.stopping.signal.aborted
+  }
+
+  private refused(): Promise<SyncResult> {
+    return Promise.resolve({ ok: false, error: { code: 'cancelled', paths: [] } })
+  }
+
+  /** Between steps: a close cuts the sync short even where git itself would not notice (a step about to start). */
+  private checkOpen(): void {
+    if (this.closed) fail('cancelled')
   }
 
   private start(work: () => Promise<SyncResult>, auto: boolean): Promise<SyncResult> {
@@ -276,7 +351,7 @@ export class SyncService {
   }
 
   /** Commit, fetch, merge and push; a push refused because the remote moved meanwhile goes round once more. */
-  private async cycle(choices: ReadonlyMap<string, ConflictChoice>, knownTheirs?: string): Promise<SyncResult> {
+  private async cycle(decided: ReadonlyMap<string, Decided>, knownTheirs?: string): Promise<SyncResult> {
     const { repo, upstream } = await this.ready()
     // Before going online: offline, the work is still saved in a local commit.
     await this.deps.exclusive(() => this.commitLocal(repo))
@@ -285,11 +360,15 @@ export class SyncService {
       if (attempt === 0 && knownTheirs) {
         theirs = knownTheirs
       } else {
+        this.checkOpen()
         await repo.fetch(upstream.remote, this.stopping.signal)
         theirs = await repo.revParse('@{upstream}')
       }
-      if ((await this.integrate(repo, theirs, choices)) === 'conflicts') return { ok: true, outcome: 'conflicts' }
+      this.checkOpen()
+      // On the retry the same choices are offered again: each one only applies to a conflict that has not changed.
+      if ((await this.integrate(repo, theirs, decided)) === 'conflicts') return { ok: true, outcome: 'conflicts' }
       if ((await repo.aheadCount()) === 0) return { ok: true, outcome: 'synced' }
+      this.checkOpen()
       try {
         await repo.push(upstream.remote, upstream.ref, { signal: this.stopping.signal })
         return { ok: true, outcome: 'synced' }
@@ -304,7 +383,7 @@ export class SyncService {
    * Brings the remote's commits in without touching the working tree until the result is complete: nothing to do, a
    * fast-forward, a merge commit, or decisions to make (then nothing changes on disk).
    */
-  private integrate(repo: ProjectRepo, theirs: string | null, choices: ReadonlyMap<string, ConflictChoice>): Promise<'done' | 'conflicts'> {
+  private integrate(repo: ProjectRepo, theirs: string | null, decided: ReadonlyMap<string, Decided>): Promise<'done' | 'conflicts'> {
     return this.deps.exclusive(async () => {
       // What the app wrote while fetching joins the local commit first.
       await this.commitLocal(repo)
@@ -316,10 +395,13 @@ export class SyncService {
       let target = theirs
       if (head && !(await repo.isAncestor(head, theirs))) {
         const base = (await repo.mergeBase(head, theirs)) ?? fail('unrelated_histories')
-        const plan = await planMerge(repo, { ours: head, theirs, base, choices })
+        const commits = { ours: head, theirs, base }
+        const { plan, kept } = await this.plan(repo, commits, decided)
         if (plan.kind === 'outside') fail('conflict_outside', plan.paths)
         if (plan.kind === 'decisions') {
-          this.pending = { head, theirs, base, conflicts: plan.conflicts }
+          const fingerprints = new Map<string, string>()
+          for (const c of plan.conflicts) fingerprints.set(c.id, await fingerprint(repo, c, commits))
+          this.pending = { head, theirs, base, conflicts: plan.conflicts, fingerprints, decided: kept }
           return 'conflicts'
         }
         target = await repo.commitTree(plan.tree, [head, theirs], mergeCommitMessage(this.machine))
@@ -330,6 +412,23 @@ export class SyncService {
       this.pending = null
       return 'done'
     })
+  }
+
+  /**
+   * The merge with the choices that still fit: the conflicts are listed first without any, and a choice is applied only
+   * when its conflict is still there with the versions the user saw. A dropped choice leaves that conflict open.
+   */
+  private async plan(repo: ProjectRepo, commits: Commits, decided: ReadonlyMap<string, Decided>): Promise<{ plan: MergePlan; kept: Map<string, Decided> }> {
+    const open = await planMerge(repo, { ...commits, choices: new Map() })
+    const kept = new Map<string, Decided>()
+    if (open.kind !== 'decisions' || decided.size === 0) return { plan: open, kept }
+    for (const c of open.conflicts) {
+      const d = decided.get(c.id)
+      if (d && d.fingerprint === (await fingerprint(repo, c, commits))) kept.set(c.id, d)
+    }
+    if (kept.size === 0) return { plan: open, kept }
+    const choices = new Map([...kept].map(([id, d]) => [id, d.choice]))
+    return { plan: await planMerge(repo, { ...commits, choices }), kept }
   }
 
   private async commitLocal(repo: ProjectRepo): Promise<void> {
@@ -374,9 +473,17 @@ export class SyncService {
     const branch = info.branch ?? fail('detached_head')
     const remote = info.remotes.includes('origin') ? 'origin' : info.remotes[0]
     await this.deps.exclusive(() => this.commitLocal(repo))
+    this.checkOpen()
     await repo.fetch(remote, this.stopping.signal)
+    const remoteHead = await repo.revParse(`refs/remotes/${remote}/${branch}`)
+    const head = await repo.revParse('HEAD')
+    // Another project's history: stop before following it, so the branch is left without an upstream to retry.
+    if (remoteHead && head && !(await repo.mergeBase(head, remoteHead))) fail('unrelated_histories')
     await repo.setUpstream(branch, remote)
-    if (!(await repo.revParse(`refs/remotes/${remote}/${branch}`))) await repo.push(remote, `refs/heads/${branch}`, { signal: this.stopping.signal })
+    if (!remoteHead) {
+      this.checkOpen()
+      await repo.push(remote, `refs/heads/${branch}`, { signal: this.stopping.signal })
+    }
   }
 
   private async openRepo(): Promise<ProjectRepo> {
