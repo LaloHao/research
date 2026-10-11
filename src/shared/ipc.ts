@@ -15,6 +15,7 @@ import type {
 import type { PdfPolicy } from './schemas'
 import type { AppSettings } from './settings'
 import type { ExtractionForm, FormImpact, FormInfo, LlmConfig, LlmModel, ReviewItem, Section, SummaryPlan, ThesisContext } from './summary'
+import type { DeletePlan, RestoreOutcome, TrashEntry, TrashOutcome, TrashTarget } from './trash'
 import type { PaperRelations, RelationPlan, RelationsFileState, RelationStatus, RelationType } from './typedRelations'
 
 export const IPC = {
@@ -36,6 +37,11 @@ export const IPC = {
   libraryReadNotes: 'library:read-notes',
   libraryWriteNotes: 'library:write-notes',
   libraryShowInFolder: 'library:show-in-folder',
+  libraryTrash: 'library:trash',
+  trashList: 'trash:list',
+  trashRestore: 'trash:restore',
+  trashDeletePlan: 'trash:delete-plan',
+  trashDeleteForever: 'trash:delete-forever',
   jobsList: 'jobs:list',
   jobsCancel: 'jobs:cancel',
   summaryRun: 'summary:run',
@@ -149,10 +155,21 @@ export interface ResearchApi {
     readNotes(id: string): Promise<{ text: string; hash: string | null }>
     writeNotes(id: string, text: string, hash: string | null): Promise<NotesWriteResult>
     showInFolder(id: string): Promise<void>
+    /** «Quitar de la biblioteca»: moves the papers to the trash; `moved` is what «Deshacer» restores. */
+    trash(ids: string[]): Promise<TrashOutcome>
   }
   jobs: {
     list(): Promise<JobRecord[]>
     cancel(id: number): Promise<void>
+  }
+  trash: {
+    list(): Promise<TrashEntry[]>
+    /** Without `merge`, a paper whose key is taken or that was added again comes back as a conflict and stays in the trash. */
+    restore(ids: string[], merge: boolean): Promise<RestoreOutcome>
+    /** What deleting these papers (or 'all': «Vaciar papelera») would remove, for the confirmation; `ids` is what it counted. */
+    deletePlan(target: TrashTarget): Promise<DeletePlan>
+    /** Deletes exactly `ids` (from deletePlan): the trash is never recomputed when the user confirms. */
+    deleteForever(ids: string[]): Promise<CountResult>
   }
   summary: {
     run(id: string, opts?: { force?: boolean; model?: LlmModel }): Promise<ActionResult>

@@ -24,11 +24,18 @@ const api: ResearchApi = {
     readPdf: (id) => ipcRenderer.invoke(IPC.libraryReadPdf, id),
     readNotes: (id) => ipcRenderer.invoke(IPC.libraryReadNotes, id),
     writeNotes: (id, text, hash) => ipcRenderer.invoke(IPC.libraryWriteNotes, id, text, hash),
-    showInFolder: (id) => ipcRenderer.invoke(IPC.libraryShowInFolder, id)
+    showInFolder: (id) => ipcRenderer.invoke(IPC.libraryShowInFolder, id),
+    trash: (ids) => ipcRenderer.invoke(IPC.libraryTrash, ids)
   },
   jobs: {
     list: () => ipcRenderer.invoke(IPC.jobsList),
     cancel: (id) => ipcRenderer.invoke(IPC.jobsCancel, id)
+  },
+  trash: {
+    list: () => ipcRenderer.invoke(IPC.trashList),
+    restore: (ids, merge) => ipcRenderer.invoke(IPC.trashRestore, ids, merge),
+    deletePlan: (target) => ipcRenderer.invoke(IPC.trashDeletePlan, target),
+    deleteForever: (ids) => ipcRenderer.invoke(IPC.trashDeleteForever, ids)
   },
   summary: {
     run: (id, opts) => ipcRenderer.invoke(IPC.summaryRun, id, opts),

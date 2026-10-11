@@ -100,6 +100,15 @@ describe('IPC argument validation', () => {
     expect(arg(ipcArgs.exportData, 'a,b\n', 'data')).toBe('a,b\n')
     expect(() => arg(ipcArgs.exportData, 42, 'data')).toThrow()
   })
+
+  it('checks the trash arguments: keys only, never an empty list, and the whole trash only by name', () => {
+    expect(arg(ipcArgs.trashIds, ['he2017drain'], 'ids')).toEqual(['he2017drain'])
+    expect(() => arg(ipcArgs.trashIds, [], 'ids')).toThrow(InvalidIpcArgument)
+    expect(() => arg(ipcArgs.trashIds, ['../x'], 'ids')).toThrow(InvalidIpcArgument)
+    expect(arg(ipcArgs.trashTarget, 'all', 'target')).toBe('all')
+    expect(arg(ipcArgs.trashTarget, ['he2017drain'], 'target')).toEqual(['he2017drain'])
+    for (const bad of [undefined, [], 'everything', ['../x']]) expect(() => arg(ipcArgs.trashTarget, bad, 'target')).toThrow(InvalidIpcArgument)
+  })
 })
 
 describe('typed relation arguments', () => {
