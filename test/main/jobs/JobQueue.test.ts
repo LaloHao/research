@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { join } from 'node:path'
-import { IndexCache } from '../../../src/main/cache/IndexCache'
+import { IndexCache, type TrashRow } from '../../../src/main/cache/IndexCache'
 import { JobQueue, type JobHandler } from '../../../src/main/jobs/JobQueue'
 import type { JobSpec } from '../../../src/shared/jobs'
 import { tmpDir } from '../../helpers/tmp'
@@ -117,6 +117,58 @@ describe('JobQueue', () => {
     await queue.whenIdle()
     off()
     expect(changes).toBeGreaterThanOrEqual(3)
+  })
+
+  it('never runs a job of a paper in the trash, even one queued before it got there', async () => {
+    const c = await cache()
+    const ran: string[] = []
+    const queue = new JobQueue(c, async (s) => {
+      ran.push(`${s.type}:${'paperId' in s ? s.paperId : ''}`)
+      return {}
+    })
+    const row: TrashRow = { id: 'a1', title: 'A', authors_label: '', year: null, doi: null, openalex_id: null, trashed_at: null, device: null, problem: null }
+    const trashed = queue.enqueue({ type: 'summarize', paperId: 'a1' })
+    const other = queue.enqueue({ type: 'citations', paperId: 'b1' })
+    c.moveToTrash(row)
+    queue.start()
+    await queue.whenIdle()
+    expect(ran).toEqual(['citations:b1'])
+    expect(queue.list().find((j) => j.id === trashed)?.state).toBe('cancelled')
+    expect(queue.list().find((j) => j.id === other)?.state).toBe('done')
+    expect(queue.cancelQueuedPapers(['b1'])).toBe(0)
+  })
+
+  it('cancels the queued and running jobs of some papers and waits for the running ones to stop', async () => {
+    const gate = deferred()
+    let aborted = false
+    const handler: JobHandler = async (s, signal) => {
+      if (s.type === 'summarize') {
+        await new Promise<void>((resolve) =>
+          signal.addEventListener('abort', () => {
+            aborted = true
+            resolve()
+          })
+        )
+        throw new Error('aborted')
+      }
+      await gate.promise
+      return {}
+    }
+    const queue = new JobQueue(await cache(), handler, { total: 1 })
+    queue.start()
+    const running = queue.enqueue({ type: 'summarize', paperId: 'a1' })
+    const queuedSame = queue.enqueue({ type: 'citations', paperId: 'a1' })
+    const other = queue.enqueue({ type: 'citations', paperId: 'b1' })
+    await new Promise((r) => setTimeout(r, 10))
+    expect(await queue.cancelPapers(['a1'])).toBe(2)
+    expect(aborted).toBe(true)
+    const state = (id: number) => queue.list().find((j) => j.id === id)?.state
+    expect(state(running)).toBe('cancelled')
+    expect(state(queuedSame)).toBe('cancelled')
+    expect(['queued', 'running']).toContain(state(other))
+    gate.resolve()
+    await queue.whenIdle()
+    expect(state(other)).toBe('done')
   })
 })
 
