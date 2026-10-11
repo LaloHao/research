@@ -17,10 +17,12 @@ import {
 import { TrashedFileSchema, type TrashedFile } from '../../shared/trash'
 import { RelationsFileSchema, type RelationsFile } from '../../shared/typedRelations'
 import { atomicWrite, MOVE_RETRYABLE, moveDir, sha256 } from './atomicWrite'
+import { renderLibraryBib } from '../export/BibExporter'
 import { ConflictError, ProjectError, type ReadResult } from './errors'
 import { gitattributesLines, gitignoreLines, withManagedBlock } from './gitFiles'
 import { RELATIONS_FILE, resolveConflictText, sortRelations } from './relationsFile'
 import { siblingName, TRASH_DIR, TRASHED_FILE } from './trashPaths'
+import { WriteGate } from './writeGate'
 import { parseFrontmatterFile, parseYamlFile, toFrontmatter, toYaml } from './yamlFile'
 
 export const PROJECT_FILE = 'project.yaml'
@@ -45,6 +47,43 @@ type InvalidBlocks = Partial<Record<LenientBlock, unknown>>
 
 /** The only writer of the project folder (exports/ and .cache/ aside). */
 export class ProjectStore {
+  /**
+   * Every public method that writes into the project folder; each runs under `gate.shared`, so the git sync (which takes
+   * the gate exclusively) never commits a half-done write. None of them calls another one of them: that would wait
+   * behind a queued sync forever. A new write method must be added here. (`.cache/` is never committed, so
+   * `removeCachedPdf` stays out.)
+   */
+  static readonly GATED_WRITES = [
+    'writePaper',
+    'writeNotes',
+    'writePdf',
+    'writeContent',
+    'writeSummary',
+    'writeExtraction',
+    'writeRelations',
+    'resolveRelationsConflict',
+    'updateConfig',
+    'trashPaper',
+    'restorePaper',
+    'adoptTrashedFile',
+    'keepPaperFileAs',
+    'finishMerge',
+    'deleteTrashed',
+    'appendCost',
+    'writeBib'
+  ] as const
+
+  static {
+    for (const name of ProjectStore.GATED_WRITES) {
+      const write = ProjectStore.prototype[name] as (this: ProjectStore, ...args: unknown[]) => Promise<unknown>
+      ProjectStore.prototype[name] = function (this: ProjectStore, ...args: unknown[]) {
+        return this.gate.shared(() => write.apply(this, args))
+      } as never
+    }
+  }
+
+  private readonly gate = new WriteGate()
+
   private constructor(
     readonly root: string,
     private cfg: ProjectConfig,
@@ -75,6 +114,11 @@ export class ProjectStore {
 
   get config(): ProjectConfig {
     return this.cfg
+  }
+
+  /** Runs `fn` with no write in flight, holding every write until it ends (the git sync's local steps). */
+  exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    return this.gate.exclusive(fn)
   }
 
   async updateConfig(
@@ -389,6 +433,19 @@ export class ProjectStore {
     const dir = join(this.root, 'costs')
     await mkdir(dir, { recursive: true })
     await appendFile(join(dir, `${deviceId}.jsonl`), `${JSON.stringify(entry)}\n`)
+  }
+
+  /**
+   * `exports/library.bib` is generated but tracked (only `.cache/` is ignored), so the sync commit reads it: writing
+   * it bypasses the gate otherwise, exactly like any other project write. True when the content changed.
+   */
+  async writeBib(papers: Pick<Paper, 'id' | 'bibtex'>[]): Promise<boolean> {
+    const path = join(this.exportsDir, 'library.bib')
+    const text = renderLibraryBib(papers)
+    const current = await readOptional(path)
+    if (current === text) return false
+    await atomicWrite(path, text)
+    return true
   }
 
   async readCosts(): Promise<CostEntry[]> {
