@@ -93,6 +93,12 @@ export class ProjectStore {
   }
 
   private readonly gate = new WriteGate()
+  /**
+   * The last parse of each mapping file, by path, with the hash of the text it came from. A mapping's records file can
+   * be megabytes of abstracts, and every decision reads all five files several times: only a text that changed is
+   * parsed again. The values are frozen, since every reader shares them.
+   */
+  private readonly mappingParses = new Map<string, ReadResult<unknown>>()
 
   private constructor(
     readonly root: string,
@@ -341,8 +347,19 @@ export class ProjectStore {
 
   /** One file of a mapping; null when it does not exist. */
   async readMappingFile<K extends MappingFileKind>(id: string, kind: K): Promise<ReadResult<MappingFiles[K]> | null> {
-    const text = await readOptional(join(this.mappingDir(id), MAPPING_FILE_NAMES[kind]))
-    return text === null ? null : parseYamlFile(text, MAPPING_SCHEMAS[kind])
+    const path = join(this.mappingDir(id), MAPPING_FILE_NAMES[kind])
+    const text = await readOptional(path)
+    if (text === null) {
+      this.mappingParses.delete(path)
+      return null
+    }
+    const hash = sha256(text)
+    const previous = this.mappingParses.get(path)
+    if (previous?.hash === hash) return previous as ReadResult<MappingFiles[K]>
+    const read = parseYamlFile(text, MAPPING_SCHEMAS[kind])
+    if (read.ok) deepFreeze(read.value)
+    this.mappingParses.set(path, read)
+    return read
   }
 
   /**
@@ -707,4 +724,11 @@ async function removeMovingLeftovers(root: string): Promise<void> {
       if (/^\..+\.moving$/.test(name)) await rm(join(dir, name), { recursive: true, force: true })
     }
   }
+}
+
+/** Freezes a parsed file in place (plain objects and arrays only). */
+function deepFreeze(value: unknown): void {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return
+  Object.freeze(value)
+  for (const child of Object.values(value)) deepFreeze(child)
 }
