@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
+import { neutralizePromptTags } from '../llm/promptTags'
 import { ToolError, type LibraryTools } from './libraryTools'
 
 export const MCP_SERVER_NAME = 'library'
@@ -43,11 +44,12 @@ export const DATA_OPEN = '<library_data>'
 export const DATA_CLOSE = '</library_data>'
 
 /**
- * A tool answer as tagged library data. Anything that could read as a closing tag (any case, spaces around the slash)
- * gets its slash escaped, so it cannot end the block; `\/` is a valid JSON escape and the rest is left as it was.
+ * A tool answer as tagged library data. Every prompt tag inside it (this one, `<question>`, `<turn>` and the rest,
+ * with invisible or full-width variants) is neutralized by the same code as the chat's own input, so paper text can
+ * neither end the block nor fake a request; the escape is valid JSON and the rest is left exactly as it was.
  */
 export function markAsData(text: string): string {
-  return `${DATA_OPEN}\n${text.replace(/<(\s*)\/(\s*)(library_data)/gi, '<$1\\/$2$3')}\n${DATA_CLOSE}`
+  return `${DATA_OPEN}\n${neutralizePromptTags(text)}\n${DATA_CLOSE}`
 }
 
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: 'text', text: t }], ...(isError ? { isError: true } : {}) })

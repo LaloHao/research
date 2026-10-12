@@ -1,6 +1,7 @@
 import type { ChatExcerpt, ChatMessage, ChatScope } from '../../shared/chat'
 import { citationsToText } from '../../shared/chatCitations'
 import type { ThesisContext } from '../../shared/summary'
+import { escapePromptData } from '../llm/promptTags'
 import { DATA_CLOSE, DATA_OPEN } from '../mcp/LibraryMcpServer'
 import { hasThesisContext, thesisPromptBlock } from '../summary/thesis'
 
@@ -48,20 +49,8 @@ export interface TrimmedHistory {
   omitted: number
 }
 
-/** The tags that structure the prompt; data may neither open nor close one of them. */
-const PROMPT_TAGS = /<(\s*)(\/?)(\s*)(?=(?:thesis|paper|earlier|conversation|turn|excerpt|question|library_data)\b)/gi
 /** Lines of a message that look like an old-style turn header. */
 const TURN_HEADER = /^([ \t]*)(?=\[(?:user|assistant)\b)/gim
-/**
- * Data as the prompt carries it. NFKC folds full-width and small-form `<` and `>` into ASCII and format characters
- * (zero-width spaces and joiners, word joiners, bidi marks) are removed, so no variant of a tag survives; then
- * `</question>` becomes `<\/question>` and `<question>` becomes `<\question>`: readable, but no longer a tag.
- */
-const escapeTags = (s: string): string =>
-  s
-    .normalize('NFKC')
-    .replace(/\p{Cf}/gu, '')
-    .replace(PROMPT_TAGS, '<$1\\$2$3')
 const escapeAttribute = (s: string): string => s.replace(/[^a-z0-9]/gi, '')
 const oneLine = (s: string): string => s.replace(/\s+/g, ' ').trim()
 const cut = (s: string, n: number): string => (s.length <= n ? s : `${s.slice(0, n).trimEnd()}…`)
@@ -134,9 +123,9 @@ const excerptOpen = (e: ChatExcerpt): string => `<excerpt paper="${escapeAttribu
 
 /** One message in its own <turn>; its text can neither close the turn nor pass for another one. */
 function turnBlock(m: ChatMessage): string[] {
-  const text = escapeTags(m.text).replace(TURN_HEADER, '$1\\')
+  const text = escapePromptData(m.text).replace(TURN_HEADER, '$1\\')
   if (m.role === 'assistant') return [`<turn role="assistant"${m.stopped ? ' stopped="true"' : ''}>`, text, '</turn>']
-  const excerpt = m.excerpt ? [excerptOpen(m.excerpt), escapeTags(oneLine(m.excerpt.quote)), '</excerpt>'] : []
+  const excerpt = m.excerpt ? [excerptOpen(m.excerpt), escapePromptData(oneLine(m.excerpt.quote)), '</excerpt>'] : []
   return ['<turn role="user">', ...excerpt, text, '</turn>']
 }
 
@@ -153,16 +142,16 @@ function paperLines(p: PaperContext): string[] {
 /** The user message of one answer: context as tagged data, the question last. */
 export function chatInput(i: ChatPromptInput): string {
   const h = trimHistory(i.history)
-  const out = ['<thesis>', hasThesisContext(i.thesis) ? escapeTags(thesisPromptBlock(i.thesis)) : 'none', '</thesis>']
-  if (i.paper) out.push('<paper>', ...paperLines(i.paper).map(escapeTags), '</paper>')
-  else if (i.scope !== 'library') out.push('<paper>', `key: ${escapeTags(i.scope.paper)} (in the trash or no longer in the library: its text is not available)`, '</paper>')
+  const out = ['<thesis>', hasThesisContext(i.thesis) ? escapePromptData(thesisPromptBlock(i.thesis)) : 'none', '</thesis>']
+  if (i.paper) out.push('<paper>', ...paperLines(i.paper).map(escapePromptData), '</paper>')
+  else if (i.scope !== 'library') out.push('<paper>', `key: ${escapePromptData(i.scope.paper)} (in the trash or no longer in the library: its text is not available)`, '</paper>')
   if (h.digest.length > 0 || h.omitted > 0) {
-    out.push('<earlier>', ...(h.omitted > 0 ? [`(${h.omitted} older messages not shown)`] : []), ...h.digest.map(escapeTags), '</earlier>')
+    out.push('<earlier>', ...(h.omitted > 0 ? [`(${h.omitted} older messages not shown)`] : []), ...h.digest.map(escapePromptData), '</earlier>')
   }
   if (h.recent.length > 0) out.push('<conversation>', ...h.recent.flatMap(turnBlock), '</conversation>')
   if (i.excerpt) {
-    out.push(excerptOpen(i.excerpt), escapeTags(i.excerpt.quote), '</excerpt>')
+    out.push(excerptOpen(i.excerpt), escapePromptData(i.excerpt.quote), '</excerpt>')
   }
-  out.push('<question>', escapeTags(i.question), '</question>')
+  out.push('<question>', escapePromptData(i.question), '</question>')
   return out.join('\n')
 }
