@@ -10,6 +10,7 @@ let input = ''
 process.stdin.on('data', (d) => (input += d))
 process.stdin.on('end', async () => {
   if (log) appendFileSync(log, JSON.stringify({ args, input }) + '\n')
+  if (process.env.FAKE_CLAUDE_ENV_LOG) appendFileSync(process.env.FAKE_CLAUDE_ENV_LOG, JSON.stringify({ MCP_TOOL_TIMEOUT: process.env.MCP_TOOL_TIMEOUT ?? null }) + '\n')
   let call = 0
   if (counter) {
     call = existsSync(counter) ? Number(readFileSync(counter, 'utf8')) + 1 : 0

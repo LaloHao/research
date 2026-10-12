@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { agentArgs, chatArgs, ClaudeCliProvider, cliArgs, mcpConfig, mcpConfigs, parseCliOutput, parseStreamLine } from '../../../src/main/llm/ClaudeCliProvider'
 import { failedCallCost, LlmError } from '../../../src/main/llm/LlmProvider'
+import { RunClock } from '../../../src/main/llm/RunClock'
 import type { ChatEvent } from '../../../src/main/llm/LlmProvider'
 import { toUserFacing } from '../../../src/main/library/UserFacingError'
 import { startLibraryMcpServer } from '../../../src/main/mcp/LibraryMcpServer'
@@ -331,6 +332,40 @@ describe('ClaudeCliProvider.chat', () => {
   it('times out like an agent run', async () => {
     const { result } = await run('chat_hang', {}, { timeoutMs: 300 })
     expect(result).toMatchObject({ code: 'llm_timeout', costUsd: 0.5, estimated: true })
+  })
+
+  it('does not time out while its clock is held, and gives the CLI the tool timeout it asked for', async () => {
+    const server = await startLibraryMcpServer(stubTools(), { maxToolCalls: 12, markData: true })
+    const envLog = join(await tmpDir(), 'env.jsonl')
+    const { p } = await provider('chat_hang', { FAKE_CLAUDE_ENV_LOG: envLog })
+    const clock = new RunClock()
+    const release = clock.hold()
+    let settled = false
+    const done = p
+      .chat({ ...chatReq, servers: [{ name: 'library', url: server.url, token: server.token }], timeoutMs: 200, clock, toolTimeoutMs: 600000 }, () => undefined)
+      .catch((e: unknown) => e)
+      .finally(() => (settled = true))
+    try {
+      await new Promise((r) => setTimeout(r, 600))
+      expect(settled).toBe(false)
+      release()
+      expect(await done).toMatchObject({ code: 'llm_timeout', costUsd: 0.5, estimated: true })
+      expect(JSON.parse((await readFile(envLog, 'utf8')).trim())).toEqual({ MCP_TOOL_TIMEOUT: '600000' })
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('leaves the tool timeout to the CLI when the run does not set one', async () => {
+    const server = await startLibraryMcpServer(stubTools(), { maxToolCalls: 12, markData: true })
+    const envLog = join(await tmpDir(), 'env.jsonl')
+    const { p } = await provider('chat', { FAKE_CLAUDE_ENV_LOG: envLog, MCP_TOOL_TIMEOUT: '' })
+    try {
+      await p.chat({ ...chatReq, servers: [{ name: 'library', url: server.url, token: server.token }] }, () => undefined)
+      expect(JSON.parse((await readFile(envLog, 'utf8')).trim())).toEqual({ MCP_TOOL_TIMEOUT: '' })
+    } finally {
+      await server.close()
+    }
   })
 
   it('keeps streaming and returns the result and cost when the listener throws', async () => {

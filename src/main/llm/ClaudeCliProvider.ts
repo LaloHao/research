@@ -15,6 +15,7 @@ import {
   type LlmProvider,
   type McpEndpoint
 } from './LlmProvider'
+import { RunClock } from './RunClock'
 
 const DEFAULT_TIMEOUT_MS = 5 * 60_000
 
@@ -216,7 +217,7 @@ function isJson(line: string): boolean {
   }
 }
 
-type RunInput = { input: string; maxUsd: number; signal?: AbortSignal; timeoutMs?: number }
+type RunInput = { input: string; maxUsd: number; signal?: AbortSignal; timeoutMs?: number; clock?: RunClock; toolTimeoutMs?: number }
 
 /** Runs `claude -p`: plain completions with no tools, no MCP servers, no user settings and no saved session; agent and chat runs with only the given MCP servers' tools. */
 export class ClaudeCliProvider implements LlmProvider {
@@ -333,25 +334,25 @@ export class ClaudeCliProvider implements LlmProvider {
   private runCli<T>(args: string[], req: RunInput, parse: (stdout: string, stderr: string, code: number | null) => T, onStdout?: (chunk: string) => void): Promise<T> {
     return new Promise((resolve, reject) => {
       if (req.signal?.aborted) return reject(abortError())
-      const child = spawn(this.opts.command ?? 'claude', [...(this.opts.prefixArgs ?? []), ...args], {
-        env: this.opts.env ?? process.env,
-        stdio: ['pipe', 'pipe', 'pipe']
-      })
+      const base = this.opts.env ?? process.env
+      // The CLI's own wait for a tool call: an action waiting for the user's approval keeps its call open that long.
+      const env = req.toolTimeoutMs ? { ...base, MCP_TOOL_TIMEOUT: String(req.toolTimeoutMs) } : base
+      const child = spawn(this.opts.command ?? 'claude', [...(this.opts.prefixArgs ?? []), ...args], { env, stdio: ['pipe', 'pipe', 'pipe'] })
       let stdout = ''
       let stderr = ''
       let settled = false
       const finish = (fn: () => void): void => {
         if (settled) return
         settled = true
-        clearTimeout(timer)
+        disarm()
         req.signal?.removeEventListener('abort', onAbort)
         fn()
       }
       // Killed after it started: its real cost is unknown, so the per-operation cap it may spend is charged as an estimate.
-      const timer = setTimeout(() => {
+      const disarm = (req.clock ?? new RunClock()).start(req.timeoutMs ?? this.opts.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS, () => {
         child.kill('SIGKILL')
         finish(() => reject(new LlmError('llm_timeout', req.maxUsd, { estimated: true })))
-      }, req.timeoutMs ?? this.opts.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS)
+      })
       const onAbort = (): void => {
         child.kill('SIGKILL')
         finish(() => reject(Object.assign(abortError(), { costUsd: req.maxUsd, estimated: true })))
