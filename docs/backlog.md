@@ -123,7 +123,7 @@
 - A `suggest_facets` cost line has an empty `paper_id`.
 - `facet-suggestions.yaml` with conflict markers (only possible after a hand-run git merge; the app's sync never leaves them) has no automatic resolution button, unlike `relations.yaml`: it must be fixed by hand.
 - A suggestion edited before acceptance keeps its original id (e.g. `new_facet__data_source` for a facet saved as `data_origin`), so a later run may suggest the original key again.
-- The cache schema went from 8 to 9 in place (`ALTER TABLE`); any other older schema is still rebuilt from scratch.
+- The cache schema goes from 8 or 9 to 10 in place (`ALTER TABLE` and the mapping tables, keeping texts and vectors); any other older schema is still rebuilt from scratch.
 
 ## Stage 4a technical minutiae
 
@@ -184,3 +184,7 @@
 - The PRISMA diagram always uses print colors (black on white), whatever the app's theme; lines wrap by an estimated character width, so a very long database name may slightly overflow its box.
 - A suggestion run cancelled while Claude was still answering writes no suggestion; its cost is logged anyway.
 - «Deshacer» is not offered for the decision that resolved a conflict between machines (undoing it would need both earlier decisions back).
+- Records already in a mapping are linked to a library paper only when they enter the mapping or are added to the library from it: a paper added to the library later by other means doesn't link the matching record, which «Agregar a la biblioteca» then links ("already in the library").
+- A decision made on a queue the window hasn't reloaded yet replaces, without showing a conflict, a decision on the same record that a sync brought meanwhile. Nothing is lost (decisions are append-only, and the replaced one is in `decisions.yaml`); a fix is to send the decision on screen and refuse with `conflict` when the heads differ.
+- The PRISMA exclusion reasons and other labels use each criterion's current wording, not the wording of the protocol version the decision was made with; 5b's reports should name the version (`criterionText` with the decision's `protocol_version`).
+- A large mapping sends every queue row (abstracts included) over IPC on each reload of the screening list; the files are parsed only when their text changes, but a paginated queue would cut the transfer.
