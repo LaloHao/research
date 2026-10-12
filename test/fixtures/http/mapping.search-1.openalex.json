@@ -1,0 +1,27 @@
+{
+  "meta": { "count": 3, "db_response_time_ms": 21, "page": null, "per_page": 100, "next_cursor": "IlsxMDAuMCwgJ1czMDAwMDAwMDAxJ10i", "groups_count": null },
+  "results": [
+    {
+      "id": "https://openalex.org/W2754665629",
+      "doi": "https://doi.org/10.1109/icws.2017.13",
+      "title": "Drain: An Online Log Parsing Approach with Fixed Depth Tree",
+      "display_name": "Drain: An Online Log Parsing Approach with Fixed Depth Tree",
+      "publication_year": 2017,
+      "type": "article",
+      "authorships": [{ "author": { "display_name": "Pinjia He" } }, { "author": { "display_name": "Jieming Zhu" } }],
+      "primary_location": { "source": { "display_name": "2017 IEEE International Conference on Web Services (ICWS)" } },
+      "abstract_inverted_index": { "Logs": [0], "record": [1], "what": [2], "a": [3], "system": [4], "does.": [5] }
+    },
+    {
+      "id": "https://openalex.org/W3000000001",
+      "doi": null,
+      "title": "Anonymizing operational logs with language models",
+      "display_name": "Anonymizing operational logs with language models",
+      "publication_year": 2024,
+      "type": "preprint",
+      "authorships": [{ "author": { "display_name": "Ana María López" } }],
+      "primary_location": { "source": null },
+      "abstract_inverted_index": null
+    }
+  ]
+}

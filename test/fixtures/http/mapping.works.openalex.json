@@ -1,0 +1,17 @@
+{
+  "meta": { "count": 2, "db_response_time_ms": 12, "page": 1, "per_page": 100, "groups_count": null },
+  "results": [
+    {
+      "id": "https://openalex.org/W3000000003",
+      "doi": "https://doi.org/10.5555/citing.2025",
+      "title": "Log parsing for privacy-preserving analytics",
+      "display_name": "Log parsing for privacy-preserving analytics",
+      "publication_year": 2025,
+      "type": "article",
+      "authorships": [{ "author": { "display_name": "Lucía Fernández" } }],
+      "primary_location": { "source": { "display_name": "Empirical Software Engineering" } },
+      "abstract_inverted_index": { "Parsed": [0], "logs": [1], "leak": [2], "less.": [3] }
+    },
+    { "id": "https://openalex.org/W3000000004", "doi": null, "title": null, "display_name": null, "publication_year": null, "type": null, "authorships": [], "primary_location": null, "abstract_inverted_index": null }
+  ]
+}
