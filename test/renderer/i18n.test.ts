@@ -53,6 +53,7 @@ describe('es.json covers every code the UI can receive', () => {
     ...['identification', 'screening', 'included'].map((k) => `mappings.prisma.stages.${k}`),
     ...['protocol.errors.title', 'protocol.errors.empty_item', 'protocol.errors.years', 'screening.without_text_one', 'screening.without_text_other'].map((k) => `mappings.${k}`),
     ...['confirm_snowball_one', 'confirm_snowball_other', 'truncated', 'pick_again', 'inconsistent', 'years_invalid'].map((k) => `mappings.searches.${k}`),
+    ...['duplicate_pending', 'inactive', 'conflict_pending'].map((k) => `mappings.screening.${k}`),
     ...['citations', 'cited_by', 'embed', 'model_download', 'suggest_relations', 'fill_facets', 'suggest_facets', 'suggest_facets_auto'].map((type) => `jobs.${type}`),
     ...['mapping_search', 'mapping_snowball', 'screen_suggest', 'ingest_record'].map((type) => `jobs.${type}`),
     ...['coupling_one', 'coupling_other', 'cocitation_one', 'cocitation_other', 'direct', 'content'].map((k) => `relations.reasons.${k}`),

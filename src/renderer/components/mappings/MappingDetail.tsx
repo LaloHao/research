@@ -5,6 +5,7 @@ import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
 import { MAPPING_TABS, type MappingTab } from '../../lib/navigation'
 import { ProtocolTab } from './ProtocolTab'
+import { ScreeningTab } from './ScreeningTab'
 import { SearchesTab } from './SearchesTab'
 
 /** Where the arrow keys, Home and End move the active tab to (wrapping around the ends). */
@@ -104,6 +105,9 @@ export function MappingDetail({ id }: { id: string }): React.JSX.Element {
         </div>
         <div id="mapping-panel-searches" role="tabpanel" aria-labelledby="mapping-tab-searches" hidden={tab !== 'searches'}>
           <SearchesTab view={view} />
+        </div>
+        <div id="mapping-panel-screening" role="tabpanel" aria-labelledby="mapping-tab-screening" hidden={tab !== 'screening'}>
+          <ScreeningTab view={view} />
         </div>
       </div>
     </div>

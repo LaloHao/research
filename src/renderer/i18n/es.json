@@ -848,7 +848,10 @@
       "distinct": "Son distintos",
       "conflicts": "Decisiones distintas en dos equipos ({{count}})",
       "conflict_option": "{{decision}} · {{machine}} · {{date}}",
-      "keep": "Quedarme con esta"
+      "keep": "Quedarme con esta",
+      "duplicate_pending": "Este registro puede ser un duplicado: responde «Es el mismo» o «Son distintos» arriba antes de cribarlo.",
+      "inactive": "Este registro ya no está en el cribado: se fusionó con otro o solo lo trajo una búsqueda descartada.",
+      "conflict_pending": "Este registro tiene decisiones distintas en dos equipos: elige arriba con cuál quedarte."
     },
     "state": {
       "pending": "Sin decidir",
