@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { readFile, rm, truncate, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ProtocolDraft } from '../../../src/shared/mapping'
-import { candidate, decision, fixturePath, hexId, record, search, setupMappings } from '../../helpers/mappings'
+import { candidate, decision, fixturePath, hexId, record, search, setupMappings, suggestion } from '../../helpers/mappings'
 import { samplePaper } from '../../helpers/papers'
 
 vi.mock('../../../src/main/mapping/importers/importFile', async (importOriginal) => {
@@ -200,6 +200,22 @@ describe('MappingService', () => {
     expect(view.protocol.protocol.exclusion.map((c) => c.id)).toEqual(['E1', 'E2'])
     await expect(service.saveProtocol(id, draft(), 1)).rejects.toMatchObject({ code: 'conflict' })
     await expect(service.saveProtocol(id, { ...draft(), title: '' }, 2)).rejects.toMatchObject({ code: 'invalid_edit' })
+  })
+
+  it('a suggestion also starts the screening: an edit after it is a new version, and the suggestion is outdated', async () => {
+    const { service, store } = await setupMappings()
+    const id = await service.create('Logs')
+    await service.saveProtocol(id, draft(), 1)
+    await service.addSearch(id, { kind: 'openalex', database: 'OpenAlex', query: 'logs' }, [candidate()])
+    const recordId = service.queue(id, { phase: 'title_abstract', filter: 'pending' })[0].id
+    await store.writeMappingFile(id, 'suggestions', { schema_version: 1, suggestions: [suggestion({ record: recordId, decision: 'exclude', criterion: 'E1' })] }, null)
+    expect(await service.open(id)).toMatchObject({ screeningStarted: true })
+    expect((await service.suggestPlan(id, 'title_abstract')).count).toBe(0)
+    await service.saveProtocol(id, { ...draft(), exclusion: [{ id: 'E1', text: 'Not peer reviewed nor a thesis.' }] }, 1)
+    const view = await service.open(id)
+    expect(view.protocol).toMatchObject({ version: 2, history: [{ version: 1, protocol: { exclusion: [{ id: 'E1', text: 'Not peer reviewed.' }] } }] })
+    expect(service.queue(id, { phase: 'title_abstract', filter: 'pending' })[0].suggestions.title_abstract).toMatchObject({ outdated: true })
+    expect((await service.suggestPlan(id, 'title_abstract')).count).toBe(1)
   })
 
   it('reads again and retries once when a file changed between its read and its write', async () => {

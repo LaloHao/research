@@ -125,6 +125,14 @@ function contentOf(files: LoadedMapping): MappingContent {
   }
 }
 
+/**
+ * Screening started once anything was decided or suggested: a protocol edit from then on is a new version, so the
+ * suggestions made before it show as outdated, with the wording they were made with, and can be asked for again.
+ */
+function screeningStarted(files: LoadedMapping): boolean {
+  return files.decisions.value.decisions.length > 0 || files.suggestions.value.suggestions.length > 0
+}
+
 /** The latest date any file of the mapping records (for the list's order). */
 function lastChange(c: MappingContent): string {
   const dates = [
@@ -307,7 +315,7 @@ export class MappingService {
         counts: state.counts,
         duplicates: duplicatePairs(rows),
         conflicts: conflictsOf(rows),
-        screeningStarted: files.decisions.value.decisions.length > 0,
+        screeningStarted: screeningStarted(files),
         inconsistentSearches: inconsistentSearches(contentOf(files))
       }
     })
@@ -320,7 +328,7 @@ export class MappingService {
     await this.mutate(id, (files) => {
       const current = files.protocol.value
       if (current.version !== version) throw new UserFacingError('conflict')
-      const next = applyDraft(current, parsed.data, { screeningStarted: files.decisions.value.decisions.length > 0, now: this.now().toISOString() })
+      const next = applyDraft(current, parsed.data, { screeningStarted: screeningStarted(files), now: this.now().toISOString() })
       return { writes: next === current ? [] : [{ kind: 'protocol', file: next }], result: undefined }
     })
   }

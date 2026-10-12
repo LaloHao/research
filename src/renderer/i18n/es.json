@@ -677,7 +677,7 @@
       "saved": "Protocolo guardado.",
       "discard": "Descartar cambios",
       "version": "Versión {{version}} del protocolo",
-      "bump_notice": "Ya empezaste a cribar: al guardar, el protocolo pasa a la versión {{next}} y las decisiones tomadas con la versión anterior quedan marcadas.",
+      "bump_notice": "Ya empezaste a cribar o pediste sugerencias: al guardar, el protocolo pasa a la versión {{next}} y las decisiones y sugerencias hechas con la versión anterior quedan marcadas.",
       "outdated": "El protocolo cambió mientras lo editabas (otro equipo o una sincronización). Si guardas, tus cambios reemplazan esa versión; con «Descartar cambios» ves la nueva.",
       "history": "Versiones anteriores",
       "history_item": "Versión {{version}} · reemplazada el {{date}}",
