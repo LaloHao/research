@@ -1,0 +1,45 @@
+TY  - CONF
+AU  - He, Pinjia
+AU  - Zhu, Jieming
+AU  - Zheng, Zibin
+AU  - Lyu, Michael R.
+TI  - Drain: An Online Log Parsing Approach with Fixed Depth Tree
+T2  - 2017 IEEE INTERNATIONAL CONFERENCE ON WEB SERVICES (ICWS)
+PY  - 2017
+SP  - 33
+EP  - 40
+DO  - 10.1109/ICWS.2017.13
+AN  - WOS:000400000000001
+AB  - Logs record what a system does at runtime, and most log analysis starts by
+      turning raw messages into templates.
+ER  -
+
+TY  - CONF
+AU  - He, Shilin
+AU  - Zhu, Jieming
+AU  - He, Pinjia
+AU  - Lyu, Michael R.
+TI  - Experience Report: System Log Analysis for Anomaly Detection
+T2  - 2016 IEEE 27TH INTERNATIONAL SYMPOSIUM ON SOFTWARE RELIABILITY ENGINEERING (ISSRE)
+PY  - 2016
+DO  - 10.1109/ISSRE.2016.21
+AB  - Anomaly detection on system logs has been studied with many methods.
+ER  -
+
+TY  - JOUR
+AU  - He, Shilin
+AU  - He, Pinjia
+AU  - Chen, Zhuangbin
+AU  - Yang, Tianyi
+AU  - Su, Yuxin
+AU  - Lyu, Michael R.
+TI  - A Survey on Automated Log Analysis for Reliability Engineering
+T2  - ACM COMPUTING SURVEYS
+PY  - 2021
+VL  - 54
+IS  - 6
+DO  - 10.1145/3460345
+AB  - Logs are a key source for keeping large software systems reliable. This survey
+      organizes automated log analysis into logging, log compression, log parsing
+      and log mining.
+ER  -
