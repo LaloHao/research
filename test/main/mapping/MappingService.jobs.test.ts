@@ -4,6 +4,7 @@ import { LlmError, type CompleteRequest } from '../../../src/main/llm/LlmProvide
 import { OpenAlexSearch } from '../../../src/main/mapping/OpenAlexSearch'
 import type { JobSpec } from '../../../src/shared/jobs'
 import type { ProtocolDraft } from '../../../src/shared/mapping'
+import type { Route } from '../../helpers/fakeFetch'
 import { DRAIN } from '../../helpers/library'
 import { FakeLlmProvider } from '../../helpers/llm'
 import { candidate, setupMappings } from '../../helpers/mappings'
@@ -79,6 +80,105 @@ describe('OpenAlex searches', () => {
     expect(() => service.requestSearch(id, { query: ' ', fromYear: null, toYear: null, types: [], cap: 10 })).toThrow('invalid_edit')
     expect(() => service.requestSearch(id, { query: 'logs, traces', fromYear: null, toYear: null, types: [], cap: 10 })).toThrow('search_query_separator')
     expect(() => service.requestSearch('20261012-100000-ffff', { query: 'x', fromYear: null, toYear: null, types: [], cap: 10 })).toThrow('mapping_not_found')
+  })
+})
+
+describe('counting an OpenAlex search before confirming it', () => {
+  const COUNT_ROUTE = { url: /select=id&per-page=1$/, body: JSON.stringify({ meta: { count: 787, next_cursor: null }, results: [{ id: 'https://openalex.org/W1' }] }) }
+
+  it('asks OpenAlex for the count only, with the same string and filters, and logs nothing', async () => {
+    const { service, queued, fetch } = await setupMappings({ routes: [COUNT_ROUTE] })
+    const id = await service.create('Logs')
+    expect(await service.countSearch(id, { query: ' log anonymization ', fromYear: 2015, toYear: null, types: ['article', 'article'] })).toBe(787)
+    expect(fetch.calls).toHaveLength(1)
+    expect(decodeURIComponent(fetch.calls[0].url.replace(/\+/g, ' '))).toContain('filter=title_and_abstract.search.exact:log anonymization,publication_year:>2014,type:article&')
+    expect(queued).toEqual([])
+    expect((await service.open(id)).searches).toEqual([])
+  })
+
+  it('fails with the classified error when OpenAlex refuses, and checks the string before any request', async () => {
+    const message = 'Wildcards (* or ?) do not work inside this quoted phrase'
+    const { service, fetch } = await setupMappings({ routes: [{ url: /\/works\?filter=/, status: 400, body: JSON.stringify({ error: 'Invalid query parameters error.', message }) }] })
+    const id = await service.create('Logs')
+    await expect(service.countSearch(id, { query: 'logs', fromYear: null, toYear: null, types: [] })).rejects.toThrow(`search_query_invalid: ${message}`)
+    expect(fetch.calls).toHaveLength(1)
+    await expect(service.countSearch(id, { query: 'logs AND "log file*"', fromYear: null, toYear: null, types: [] })).rejects.toThrow('search_query_quoted_wildcard: "log file*"')
+    await expect(service.countSearch(id, { query: 'logs, traces', fromYear: null, toYear: null, types: [] })).rejects.toThrow('search_query_separator')
+    await expect(service.countSearch(id, { query: 'logs', fromYear: 2020, toYear: 2015, types: [] })).rejects.toThrow('invalid_edit')
+    await expect(service.countSearch('20261012-100000-ffff', { query: 'logs', fromYear: null, toYear: null, types: [] })).rejects.toThrow('mapping_not_found')
+    expect(fetch.calls).toHaveLength(1)
+    expect(() => service.requestSearch(id, { query: '"log file*"', fromYear: null, toYear: null, types: [], cap: 10 })).toThrow('search_query_quoted_wildcard')
+  })
+})
+
+describe('«Completar búsqueda»', () => {
+  it('runs the same search at the maximum cap, then discards the capped one and links it to the new one', async () => {
+    const { service, queued } = await setupMappings({ routes: SEARCH_ROUTES })
+    const id = await service.create('Logs')
+    await service.saveProtocol(id, draft, 1)
+    service.requestSearch(id, { query: 'logs', fromYear: 2015, toYear: 2026, types: ['article'], cap: 2 })
+    await service.runSearch(as(queued[0], 'mapping_search'), signal)
+    const old = (await service.open(id)).searches[0]
+    expect(old).toMatchObject({ count: 2, total: 3, capped: true })
+    // A record of the capped search is decided before completing it.
+    const [first] = service.queue(id, { phase: 'title_abstract', filter: 'pending' })
+    await service.decide(id, { recordId: first.id, phase: 'title_abstract', decision: 'include', criterion: null, suggestionId: null })
+
+    await service.requestComplete(id, old.id)
+    await service.requestComplete(id, old.id)
+    const spec = as(queued[1], 'mapping_search')
+    expect(spec).toEqual({ type: 'mapping_search', mappingId: id, query: 'logs', fromYear: 2015, toYear: 2026, types: ['article'], cap: 5000, replaces: old.id })
+    await service.runSearch(spec, signal)
+
+    const view = await service.open(id)
+    const [fresh, replaced] = view.searches
+    expect(fresh).toMatchObject({ query: 'logs', filters: old.filters, field: old.field, request: old.request, count: 3, total: 3, capped: false, discarded: null })
+    expect(replaced.id).toBe(old.id)
+    expect(replaced.discarded).toEqual({ at: fresh.at, reason: 'completed', machine: expect.any(String), replaced_by: fresh.id })
+    expect(view.heldBySearch).toEqual({ [old.id]: 2, [fresh.id]: 3 })
+    // The capped search's records are the new one's too: PRISMA counts only the new search, and nothing left the screening.
+    expect(view.prisma.databases.identified).toEqual([{ kind: 'openalex', database: 'OpenAlex', count: 3 }])
+    expect(view.prisma.databases.screened).toBe(3)
+    expect(view.counts.title_abstract).toMatchObject({ include: 1, pending: 2 })
+    const rows = service.queue(id, { phase: 'title_abstract', filter: 'all' })
+    expect(rows.every((r) => r.active)).toBe(true)
+    await service.decide(id, { recordId: first.id, phase: 'title_abstract', decision: 'exclude', criterion: 'E1', suggestionId: null })
+    // The same completion queued twice runs once: the second fails before any request and logs nothing.
+    await expect(service.runSearch(as(queued[2], 'mapping_search'), signal)).rejects.toThrow('search_not_completable')
+    expect((await service.open(id)).searches).toHaveLength(2)
+    // A search that is no longer capped, or already replaced, has nothing to complete.
+    await expect(service.requestComplete(id, old.id)).rejects.toThrow('search_not_completable')
+    await expect(service.requestComplete(id, fresh.id)).rejects.toThrow('search_not_completable')
+  })
+
+  it('leaves the capped search as it was when the new search fails', async () => {
+    const routes: Route[] = [...SEARCH_ROUTES]
+    const { service, queued } = await setupMappings({ routes })
+    const id = await service.create('Logs')
+    service.requestSearch(id, { query: 'logs', fromYear: null, toYear: null, types: [], cap: 2 })
+    await service.runSearch(as(queued[0], 'mapping_search'), signal)
+    const before = await service.open(id)
+    routes.splice(0, routes.length, { url: /\/works\?filter=/, status: 503, body: 'down' })
+    await service.requestComplete(id, before.searches[0].id)
+    await expect(service.runSearch(as(queued[1], 'mapping_search'), signal)).rejects.toThrow('server_error')
+    const after = await service.open(id)
+    expect(after.searches).toEqual(before.searches)
+    expect(after.searches[0].discarded).toBeNull()
+  })
+
+  it('refuses a search OpenAlex says is bigger than any search, and one it cannot repeat', async () => {
+    const { service, queued } = await setupMappings()
+    const id = await service.create('Logs')
+    const openalex = { kind: 'openalex' as const, database: 'OpenAlex', query: 'logs', field: 'title_and_abstract', capped: true }
+    await service.addSearch(id, { ...openalex, total: 9000, count: 5000 }, [candidate()])
+    await service.addSearch(id, { ...openalex, filters: { language: 'en' }, total: 900, count: 500 }, [candidate()])
+    await service.addSearch(id, { kind: 'import', database: 'Scopus', capped: true }, [candidate()])
+    const [imported, filtered, big] = (await service.open(id)).searches
+    await expect(service.requestComplete(id, big.id)).rejects.toThrow('search_too_large')
+    await expect(service.requestComplete(id, filtered.id)).rejects.toThrow('search_not_completable')
+    await expect(service.requestComplete(id, imported.id)).rejects.toThrow('search_not_completable')
+    await expect(service.requestComplete(id, 's00000000ffff')).rejects.toThrow('mapping_not_found')
+    expect(queued).toEqual([])
   })
 })
 

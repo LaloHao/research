@@ -4,10 +4,12 @@ import { basename } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import type { JobSpec } from '../../shared/jobs'
 import {
+  COMPLETED_REASON,
+  completionRequest,
   MAIN_REVIEWER,
-  hasFilterSeparator,
   MAPPING_ID,
   OPENALEX_SEARCH_FIELD,
+  openAlexFilter,
   ProtocolDraftSchema,
   SEARCH_CAP,
   SearchSchema,
@@ -44,7 +46,7 @@ import { EMPTY_MAPPING_LISTS, MAPPING_FILE_KINDS, MAPPING_FILE_NAMES, newMapping
 import type { ProjectStore } from '../project/ProjectStore'
 import { cleanIdentifiers, mergeCandidate, newRecord, RecordMatcher, recordIdFor, recordKey, syncDuplicates } from './dedup'
 import { decodeExport, MAX_EXPORT_BYTES, parseExport } from './importers/importFile'
-import { openAlexFilter, type OpenAlexSearch } from './OpenAlexSearch'
+import { checkSearchString, type OpenAlexSearch } from './OpenAlexSearch'
 import { prismaCounts } from './prisma'
 import { applyDraft, newProtocol } from './protocol'
 import type { ScreeningSuggester, SuggestedScreening } from './ScreeningSuggester'
@@ -166,14 +168,19 @@ function withSyncDuplicates(rows: MappingRecordRow[], c: MappingContent): Mappin
   })
 }
 
+/** Search id → the records (not merged into another) that name it as a source: the distinct works it holds now. */
+function heldBySearch(c: MappingContent): Map<string, number> {
+  const holding = new Map<string, number>()
+  for (const r of c.records) if (r.merged_into === null) for (const s of new Set(r.sources)) holding.set(s, (holding.get(s) ?? 0) + 1)
+  return holding
+}
+
 /**
  * Live searches whose `count` is lower than the records (not merged into another) that name them. Every candidate a
  * search read gives its id to one record, and «Es el mismo» moves it from the merged record to the surviving one, so
  * only a hand-edited file breaks this.
  */
-function inconsistentSearches(c: MappingContent): string[] {
-  const holding = new Map<string, number>()
-  for (const r of c.records) if (r.merged_into === null) for (const s of new Set(r.sources)) holding.set(s, (holding.get(s) ?? 0) + 1)
+function inconsistentSearches(c: MappingContent, holding: Map<string, number>): string[] {
   return c.searches.filter((s) => !s.discarded && s.count < (holding.get(s.id) ?? 0)).map((s) => s.id)
 }
 
@@ -309,6 +316,8 @@ export class MappingService {
       const rows = this.deps.cache.mappingRows(id)
       const state = this.deps.cache.mappingState(id)
       if (!state) throw new UserFacingError('mapping_invalid')
+      const content = contentOf(files)
+      const held = heldBySearch(content)
       return {
         id,
         protocol: files.protocol.value,
@@ -318,7 +327,8 @@ export class MappingService {
         duplicates: duplicatePairs(rows),
         conflicts: conflictsOf(rows),
         screeningStarted: screeningStarted(files),
-        inconsistentSearches: inconsistentSearches(contentOf(files))
+        inconsistentSearches: inconsistentSearches(content, held),
+        heldBySearch: Object.fromEntries(held)
       }
     })
   }
@@ -382,8 +392,10 @@ export class MappingService {
    * fields it lacked); a new one becomes a record, linked to its library paper when there is one, and marked as a
    * possible duplicate when it looks like another record. Records are written before the search, so an interruption
    * never leaves a logged search without its records. The search's `count` is never below the candidates it read.
+   * `replaces` («Completar búsqueda»): a live search this one takes the place of, discarded in the same write and
+   * linked to it (`replaced_by`); a search already discarded keeps its own discard.
    */
-  async addSearch(id: string, search: NewSearch, candidates: WorkCandidate[]): Promise<ImportOutcome> {
+  async addSearch(id: string, search: NewSearch, candidates: WorkCandidate[], replaces?: string): Promise<ImportOutcome> {
     const searchId = this.newId('s')
     const at = this.now().toISOString()
     const library = this.deps.cache.dedupeEntries()
@@ -422,7 +434,13 @@ export class MappingService {
       })
       const searches = files.searches.value.searches
       const writes: Write[] = [{ kind: 'records', file: { ...files.records.value, records: [...records.values()] } }]
-      if (!searches.some((s) => s.id === searchId)) writes.push({ kind: 'searches', file: { ...files.searches.value, searches: [...searches, entry] } })
+      const logged = searches.some((s) => s.id === searchId)
+      const replaced = replaces !== undefined && searches.some((s) => s.id === replaces && !s.discarded)
+      if (!logged || replaced) {
+        const discarded = { at, reason: COMPLETED_REASON, machine: this.deps.machine, replaced_by: searchId }
+        const next = searches.map((s) => (replaced && s.id === replaces ? { ...s, discarded } : s))
+        writes.push({ kind: 'searches', file: { ...files.searches.value, searches: logged ? next : [...next, entry] } })
+      }
       return { writes, result: outcome }
     })
   }
@@ -610,7 +628,7 @@ export class MappingService {
     if (!this.deps.store.mappingExists(id)) throw new UserFacingError('mapping_not_found')
     const query = req.query.trim()
     if (!query) throw new UserFacingError('invalid_edit')
-    if (hasFilterSeparator(query)) throw new UserFacingError('search_query_separator')
+    checkSearchString(query)
     if (req.fromYear !== null && req.toYear !== null && req.fromYear > req.toYear) throw new UserFacingError('invalid_edit')
     const cap = Number.isFinite(req.cap) ? Math.round(req.cap) : SEARCH_CAP.default
     return this.deps.enqueue({
@@ -624,11 +642,48 @@ export class MappingService {
     })
   }
 
+  /**
+   * Before «Buscar» asks to confirm: OpenAlex's own count of the search's results, with the same string and filters
+   * (one request of one result; no money). Checked as `requestSearch` checks it.
+   */
+  async countSearch(id: string, req: Omit<OpenAlexSearchRequest, 'cap'>): Promise<number> {
+    if (!this.deps.store.mappingExists(id)) throw new UserFacingError('mapping_not_found')
+    const query = req.query.trim()
+    if (!query) throw new UserFacingError('invalid_edit')
+    checkSearchString(query)
+    if (req.fromYear !== null && req.toYear !== null && req.fromYear > req.toYear) throw new UserFacingError('invalid_edit')
+    try {
+      return await this.deps.openalex.count(query, openAlexFilter({ fromYear: req.fromYear, toYear: req.toYear, types: [...new Set(req.types)] }))
+    } catch (error) {
+      throw toUserFacing(error)
+    }
+  }
+
+  /**
+   * «Completar búsqueda»: a live OpenAlex search that hit its cap runs again with the same string, filters and fields
+   * at the maximum cap. When that search is logged it discards this one and links to it (`replaced_by`); when it fails,
+   * this one stays as it is. A search OpenAlex says has more results than the maximum is refused (`search_too_large`).
+   */
+  async requestComplete(id: string, searchId: string): Promise<number> {
+    const files = this.required(await this.load(id))
+    const search = files.searches.value.searches.find((s) => s.id === searchId)
+    if (!search) throw new UserFacingError('mapping_not_found')
+    const req = completionRequest(search)
+    if (!req) throw new UserFacingError('search_not_completable')
+    if (search.total !== null && search.total > SEARCH_CAP.max) throw new UserFacingError('search_too_large')
+    return this.deps.enqueue({ type: 'mapping_search', mappingId: id, ...req, cap: SEARCH_CAP.max, replaces: search.id })
+  }
+
   /** Every page of results up to the cap, then one log entry with the exact string, filters, request and counts. */
   async runSearch(spec: Spec<'mapping_search'>, signal: AbortSignal): Promise<{ message: 'mapping_searched' }> {
     try {
       const { openalex } = this.deps
       const filter = openAlexFilter(spec)
+      if (spec.replaces) {
+        // A completion queued twice (or a search discarded meanwhile): the first one already replaced it.
+        const old = this.required(await this.load(spec.mappingId)).searches.value.searches.find((s) => s.id === spec.replaces)
+        if (!old || old.discarded) throw new UserFacingError('search_not_completable')
+      }
       await this.pause()
       signal.throwIfAborted()
       const found = await openalex.search(spec.query, filter, spec.cap, signal)
@@ -645,7 +700,8 @@ export class MappingService {
           total: found.total,
           capped: found.capped
         },
-        found.works
+        found.works,
+        spec.replaces
       )
       return { message: 'mapping_searched' }
     } catch (error) {

@@ -27,8 +27,13 @@ describe('searchFilter', () => {
   })
 
   it('keeps boolean operators, quotes and wildcards as typed', () => {
-    const q = '(log OR logs OR "log data") AND (anonymi* OR sanitiz* OR "de-identif*" OR PII)'
+    const q = '(log OR logs OR "log data") AND (anonymi* OR sanitiz* OR de-identif* OR PII)'
     expect(searchFilter(q, null)).toBe(`title_and_abstract.search.exact:${q}`)
+  })
+
+  it('refuses a wildcard inside a quoted phrase, naming the phrase (OpenAlex answers it with an HTTP 400)', () => {
+    expect(() => searchFilter('logs AND "log file*"', null)).toThrow('search_query_quoted_wildcard: "log file*"')
+    expect(() => searchFilter('"anonymi?ation"', null)).toThrow('search_query_quoted_wildcard')
   })
 
   it('refuses a comma or a pipe, which OpenAlex reads as filter separators', () => {
@@ -127,6 +132,29 @@ describe('OpenAlexSearch', () => {
   it('makes no request for a query with a filter separator', async () => {
     const { search, fetch } = client([])
     await expect(search.search('logs, traces', null, 10)).rejects.toThrow('search_query_separator')
+    expect(fetch.calls).toHaveLength(0)
+  })
+
+  it('counts a search with one request of one result, with the same filter and no cursor', async () => {
+    const { search, fetch } = client([{ url: /\/works\?filter=/, body: JSON.stringify({ meta: { count: 787.0, next_cursor: null }, results: [{ id: 'https://openalex.org/W1' }] }) }])
+    expect(await search.count('log anonymization', 'publication_year:2015-2026')).toBe(787)
+    expect(fetch.calls).toHaveLength(1)
+    const url = decodeURIComponent(fetch.calls[0].url.replace(/\+/g, ' '))
+    expect(url).toContain('filter=title_and_abstract.search.exact:log anonymization,publication_year:2015-2026&')
+    expect(url).toContain('select=id&per-page=1')
+    expect(url).not.toContain('cursor=')
+  })
+
+  it('reads a count of 0 as 0, and a reply without a count as a server error', async () => {
+    expect(await client([{ url: /filter=/, body: JSON.stringify({ meta: { count: 0 }, results: [] }) }]).search.count('logs', null)).toBe(0)
+    await expect(client([{ url: /filter=/, body: '{}' }]).search.count('logs', null)).rejects.toThrow('server_error')
+    await expect(client([{ url: /filter=/, body: JSON.stringify({ meta: { count: '12' } }) }]).search.count('logs', null)).rejects.toThrow('server_error')
+  })
+
+  it('makes no count request for a string OpenAlex would refuse', async () => {
+    const { search, fetch } = client([])
+    await expect(search.count('"log file*"', null)).rejects.toThrow('search_query_quoted_wildcard')
+    await expect(search.count('logs|traces', null)).rejects.toThrow('search_query_separator')
     expect(fetch.calls).toHaveLength(0)
   })
 

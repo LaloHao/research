@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { TFunction } from 'i18next'
 import {
   approxUsd,
+  countAdvice,
+  discardedText,
   draftOf,
   draftOutdated,
   draftProblems,
@@ -16,9 +18,11 @@ import {
   planLines,
   prismaFileName,
   prismaLabels,
+  raisedCap,
   sameDraft,
   screeningCommand,
   snowballPlanLines,
+  searchCountParts,
   searchField,
   searchFilters,
   searchSource,
@@ -181,6 +185,8 @@ describe('search confirmations', () => {
     expect(openAlexRequest({ ...form, query: '   ' })).toEqual({ ok: false, problem: 'query' })
     expect(openAlexRequest({ ...form, query: 'logs, traces' })).toEqual({ ok: false, problem: 'separator' })
     expect(openAlexRequest({ ...form, query: 'logs | traces' })).toEqual({ ok: false, problem: 'separator' })
+    expect(openAlexRequest({ ...form, query: 'logs AND "log file*"' })).toEqual({ ok: false, problem: 'quoted_wildcard', phrase: '"log file*"' })
+    expect(openAlexRequest({ ...form, query: 'log* AND "log data"' })).toMatchObject({ ok: true })
     expect(openAlexRequest({ ...form, fromYear: '20' })).toEqual({ ok: false, problem: 'years' })
     expect(openAlexRequest({ ...form, fromYear: '2015.5' })).toEqual({ ok: false, problem: 'years' })
     expect(openAlexRequest({ ...form, fromYear: '2024', toYear: '2015' })).toEqual({ ok: false, problem: 'years' })
@@ -216,6 +222,35 @@ describe('search confirmations', () => {
     expect(lines({ fromYear: '', toYear: '2026' })[2]).toBe('mappings.searches.confirm_years_to {"to":2026}')
   })
 
+  it("says what OpenAlex's count means for the cap", () => {
+    expect(countAdvice({ cap: 500 }, { ok: true, total: 120 })).toEqual({ kind: 'fits', total: 120, fetched: 120 })
+    expect(countAdvice({ cap: 500 }, { ok: true, total: 500 })).toEqual({ kind: 'fits', total: 500, fetched: 500 })
+    expect(countAdvice({ cap: 500 }, { ok: true, total: 787 })).toEqual({ kind: 'raise', total: 787, fetched: 500 })
+    expect(countAdvice({ cap: 500 }, { ok: true, total: 5000 })).toEqual({ kind: 'raise', total: 5000, fetched: 500 })
+    expect(countAdvice({ cap: 500 }, { ok: true, total: 5001 })).toEqual({ kind: 'too_many', total: 5001, fetched: 500 })
+    expect(countAdvice({ cap: 500 }, { ok: false, error: 'network' })).toEqual({ kind: 'unknown', error: 'network' })
+    expect([raisedCap({ cap: 500 }, { ok: true, total: 787 }), raisedCap({ cap: 787 }, { ok: true, total: 787 }), raisedCap({ cap: 500 }, { ok: true, total: 9000 })]).toEqual([787, null, null])
+    expect(raisedCap({ cap: 500 }, { ok: false, error: 'network' })).toBeNull()
+  })
+
+  it("leads the confirmation with OpenAlex's count, or with why it could not be read", () => {
+    const r = openAlexRequest({ ...form, fromYear: '', types: [] })
+    if (!r.ok) throw new Error(r.problem)
+    const tail = ['mappings.searches.confirm_field', 'mappings.searches.confirm_years_any', 'mappings.searches.confirm_types_any', 'mappings.searches.confirm_free']
+    expect(openAlexPlanLines(t, r.req, { ok: true, total: 787 })).toEqual(['mappings.searches.confirm_count {"total":787,"fetched":500,"pages":5}', ...tail])
+    expect(openAlexPlanLines(t, { ...r.req, cap: 787 }, { ok: true, total: 787 })[0]).toBe('mappings.searches.confirm_count {"total":787,"fetched":787,"pages":8}')
+    expect(openAlexPlanLines(t, r.req, { ok: true, total: 0 })[0]).toBe('mappings.searches.confirm_count_none')
+    expect(openAlexPlanLines(t, r.req, { ok: true, total: 12000 }).slice(0, 2)).toEqual([
+      'mappings.searches.confirm_count {"total":12000,"fetched":500,"pages":5}',
+      'mappings.searches.count_too_many {"max":5000}'
+    ])
+    expect(openAlexPlanLines(t, r.req, { ok: false, error: 'network' })).toEqual([
+      'mappings.searches.count_failed {"error":"errors.network {\\"defaultValue\\":\\"network\\"}"}',
+      'mappings.searches.confirm_openalex {"cap":500,"pages":5}',
+      ...tail
+    ])
+  })
+
   it('numbers the next snowballing iteration and says what it will fetch', () => {
     expect(nextSnowballIteration([search(), search({ kind: 'snowball' }), search({ kind: 'snowball', discarded: { at: AT, reason: 'x', machine: '' } })])).toBe(3)
     expect(nextSnowballIteration([])).toBe(1)
@@ -233,5 +268,31 @@ describe('approxUsd', () => {
     expect(approxUsd(0.01)).toBe('~$0.01')
     expect(approxUsd(0.004)).toBe('< $0.01')
     expect(approxUsd(0)).toBe('< $0.01')
+  })
+})
+
+describe('the search log', () => {
+  it('shows the rows received, the total OpenAlex reported and the distinct records held', () => {
+    const openalex = search({ kind: 'openalex', database: 'OpenAlex', count: 791, total: 787 })
+    expect(searchCountParts(t, openalex, 782)).toEqual([
+      'mappings.searches.count_received {"count":791}',
+      'mappings.searches.count_total {"count":787}',
+      'mappings.searches.count_held {"count":782}'
+    ])
+    expect(searchCountParts(t, search({ count: 40 }), 38)).toEqual(['mappings.searches.count_read {"count":40}', 'mappings.searches.count_held {"count":38}'])
+    expect(searchCountParts(t, search({ kind: 'snowball', count: 30, total: 45 }), 30)).toEqual([
+      'mappings.searches.count_received {"count":30}',
+      'mappings.searches.count_found {"count":45}',
+      'mappings.searches.count_held {"count":30}'
+    ])
+  })
+
+  it('says which search completed a replaced one, and the reason of any other discard', () => {
+    const later = search({ id: 's00000000000b', at: '2026-10-12T11:00:00.000Z' })
+    const replaced = search({ discarded: { at: '2026-10-12T11:00:00.000Z', reason: 'completed', machine: 'm', replaced_by: later.id } })
+    expect(discardedText(t, replaced, [later, replaced])).toBe(`mappings.searches.completed_by {"date":"${new Date(later.at).toLocaleString()}"}`)
+    const own = search({ discarded: { at: AT, reason: 'Cadena amplia.', machine: 'm' } })
+    expect(discardedText(t, own, [own])).toBe(`mappings.searches.discarded {"date":"${new Date(AT).toLocaleDateString()}","reason":"Cadena amplia."}`)
+    expect(discardedText(t, search(), [])).toBeNull()
   })
 })

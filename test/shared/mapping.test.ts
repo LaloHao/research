@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  completionRequest,
   criterionFits,
   criterionText,
   DecisionSchema,
@@ -7,6 +8,7 @@ import {
   ProtocolBodySchema,
   ProtocolDraftSchema,
   ProtocolFileSchema,
+  quotedWildcard,
   SearchesFileSchema,
   SearchSchema
 } from '../../src/shared/mapping'
@@ -149,5 +151,64 @@ describe('criteria', () => {
     expect(criterionFits(p, 'include', 'I7')).toBe(false)
     expect(criterionFits(p, 'uncertain', null)).toBe(true)
     expect(criterionFits(p, 'not_retrieved', 'E1')).toBe(false)
+  })
+})
+
+describe('quotedWildcard', () => {
+  it('names the first quoted phrase that holds * or ?', () => {
+    expect(quotedWildcard('"log file*"')).toBe('"log file*"')
+    expect(quotedWildcard('(log OR "log data") AND ("anonymi?ed logs" OR "mask* data")')).toBe('"anonymi?ed logs"')
+    expect(quotedWildcard('"log data" AND "log file*" AND "trace?"')).toBe('"log file*"')
+  })
+
+  it('allows wildcards outside quotes, and phrases without them', () => {
+    expect(quotedWildcard('anonymi* AND "log data" AND trace?')).toBeNull()
+    expect(quotedWildcard('logs')).toBeNull()
+    expect(quotedWildcard('')).toBeNull()
+  })
+
+  it('reads only closed pairs of quotes as phrases', () => {
+    // The last quote opens nothing: what follows it is not a phrase.
+    expect(quotedWildcard('"log data" AND "anonymi*')).toBeNull()
+    expect(quotedWildcard('anonymi* "')).toBeNull()
+    // A wildcard between two phrases is outside both.
+    expect(quotedWildcard('"log data" anonymi* "trace data"')).toBeNull()
+    expect(quotedWildcard('"a" "b*" "c')).toBe('"b*"')
+  })
+})
+
+describe('completionRequest', () => {
+  const capped = (over: Partial<Search> = {}): Search =>
+    search({ kind: 'openalex', database: 'OpenAlex', query: 'log anonymization', field: 'title_and_abstract', filters: {}, file: null, format: null, count: 500, total: 787, capped: true, ...over })
+
+  it('reads back the string and the filters a capped OpenAlex search was made with', () => {
+    expect(completionRequest(capped())).toEqual({ query: 'log anonymization', fromYear: null, toYear: null, types: [] })
+    expect(completionRequest(capped({ filters: { publication_year: '2015-2026', type: 'article|conference-paper' } }))).toEqual({
+      query: 'log anonymization',
+      fromYear: 2015,
+      toYear: 2026,
+      types: ['article', 'conference-paper']
+    })
+    expect(completionRequest(capped({ filters: { publication_year: '>2014' } }))).toMatchObject({ fromYear: 2015, toYear: null })
+    expect(completionRequest(capped({ filters: { publication_year: '<2021' } }))).toMatchObject({ fromYear: null, toYear: 2020 })
+  })
+
+  it('refuses searches it cannot repeat exactly, and those with nothing to complete', () => {
+    expect(completionRequest(capped({ capped: false }))).toBeNull()
+    expect(completionRequest(capped({ discarded: { at: AT, reason: 'x', machine: '' } }))).toBeNull()
+    expect(completionRequest(capped({ kind: 'import' }))).toBeNull()
+    expect(completionRequest(capped({ field: null }))).toBeNull()
+    expect(completionRequest(capped({ query: null }))).toBeNull()
+    expect(completionRequest(capped({ filters: { type: 'journal-article' } }))).toBeNull()
+    expect(completionRequest(capped({ filters: { publication_year: '2015' } }))).toBeNull()
+    expect(completionRequest(capped({ filters: { language: 'en' } }))).toBeNull()
+    // Written in another order than the app writes it: the request would not be the logged one.
+    expect(completionRequest(capped({ filters: { type: 'article', publication_year: '>2014' } }))).toBeNull()
+  })
+
+  it('keeps the search that replaced a discarded one', () => {
+    const discarded = { at: AT, reason: 'completed', machine: 'm', replaced_by: hexId('s', 2) }
+    expect(SearchSchema.parse(capped({ discarded })).discarded).toEqual(discarded)
+    expect(() => SearchSchema.parse(capped({ discarded: { ...discarded, replaced_by: 'x' } }))).toThrow()
   })
 })

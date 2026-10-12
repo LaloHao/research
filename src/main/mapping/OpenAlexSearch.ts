@@ -1,10 +1,12 @@
-import { hasFilterSeparator, OPENALEX_SEARCH_FIELD, SEARCH_CAP, type WorkCandidate } from '../../shared/mapping'
+import { hasFilterSeparator, OPENALEX_SEARCH_FIELD, quotedWildcard, SEARCH_CAP, type WorkCandidate } from '../../shared/mapping'
 import type { Author, PaperKind } from '../../shared/schemas'
 import type { HttpClient } from '../ingest/http'
 import { normalizeDoi } from '../ingest/identifiers'
 import { invertedIndexToText, KIND_BY_OPENALEX } from '../ingest/MetadataResolver'
 import { authorFromDisplayName, bareOpenAlexId } from '../ingest/openalex'
 import { UserFacingError } from '../library/UserFacingError'
+
+export { openAlexFilter, type SearchFilter } from '../../shared/mapping'
 
 const API = 'https://api.openalex.org'
 /** Results per page, and ids per lookup: OpenAlex's maximum. */
@@ -17,26 +19,20 @@ interface RawList {
   results?: unknown
 }
 
-export interface SearchFilter {
-  fromYear: number | null
-  toYear: number | null
-  types: readonly string[]
-}
-
 export interface SearchPage {
   works: WorkCandidate[]
   next: string | null
   total: number
 }
 
-/** `publication_year:2015-2026,type:article|preprint`; null when there is nothing to filter. */
-export function openAlexFilter(f: SearchFilter): string | null {
-  const parts: string[] = []
-  if (f.fromYear !== null && f.toYear !== null) parts.push(`publication_year:${f.fromYear}-${f.toYear}`)
-  else if (f.fromYear !== null) parts.push(`publication_year:>${f.fromYear - 1}`)
-  else if (f.toYear !== null) parts.push(`publication_year:<${f.toYear + 1}`)
-  if (f.types.length > 0) parts.push(`type:${f.types.join('|')}`)
-  return parts.length > 0 ? parts.join(',') : null
+/** A search string OpenAlex would refuse, or read differently from what the log keeps, is refused before any request. */
+export function checkSearchString(search: string): void {
+  // Inside `filter`, a comma separates filters and a pipe ORs values: OpenAlex would split the string there (an
+  // unescaped comma is refused outright), so the logged string would not be the one searched.
+  if (hasFilterSeparator(search)) throw new UserFacingError('search_query_separator')
+  // The exact search refuses a wildcard inside a quoted phrase with an HTTP 400.
+  const phrase = quotedWildcard(search)
+  if (phrase) throw new UserFacingError('search_query_quoted_wildcard', { detail: phrase })
 }
 
 /**
@@ -45,9 +41,7 @@ export function openAlexFilter(f: SearchFilter): string | null {
  * parameter (full text) and `title_and_abstract.search` refuse wildcards with an HTTP 400.
  */
 export function searchFilter(search: string, filter: string | null): string {
-  // Inside `filter`, a comma separates filters and a pipe ORs values: OpenAlex would split the string there (an
-  // unescaped comma is refused outright), so the logged string would not be the one searched. Refused before any request.
-  if (hasFilterSeparator(search)) throw new UserFacingError('search_query_separator')
+  checkSearchString(search)
   const own = `${OPENALEX_SEARCH_FIELD}.search.exact:${search}`
   return filter ? `${own},${filter}` : own
 }
@@ -99,6 +93,17 @@ export class OpenAlexSearch {
   /** The request as the search log keeps it (without paging, the fields read, the contact email or the API key). */
   requestUrl(search: string, filter: string | null): string {
     return `${API}/works?${query({ filter: searchFilter(search, filter) })}`
+  }
+
+  /**
+   * OpenAlex's own count of a search's results, from one request of a single result (OpenAlex says it is approximate).
+   * A reply without a count is a `server_error`, never a zero.
+   */
+  async count(search: string, filter: string | null, signal?: AbortSignal): Promise<number> {
+    const raw = await this.list({ filter: searchFilter(search, filter), select: 'id', 'per-page': '1' }, signal)
+    const count = isObject(raw.meta) ? raw.meta.count : undefined
+    if (typeof count !== 'number' || !Number.isFinite(count) || count < 0) throw new UserFacingError('server_error', { detail: 'OpenAlex did not report a count' })
+    return Math.floor(count)
   }
 
   /** One page of results; start with cursor '*', stop when `next` is null. */

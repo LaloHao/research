@@ -14,7 +14,8 @@ export type JobSpec =
   | { type: 'suggest_relations'; paperId: string; batchId?: string; model?: LlmModel; force?: boolean }
   | { type: 'fill_facets'; paperId: string; batchId?: string }
   | { type: 'suggest_facets'; batchId?: string; auto?: boolean; model?: LlmModel }
-  | { type: 'mapping_search'; mappingId: string; query: string; fromYear: number | null; toYear: number | null; types: OpenAlexType[]; cap: number }
+  /** `replaces`: «Completar búsqueda», the logged search this one discards (and links to) once it is logged. */
+  | { type: 'mapping_search'; mappingId: string; query: string; fromYear: number | null; toYear: number | null; types: OpenAlexType[]; cap: number; replaces?: string }
   | { type: 'mapping_snowball'; mappingId: string; direction: SnowballDirection }
   | { type: 'ingest_record'; mappingId: string; recordId: string; batchId?: string }
   | { type: 'screen_suggest'; mappingId: string; phase: Phase; recordIds: string[]; batchId?: string; model?: LlmModel }

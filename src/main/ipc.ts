@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
+import type { OpenAlexCount } from '../shared/mapping'
 import type { CountResult } from '../shared/relations'
 import type { FormImpact } from '../shared/summary'
 import type { DeletePlanResult, RestoreOutcome, TrashOutcome } from '../shared/trash'
@@ -493,6 +494,21 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     const req = arg(ipcArgs.openalexSearch, rawReq, 'search')
     arg(ipcArgs.confirmed, rawConfirmed, 'confirmed')
     return actionResult(async () => app.requireSession().mappings.requestSearch(id, req))
+  })
+  ipcMain.handle(IPC.mappingsCount, async (_e, rawId: unknown, rawReq: unknown): Promise<OpenAlexCount> => {
+    const id = arg(ipcArgs.mappingId, rawId, 'id')
+    const req = arg(ipcArgs.openalexCount, rawReq, 'search')
+    try {
+      return { ok: true, total: await mappings((m) => m.countSearch(id, req)) }
+    } catch (error) {
+      return failed(error)
+    }
+  })
+  ipcMain.handle(IPC.mappingsComplete, (_e, rawId: unknown, rawSearch: unknown, rawConfirmed: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.mappingId, rawId, 'id')
+    const searchId = arg(ipcArgs.searchId, rawSearch, 'search')
+    arg(ipcArgs.confirmed, rawConfirmed, 'confirmed')
+    return actionResult(() => mappings((m) => m.requestComplete(id, searchId)))
   })
   ipcMain.handle(IPC.mappingsChooseImport, async (): Promise<ImportChoice | null> => {
     const path = await chooseExport(getWindow())

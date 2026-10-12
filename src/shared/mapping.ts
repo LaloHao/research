@@ -62,6 +62,16 @@ export const OPENALEX_SEARCH_FIELD = 'title_and_abstract'
  * the string searched would not be the one logged, so a search string cannot carry them.
  */
 export const hasFilterSeparator = (query: string): boolean => /[,|]/.test(query) || query.trimStart().startsWith('!')
+
+/**
+ * The first quoted phrase (quotes included) holding a wildcard, which OpenAlex's exact search refuses with an HTTP
+ * 400; null when there is none. Only closed pairs of double quotes are phrases: a wildcard outside them is fine.
+ */
+export function quotedWildcard(query: string): string | null {
+  for (const m of query.matchAll(/"[^"]*"/g)) if (/[*?]/.test(m[0])) return m[0]
+  return null
+}
+
 export const MAX_TEXT = 2000
 
 /**
@@ -160,7 +170,16 @@ export const SearchSchema = z.looseObject({
     .looseObject({ direction: z.enum(SNOWBALL_DIRECTIONS), from: z.array(z.string().regex(RECORD_ID)), iteration: z.number().int().positive() })
     .nullable()
     .default(null),
-  discarded: z.looseObject({ at: iso, reason: z.string().trim().min(1).max(MAX_REASON), machine: z.string().default('') }).nullable().default(null)
+  discarded: z
+    .looseObject({
+      at: iso,
+      reason: z.string().trim().min(1).max(MAX_REASON),
+      machine: z.string().default(''),
+      /** «Completar búsqueda»: the search that ran the same string with a higher cap and took this one's place. */
+      replaced_by: z.string().regex(SEARCH_ID).optional()
+    })
+    .nullable()
+    .default(null)
 })
 export type Search = z.infer<typeof SearchSchema>
 export const SearchesFileSchema = z.looseObject({ schema_version: z.literal(1), searches: z.array(SearchSchema).default([]) })
@@ -442,6 +461,8 @@ export interface MappingView {
    * `searches.yaml` does that): the PRISMA duplicates box floors at 0 and the diagram's sums stop adding up.
    */
   inconsistentSearches: string[]
+  /** Search id → records not merged into another that name it as a source: the distinct works it holds now. */
+  heldBySearch: Record<string, number>
 }
 
 export interface DecideRequest {
@@ -479,6 +500,12 @@ export interface OpenAlexSearchRequest {
   cap: number
 }
 
+/** OpenAlex's own count of a search's results («Buscar» asks for it before confirming), or why it could not be read. */
+export type OpenAlexCount = { ok: true; total: number } | { ok: false; error: string }
+
+/** The reason stored on a search «Completar búsqueda» replaced; the window shows its own wording from `replaced_by`. */
+export const COMPLETED_REASON = 'completed'
+
 export interface ScreeningPlan {
   phase: Phase
   /** Records Claude would look at. */
@@ -502,4 +529,43 @@ export interface IngestPlan {
   /** «Resumir automáticamente al agregar» is on: each new paper is also summarized. */
   autoSummarize: boolean
   estimateUsd: number
+}
+
+export interface SearchFilter {
+  fromYear: number | null
+  toYear: number | null
+  types: readonly string[]
+}
+
+/** `publication_year:2015-2026,type:article|preprint`; null when there is nothing to filter. */
+export function openAlexFilter(f: SearchFilter): string | null {
+  const parts: string[] = []
+  if (f.fromYear !== null && f.toYear !== null) parts.push(`publication_year:${f.fromYear}-${f.toYear}`)
+  else if (f.fromYear !== null) parts.push(`publication_year:>${f.fromYear - 1}`)
+  else if (f.toYear !== null) parts.push(`publication_year:<${f.toYear + 1}`)
+  if (f.types.length > 0) parts.push(`type:${f.types.join('|')}`)
+  return parts.length > 0 ? parts.join(',') : null
+}
+
+/**
+ * The request a logged OpenAlex search was made with, for «Completar búsqueda»: only a live search that hit its cap,
+ * searched in the fields searches use now, whose filters read back to exactly the logged ones (`2015-2026`, `>2014`
+ * or `<2021`, and types this app offers). Null for any other search.
+ */
+export function completionRequest(s: Search): Omit<OpenAlexSearchRequest, 'cap'> | null {
+  if (s.kind !== 'openalex' || s.discarded || !s.capped || !s.query || s.field !== OPENALEX_SEARCH_FIELD) return null
+  const { publication_year: years, type, ...other } = s.filters
+  if (Object.keys(other).length > 0) return null
+  let fromYear: number | null = null
+  let toYear: number | null = null
+  const range = years === undefined ? null : /^(?:(\d{1,4})-(\d{1,4})|>(\d{1,4})|<(\d{1,4}))$/.exec(years)
+  if (years !== undefined && !range) return null
+  if (range?.[1] !== undefined) [fromYear, toYear] = [Number(range[1]), Number(range[2])]
+  else if (range?.[3] !== undefined) fromYear = Number(range[3]) + 1
+  else if (range?.[4] !== undefined) toYear = Number(range[4]) - 1
+  const types = type === undefined ? [] : type.split('|')
+  if (!types.every((t): t is OpenAlexType => (OPENALEX_TYPES as readonly string[]).includes(t))) return null
+  const req = { query: s.query, fromYear, toYear, types }
+  const logged = Object.entries(s.filters).map(([k, v]) => `${k}:${v}`).join(',')
+  return (openAlexFilter(req) ?? '') === logged ? req : null
 }

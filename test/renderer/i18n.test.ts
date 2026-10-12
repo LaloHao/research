@@ -55,6 +55,7 @@ describe('es.json covers every code the UI can receive', () => {
     'mappings.prisma.inconsistent_other',
     ...['protocol.errors.title', 'protocol.errors.empty_item', 'protocol.errors.years', 'screening.without_text_one', 'screening.without_text_other'].map((k) => `mappings.${k}`),
     ...['confirm_snowball_one', 'confirm_snowball_other', 'truncated', 'pick_again', 'inconsistent', 'years_invalid'].map((k) => `mappings.searches.${k}`),
+    ...['count_received', 'count_read', 'count_found'].flatMap((k) => [`mappings.searches.${k}_one`, `mappings.searches.${k}_other`]),
     ...['duplicate_pending', 'inactive', 'conflict_pending', 'unchanged', 'same_keeps'].map((k) => `mappings.screening.${k}`),
     ...['citations', 'cited_by', 'embed', 'model_download', 'suggest_relations', 'fill_facets', 'suggest_facets', 'suggest_facets_auto'].map((type) => `jobs.${type}`),
     ...['mapping_search', 'mapping_snowball', 'screen_suggest', 'ingest_record'].map((type) => `jobs.${type}`),
