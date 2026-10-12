@@ -1,4 +1,9 @@
+import { fileURLToPath } from 'node:url'
+import { MappingService } from '../../src/main/mapping/MappingService'
+import type { ResolvedMetadata } from '../../src/main/ingest/types'
 import type { Decision, MappingRecord, ProtocolBody, ProtocolFile, ScreeningSuggestion, Search, WorkCandidate } from '../../src/shared/mapping'
+import type { Route } from './fakeFetch'
+import { setupLibrary } from './library'
 
 export const MAPPING_A = '20261012-090000-a1b2'
 export const MAPPING_B = '20261012-091500-c3d4'
@@ -130,4 +135,23 @@ export function candidate(over: Partial<WorkCandidate> = {}): WorkCandidate {
     identifiers: { doi: '10.1109/ICWS.2017.13' },
     ...over
   }
+}
+
+/** Absolute path of an export under test/fixtures/mapping/. */
+export const fixturePath = (name: string): string => fileURLToPath(new URL(`../fixtures/mapping/${name}`, import.meta.url))
+
+/** A mapping service over a fresh project and library, with a fixed clock and counting ids. */
+export async function setupMappings(opts: { routes?: Route[]; resolver?: Record<string, ResolvedMetadata> } = {}) {
+  const lib = await setupLibrary({ routes: opts.routes, resolver: opts.resolver })
+  let changes = 0
+  let n = 0
+  const service = new MappingService({
+    store: lib.store,
+    cache: lib.cache,
+    emit: () => void changes++,
+    machine: 'machine-a',
+    now: () => new Date('2026-10-12T10:00:00.000Z'),
+    randomHex: (digits) => (++n).toString(16).padStart(digits, '0')
+  })
+  return { ...lib, service, changes: () => changes }
 }

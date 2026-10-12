@@ -417,6 +417,11 @@ export interface MappingView {
   conflicts: ScreeningConflict[]
   /** Some decision exists: a change to the protocol creates a new version. */
   screeningStarted: boolean
+  /**
+   * Live searches whose `count` is lower than the records still holding them as a source (only a hand-edited
+   * `searches.yaml` does that): the PRISMA duplicates box floors at 0 and the diagram's sums stop adding up.
+   */
+  inconsistentSearches: string[]
 }
 
 export interface DecideRequest {
@@ -442,6 +447,8 @@ export interface ImportOutcome {
   linked: number
   doubtful: number
   skipped: number
+  /** The export had more entries than the app reads from one file: only the first ones were read. */
+  truncated?: true
 }
 
 export interface OpenAlexSearchRequest {
