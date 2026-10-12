@@ -474,6 +474,8 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     const id = arg(ipcArgs.chatId, rawId, 'id')
     const approvalId = arg(ipcArgs.approvalId, rawApproval, 'approval')
     const approve = arg(ipcArgs.approve, rawApprove, 'approve')
+    // The session's service is captured before the PDF dialog may wait: if the project is closed or switched
+    // meanwhile, the decision lands on the old service, which answers approval_gone, never on the new project's.
     return actionResult(() => decisions.decide(app.requireSession().chats, id, approvalId, approve))
   })
   // «Deshacer»: tracked, so closing the project waits for the undo before the cache closes.

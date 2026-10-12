@@ -19,6 +19,11 @@ export class WindowDecisions {
 
   constructor(private readonly choosePdf: () => Promise<string | null>) {}
 
+  /**
+   * Settles the approval with the user's click. Resolving does not mean "approved": a cancelled PDF dialog leaves the
+   * card waiting, and a second click while the dialog is open is a no-op that resolves too. The window learns the
+   * outcome from the `approvals` stream event; an approval already settled rejects with `approval_gone`.
+   */
   async decide(service: DecisionTarget, chatId: string, approvalId: string, approve: boolean): Promise<void> {
     if (approve !== true) {
       service.decide(chatId, approvalId, { approve: false })
