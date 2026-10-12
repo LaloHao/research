@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -272,8 +272,11 @@ describe('parseStreamLine', () => {
 })
 
 describe('ClaudeCliProvider.chat', () => {
-  /** `stopOnText`: aborted as soon as the first text arrives, like «Detener» while an answer streams. */
-  async function run(mode: string, extra: Record<string, string> = {}, opts: { timeoutMs?: number; stopOnText?: boolean } = {}) {
+  /**
+   * `stopOnText`: aborted as soon as the first text arrives, like «Detener» while an answer streams. `throwOnEvent`: the
+   * listener throws on every event.
+   */
+  async function run(mode: string, extra: Record<string, string> = {}, opts: { timeoutMs?: number; stopOnText?: boolean; throwOnEvent?: boolean } = {}) {
     const server = await startLibraryMcpServer(stubTools(), { maxToolCalls: 12, markData: true })
     const { p, log } = await provider(mode, extra)
     const events: ChatEvent[] = []
@@ -283,6 +286,7 @@ describe('ClaudeCliProvider.chat', () => {
         .chat({ ...chatReq, timeoutMs: opts.timeoutMs, signal: ac.signal, servers: [{ name: 'library', url: server.url, token: server.token }] }, (e) => {
           events.push(e)
           if (opts.stopOnText && e.kind === 'delta') ac.abort()
+          if (opts.throwOnEvent) throw new Error('listener broke')
         })
         .catch((e: unknown) => e)
       return { result, events, log, calls: server.calls() }
@@ -320,11 +324,40 @@ describe('ClaudeCliProvider.chat', () => {
     const { result, events } = await run('chat_hang', {}, { stopOnText: true })
     expect(result).toMatchObject({ name: 'AbortError' })
     expect(failedCallCost(result)).toEqual({ costUsd: 0.5, estimated: true })
-    expect(events.some((e) => e.kind === 'delta')).toBe(true)
+    // Nothing after the stop reaches the listener, even lines of the chunk being read.
+    expect(events.filter((e) => e.kind === 'delta')).toEqual([{ kind: 'delta', text: 'Drain parses ' }])
   })
 
   it('times out like an agent run', async () => {
     const { result } = await run('chat_hang', {}, { timeoutMs: 300 })
     expect(result).toMatchObject({ code: 'llm_timeout', costUsd: 0.5, estimated: true })
+  })
+
+  it('keeps streaming and returns the result and cost when the listener throws', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const { result, events } = await run('chat', {}, { throwOnEvent: true })
+      expect(result).toEqual({ text: 'Drain parses logs online.', costUsd: 0.02, model: 'claude-sonnet-5' })
+      expect(events).toEqual([{ kind: 'turn' }, { kind: 'delta', text: 'Drain parses ' }, { kind: 'delta', text: 'logs online.' }])
+      expect(logged).toHaveBeenCalledTimes(3)
+    } finally {
+      logged.mockRestore()
+    }
+  })
+
+  it('reads lines and UTF-8 characters split across chunks, and a last line with no newline', async () => {
+    const { result, events } = await run('chat_split', { FAKE_CLAUDE_DELTAS: JSON.stringify(['Café ', 'costó 5 €.']) })
+    expect(result).toEqual({ text: 'Café costó 5 €.', costUsd: 0.02, model: 'claude-sonnet-5' })
+    expect(events).toEqual([{ kind: 'turn' }, { kind: 'delta', text: 'Café ' }, { kind: 'delta', text: 'costó 5 €.' }])
+  })
+
+  it('charges the cap as an estimate when the CLI dies after streaming, never classifying the streamed text', async () => {
+    const { result } = await run('chat_cut', { FAKE_CLAUDE_DELTAS: JSON.stringify(['The rate limit and quota ', 'of the parser.']) })
+    expect(result).toMatchObject({ name: 'LlmError', code: 'llm_unavailable', costUsd: 0.5, estimated: true })
+  })
+
+  it('charges nothing when the CLI fails before streaming anything', async () => {
+    const { result } = await run('garbage')
+    expect(result).toMatchObject({ name: 'LlmError', code: 'llm_unavailable', costUsd: 0, estimated: false })
   })
 })

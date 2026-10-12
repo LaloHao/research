@@ -42,9 +42,12 @@ export function truncate(text: string, max = MAX_RESPONSE_CHARS): string {
 export const DATA_OPEN = '<library_data>'
 export const DATA_CLOSE = '</library_data>'
 
-/** A tool answer as tagged library data; a closing tag inside the content is broken up so it cannot end the block. */
+/**
+ * A tool answer as tagged library data. Anything that could read as a closing tag (any case, spaces around the slash)
+ * gets its slash escaped, so it cannot end the block; `\/` is a valid JSON escape and the rest is left as it was.
+ */
 export function markAsData(text: string): string {
-  return `${DATA_OPEN}\n${text.replace(/<\/library_data/gi, '<\\/library_data')}\n${DATA_CLOSE}`
+  return `${DATA_OPEN}\n${text.replace(/<(\s*)\/(\s*)(library_data)/gi, '<$1\\/$2$3')}\n${DATA_CLOSE}`
 }
 
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: 'text', text: t }], ...(isError ? { isError: true } : {}) })

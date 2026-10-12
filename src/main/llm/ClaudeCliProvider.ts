@@ -205,6 +205,17 @@ export function parseStreamLine(line: string): StreamItem | null {
   return null
 }
 
+const MAX_NOISE_LINES = 50
+
+function isJson(line: string): boolean {
+  try {
+    JSON.parse(line)
+    return true
+  } catch {
+    return false
+  }
+}
+
 type RunInput = { input: string; maxUsd: number; signal?: AbortSignal; timeoutMs?: number }
 
 /** Runs `claude -p`: plain completions with no tools, no MCP servers, no user settings and no saved session; agent and chat runs with only the given MCP servers' tools. */
@@ -233,38 +244,68 @@ export class ClaudeCliProvider implements LlmProvider {
   /** Streams the answer line by line as events; the result line gives the final text, cost and model. */
   chat(req: ChatRequest, onEvent: (event: ChatEvent) => void): Promise<ChatResult> {
     return this.withMcpConfig(req.servers, req.signal, (configPath) => {
-      const state: { buffer: string; result: CliOutput | null; streamed: boolean } = { buffer: '', result: null, streamed: false }
+      const state = {
+        /** The unfinished last line, in pieces: joined only when its newline arrives, so a long line is never rescanned. */
+        pending: [] as string[],
+        result: null as CliOutput | null,
+        streamed: false,
+        /** Whether the CLI got as far as streaming anything: then a run with no result line may have spent money. */
+        started: false,
+        /** Stdout lines that are not JSON (the CLI's own error output); streamed paper text is never classified. */
+        noise: [] as string[]
+      }
+      // A failing listener is the caller's problem: the run keeps streaming and still returns its result and cost.
+      const emit = (event: ChatEvent): void => {
+        try {
+          onEvent(event)
+        } catch (error) {
+          console.error('chat stream listener', error)
+        }
+      }
       const handle = (line: string): void => {
         const item = parseStreamLine(line)
+        if (!item) {
+          if (line.trim() && !isJson(line) && state.noise.length < MAX_NOISE_LINES) state.noise.push(line)
+          return
+        }
+        state.started = true
         // Nothing reaches the caller once it stopped the run, even from the rest of the chunk being read.
-        if (!item || req.signal?.aborted) return
+        if (req.signal?.aborted) return
         if (item.kind === 'result') state.result = item.output
         else if (item.kind === 'assistant') {
           // Without partial messages, each whole message is a turn of its own.
           if (!state.streamed) {
-            onEvent({ kind: 'turn' })
-            onEvent({ kind: 'delta', text: item.text })
+            emit({ kind: 'turn' })
+            emit({ kind: 'delta', text: item.text })
           }
         } else {
           if (item.kind === 'delta') state.streamed = true
-          onEvent(item)
+          emit(item)
         }
       }
       const onStdout = (chunk: string): void => {
-        state.buffer += chunk
-        for (let at = state.buffer.indexOf('\n'); at >= 0; at = state.buffer.indexOf('\n')) {
-          handle(state.buffer.slice(0, at))
-          state.buffer = state.buffer.slice(at + 1)
+        const lines = chunk.split('\n')
+        const last = lines.pop() ?? ''
+        if (lines.length > 0) {
+          lines[0] = state.pending.join('') + lines[0]
+          state.pending = []
+          for (const line of lines) handle(line)
         }
+        if (last) state.pending.push(last)
       }
       return this.runCli(
         chatArgs(req, configPath, this.flags),
         req,
-        (stdout, stderr, code) => {
-          if (state.buffer.trim()) handle(state.buffer)
-          state.buffer = ''
+        (_stdout, stderr, code) => {
+          const rest = state.pending.join('')
+          state.pending = []
+          if (rest.trim()) handle(rest)
           const out = state.result
-          if (!out) throw new LlmError(classifyCliError(`${stdout}\n${stderr}`, null, undefined), 0)
+          if (!out) {
+            const kind = classifyCliError(`${state.noise.join('\n')}\n${stderr}`, null, undefined)
+            // Cut off after it started: its real cost is unknown, so the cap it may have spent is charged as an estimate.
+            throw state.started ? new LlmError(kind, req.maxUsd, { estimated: true }) : new LlmError(kind, 0)
+          }
           const cost = checkOutcome(out, stderr, code)
           return { text: typeof out.result === 'string' ? out.result : '', costUsd: cost, model: mainModel(out.modelUsage, req.model) }
         },

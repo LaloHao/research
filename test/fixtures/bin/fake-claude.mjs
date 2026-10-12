@@ -53,8 +53,16 @@ process.stdin.on('end', async () => {
       return process.exit(0)
     }
     case 'chat':
-    case 'chat_hang': {
-      const emit = (o) => process.stdout.write(JSON.stringify({ ...o, parent_tool_use_id: null, session_id: 'fake' }) + '\n')
+    case 'chat_hang':
+    case 'chat_cut':
+    case 'chat_split': {
+      // chat_split: the whole stream is written a few bytes at a time (splitting lines and UTF-8 characters), with no final newline.
+      const lines = []
+      const emit = (o) => {
+        const line = JSON.stringify({ ...o, parent_tool_use_id: null, session_id: 'fake' })
+        if (mode === 'chat_split') lines.push(line)
+        else process.stdout.write(line + '\n')
+      }
       const configPath = args[args.indexOf('--mcp-config') + 1]
       const server = Object.values(JSON.parse(readFileSync(configPath, 'utf8')).mcpServers)[0]
       emit({ type: 'system', subtype: 'init' })
@@ -80,9 +88,21 @@ process.stdin.on('end', async () => {
         setInterval(() => {}, 1000)
         return
       }
+      if (mode === 'chat_cut') {
+        // Dies after streaming, with no result line: only stderr says why.
+        process.stderr.write('connection reset\n')
+        return process.exit(1)
+      }
       const answer = deltas.join('')
       emit({ type: 'assistant', message: { content: [{ type: 'text', text: answer }] } })
       emit({ type: 'result', subtype: 'success', is_error: false, result: answer, total_cost_usd: 0.02, modelUsage: { 'claude-sonnet-5': { outputTokens: 40, costUSD: 0.02 } } })
+      if (mode === 'chat_split') {
+        const bytes = Buffer.from(lines.join('\n'), 'utf8')
+        for (let at = 0; at < bytes.length; at += 7) {
+          process.stdout.write(bytes.subarray(at, at + 7))
+          await new Promise((r) => setTimeout(r, 1))
+        }
+      }
       return process.exit(0)
     }
     case 'chat_quota':

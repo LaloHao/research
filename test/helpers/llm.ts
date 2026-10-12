@@ -49,22 +49,36 @@ export class FakeLlmProvider implements LlmProvider {
 
   /**
    * The last configured response repeats. A plain result streams as one turn of 12-character deltas; a function decides
-   * what to stream (and may call the tools at `req.servers[0]`, see helpers/mcp.ts).
+   * what to stream (and may call the tools at `req.servers[0]`, see helpers/mcp.ts). Like the real provider, a run
+   * stopped through `req.signal` rejects with an AbortError (charged at `maxUsd` as an estimate once it started) and
+   * nothing more is streamed after the stop.
    */
   async chat(req: ChatRequest, onEvent: (e: ChatEvent) => void): Promise<ChatResult> {
     this.chatCalls.push(req)
+    if (req.signal?.aborted) throw chatAbortError()
     if (this.chatResponses.length === 0) throw new Error('FakeLlmProvider: no chat response configured')
     const next = this.chatResponses.length > 1 ? this.chatResponses.shift()! : this.chatResponses[0]
-    if (typeof next === 'function') {
-      const r = await next(req, onEvent)
-      if (r instanceof Error) throw r
-      return r
+    const stopped = (): Error => Object.assign(chatAbortError(), { costUsd: req.maxUsd, estimated: true })
+    const emit = (e: ChatEvent): void => {
+      if (!req.signal?.aborted) onEvent(e)
     }
-    if (next instanceof Error) throw next
-    onEvent({ kind: 'turn' })
-    for (const text of next.text.match(/[\s\S]{1,12}/g) ?? []) onEvent({ kind: 'delta', text })
-    return next
+    let r: ChatResult | Error
+    if (typeof next === 'function') r = await next(req, emit)
+    else {
+      r = next
+      if (!(next instanceof Error)) {
+        emit({ kind: 'turn' })
+        for (const text of next.text.match(/[\s\S]{1,12}/g) ?? []) emit({ kind: 'delta', text })
+      }
+    }
+    if (req.signal?.aborted) throw stopped()
+    if (r instanceof Error) throw r
+    return r
   }
+}
+
+function chatAbortError(): Error {
+  return new DOMException('The operation was aborted.', 'AbortError')
 }
 
 /** A schema-valid answer for `form` (and `thesis`, when given), citing `quote` on page 1 everywhere. */

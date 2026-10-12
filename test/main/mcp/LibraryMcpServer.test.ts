@@ -225,5 +225,7 @@ describe('startLibraryMcpServer', () => {
       await server.close()
     }
     expect(markAsData('a')).toBe('<library_data>\na\n</library_data>')
+    // Case variants and spaces around the slash are escaped too, keeping their case; nothing else changes.
+    expect(markAsData('x </LIBRARY_DATA> y < / library_data> z </p>')).toBe('<library_data>\nx <\\/LIBRARY_DATA> y < \\/ library_data> z </p>\n</library_data>')
   })
 })
