@@ -1,4 +1,4 @@
-import { CHAT_ID, ChatMetaSchema, type AssistantMessage, type ChatFile, type ChatMessage, type UserMessage } from '../../shared/chat'
+import { CHAT_ID, ChatMessageSchema, ChatMetaSchema, MAX_MESSAGE_COST, MESSAGE_MODEL, normalizeExcerpt, type AssistantMessage, type ChatFile, type ChatMessage, type UserMessage } from '../../shared/chat'
 import { citationMarker, parseCitations } from '../../shared/chatCitations'
 import { sha256 } from './atomicWrite'
 import type { ReadResult } from './errors'
@@ -12,7 +12,7 @@ export const ASSISTANT_HEADING = 'Claude'
 export const STOPPED_MARK = 'detenida'
 export const TITLE_CHARS = 80
 
-const HEADING = /^## (Tú|Claude) — (\S+)(?: · (.*))?$/
+const HEADING = /^## (Tú|Claude) — (\S+)(?: · (.*?))?\s*$/
 /**
  * Message lines written with one more leading backslash, and read back with one less, so that any text round-trips:
  * lines that would read as a message heading (with any number of backslashes already in front), and lines that would
@@ -48,6 +48,19 @@ export function titleFrom(text: string): string {
 /** What a conversation cost: the sum of its answers (the frontmatter's `cost_usd`). */
 export function totalCost(messages: ChatMessage[]): number {
   return Math.round(messages.reduce((sum, m) => sum + (m.role === 'assistant' ? m.costUsd : 0), 0) * 10000) / 10000
+}
+
+/**
+ * Throws when a message cannot be written and read back (a programming error, not a conflict): a time or model id with
+ * whitespace would merge or split messages, a bad cost or excerpt would read back different. Returns the messages
+ * stripped to their file fields.
+ */
+export function checkMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((m, i) => {
+    const valid = ChatMessageSchema.parse(m)
+    if (valid.role === 'assistant' && valid.model === STOPPED_MARK) throw new Error(`Message ${i}: the model id cannot be "${STOPPED_MARK}"`)
+    return valid
+  })
 }
 
 /**
@@ -95,10 +108,8 @@ export function renderChat(file: ChatFile): string {
 function readUserMessage(at: string, raw: string): UserMessage {
   const m = EXCERPT_LINE.exec(raw)
   const cited = m ? parseCitations(m[1]) : []
-  if (m && cited.length === 1 && cited[0].start === 0 && cited[0].end === m[1].length) {
-    const { paper, page, quote } = cited[0]
-    return { role: 'user', at, text: unescapeBody(cleanMessageText(raw.slice(m[0].length)), true), excerpt: { paper, page, quote } }
-  }
+  const excerpt = m && cited.length === 1 && cited[0].start === 0 && cited[0].end === m[1].length ? normalizeExcerpt(cited[0]) : null
+  if (m && excerpt) return { role: 'user', at, text: unescapeBody(cleanMessageText(raw.slice(m[0].length)), true), excerpt }
   return { role: 'user', at, text: unescapeBody(raw, true), excerpt: null }
 }
 
@@ -107,9 +118,12 @@ function readAssistantMessage(at: string, rest: string, raw: string): AssistantM
     .split(' · ')
     .map((p) => p.trim())
     .filter(Boolean)
-  const cost = parts.map((p) => /^\$(\d+(?:\.\d+)?)$/.exec(p)).find((m) => m !== null)
-  const model = parts[0] && !parts[0].startsWith('$') && parts[0] !== STOPPED_MARK ? parts[0] : 'unknown'
-  return { role: 'assistant', at, model, costUsd: cost ? Number(cost[1]) : 0, stopped: parts.includes(STOPPED_MARK), text: unescapeBody(raw, false) }
+  const costMatch = parts.map((p) => /^\$(\d+(?:\.\d+)?)$/.exec(p)).find((m) => m !== null)
+  const cost = costMatch ? Number(costMatch[1]) : 0
+  // A hand-edited heading reads as values that can be written back: an odd model is 'unknown', an odd cost 0.
+  const model = parts[0] && MESSAGE_MODEL.test(parts[0]) && parts[0] !== STOPPED_MARK ? parts[0] : 'unknown'
+  const costUsd = Number.isFinite(cost) && cost < MAX_MESSAGE_COST ? cost : 0
+  return { role: 'assistant', at, model, costUsd, stopped: parts.includes(STOPPED_MARK), text: unescapeBody(raw, false) }
 }
 
 function parseMessages(body: string): ChatMessage[] {
@@ -136,11 +150,12 @@ function parseMessages(body: string): ChatMessage[] {
 }
 
 /**
- * Reads chats/<id>.md; text before the first heading (a hand-written note) is ignored. Windows line endings are read
- * as plain ones; the hash is always that of the text on disk.
+ * Reads chats/<id>.md. Text before the first heading (a hand-written note) is ignored, so it does not survive the next
+ * write by the app (the spec allows it; the user docs should say so). Windows line endings and a leading BOM are read
+ * as if absent; the hash is always that of the text on disk.
  */
 export function parseChat(text: string): ReadResult<ChatFile> {
-  const normalized = text.replace(/\r\n/g, '\n')
+  const normalized = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n')
   const hash = sha256(text)
   const meta = parseFrontmatterFile(normalized, ChatMetaSchema)
   if (!meta.ok) return { ...meta, hash }

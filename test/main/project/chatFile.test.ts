@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { isChatFileName, newChatId, parseChat, renderChat, titleFrom, totalCost } from '../../../src/main/project/chatFile'
 import { hasConflictMarkers } from '../../../src/main/project/yamlFile'
+import { sha256 } from '../../../src/main/project/atomicWrite'
+import { ChatMessageSchema } from '../../../src/shared/chat'
 import { assistantMessage, CHAT_AT, chatFile, userMessage } from '../../helpers/chats'
 
 const read = (text: string) => {
@@ -76,6 +78,27 @@ describe('chat file format', () => {
       { role: 'user', at: CHAT_AT, text: '> not an excerpt\n\nQ', excerpt: null },
       { role: 'assistant', at: '2026-10-11T12:00:01.000Z', model: 'unknown', costUsd: 0, stopped: false, text: 'A' }
     ])
+  })
+
+  it('tolerates trailing spaces on a hand-edited heading and a leading BOM', () => {
+    const text = `\uFEFF${renderChat(chatFile([]))}## Tú — 2026-10-11T12:00:00.000Z  \n\nQ\n\n## Claude — 2026-10-11T12:00:01.000Z · m · $0.0100 · detenida \t\n\nA\n`
+    const r = parseChat(text)
+    expect(r.hash).toBe(sha256(text))
+    expect(read(text).messages).toEqual([
+      { role: 'user', at: CHAT_AT, text: 'Q', excerpt: null },
+      { role: 'assistant', at: '2026-10-11T12:00:01.000Z', model: 'm', costUsd: 0.01, stopped: true, text: 'A' }
+    ])
+  })
+
+  it('reads hand-edited heading fields as values it can write back', () => {
+    const big = '9'.repeat(400)
+    const text = `${renderChat(chatFile([]))}## Tú — 2026-10-11T12:00:00.000Z\n\n> [[he2017drain|p. 2|" two  spaces "]]\n\nQ\n\n## Claude — 2026-10-11T12:00:01.000Z · detenida · $${big}\n\nA\n`
+    const messages = read(text).messages
+    expect(messages).toEqual([
+      { role: 'user', at: CHAT_AT, text: 'Q', excerpt: { paper: 'he2017drain', page: 2, quote: 'two spaces' } },
+      { role: 'assistant', at: '2026-10-11T12:00:01.000Z', model: 'unknown', costUsd: 0, stopped: true, text: 'A' }
+    ])
+    for (const m of messages) expect(ChatMessageSchema.safeParse(m).success).toBe(true)
   })
 
   it('reports conflict markers and an invalid frontmatter as problems', () => {

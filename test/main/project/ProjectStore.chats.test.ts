@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { ConflictError } from '../../../src/main/project/errors'
 import { renderChat } from '../../../src/main/project/chatFile'
 import { ProjectStore } from '../../../src/main/project/ProjectStore'
-import { CHAT_ID_A, chatFile } from '../../helpers/chats'
+import { assistantMessage, CHAT_ID_A, chatFile, userMessage } from '../../helpers/chats'
 import { tmpDir } from '../../helpers/tmp'
 
 describe('ProjectStore chats', () => {
@@ -44,5 +44,28 @@ describe('ProjectStore chats', () => {
     const other = '20261011-120000-ffff'
     await writeFile(store.chatPath(other), renderChat(chatFile()))
     expect(await store.readChat(other)).toMatchObject({ ok: false, problem: { kind: 'invalid_schema' } })
+  })
+
+  it('refuses a message that would break the file, writing nothing', async () => {
+    const store = await ProjectStore.create(await tmpDir(), 'Thesis')
+    for (const bad of [
+      userMessage({ at: '2026 x' }),
+      userMessage({ at: '' }),
+      assistantMessage({ model: 'a\n## Tú — b' }),
+      assistantMessage({ model: 'a · b' }),
+      assistantMessage({ model: 'detenida' }),
+      assistantMessage({ costUsd: 1e21 }),
+      assistantMessage({ costUsd: -1 }),
+      userMessage({ excerpt: { paper: 'he2017drain', page: 1, quote: 'ends "]] early' } })
+    ]) {
+      await expect(store.writeChat(chatFile([userMessage(), bad]), null)).rejects.toThrow()
+    }
+    expect(await store.listChatIds()).toEqual([])
+  })
+
+  it('recomputes cost_usd from the answers', async () => {
+    const store = await ProjectStore.create(await tmpDir(), 'Thesis')
+    await store.writeChat(chatFile([userMessage(), assistantMessage({ costUsd: 0.1 }), assistantMessage({ costUsd: 0.2 })], { cost_usd: 7 }), null)
+    expect(await store.readChat(CHAT_ID_A)).toMatchObject({ ok: true, value: { meta: { cost_usd: 0.3 } } })
   })
 })

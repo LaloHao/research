@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CHAT_ID, ChatMetaSchema, ChatScopeSchema } from '../../src/shared/chat'
+import { CHAT_ID, ChatMessageSchema, ChatMetaSchema, ChatScopeSchema, normalizeExcerpt } from '../../src/shared/chat'
 
 const AT = '2026-10-11T12:00:00.000Z'
 const meta = { schema_version: 1, id: '20261011-120000-a1b2', title: 'What does Drain do?', scope: 'library', model: 'sonnet', created_at: AT, updated_at: AT }
@@ -25,5 +25,42 @@ describe('ChatMetaSchema', () => {
       expect(ChatMetaSchema.safeParse({ ...meta, ...bad }).success).toBe(false)
     }
     expect(ChatScopeSchema.safeParse({ paper: 'he2017drain', extra: 1 }).success).toBe(false)
+  })
+})
+
+describe('ChatMessageSchema', () => {
+  const user = { role: 'user', at: '2026-10-11T12:00:00.000Z', text: 'Q', excerpt: null }
+  const answer = { role: 'assistant', at: '2026-10-11T12:00:05.000Z', model: 'claude-sonnet-5', costUsd: 0.02, stopped: false, text: 'A' }
+
+  it('accepts messages that the file format writes and reads back unchanged', () => {
+    expect(ChatMessageSchema.safeParse(user).success).toBe(true)
+    expect(ChatMessageSchema.safeParse(answer).success).toBe(true)
+    expect(ChatMessageSchema.safeParse({ ...user, excerpt: { paper: 'he2017drain', page: 3, quote: 'a parse tree' } }).success).toBe(true)
+    expect(ChatMessageSchema.safeParse({ ...user, excerpt: { paper: 'he2017drain', page: null, quote: 'web text' } }).success).toBe(true)
+  })
+
+  it('rejects heading fields that would break the file', () => {
+    for (const at of ['2026 x', '', '2026\n## Tú — b']) {
+      expect(ChatMessageSchema.safeParse({ ...user, at }).success).toBe(false)
+      expect(ChatMessageSchema.safeParse({ ...answer, at }).success).toBe(false)
+    }
+    for (const model of ['a\n## Tú — b', 'a · b', 'a b', '', '$1']) expect(ChatMessageSchema.safeParse({ ...answer, model }).success).toBe(false)
+    for (const costUsd of [1e21, -0.1, Number.NaN, Number.POSITIVE_INFINITY]) expect(ChatMessageSchema.safeParse({ ...answer, costUsd }).success).toBe(false)
+  })
+
+  it('rejects an excerpt whose marker would not read back the same', () => {
+    for (const excerpt of [
+      { paper: 'he2017drain', page: 3, quote: 'two  spaces' },
+      { paper: 'he2017drain', page: 3, quote: 'ends "]] early' },
+      { paper: 'He2017', page: 3, quote: 'q' },
+      { paper: 'he2017drain', page: 0, quote: 'q' },
+      { paper: 'he2017drain', page: 3, quote: ' ' }
+    ])
+      expect(ChatMessageSchema.safeParse({ ...user, excerpt }).success).toBe(false)
+  })
+
+  it('normalizes an excerpt to what its marker reads back', () => {
+    expect(normalizeExcerpt({ paper: 'he2017drain', page: 3, quote: ' two  spaces\n' })).toEqual({ paper: 'he2017drain', page: 3, quote: 'two spaces' })
+    expect(normalizeExcerpt({ paper: 'he2017drain', page: 3, quote: '  ' })).toBeNull()
   })
 })

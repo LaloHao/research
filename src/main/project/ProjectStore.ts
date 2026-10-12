@@ -20,7 +20,7 @@ import { RelationsFileSchema, type RelationsFile } from '../../shared/typedRelat
 import { FacetSuggestionsFileSchema, type FacetSuggestionsFile } from '../../shared/facetSuggestions'
 import { atomicWrite, MOVE_RETRYABLE, moveDir, sha256 } from './atomicWrite'
 import { renderLibraryBib } from '../export/BibExporter'
-import { CHATS_DIR, chatFileName, isChatFileName, parseChat, renderChat } from './chatFile'
+import { CHATS_DIR, chatFileName, checkMessages, isChatFileName, parseChat, renderChat, totalCost } from './chatFile'
 import { ConflictError, ProjectError, type ReadResult } from './errors'
 import { FACET_SUGGESTIONS_FILE, sortSuggestions } from './facetSuggestionsFile'
 import { gitattributesLines, gitignoreLines, withManagedBlock } from './gitFiles'
@@ -343,11 +343,14 @@ export class ProjectStore {
 
   /**
    * One file per conversation, so two machines rarely touch the same one. A file with conflict markers is never
-   * overwritten, even with its hash: one machine's messages would be lost.
+   * overwritten, even with its hash: one machine's messages would be lost. Every message is checked first (a bad one
+   * throws and nothing is written), and `cost_usd` is always recomputed from the answers. The hash returned is that of
+   * the rendered file, whose message texts are normalized (`cleanMessageText`).
    */
   async writeChat(file: ChatFile, expectedHash: string | null): Promise<string> {
-    const meta = ChatMetaSchema.parse(file.meta)
-    return this.writeChecked(this.chatPath(meta.id), renderChat({ meta, messages: file.messages }), expectedHash, { refuseConflictMarkers: true })
+    const messages = checkMessages(file.messages)
+    const meta = ChatMetaSchema.parse({ ...file.meta, cost_usd: totalCost(messages) })
+    return this.writeChecked(this.chatPath(meta.id), renderChat({ meta, messages }), expectedHash, { refuseConflictMarkers: true })
   }
 
   /** «Borrar»: only the version read (`expectedHash`); git history keeps it. Nothing to do when it is already gone. */

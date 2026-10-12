@@ -158,11 +158,16 @@ export function watchProject(root: string, handlers: WatchHandlers, debounceMs =
     chatsWatcher?.close()
     chatsWatcher = null
   }
-  /** Watches chats/ once it exists: conversations come and go in it (atomic writes, git checkouts, deletions). */
-  const syncChatsDir = (notify: boolean): void => {
+  /**
+   * Watches chats/ once it exists: conversations come and go in it (atomic writes, git checkouts, deletions). A root
+   * event for chats/ itself (`rearm`) always re-opens the watch: the folder may have been removed and recreated between
+   * two events (a git checkout), and the old watch would be left on the deleted folder. Its inode cannot tell: the
+   * filesystem may hand the new folder the same one.
+   */
+  const syncChatsDir = (rearm: boolean): void => {
     if (closed) return
-    if (!isDir(chatsDir)) closeChatsDir()
-    else
+    if (rearm || !isDir(chatsDir)) closeChatsDir()
+    if (isDir(chatsDir))
       chatsWatcher ??= watchDir(
         chatsDir,
         (name) => {
@@ -170,7 +175,7 @@ export function watchProject(root: string, handlers: WatchHandlers, debounceMs =
         },
         closeChatsDir
       )
-    if (notify) chatsChanged()
+    if (rearm) chatsChanged()
   }
 
   const rootWatcher = watchDir(
