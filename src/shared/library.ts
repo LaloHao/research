@@ -24,6 +24,8 @@ export interface PaperRow {
   summary_status: SummaryStatus
   /** Fields and facets still `generated` (not yet verified or edited). */
   pending_review: number
+  /** Facets of the current form the paper's (up-to-date) classification has no entry for yet: «Faceta nueva sin llenar». */
+  unfilled_facets: number
   /** `generated.model` of the last summary, or `null` when there is none. */
   summary_model: string | null
   /** Whether citations were fetched from OpenAlex ('none' until the first try). */

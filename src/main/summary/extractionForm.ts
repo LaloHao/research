@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { ExtractionFormSchema, type ExtractionForm } from '../../shared/summary'
+import { ExtractionFormSchema, type ExtractionFile, type ExtractionForm, type FacetDef } from '../../shared/summary'
 import { sha256 } from '../project/atomicWrite'
 
 /** The draft offered when a project has no form yet (from the thesis design). */
@@ -46,6 +46,20 @@ export function formHash(form: ExtractionForm): string {
     return rest
   })
   return sha256(JSON.stringify(sortKeys(facets)))
+}
+
+/**
+ * formHash of the facets a paper's classification has entries for (in form order). A facet added after the paper was
+ * summarized leaves this unchanged: the paper stays up to date and the facet is just unfilled (see unfilledFacets).
+ */
+export function formHashFor(form: ExtractionForm, keys: Iterable<string>): string {
+  const present = new Set(keys)
+  return formHash({ ...form, facets: form.facets.filter((f) => present.has(f.key)) })
+}
+
+/** Facets of the form a classification has no entry for: added to the form after the paper was summarized. */
+export function unfilledFacets(form: ExtractionForm, extraction: ExtractionFile): FacetDef[] {
+  return form.facets.filter((f) => !extraction.facets[f.key])
 }
 
 const toSnake = (v: string): string =>

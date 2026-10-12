@@ -41,6 +41,7 @@ const row = (over: Partial<PaperRow>): PaperRow => ({
   summary_model: null,
   citations_status: 'none',
   relations_pending: 0,
+  unfilled_facets: 0,
   ...over
 })
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyAliases, DEFAULT_EXTRACTION_FORM, formHash, loadForm } from '../../../src/main/summary/extractionForm'
+import { applyAliases, DEFAULT_EXTRACTION_FORM, formHash, formHashFor, loadForm, unfilledFacets } from '../../../src/main/summary/extractionForm'
 
 describe('loadForm', () => {
   it('reports a missing form', () => {
@@ -78,5 +78,29 @@ describe('applyAliases', () => {
       known: [],
       proposed: ['format_preserving_encryption']
     })
+  })
+})
+
+describe('formHashFor and unfilledFacets', () => {
+  const form = {
+    facets: [
+      { key: 'task', type: 'text' as const, description: 'd' },
+      { key: 'extra', type: 'text' as const, description: 'e' }
+    ],
+    value_aliases: {}
+  }
+
+  it('hashes only the facets a paper has entries for, in form order', () => {
+    expect(formHashFor(form, ['task', 'extra'])).toBe(formHash(form))
+    expect(formHashFor(form, ['extra', 'task'])).toBe(formHash(form))
+    expect(formHashFor(form, ['task'])).toBe(formHash({ ...form, facets: [form.facets[0]] }))
+    // An entry of a facet no longer in the form does not count.
+    expect(formHashFor(form, ['task', 'removed_facet'])).toBe(formHashFor(form, ['task']))
+  })
+
+  it('lists the form facets a classification has no entry for', () => {
+    const extraction = { schema_version: 1 as const, form_hash: 'h', facets: { task: { text: 't', proposed: [], status: 'generated' as const, evidence: [] } } }
+    expect(unfilledFacets(form, extraction).map((f) => f.key)).toEqual(['extra'])
+    expect(unfilledFacets({ ...form, facets: [form.facets[0]] }, extraction)).toEqual([])
   })
 })

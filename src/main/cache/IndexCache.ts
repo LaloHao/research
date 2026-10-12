@@ -28,7 +28,8 @@ export interface JobRow {
 
 // 5: citations, external works, vectors, neighbours and facet values (stage 3a). 6: when citing works were fetched.
 // 7: typed relations, an index of relations.yaml (stage 3b). 8: the trash (.trash/), whose papers keep their text and vector.
-const SCHEMA_VERSION = 8
+// 9: unfilled facets per paper (stage 3c); migrated in place from 8.
+const SCHEMA_VERSION = 9
 const TOKENIZER = "tokenize='unicode61 remove_diacritics 2'"
 const DDL = `
 CREATE TABLE papers (
@@ -50,6 +51,7 @@ CREATE TABLE papers (
   text_chars INTEGER NOT NULL DEFAULT 0,
   summary_status TEXT NOT NULL DEFAULT 'none',
   pending_review INTEGER NOT NULL DEFAULT 0,
+  unfilled_facets INTEGER NOT NULL DEFAULT 0,
   summary_error TEXT,
   summary_model TEXT,
   openalex_id TEXT,
@@ -95,7 +97,7 @@ const TRASHED_IDS = 'SELECT id FROM trash WHERE id NOT IN (SELECT id FROM papers
 const VISIBLE_RELATION = `from_id NOT IN (${TRASHED_IDS}) AND to_id NOT IN (${TRASHED_IDS})`
 
 const PAPER_COLUMNS =
-  'id, title, authors_label, year, venue, kind, doi, arxiv, metadata_status, has_pdf, problem, added_at, text_status, summary_status, pending_review, summary_model, citations_status, ' +
+  'id, title, authors_label, year, venue, kind, doi, arxiv, metadata_status, has_pdf, problem, added_at, text_status, summary_status, pending_review, unfilled_facets, summary_model, citations_status, ' +
   "(SELECT COUNT(*) FROM typed_relations r WHERE r.status = 'suggested' AND (r.from_id = papers.id OR r.to_id = papers.id) " +
   `AND r.from_id NOT IN (${TRASHED_IDS}) AND r.to_id NOT IN (${TRASHED_IDS})) AS relations_pending`
 
@@ -250,9 +252,11 @@ export class IndexCache {
     ).map((r) => ({ page: r.page === null ? null : Number(r.page), text: r.text }))
   }
 
-  setSummaryState(id: string, status: SummaryStatus, pending: number, text: string, model: string | null): void {
+  setSummaryState(id: string, status: SummaryStatus, pending: number, text: string, model: string | null, unfilled = 0): void {
     this.tx(() => {
-      this.db.prepare('UPDATE papers SET summary_status = ?, pending_review = ?, summary_model = ? WHERE id = ?').run(status, pending, model, id)
+      this.db
+        .prepare('UPDATE papers SET summary_status = ?, pending_review = ?, unfilled_facets = ?, summary_model = ? WHERE id = ?')
+        .run(status, pending, unfilled, model, id)
       this.db.prepare('DELETE FROM summaries_fts WHERE paper_id = ?').run(id)
       if (text) this.db.prepare('INSERT INTO summaries_fts (paper_id, text) VALUES (?, ?)').run(id, text)
     })
@@ -720,7 +724,11 @@ function connect(file: string): DatabaseSync {
   try {
     db.exec('PRAGMA journal_mode = WAL')
     const { user_version } = db.prepare('PRAGMA user_version').get() as { user_version: number }
-    if (user_version !== SCHEMA_VERSION) {
+    if (user_version === 8) {
+      // 9 only adds a column: an 8 cache keeps its text, vectors and neighbours, and the next reindex fills the count.
+      db.exec('ALTER TABLE papers ADD COLUMN unfilled_facets INTEGER NOT NULL DEFAULT 0')
+      db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
+    } else if (user_version !== SCHEMA_VERSION) {
       if (user_version !== 0) throw new Error('Stale cache schema')
       db.exec(DDL)
       db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
@@ -749,6 +757,7 @@ function toPaperRow(r: Record<string, unknown>): PaperRow {
     text_status: r.text_status as TextStatus,
     summary_status: (r.summary_status as SummaryStatus) ?? 'none',
     pending_review: Number(r.pending_review ?? 0),
+    unfilled_facets: Number(r.unfilled_facets ?? 0),
     summary_model: (r.summary_model as string | null) ?? null,
     citations_status: (r.citations_status as CitationsStatus | undefined) ?? 'none',
     relations_pending: Number(r.relations_pending ?? 0)
