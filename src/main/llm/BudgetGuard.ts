@@ -5,6 +5,8 @@ export interface BudgetLimits {
   perOperationUsd: number
   perBatchUsd: number
   perMonthUsd: number | null
+  /** One «Sugerir facetas» run (an agent run over the whole library); the per-operation cap when absent. */
+  perFacetSuggestionUsd?: number
 }
 
 export interface Reservation {
@@ -15,7 +17,17 @@ export interface Reservation {
 }
 
 export function limitsFromConfig(llm: LlmConfig): BudgetLimits {
-  return { perOperationUsd: llm.budget.per_operation_usd, perBatchUsd: llm.budget.per_batch_usd, perMonthUsd: llm.budget.per_month_usd }
+  return {
+    perOperationUsd: llm.budget.per_operation_usd,
+    perBatchUsd: llm.budget.per_batch_usd,
+    perMonthUsd: llm.budget.per_month_usd,
+    perFacetSuggestionUsd: llm.budget.per_facet_suggestion_usd
+  }
+}
+
+/** The most one call of `operation` may spend (its --max-budget-usd), which also bounds its learned estimate. */
+export function operationCap(limits: BudgetLimits, operation: CostOperation): number {
+  return operation === 'suggest_facets' ? (limits.perFacetSuggestionUsd ?? limits.perOperationUsd) : limits.perOperationUsd
 }
 
 const fits = (spent: number, reserved: number, estimate: number, limit: number): boolean =>
@@ -37,9 +49,9 @@ export class BudgetGuard {
     this.estimates = new Map(COST_OPERATIONS.map((op) => [op, initialEstimates[op] ?? initialEstimate]))
   }
 
-  /** The largest real cost seen for `operation` (never above the per-operation cap). */
+  /** The largest real cost seen for `operation` (never above that operation's cap). */
   currentEstimate(operation: CostOperation = 'summarize'): number {
-    return Math.min(this.estimates.get(operation) ?? 0, this.limits().perOperationUsd)
+    return Math.min(this.estimates.get(operation) ?? 0, operationCap(this.limits(), operation))
   }
 
   async admit(batchId?: string, operation: CostOperation = 'summarize'): Promise<Reservation> {

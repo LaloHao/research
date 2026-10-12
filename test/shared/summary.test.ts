@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ProjectConfigSchema } from '../../src/shared/schemas'
-import { ExtractionFileSchema, ExtractionFormSchema, LlmConfigSchema, SummaryFileSchema } from '../../src/shared/summary'
+import { COST_OPERATIONS, ExtractionFileSchema, ExtractionFormSchema, LlmConfigSchema, SummaryFileSchema } from '../../src/shared/summary'
 
 const field = (value: unknown) => ({ value, status: 'generated', evidence: [] })
 
@@ -78,8 +78,10 @@ describe('LlmConfigSchema', () => {
       model: 'sonnet',
       auto_summarize: false,
       auto_suggest_relations: false,
+      auto_suggest_facets: false,
+      auto_suggest_facets_after: 10,
       max_input_chars: 400000,
-      budget: { per_operation_usd: 0.5, per_batch_usd: 10, per_month_usd: null }
+      budget: { per_operation_usd: 0.5, per_batch_usd: 10, per_month_usd: null, per_facet_suggestion_usd: 2 }
     })
   })
 
@@ -91,13 +93,35 @@ describe('LlmConfigSchema', () => {
   it('falls back field by field: one bad value keeps the others', () => {
     expect(
       LlmConfigSchema.parse({ model: 'gpt', auto_summarize: true, max_input_chars: 1000, budget: { per_operation_usd: -1, per_batch_usd: 3, per_month_usd: 20 } })
-    ).toEqual({ model: 'sonnet', auto_summarize: true, auto_suggest_relations: false, max_input_chars: 1000, budget: { per_operation_usd: 0.5, per_batch_usd: 3, per_month_usd: 20 } })
+    ).toEqual({
+      model: 'sonnet',
+      auto_summarize: true,
+      auto_suggest_relations: false,
+      auto_suggest_facets: false,
+      auto_suggest_facets_after: 10,
+      max_input_chars: 1000,
+      budget: { per_operation_usd: 0.5, per_batch_usd: 3, per_month_usd: 20, per_facet_suggestion_usd: 2 }
+    })
     expect(LlmConfigSchema.parse({ model: 'opus', budget: 'oops' })).toMatchObject({ model: 'opus', budget: { per_operation_usd: 0.5, per_batch_usd: 10, per_month_usd: null } })
   })
 
   it('keeps auto_suggest_relations and falls back to false when invalid', () => {
     expect(LlmConfigSchema.parse({ auto_suggest_relations: true }).auto_suggest_relations).toBe(true)
     expect(LlmConfigSchema.parse({ auto_suggest_relations: 'yes' }).auto_suggest_relations).toBe(false)
+  })
+
+  it('reads the facet suggestion settings, each falling back on its own', () => {
+    expect(LlmConfigSchema.parse({ auto_suggest_facets: true, auto_suggest_facets_after: 4, budget: { per_facet_suggestion_usd: 3 } })).toMatchObject({
+      auto_suggest_facets: true,
+      auto_suggest_facets_after: 4,
+      budget: { per_facet_suggestion_usd: 3, per_operation_usd: 0.5 }
+    })
+    expect(LlmConfigSchema.parse({ auto_suggest_facets: 'yes', auto_suggest_facets_after: 0, budget: { per_facet_suggestion_usd: -1 } })).toMatchObject({
+      auto_suggest_facets: false,
+      auto_suggest_facets_after: 10,
+      budget: { per_facet_suggestion_usd: 2 }
+    })
+    expect(COST_OPERATIONS).toEqual(['summarize', 'suggest_relations', 'suggest_facets', 'fill_facets'])
   })
 })
 
