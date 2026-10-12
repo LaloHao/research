@@ -50,6 +50,7 @@ const OPENALEX_FIELDS = 'id,doi,title,publication_year,type,authorships,primary_
 
 export const KIND_BY_OPENALEX: Record<string, PaperKind> = {
   article: 'article',
+  'conference-paper': 'conference',
   preprint: 'preprint',
   book: 'book',
   'book-chapter': 'chapter',
