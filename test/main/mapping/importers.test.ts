@@ -162,7 +162,7 @@ describe('hostile and malformed input', () => {
     const out = parseExport('x.bib', '@article{a, title = {Broken {title}\n@article{b, title = {Fine}}\n')!
     expect(out.records.map((r) => r.title)).toEqual(['Broken title', 'Fine'])
     const many = fast(() => parseExport('x.bib', '@article{k, title = {x\n'.repeat(40_000)))!
-    expect(out.skipped).toBe(0)
+    expect(many.skipped).toBe(0)
     expect(many.records).toHaveLength(40_000)
     expect(fast(() => parseExport('x.bib', '@article{k, title = {' + 'x'.repeat(5_000_000)))!.records[0].title).toHaveLength(1000)
   })
@@ -171,10 +171,12 @@ describe('hostile and malformed input', () => {
     let text = '@string{m0 = "xxxxxxxxxx"}\n'
     for (let k = 1; k <= 40; k++) text += `@string{m${k} = m${k - 1} # m${k - 1}}\n`
     text += '@misc{k, title = m40, junk without equals, year = 2020, abstract = ' + Array(200_000).fill('"ab"').join(' # ') + '}\n'
+    // The doubling spends the file's expansion budget, so the last macros expand to '' and the entry has no title.
     const out = fast(() => parseExport('x.bib', text))!
-    expect(out.records[0].title).toHaveLength(1000)
-    expect(out.records[0].year).toBe(2020)
-    expect(out.records[0].abstract!.length).toBeLessThanOrEqual(20_000)
+    expect(out).toMatchObject({ records: [], skipped: 1 })
+    const fields = parseBibtex(text)[0].fields
+    expect(fields.year).toBe('2020')
+    expect(fields.abstract.length).toBeLessThanOrEqual(100_000)
   })
 
   it('BibTeX: long runs of whitespace, commas, accents and «and» do not hang, and field names cannot reach the prototype', () => {
@@ -259,6 +261,7 @@ describe('hostile and malformed input', () => {
     const blanks = ' '.repeat(1_000_000)
     expect(fast(() => latexToText(`\\'${blanks}\\c${blanks}{x`))).toBe("\\' x")
     expect(fast(() => splitBibNames(`a${blanks}b${blanks}and${blanks}c`))).toHaveLength(2)
+    expect(fast(() => latexToText(`$${'a\\b'.repeat(300_000)}${'$x'.repeat(300_000)}`)).length).toBeGreaterThan(0)
     expect(fast(() => parseName(`${','.repeat(1_000_000)}x`))).toBeNull()
     expect(fast(() => parseRis(`TY  - JOUR\nTI  - a${blanks}b\n`))[0].TI[0].length).toBeLessThanOrEqual(100_000)
     expect(fast(() => parseCsv(`t\n${'x"'.repeat(1_000_000)}`)).rows).toHaveLength(1)
@@ -299,5 +302,61 @@ describe('hostile and malformed input', () => {
       expect(() => splitBibNames(text)).not.toThrow()
       expect(() => parseName(text)).not.toThrow()
     }
+  })
+})
+
+describe('fix round 1', () => {
+  it('BibTeX: one big macro referenced by every field of many entries stays within a per-file expansion budget', () => {
+    const big = 'x'.repeat(100_000)
+    const text = `@string{big = {${big}}}\n` + '@a{k,title=big,abstract=big,journal=big,booktitle=big,author=big,doi=big,url=big}\n'.repeat(20_000)
+    const out = fast(() => parseExport('x.bib', text), 5000)!
+    const total = out.records.reduce((n, r) => n + r.title.length + (r.abstract?.length ?? 0) + (r.venue?.length ?? 0) + r.authors.reduce((m, a) => m + a.family.length, 0), 0)
+    expect(total).toBeLessThan(4 * text.length)
+    expect(out.records.length + out.skipped).toBe(20_000)
+  })
+
+  it('names: all-caps names and dotted initials first are not inverted; particles and Jr. stay with the family name', () => {
+    expect(parseName('J. YU')).toEqual({ family: 'YU', given: 'J.' })
+    expect(parseName('JOHN SMITH')).toEqual({ family: 'SMITH', given: 'JOHN' })
+    expect(parseName('J.-L. Van der Berg')).toEqual({ family: 'Van der Berg', given: 'J.-L.' })
+    expect(parseName('Zhu J')).toEqual({ family: 'Zhu', given: 'J' })
+    expect(parseName('Ludwig van Beethoven')).toEqual({ family: 'van Beethoven', given: 'Ludwig' })
+    expect(parseName('Smith, Jr., John')).toEqual({ family: 'Smith Jr.', given: 'John' })
+    expect(parseExport('x.bib', '@misc{k, title={T}, author={Smith, Jr., John and Jean de la Fontaine}}')!.records[0].authors).toEqual([
+      { family: 'Smith Jr.', given: 'John' },
+      { family: 'de la Fontaine', given: 'Jean' }
+    ])
+  })
+
+  it('generic CSV: comma-separated authors (Publish or Perish), Zotero and Lens columns, and Lens is not Scopus', () => {
+    const pop = parseExport('pop.csv', 'Cites,Authors,Title,Year\n10,"P He, J Zhu, Z Zheng",Drain,2017\n1,"He, Pinjia, Zhu, Jieming",Other,2018\n')!
+    expect(pop.records.map((r) => r.authors)).toEqual([
+      [{ family: 'He', given: 'P' }, { family: 'Zhu', given: 'J' }, { family: 'Zheng', given: 'Z' }],
+      [{ family: 'He', given: 'Pinjia' }, { family: 'Zhu', given: 'Jieming' }]
+    ])
+    const zotero = parseExport('zotero.csv', '"Key","Item Type","Publication Year","Author","Title","Publication Title","DOI","Url","Abstract Note"\n"K1","conferencePaper","2017","He, Pinjia; Zhu, Jieming","Drain","ICWS","10.1109/ICWS.2017.13","","Online parsing."\n"K2","bookSection","2019","Doe, J","Chap","Book","","https://arxiv.org/abs/2008.06448",""\n')!
+    expect(zotero.records[0]).toMatchObject({ kind: 'conference', abstract: 'Online parsing.', venue: 'ICWS', authors: [{ family: 'He', given: 'Pinjia' }, { family: 'Zhu', given: 'Jieming' }] })
+    expect(zotero.records[1]).toMatchObject({ kind: 'chapter', identifiers: { arxiv: '2008.06448' } })
+    const lens = parseExport('lens.csv', 'Lens ID,Title,Publication Year,Publication Type,Source Title,Author/s,DOI,Abstract\n001,Drain,2017,conference proceedings article,ICWS,Pinjia He; Jieming Zhu,10.1109/ICWS.2017.13,Text.\n')!
+    expect(lens.format).toBe('csv')
+    expect(lens.records[0]).toMatchObject({ kind: 'conference', venue: 'ICWS', authors: [{ family: 'He', given: 'Pinjia' }, { family: 'Zhu', given: 'Jieming' }] })
+  })
+
+  it('RIS: a line or paragraph separator inside a value keeps its tag', () => {
+    expect(parseExport('x.ris', 'TY  - JOUR\nTI  - a b c\nER  - \n')!.records[0].title).toBe('a b c')
+  })
+
+  it('decodeExport: a few stray bytes in UTF-8 keep the file UTF-8', () => {
+    const bytes = Buffer.concat([Buffer.from('Schönberg and ', 'utf8'), Buffer.from([0xe9]), Buffer.from(' Müller', 'utf8')])
+    expect(decodeExport(bytes)).toBe('Schönberg and � Müller')
+  })
+
+  it('latexToText: dotless i and j, œ, unbraced cedilla, TeX logos and math commands', () => {
+    expect(latexToText(String.raw`{\i}n {\oe}uvre {\OE} \c c \v s {\LaTeX} \TeX{} $O(n \log n)$ costs 5\$`)).toBe('ın œuvre Œ ç š LaTeX TeX O(n log n) costs 5$')
+  })
+
+  it('identifiers: an arXiv DOI with a bad id, and several DOIs in one cell', () => {
+    const out = parseExport('f.csv', 'title,doi\nA,10.48550/arXiv.garbage\nB,"10.1109/X.1;10.2000/y"\nC,"doi: 10.1145/1 10.1145/2"\nD,"junk, 10.1145/3"\n')!
+    expect(out.records.map((r) => r.identifiers)).toEqual([{ doi: '10.48550/arxiv.garbage' }, { doi: '10.1109/x.1' }, { doi: '10.1145/1' }, { doi: '10.1145/3' }])
   })
 })

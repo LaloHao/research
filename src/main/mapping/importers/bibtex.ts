@@ -86,8 +86,16 @@ function nextComma(body: string, from: number): number {
   return body.length
 }
 
-/** `name = value` pairs; a value is `{…}`, `"…"`, a number or a macro, and pieces join with `#`. */
-function parseFields(body: string, strings: ReadonlyMap<string, string>): Record<string, string> {
+/** Characters that may still be appended to values across one file; once spent, macros expand to ''. */
+interface Budget {
+  left: number
+}
+
+/**
+ * `name = value` pairs; a value is `{…}`, `"…"`, a number or a macro, and pieces join with `#`. Every appended piece is
+ * charged to the file's `budget`, so a big macro referenced by every field of every entry cannot multiply the input.
+ */
+function parseFields(body: string, strings: ReadonlyMap<string, string>, budget: Budget): Record<string, string> {
   const fields: Record<string, string> = {}
   let count = 0
   let i = 0
@@ -124,9 +132,11 @@ function parseFields(body: string, strings: ReadonlyMap<string, string>): Record
         WORD.lastIndex = i
         const word = WORD.exec(body)
         if (!word) break
-        piece = strings.get(word[0].toLowerCase()) ?? word[0]
+        const macro = strings.get(word[0].toLowerCase())
+        piece = macro === undefined ? word[0] : budget.left > 0 ? macro : ''
         i = WORD.lastIndex
       }
+      budget.left -= piece.length
       if (value.length < MAX_BIB_VALUE) {
         value += piece
         if (value.length > MAX_BIB_VALUE) value = value.slice(0, MAX_BIB_VALUE)
@@ -149,6 +159,7 @@ export function parseBibtex(text: string, maxEntries = Number.POSITIVE_INFINITY)
   const head = /@\s*([A-Za-z]+)\s*([{(])/g
   const entries: BibEntry[] = []
   const strings = new Map<string, string>()
+  const budget: Budget = { left: Math.max(2 * text.length, 4_000_000) }
   while (entries.length < maxEntries) {
     const m = head.exec(text)
     if (!m) break
@@ -159,13 +170,13 @@ export function parseBibtex(text: string, maxEntries = Number.POSITIVE_INFINITY)
     if (type === 'comment' || type === 'preamble') continue
     const body = text.slice(open + 1, end)
     if (type === 'string') {
-      for (const [name, value] of Object.entries(parseFields(body, strings))) strings.set(name, value)
+      for (const [name, value] of Object.entries(parseFields(body, strings, budget))) strings.set(name, value)
       continue
     }
     const comma = body.indexOf(',')
     const key = comma < 0 ? '' : body.slice(0, comma).trim()
     if (!key || /\s/.test(key)) continue
-    entries.push({ type, key, fields: parseFields(body.slice(comma + 1), strings) })
+    entries.push({ type, key, fields: parseFields(body.slice(comma + 1), strings, budget) })
   }
   return entries
 }
@@ -184,7 +195,22 @@ const ACCENTS: Record<string, string> = {
   H: '\u030B',
   k: '\u0328'
 }
-const LETTERS: Record<string, string> = { ss: 'ß', aa: 'å', AA: 'Å', ae: 'æ', AE: 'Æ', o: 'ø', O: 'Ø', l: 'ł', L: 'Ł' }
+const LETTERS: Record<string, string> = {
+  ss: 'ß',
+  aa: 'å',
+  AA: 'Å',
+  ae: 'æ',
+  AE: 'Æ',
+  oe: 'œ',
+  OE: 'Œ',
+  o: 'ø',
+  O: 'Ø',
+  l: 'ł',
+  L: 'Ł',
+  i: 'ı',
+  j: 'ȷ'
+}
+const LOGOS: Record<string, string> = { LaTeX: 'LaTeX', LaTeXe: 'LaTeX2e', TeX: 'TeX', BibTeX: 'BibTeX' }
 
 /**
  * A BibTeX value as plain text: accents and special letters decoded, escapes and other commands dropped, braces removed.
@@ -193,11 +219,16 @@ const LETTERS: Record<string, string> = { ss: 'ß', aa: 'å', AA: 'Å', ae: 'æ'
 export function latexToText(s: string): string {
   return s
     .replace(/\s+/g, ' ')
+    // Inline math: delimiters dropped and command names kept ("$O(n \log n)$" → "O(n log n)").
+    .replace(/(?<!\\)\$([^$]{0,500}?)(?<!\\)\$/g, (_m, math: string) => math.replace(/\\([A-Za-z]+)/g, '$1'))
     .replace(/\\([`'^"~=.]) ?(?:\{ ?)?(?:\\([ij])|([A-Za-z]))(?: ?\})?/g, (_m, accent: string, dotless: string | undefined, letter: string | undefined) =>
       `${dotless ?? letter}${ACCENTS[accent]}`.normalize('NFC')
     )
-    .replace(/\\([cuvHk]) ?\{ ?([A-Za-z]) ?\}/g, (_m, accent: string, letter: string) => `${letter}${ACCENTS[accent]}`.normalize('NFC'))
-    .replace(/\\(ss|aa|AA|ae|AE|o|O|l|L)(?![A-Za-z]) ?/g, (_m, name: string) => LETTERS[name])
+    .replace(/\\([cuvHk])(?: ?\{ ?([A-Za-z]) ?\}| ([A-Za-z])(?![A-Za-z]))/g, (_m, accent: string, braced: string | undefined, bare: string | undefined) =>
+      `${braced ?? bare}${ACCENTS[accent]}`.normalize('NFC')
+    )
+    .replace(/\\(ss|aa|AA|ae|AE|oe|OE|o|O|l|L|i|j)(?![A-Za-z]) ?/g, (_m, name: string) => LETTERS[name])
+    .replace(/\\(LaTeXe|LaTeX|TeX|BibTeX)(?![A-Za-z]) ?/g, (_m, name: string) => LOGOS[name])
     .replace(/\\([&%$#_])/g, '$1')
     .replace(/\\[A-Za-z]+ ?/g, '')
     .replace(/[{}]/g, '')

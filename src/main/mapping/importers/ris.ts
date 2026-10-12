@@ -1,5 +1,5 @@
 /** `XY  - value`: two-character tag, two spaces, a dash. */
-const TAG = /^([A-Z][A-Z0-9]) {2}- ?(.*)$/
+const TAG = /^([A-Z][A-Z0-9]) {2}- ?([^]*)$/ // [^]: a value may hold U+2028/U+2029
 /** A value stops growing here (continuation lines are dropped beyond it). */
 export const MAX_RIS_VALUE = 100_000
 

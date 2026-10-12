@@ -29,7 +29,8 @@ type Family = 'bibtex' | 'ris' | 'csv'
 
 /**
  * The text of an export file: UTF-8 with or without BOM, UTF-16 (by its BOM, or by the zero bytes of mostly-ASCII
- * text), and anything that is not valid UTF-8 read as Windows-1252 (old Latin-1 exports). Never throws.
+ * text), and a file whose non-ASCII bytes are mostly not UTF-8 read as Windows-1252 (old Latin-1 exports); a few
+ * stray bytes in a UTF-8 file become U+FFFD instead of turning the whole file into mojibake. Never throws.
  */
 export function decodeExport(bytes: Uint8Array): string {
   if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) return new TextDecoder('utf-8').decode(bytes.subarray(3))
@@ -38,11 +39,16 @@ export function decodeExport(bytes: Uint8Array): string {
   const utf16 = guessUtf16(bytes)
   if (utf16 === 'le') return new TextDecoder('utf-16le').decode(bytes)
   if (utf16 === 'be') return utf16be(bytes)
-  try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-  } catch {
-    return windows1252(bytes)
+  const text = new TextDecoder('utf-8').decode(bytes)
+  // A few stray bytes in a UTF-8 file stay as U+FFFD; a file whose non-ASCII text is mostly invalid is Windows-1252.
+  let invalid = 0
+  let valid = 0
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i)
+    if (code === 0xfffd) invalid++
+    else if (code >= 0x80) valid++
   }
+  return invalid > 0 && invalid >= valid ? windows1252(bytes) : text
 }
 
 function utf16be(bytes: Uint8Array): string {
@@ -146,16 +152,21 @@ function clean(s: string | null | undefined, max = MAX_TITLE_LENGTH): string | n
     .trim()
     .slice(0, max)
     .trim()
-  return v ? v : null
+  // A fresh copy: a slice would keep its whole parent (a 100k value, or the file) alive behind a short title.
+  return v ? (v + ' ').slice(0, -1) : null
 }
 
 const abstractOf = (s: string | null): string | null => (s && !NO_ABSTRACT.test(s) ? s : null)
 
 const DOI = /^10\.\d{4,9}\/\S+$/
 
+/** The first valid DOI of a field (a cell can hold several, separated by `;`, `,` or blanks). */
 function doiOf(raw: string): string | null {
-  const doi = normalizeDoi(raw.slice(0, 500))
-  return DOI.test(doi) ? doi : null
+  for (const piece of raw.slice(0, 500).split(/[;,\s]+/, 10)) {
+    const doi = normalizeDoi(piece)
+    if (DOI.test(doi)) return doi
+  }
+  return null
 }
 
 function linkOf(url: string): ParsedInput | null {
@@ -171,7 +182,7 @@ function identifiers(doiField: string | null, extra: { arxiv?: string | null; ur
   const link = extra.url ? linkOf(extra.url) : null
   const doi = (doiField ? doiOf(doiField) : null) ?? (link?.kind === 'doi' && DOI.test(link.doi) ? link.doi : null)
   const arxiv =
-    (extra.arxiv ? normalizeArxiv(extra.arxiv.slice(0, 100)) : null) ?? (link?.kind === 'arxiv' ? link.arxiv : null) ?? (doi ? arxivFromDoi(doi) : null)
+    (extra.arxiv ? normalizeArxiv(extra.arxiv.slice(0, 100)) : null) ?? (link?.kind === 'arxiv' ? link.arxiv : null) ?? (doi ? normalizeArxiv(arxivFromDoi(doi) ?? '') : null)
   return { ...(doi ? { doi } : {}), ...(arxiv ? { arxiv } : {}) }
 }
 
@@ -283,8 +294,11 @@ function csvKind(value: string | null): PaperKind | null {
   if (!value) return null
   const v = value.toLowerCase()
   if (v.includes('conference') || v.includes('proceeding')) return 'conference'
-  if (v.includes('chapter')) return 'chapter'
+  if (v.includes('chapter') || v.includes('section')) return 'chapter'
   if (v.includes('book')) return 'book'
+  if (v.includes('thesis') || v.includes('dissertation')) return 'thesis'
+  if (v.includes('report')) return 'report'
+  if (v.includes('preprint')) return 'preprint'
   if (v.includes('journal') || v.includes('article') || v.includes('review') || v.includes('magazine')) return 'article'
   return 'other'
 }
@@ -299,16 +313,29 @@ function scopusAuthors(row: Record<string, string>): Author[] {
   return splitAuthors(short, short.includes(';') ? /;/ : /(?<=\.),\s*/)
 }
 
+/**
+ * Any other CSV's author list: `;`-separated; or `,`-separated names ("P He, J Zhu", as Publish or Perish writes
+ * them) when every piece has a blank; or "Family, Given" pairs ("He, Pinjia, Zhu, Jieming") otherwise.
+ */
+function genericAuthors(raw: string): Author[] {
+  if (raw.includes(';') || !raw.includes(',')) return splitAuthors(raw, /;/)
+  const pieces = raw.split(',', MAX_AUTHORS * 4).map((p) => p.trim())
+  if (pieces.every((p) => p.includes(' '))) return parseNames(pieces)
+  const pairs: string[] = []
+  for (let k = 0; k < pieces.length; k += 2) pairs.push(pieces.slice(k, k + 2).join(', '))
+  return parseNames(pairs)
+}
+
 function csvRecord(format: ImportFormat, row: Record<string, string>): WorkCandidate | null {
   const title = pick(row, ['Title', 'Document Title', 'Article Title', 'Título', 'Titulo'])
   if (!title) return null
   return {
     title,
-    authors: format === 'csv_scopus' ? scopusAuthors(row) : splitAuthors(pick(row, ['Authors', 'Author', 'Autores'], AUTHOR_LIST) ?? '', /;/),
+    authors: format === 'csv_scopus' ? scopusAuthors(row) : genericAuthors(pick(row, ['Authors', 'Author', 'Author/s', 'Autores'], AUTHOR_LIST) ?? ''),
     year: firstYear(pick(row, ['Year', 'Publication Year', 'Publication_Year', 'Año'])),
     venue: pick(row, ['Source title', 'Publication Title', 'Venue', 'Journal', 'Source'], MAX_VENUE_LENGTH),
-    abstract: abstractOf(pick(row, ['Abstract', 'Resumen'], MAX_ABSTRACT_LENGTH)),
-    kind: csvKind(pick(row, ['Document Type', 'Document Identifier', 'Type'])),
+    abstract: abstractOf(pick(row, ['Abstract', 'Abstract Note', 'Resumen'], MAX_ABSTRACT_LENGTH)),
+    kind: csvKind(pick(row, ['Document Type', 'Document Identifier', 'Item Type', 'Publication Type', 'Type'])),
     identifiers: identifiers(pick(row, ['DOI']), { arxiv: pick(row, ['arXiv', 'arxiv_id']), url: pick(row, ['Link', 'PDF Link', 'URL'], 2000) })
   }
 }
@@ -316,7 +343,11 @@ function csvRecord(format: ImportFormat, row: Record<string, string>): WorkCandi
 function fromCsv(text: string): ParsedExport {
   const { header, rows, truncated } = parseCsv(text, { maxRows: MAX_EXPORT_RECORDS })
   const has = (name: string): boolean => header.some((h) => h.toLowerCase() === name.toLowerCase())
-  const format: ImportFormat = has('Source title') && has('Title') ? 'csv_scopus' : has('Document Title') && has('Publication Year') ? 'csv_ieee' : 'csv'
+  // Scopus by a column only Scopus writes (Lens.org also has «Source Title» and «Title»), or by its links.
+  const scopus =
+    has('Title') &&
+    (has('EID') || has('Author full names') || (has('Source title') && rows.slice(0, 20).some((row) => /\bscopus\.com\//i.test(pick(row, ['Link'], 2000) ?? ''))))
+  const format: ImportFormat = scopus ? 'csv_scopus' : has('Document Title') && has('Publication Year') ? 'csv_ieee' : 'csv'
   return collect(
     format,
     rows.map((row) => csvRecord(format, row)),
