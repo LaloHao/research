@@ -141,7 +141,7 @@ export function withThesisQuestions(d: ProtocolDraft, thesis: Pick<ThesisContext
 
 const OPENALEX_BY_KIND: Partial<Record<PaperKind, OpenAlexType>> = {
   article: 'article',
-  conference: 'article',
+  conference: 'conference-paper',
   preprint: 'preprint',
   book: 'book',
   chapter: 'book-chapter',
@@ -149,7 +149,7 @@ const OPENALEX_BY_KIND: Partial<Record<PaperKind, OpenAlexType>> = {
   report: 'report'
 }
 
-/** The OpenAlex types the search form starts with, from the protocol's accepted types (conference papers are articles there). */
+/** The OpenAlex types the search form starts with, from the protocol's accepted types. */
 export function openAlexTypesFor(kinds: readonly PaperKind[]): OpenAlexType[] {
   return [...new Set(kinds.flatMap((k) => OPENALEX_BY_KIND[k] ?? []))]
 }

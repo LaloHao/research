@@ -111,7 +111,7 @@ describe('protocol drafts', () => {
   })
 
   it('prefills the OpenAlex types from the accepted publication types', () => {
-    expect(openAlexTypesFor(['article', 'conference', 'chapter', 'web'])).toEqual(['article', 'book-chapter'])
+    expect(openAlexTypesFor(['article', 'conference', 'chapter', 'web'])).toEqual(['article', 'conference-paper', 'book-chapter'])
   })
 })
 

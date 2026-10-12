@@ -87,6 +87,16 @@ describe('OpenAlexSearch', () => {
     expect(page.works[0]).toMatchObject({ kind: 'article', identifiers: { doi: '10.5555/mask.2023', openalex: 'W3000000002' }, abstract: 'We mask secrets in logs.' })
   })
 
+  it('reads a conference paper as a conference paper', async () => {
+    const body = JSON.stringify({
+      meta: { count: 1, next_cursor: null },
+      results: [{ id: 'https://openalex.org/W4384345635', title: 'Recommending Root-Cause and Mitigation Steps for Cloud Incidents', publication_year: 2023, type: 'conference-paper' }]
+    })
+    const { search } = client([{ url: /cursor=/, body }])
+    const page = await search.page('incidents', null, '*')
+    expect(page.works[0]).toMatchObject({ kind: 'conference', identifiers: { openalex: 'W4384345635' } })
+  })
+
   it('looks works up by id, 100 per request, leaving out works without a title', async () => {
     const { search, fetch } = client([{ url: /filter=ids\.openalex%3A/, body: fx('mapping.works.openalex.json') }])
     const ids = Array.from({ length: 150 }, (_, i) => `W${3000000003 + i}`)

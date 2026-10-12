@@ -43,7 +43,7 @@ export type SnowballDirection = (typeof SNOWBALL_DIRECTIONS)[number]
 export const DUPLICATE_REASONS = ['similar_title', 'same_title', 'conflicting_ids', 'same_id'] as const
 export type DuplicateReason = (typeof DUPLICATE_REASONS)[number]
 /** OpenAlex work types offered as search filters. */
-export const OPENALEX_TYPES = ['article', 'preprint', 'review', 'book', 'book-chapter', 'dissertation', 'report'] as const
+export const OPENALEX_TYPES = ['article', 'conference-paper', 'preprint', 'review', 'book', 'book-chapter', 'dissertation', 'report'] as const
 export type OpenAlexType = (typeof OPENALEX_TYPES)[number]
 /** Databases offered when importing (another name can be typed). */
 export const DATABASE_NAMES = ['Scopus', 'IEEE Xplore', 'ACM Digital Library', 'Web of Science'] as const

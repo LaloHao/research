@@ -709,6 +709,7 @@
     },
     "openalex_types": {
       "article": "Artículo",
+      "conference-paper": "Artículo de congreso",
       "preprint": "Preprint",
       "review": "Revisión",
       "book": "Libro",
