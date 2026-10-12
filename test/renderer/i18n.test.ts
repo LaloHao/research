@@ -13,6 +13,7 @@ import { RELATION_TYPES } from '../../src/shared/typedRelations'
 import { TRASH_PROBLEMS } from '../../src/shared/trash'
 import { CONFLICT_SIDES, SYNC_ERROR_CODES } from '../../src/shared/sync'
 import { SYNC_STATES } from '../../src/renderer/lib/sync'
+import { FACET_SUGGESTION_KINDS, SUGGESTION_VALIDITIES } from '../../src/shared/facetSuggestions'
 
 const lookup = (path: string): unknown => path.split('.').reduce<unknown>((node, key) => (node as Record<string, unknown> | undefined)?.[key], es)
 const JOB_STATES: JobState[] = ['queued', 'running', 'done', 'failed', 'cancelled']
@@ -124,7 +125,53 @@ describe('es.json covers every code the UI can receive', () => {
       'diff_too_large'
     ].map((k) => `sync.conflicts.${k}`),
     ...['title', 'body', 'sync_and_close', 'close_anyway', 'cancel', 'syncing', 'conflicts', 'open_sync'].map((k) => `sync.close.${k}`),
-    ...['title', 'enabled', 'enabled_help', 'minutes', 'minutes_help'].map((k) => `sync.auto.${k}`)
+    ...['title', 'enabled', 'enabled_help', 'minutes', 'minutes_help'].map((k) => `sync.auto.${k}`),
+    ...SUGGESTION_VALIDITIES.filter((v) => v !== 'ok').map((v) => `facets.invalid.${v}`),
+    ...FACET_SUGGESTION_KINDS.map((k) => `facets.kinds.${k}`),
+    ...[
+      'title',
+      'intro',
+      'suggest',
+      'confirm',
+      'queued',
+      'running',
+      'pending_one',
+      'pending_other',
+      'none',
+      'last_run',
+      'last_run_failed',
+      'rationale',
+      'examples',
+      'example_quote',
+      'example_page',
+      'quote_not_found',
+      'close_quote',
+      'accept',
+      'edit_accept',
+      'save_accept',
+      'cancel',
+      'reject',
+      'restore',
+      'undo',
+      'value_label',
+      'to_label',
+      'values_label',
+      'accepted_title_one',
+      'accepted_title_other',
+      'rejected_title_one',
+      'rejected_title_other',
+      'form_dirty',
+      'fill_offer',
+      'fill',
+      'fill_queued',
+      'later'
+    ].map((k) => `facets.${k}`),
+    ...['accepted', 'rejected', 'restored'].map((k) => `facets.done.${k}`),
+    ...['new_value', 'alias'].map((k) => `facets.proposal.${k}`),
+    'facets.file.conflict',
+    'facets.file.invalid',
+    'settings.tabs.form_count',
+    ...['auto_suggest_facets', 'auto_suggest_facets_help', 'auto_suggest_facets_after', 'budget_facets'].map((k) => `settings.${k}`)
   ])('%s', (path) => {
     expect(typeof lookup(path)).toBe('string')
   })

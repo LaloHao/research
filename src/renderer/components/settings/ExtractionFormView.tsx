@@ -20,6 +20,7 @@ import {
 import { parseInteger, type NumberIssue } from '../../lib/numberField'
 import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
+import { FacetSuggestionsSection } from './FacetSuggestionsSection'
 
 type FacetType = (typeof FACET_TYPES)[number]
 
@@ -103,8 +104,12 @@ export function ExtractionFormView(): React.JSX.Element {
     setScaleIssues({})
   }
 
+  // Two events can reload the form back to back (a facet acceptance emits both); only the latest answer counts.
+  const loadRequest = useRef(0)
   const load = useCallback(() => {
+    const token = ++loadRequest.current
     window.research.llm.info().then((info) => {
+      if (token !== loadRequest.current) return
       setFormInfo(info.form)
       if (info.form.status !== 'ok') {
         applyEditor(null)
@@ -123,6 +128,8 @@ export function ExtractionFormView(): React.JSX.Element {
   }, [])
   useEffect(load, [load])
   useEvent('project-changed', load)
+  // Accepting or undoing a facet suggestion rewrites the saved form; reload it so the editor shows the change.
+  useEvent('facets-changed', load)
 
   const mutate = (fn: (draft: FormDraft) => FormDraft): void => {
     if (!editor) return
@@ -711,6 +718,8 @@ export function ExtractionFormView(): React.JSX.Element {
             </button>
             <button onClick={() => void window.research.llm.showProjectFile()}>{t('settings.form_show_file')}</button>
           </div>
+
+          <FacetSuggestionsSection form={editor.saved} formDirty={dirty} />
         </>
       )}
     </section>

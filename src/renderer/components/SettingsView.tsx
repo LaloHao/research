@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ProjectInfo } from '../../shared/ipc'
+import { useFacetSuggestionCount } from '../hooks/useFacetSuggestionCount'
 import { nextTab, SETTINGS_TABS, type SettingsTab } from '../lib/settingsTabs'
 import { AppSection } from './settings/AppSection'
 import { ClaudeSection } from './settings/ClaudeSection'
@@ -34,6 +35,7 @@ export function SettingsView({ project }: { project: ProjectInfo }): React.JSX.E
   const [tab, setTab] = useState<SettingsTab>(loadTab)
   const [saved, setSaved] = useState(false)
   const tabButtons = useRef(new Map<SettingsTab, HTMLButtonElement>())
+  const pending = useFacetSuggestionCount()
 
   const selectTab = (next: SettingsTab): void => {
     setTab(next)
@@ -76,7 +78,7 @@ export function SettingsView({ project }: { project: ProjectInfo }): React.JSX.E
             className={tab === id ? 'active' : ''}
             onClick={() => selectTab(id)}
           >
-            {t(`settings.tabs.${id}`)}
+            {id === 'form' && pending > 0 ? t('settings.tabs.form_count', { count: pending }) : t(`settings.tabs.${id}`)}
           </button>
         ))}
       </nav>
