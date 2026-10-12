@@ -1,37 +1,52 @@
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
+import type { JobSpec } from '../../shared/jobs'
 import {
   MAIN_REVIEWER,
   MAPPING_ID,
   ProtocolDraftSchema,
+  SEARCH_CAP,
   SearchSchema,
+  SNOWBALL_CAP,
   type DecideRequest,
   type Decision,
   type ImportOutcome,
   type ImportSource,
+  type IngestPlan,
   type MappingRecord,
   type MappingRecordRow,
   type MappingSummary,
   type MappingView,
+  type OpenAlexSearchRequest,
   type Phase,
   type ProtocolDraft,
   type QueueQuery,
+  type ScreeningPlan,
+  type ScreeningSuggestion,
   type Search,
+  type SnowballDirection,
   type WorkCandidate
 } from '../../shared/mapping'
 import type { Paper } from '../../shared/schemas'
+import type { CostOperation, LlmModel } from '../../shared/summary'
 import type { IndexCache } from '../cache/IndexCache'
+import type { ResolvedMetadata } from '../ingest/types'
 import { findDuplicate, type DedupeEntry } from '../library/dedupe'
-import { UserFacingError } from '../library/UserFacingError'
+import type { IngestOutcome } from '../library/LibraryService'
+import { toUserFacing, UserFacingError } from '../library/UserFacingError'
+import { operationCap, type BudgetLimits } from '../llm/BudgetGuard'
 import { ConflictError, type ReadResult } from '../project/errors'
 import { EMPTY_MAPPING_LISTS, MAPPING_FILE_KINDS, MAPPING_FILE_NAMES, newMappingId, type MappingFileKind, type MappingFiles } from '../project/mappingFiles'
 import type { ProjectStore } from '../project/ProjectStore'
 import { cleanIdentifiers, mergeCandidate, newRecord, RecordMatcher, recordIdFor, recordKey, syncDuplicates } from './dedup'
 import { decodeExport, MAX_EXPORT_BYTES, parseExport } from './importers/importFile'
+import { openAlexFilter, type OpenAlexSearch } from './OpenAlexSearch'
 import { prismaCounts } from './prisma'
 import { applyDraft, newProtocol } from './protocol'
+import type { ScreeningSuggester, SuggestedScreening } from './ScreeningSuggester'
+import { MAX_RECORDS_PER_CALL, SCREENING_PROMPT_VERSION } from './screeningPrompt'
 import {
   activeSearchIds,
   carriedDecisions,
@@ -58,6 +73,22 @@ export interface MappingServiceDeps {
   now?: () => Date
   /** Random hex digits for new ids; tests pass a counter. */
   randomHex?: (digits: number) => string
+  /** The usual ingest. */
+  library: {
+    ingestIdentifier(input: string, signal?: AbortSignal): Promise<IngestOutcome>
+    ingestMetadata(meta: ResolvedMetadata, signal?: AbortSignal): Promise<IngestOutcome>
+  }
+  openalex: OpenAlexSearch
+  /** 3a citations: a paper's references (written into paper.yaml) and the works citing it (the cache). */
+  citations: { fetch(paperId: string, signal?: AbortSignal): Promise<unknown>; fetchCitedBy(paperId: string, signal?: AbortSignal): Promise<unknown> }
+  suggester: Pick<ScreeningSuggester, 'titleAbstract' | 'fullText'>
+  /** Learned estimates, caps and the month's spending, for the plans. */
+  costs: { estimate(operation: CostOperation): number; limits(): BudgetLimits; monthSpent(): Promise<number> }
+  /** Queues a job; returns its id. Jobs never queue themselves: the window asks after the user confirms. */
+  enqueue: (spec: JobSpec) => number
+  /** Pause before each OpenAlex request; tests pass 0. */
+  pauseMs?: number
+  sleep?: (ms: number) => Promise<void>
 }
 
 /** A mapping's files as read, each with the hash of its text (null: not written yet; it reads as empty). */
@@ -168,6 +199,37 @@ function fromPaper(p: Paper): WorkCandidate {
     paperId: p.id
   }
 }
+
+/** A record as ingest metadata: what an export or OpenAlex gave, never claimed complete. */
+function recordMetadata(r: MappingRecord): ResolvedMetadata {
+  const ids = cleanIdentifiers(r.identifiers)
+  return {
+    kind: r.kind ?? 'other',
+    title: r.title,
+    authors: r.authors,
+    year: r.year ?? undefined,
+    venue: r.venue ?? undefined,
+    abstract: r.abstract ?? undefined,
+    identifiers: { ...(ids.doi ? { doi: ids.doi } : {}), ...(ids.arxiv ? { arxiv: ids.arxiv } : {}), ...(ids.openalex ? { openalex: ids.openalex } : {}) },
+    complete: false
+  }
+}
+
+function recordCandidate(r: MappingRecord): WorkCandidate {
+  return { title: r.title, authors: r.authors, year: r.year, venue: r.venue, abstract: r.abstract, kind: r.kind, identifiers: r.identifiers }
+}
+
+/** `publication_year:>2014,type:article` as the log keeps it: `{ publication_year: '>2014', type: 'article' }`. */
+function filtersOf(filter: string | null): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const part of (filter ?? '').split(',')) {
+    const at = part.indexOf(':')
+    if (at > 0) out[part.slice(0, at)] = part.slice(at + 1)
+  }
+  return out
+}
+
+type Spec<T extends JobSpec['type']> = Extract<JobSpec, { type: T }>
 
 /** Systematic mappings: protocol, search log, records, screening and their index. Every write goes through ProjectStore. */
 export class MappingService {
@@ -526,6 +588,326 @@ export class MappingService {
       }
       return { writes: [{ kind: 'decisions', file: { ...files.decisions.value, decisions: [...decisions, resolved] } }], result: undefined }
     })
+  }
+
+  /** «Buscar en OpenAlex»: a job; the search is logged when it ends. */
+  requestSearch(id: string, req: OpenAlexSearchRequest): number {
+    if (!this.deps.store.mappingExists(id)) throw new UserFacingError('mapping_not_found')
+    const query = req.query.trim()
+    if (!query) throw new UserFacingError('invalid_edit')
+    const cap = Number.isFinite(req.cap) ? Math.round(req.cap) : SEARCH_CAP.default
+    return this.deps.enqueue({
+      type: 'mapping_search',
+      mappingId: id,
+      query,
+      fromYear: req.fromYear,
+      toYear: req.toYear,
+      types: [...new Set(req.types)],
+      cap: Math.max(1, Math.min(cap, SEARCH_CAP.max))
+    })
+  }
+
+  /** Every page of results up to the cap, then one log entry with the exact string, filters, request and counts. */
+  async runSearch(spec: Spec<'mapping_search'>, signal: AbortSignal): Promise<{ message: 'mapping_searched' }> {
+    try {
+      const { openalex } = this.deps
+      const filter = openAlexFilter(spec)
+      await this.pause()
+      signal.throwIfAborted()
+      const found = await openalex.search(spec.query, filter, spec.cap, signal)
+      signal.throwIfAborted()
+      await this.addSearch(
+        spec.mappingId,
+        {
+          kind: 'openalex',
+          database: 'OpenAlex',
+          query: spec.query,
+          filters: filtersOf(filter),
+          request: openalex.requestUrl(spec.query, filter),
+          total: found.total,
+          capped: found.capped
+        },
+        found.works
+      )
+      return { message: 'mapping_searched' }
+    } catch (error) {
+      throw signal.aborted ? error : toUserFacing(error)
+    }
+  }
+
+  /** «Buscar candidatos» (snowballing): a job, only when some record is included on full text and is a library paper. */
+  requestSnowball(id: string, direction: SnowballDirection): number {
+    if (!this.deps.store.mappingExists(id)) throw new UserFacingError('mapping_not_found')
+    if (this.included(id).length === 0) throw new UserFacingError('nothing_to_snowball')
+    return this.deps.enqueue({ type: 'mapping_snowball', mappingId: id, direction })
+  }
+
+  /**
+   * Backward: the OpenAlex references of each included paper (fetched first when it never had them). Forward: the works
+   * citing it, fetched now. The union is looked up with abstracts and logged as one iteration with its origin.
+   */
+  async runSnowball(spec: Spec<'mapping_snowball'>, signal: AbortSignal): Promise<{ message: 'snowballed' }> {
+    try {
+      const { cache, citations, openalex } = this.deps
+      const from = this.included(spec.mappingId)
+      if (from.length === 0) throw new UserFacingError('nothing_to_snowball')
+      const found = new Set<string>()
+      for (const row of from) {
+        const paperId = row.paper_id!
+        signal.throwIfAborted()
+        // A paper whose citations were never fetched has neither its references nor its OpenAlex id yet.
+        if (cache.getPaper(paperId)?.citations_status === 'none') await citations.fetch(paperId, signal)
+        signal.throwIfAborted()
+        if (spec.direction !== 'forward') {
+          for (const e of cache.citationEdges()) if (e.citing === paperId) found.add(e.cited)
+        }
+        if (spec.direction !== 'backward') {
+          // A paper OpenAlex does not know has no citing works to fetch.
+          if (cache.relationRows().find((r) => r.id === paperId)?.openalex_id) await citations.fetchCitedBy(paperId, signal)
+          signal.throwIfAborted()
+          for (const e of cache.incomingEdges()) if (e.paperId === paperId) found.add(e.citing)
+        }
+      }
+      const ids = [...found].sort().slice(0, SNOWBALL_CAP)
+      let works: WorkCandidate[] = []
+      if (ids.length > 0) {
+        await this.pause()
+        signal.throwIfAborted()
+        works = await openalex.works(ids, signal)
+      }
+      signal.throwIfAborted()
+      const searches = this.required(await this.load(spec.mappingId)).searches.value.searches
+      const iteration = searches.filter((s) => s.kind === 'snowball').length + 1
+      await this.addSearch(
+        spec.mappingId,
+        {
+          kind: 'snowball',
+          database: 'OpenAlex',
+          filters: { direction: spec.direction },
+          origin: { direction: spec.direction, from: from.map((r) => r.id), iteration },
+          total: found.size,
+          capped: found.size > ids.length
+        },
+        works
+      )
+      return { message: 'snowballed' }
+    } catch (error) {
+      throw signal.aborted ? error : toUserFacing(error)
+    }
+  }
+
+  /** What «Agregar a la biblioteca» would do: how many records, and the summaries it starts when automatic summaries are on. */
+  ingestPlan(id: string): IngestPlan {
+    const count = this.toIngest(id).length
+    const autoSummarize = this.deps.store.config.llm.auto_summarize
+    return { count, autoSummarize, estimateUsd: autoSummarize ? count * this.deps.costs.estimate('summarize') : 0 }
+  }
+
+  /** After the confirmation: one ingest job per record included on title and abstract that is not a library paper yet (these, or all); one batch. */
+  requestIngest(id: string, recordIds?: string[]): number {
+    if (!this.deps.store.mappingExists(id)) throw new UserFacingError('mapping_not_found')
+    const rows = this.toIngest(id, recordIds)
+    const batchId = randomUUID()
+    for (const row of rows) this.deps.enqueue({ type: 'ingest_record', mappingId: id, recordId: row.id, batchId })
+    return rows.length
+  }
+
+  /**
+   * The usual ingest by DOI, arXiv id or OpenAlex id; the record's own metadata when it has none or the registries do
+   * not know it. The record is then linked to the paper. A record already a library paper (by DOI, arXiv id or title,
+   * never a title across different DOIs) is only linked.
+   */
+  async ingestRecord(spec: Spec<'ingest_record'>, signal: AbortSignal): Promise<IngestOutcome> {
+    try {
+      const files = this.required(await this.load(spec.mappingId))
+      const content = contentOf(files)
+      const record = content.records.find((r) => r.id === spec.recordId)
+      if (!record) throw new UserFacingError('mapping_not_found')
+      if (!this.ingestable(content, record)) throw new UserFacingError('not_eligible')
+      const { store, cache, library } = this.deps
+      if (record.paper_id && store.paperExists(record.paper_id)) return { status: 'duplicate', paperId: record.paper_id }
+      const known = libraryPaper(recordCandidate(record), cache.dedupeEntries())
+      if (known && store.paperExists(known)) {
+        await this.linkPaper(spec.mappingId, record.id, known)
+        return { status: 'duplicate', paperId: known }
+      }
+      const ids = cleanIdentifiers(record.identifiers)
+      const identifier = ids.doi ?? (ids.arxiv ? `arXiv:${ids.arxiv}` : undefined) ?? ids.openalex ?? null
+      let outcome: IngestOutcome
+      try {
+        outcome = identifier ? await library.ingestIdentifier(identifier, signal) : await library.ingestMetadata(recordMetadata(record), signal)
+      } catch (error) {
+        if (!identifier || signal.aborted || toUserFacing(error).code !== 'not_found') throw error
+        outcome = await library.ingestMetadata(recordMetadata(record), signal)
+      }
+      signal.throwIfAborted()
+      // A new paper is this record's; a paper the ingest merged into is linked only when it is the same work by identifier
+      // or by title without different DOIs (the library's ingest may have taken a preprint for its published version).
+      const link = outcome.status === 'added' ? outcome.paperId : libraryPaper(recordCandidate(record), cache.dedupeEntries())
+      if (link === outcome.paperId) await this.linkPaper(spec.mappingId, record.id, outcome.paperId)
+      return outcome
+    } catch (error) {
+      throw signal.aborted ? error : toUserFacing(error)
+    }
+  }
+
+  /** «Sugerir cribado»'s confirmation: records, calls, estimate, caps and the month's spending. */
+  async suggestPlan(id: string, phase: Phase): Promise<ScreeningPlan> {
+    const { ready, withoutText } = this.toSuggest(id, phase)
+    const calls = phase === 'title_abstract' ? Math.ceil(ready.length / MAX_RECORDS_PER_CALL) : ready.length
+    const limits = this.deps.costs.limits()
+    return {
+      phase,
+      count: ready.length,
+      calls,
+      estimateUsd: calls * this.deps.costs.estimate('screening'),
+      perCallUsd: operationCap(limits, 'screening'),
+      batchCapUsd: limits.perBatchUsd,
+      monthSpentUsd: await this.deps.costs.monthSpent(),
+      monthCapUsd: limits.perMonthUsd,
+      withoutText
+    }
+  }
+
+  /** After the confirmation («Sugerir»): one job per 20 records (title and abstract) or per record (full text), all in one batch. */
+  requestSuggestions(id: string, phase: Phase, model?: LlmModel): { batchId: string; count: number } {
+    if (!this.deps.store.mappingExists(id)) throw new UserFacingError('mapping_not_found')
+    const { ready } = this.toSuggest(id, phase)
+    const batchId = randomUUID()
+    const size = phase === 'title_abstract' ? MAX_RECORDS_PER_CALL : 1
+    for (let i = 0; i < ready.length; i += size) {
+      this.deps.enqueue({ type: 'screen_suggest', mappingId: id, phase, recordIds: ready.slice(i, i + size).map((r) => r.id), batchId, ...(model ? { model } : {}) })
+    }
+    return { batchId, count: ready.length }
+  }
+
+  /**
+   * Asks Claude about the job's records that are still undecided and eligible, and appends what comes back, stamped
+   * with the protocol version sent. Decides nothing.
+   */
+  async runSuggestions(spec: Spec<'screen_suggest'>, signal: AbortSignal): Promise<{ message: 'screening_suggested' }> {
+    try {
+      const content = contentOf(this.required(await this.load(spec.mappingId)))
+      const { protocol } = content
+      const wanted = new Set(spec.recordIds)
+      // Records decided, merged, waiting for a duplicate answer or already suggested since the job was queued are not asked about.
+      const pending = content.records.filter((r) => wanted.has(r.id) && this.suggestable(content, r, spec.phase))
+      if (pending.length === 0) return { message: 'screening_suggested' }
+      const made: SuggestedScreening[] = []
+      let model = ''
+      if (spec.phase === 'title_abstract') {
+        const out = await this.deps.suggester.titleAbstract({ protocol, records: pending, batchId: spec.batchId, model: spec.model, signal })
+        made.push(...out.suggestions)
+        model = out.model
+      } else {
+        for (const record of pending) {
+          signal.throwIfAborted()
+          const out = await this.deps.suggester.fullText({ protocol, record, paperId: record.paper_id!, batchId: spec.batchId, model: spec.model, signal })
+          made.push(out.suggestion)
+          model = out.model
+        }
+      }
+      // A run cancelled while Claude answered writes nothing (its cost is logged).
+      signal.throwIfAborted()
+      await this.appendSuggestions(spec.mappingId, spec.phase, made, model, protocol.version)
+      return { message: 'screening_suggested' }
+    } catch (error) {
+      throw signal.aborted ? error : toUserFacing(error)
+    }
+  }
+
+  /** Records included on full text that are library papers: where snowballing starts. */
+  private included(id: string): MappingRecordRow[] {
+    const { cache, store } = this.deps
+    return cache
+      .mappingRows(id)
+      .filter((r) => r.active && !r.duplicate && r.title_abstract.state === 'include' && r.full_text.state === 'include' && r.paper_id !== null && store.paperExists(r.paper_id))
+  }
+
+  private toIngest(id: string, recordIds?: string[]): MappingRecordRow[] {
+    const wanted = recordIds ? new Set(recordIds) : null
+    return this.deps.cache
+      .mappingRows(id)
+      .filter(
+        (r) =>
+          r.active && !r.duplicate && r.title_abstract.state === 'include' && (r.paper_id === null || !this.deps.store.paperExists(r.paper_id)) && (!wanted || wanted.has(r.id))
+      )
+  }
+
+  /** Undecided records without a suggestion made with the current protocol; on full text, only papers with text. */
+  private toSuggest(id: string, phase: Phase): { ready: MappingRecordRow[]; withoutText: number } {
+    const rows = this.queue(id, { phase, filter: 'pending' }).filter((r) => !r.suggestions[phase] || r.suggestions[phase]!.outdated)
+    if (phase === 'title_abstract') return { ready: rows, withoutText: 0 }
+    const ready = rows.filter((r) => r.paper_id !== null && this.deps.store.paperExists(r.paper_id) && this.deps.cache.getPaper(r.paper_id)?.text_status === 'ok')
+    return { ready, withoutText: rows.length - ready.length }
+  }
+
+  /** As `decide` would take it: not merged, brought by a live search, not waiting for a duplicate answer. */
+  private decidable(c: MappingContent, record: MappingRecord): boolean {
+    const live = activeSearchIds(c.searches)
+    return !record.merged_into && record.sources.some((s) => live.has(s)) && !record.duplicate_of && !syncPairs(c).has(record.id)
+  }
+
+  private ingestable(c: MappingContent, record: MappingRecord): boolean {
+    if (!this.decidable(c, record)) return false
+    return phaseView(headsOf(decisionHeads(c.decisions), record.id, 'title_abstract'), c.protocol.version).state === 'include'
+  }
+
+  /** Still worth asking Claude about: decidable, pending in the phase, and not suggested with the current protocol yet. */
+  private suggestable(c: MappingContent, record: MappingRecord, phase: Phase): boolean {
+    if (!this.decidable(c, record)) return false
+    const heads = decisionHeads(c.decisions)
+    const version = c.protocol.version
+    if (phaseView(headsOf(heads, record.id, phase), version).state !== 'pending') return false
+    if (phase === 'full_text') {
+      if (phaseView(headsOf(heads, record.id, 'title_abstract'), version).state !== 'include') return false
+      const paperId = record.paper_id
+      if (!paperId || !this.deps.store.paperExists(paperId) || this.deps.cache.getPaper(paperId)?.text_status !== 'ok') return false
+    }
+    return !c.suggestions.some((s) => s.record === record.id && s.phase === phase && s.protocol_version === version)
+  }
+
+  private linkPaper(id: string, recordId: string, paperId: string): Promise<void> {
+    const at = this.now().toISOString()
+    return this.mutate(id, (files) => {
+      const records = files.records.value.records
+      const record = records.find((r) => r.id === recordId)
+      if (!record || record.paper_id === paperId) return { writes: [], result: undefined }
+      return {
+        writes: [{ kind: 'records', file: { ...files.records.value, records: records.map((r) => (r.id === recordId ? { ...r, paper_id: paperId, updated_at: at } : r)) } }],
+        result: undefined
+      }
+    })
+  }
+
+  private appendSuggestions(id: string, phase: Phase, made: SuggestedScreening[], model: string, version: number): Promise<void> {
+    if (made.length === 0) return Promise.resolve()
+    const at = this.now().toISOString()
+    const entries: ScreeningSuggestion[] = made.map((s) => ({
+      id: this.newId('g'),
+      record: s.record,
+      phase,
+      decision: s.decision,
+      criterion: s.criterion,
+      justification: s.justification,
+      quote: s.quote,
+      page: s.page,
+      found: s.found,
+      model,
+      at,
+      protocol_version: version,
+      prompt_version: SCREENING_PROMPT_VERSION
+    }))
+    return this.mutate(id, (files) => {
+      const list = files.suggestions.value.suggestions
+      const fresh = entries.filter((e) => !list.some((x) => x.id === e.id))
+      return { writes: fresh.length > 0 ? [{ kind: 'suggestions', file: { ...files.suggestions.value, suggestions: [...list, ...fresh] } }] : [], result: undefined }
+    })
+  }
+
+  private async pause(): Promise<void> {
+    const ms = this.deps.pauseMs ?? 150
+    if (ms > 0) await (this.deps.sleep ?? ((t: number) => new Promise<void>((resolve) => setTimeout(resolve, t))))(ms)
   }
 
   /**

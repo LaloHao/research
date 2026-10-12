@@ -22,6 +22,9 @@ import { ClaudeCliProvider } from '../llm/ClaudeCliProvider'
 import { CostLedger } from '../llm/CostLedger'
 import type { LlmProvider } from '../llm/LlmProvider'
 import { MapService } from '../map/MapService'
+import { MappingService } from '../mapping/MappingService'
+import { OpenAlexSearch } from '../mapping/OpenAlexSearch'
+import { ScreeningSuggester } from '../mapping/ScreeningSuggester'
 import { startActionsMcpServer } from '../mcp/ActionsMcpServer'
 import { startLibraryMcpServer } from '../mcp/LibraryMcpServer'
 import { libraryTools } from '../mcp/libraryTools'
@@ -67,18 +70,18 @@ export interface SessionOptions {
   gitEnv?: Record<string, string>
   /** Names this machine in sync commits; defaults to the host name. */
   machineName?: string
-  /** The clock of the facet suggestions (their automatic trigger runs at most once a day); tests pass their own. */
+  /** The clock of the facet suggestions (their automatic trigger runs at most once a day) and of the mappings; tests pass their own. */
   now?: () => Date
 }
 
-type SessionEvent = 'library' | 'jobs' | 'project' | 'sync' | 'facets' | 'chats'
+type SessionEvent = 'library' | 'jobs' | 'project' | 'sync' | 'facets' | 'chats' | 'mappings'
 
 /** Files whose external change alters the bibliography (paper.yaml, or the paper folder appearing or going away). */
 const BIB_FILES = new Set(['paper.yaml', PAPER_FOLDER])
 
 /** Everything that lives while one project is open. */
 export class ProjectSession {
-  private readonly listeners: Record<SessionEvent, Set<() => void>> = { library: new Set(), jobs: new Set(), project: new Set(), sync: new Set(), facets: new Set(), chats: new Set() }
+  private readonly listeners: Record<SessionEvent, Set<() => void>> = { library: new Set(), jobs: new Set(), project: new Set(), sync: new Set(), facets: new Set(), chats: new Set(), mappings: new Set() }
   private readonly streamListeners = new Set<(u: ChatStreamUpdate) => void>()
   private stopWatching: (() => void) | null = null
   private readonly inFlight = new Set<Promise<unknown>>()
@@ -99,7 +102,8 @@ export class ProjectSession {
     readonly relations: RelationService,
     readonly sync: SyncService,
     readonly facets: FacetSuggestionService,
-    readonly chats: ChatService
+    readonly chats: ChatService,
+    readonly mappings: MappingService
   ) {}
 
   static async create(root: string, name: string, opts: SessionOptions): Promise<ProjectSession> {
@@ -138,7 +142,7 @@ export class ProjectSession {
       () => limitsFromConfig(store.config.llm),
       () => ledger.monthTotal(),
       0.05,
-      { suggest_relations: 0.25, suggest_facets: 0.5, chat: 0.1 }
+      { suggest_relations: 0.25, suggest_facets: 0.5, chat: 0.1, screening: 0.1 }
     )
     const llm = opts.llm ?? new ClaudeCliProvider()
     const summarizer = new Summarizer({ store, cache, provider: llm, budget, ledger })
@@ -147,7 +151,20 @@ export class ProjectSession {
     // One analysis at a time: skipping pairs already analyzed from the other paper relies on runs being sequential.
     const queue = new JobQueue(cache, (spec, signal, report) => runJob(session.services(), spec, signal, report), {
       total: 4,
-      byType: { summarize: 1, citations: 1, cited_by: 1, embed: 1, model_download: 1, suggest_relations: 1, fill_facets: 1, suggest_facets: 1 }
+      byType: {
+        summarize: 1,
+        citations: 1,
+        cited_by: 1,
+        embed: 1,
+        model_download: 1,
+        suggest_relations: 1,
+        fill_facets: 1,
+        suggest_facets: 1,
+        mapping_search: 1,
+        mapping_snowball: 1,
+        screen_suggest: 1,
+        ingest_record: 2
+      }
     })
     const summaries = new SummaryService({
       store,
@@ -265,11 +282,37 @@ export class ProjectSession {
       stream: (u) => session.emitStream(u),
       now: opts.now
     })
-    const session: ProjectSession = new ProjectSession(store, cache, http, library, queue, summaries, citations, similarity, map, relations, sync, facets, chats)
+    const mappings = new MappingService({
+      store,
+      cache,
+      emit: () => session.emit('mappings'),
+      machine: machineName(opts.machineName ?? hostname()),
+      now: opts.now,
+      library: {
+        ingestIdentifier: (input, signal) => library.ingestIdentifier(input, signal),
+        ingestMetadata: (meta, signal) => library.ingestMetadata(meta, signal)
+      },
+      openalex: new OpenAlexSearch(http),
+      citations: { fetch: (id, signal) => citations.fetch(id, signal), fetchCitedBy: (id, signal) => citations.fetchCitedBy(id, signal) },
+      suggester: new ScreeningSuggester({
+        store,
+        cache,
+        provider: llm,
+        budget,
+        ledger,
+        // Full-text suggestions read the paper with a fresh read-only MCP server per run, closed when it ends.
+        startTools: (o) => startLibraryMcpServer(libraryTools({ store, cache, map, embeddings: opts.embeddings ?? null }), o)
+      }),
+      costs: { estimate: (op) => budget.currentEstimate(op), limits: () => limitsFromConfig(store.config.llm), monthSpent: () => ledger.monthTotal() },
+      enqueue: (spec) => queue.enqueue(spec),
+      pauseMs: opts.citationPauseMs
+    })
+    const session: ProjectSession = new ProjectSession(store, cache, http, library, queue, summaries, citations, similarity, map, relations, sync, facets, chats, mappings)
     await library.reindexAll()
     await relations.reindex()
     await facets.reindex()
     await chats.reindex()
+    await mappings.reindexAll()
     library.onChange(() => session.emit('library'))
     queue.onChange(() => session.emit('jobs'))
     queue.start()
@@ -333,6 +376,16 @@ export class ProjectSession {
             )
             .catch((error) => console.error('chats', error))
         },
+        onMappings: (id) => {
+          // Our own writes come through the watcher too and are already indexed: only a real external change counts.
+          void session
+            .track(
+              mappings.reindexIfChanged(id).then((changed) => {
+                if (changed) session.emit('mappings')
+              })
+            )
+            .catch((error) => console.error('mappings', id, error))
+        },
         onTrash: () => {
           void session
             .track(library.syncTrash().then(() => session.emit('library')))
@@ -381,7 +434,15 @@ export class ProjectSession {
   }
 
   services(): JobServices {
-    return { library: this.library, summaries: this.summaries, citations: this.citations, similarity: this.similarity, relations: this.relations, facets: this.facets }
+    return {
+      library: this.library,
+      summaries: this.summaries,
+      citations: this.citations,
+      similarity: this.similarity,
+      relations: this.relations,
+      facets: this.facets,
+      mappings: this.mappings
+    }
   }
 
   /** Summary entries and suggested relations still to review, paper by paper (in `ids` order when given, otherwise in list order). */
@@ -494,12 +555,24 @@ export interface JobServices {
   similarity: SimilarityService
   relations: RelationService
   facets: FacetSuggestionService
+  mappings: MappingService
 }
 
 const logged =
   (what: string) =>
   (error: unknown): void =>
     console.error(what, error)
+
+/** What follows any ingest that added or updated a paper: the automatic summary, citations and embedding. */
+async function afterIngest(s: JobServices, paperId: string): Promise<void> {
+  await s.summaries.autoAfterIngest(paperId).catch(logged('auto summarize'))
+  try {
+    s.citations.autoAfterIngest(paperId)
+  } catch (error) {
+    logged('auto citations')(error)
+  }
+  await s.similarity.enqueueStale([paperId]).catch(logged('embeddings'))
+}
 
 export async function runJob(
   s: JobServices,
@@ -566,15 +639,18 @@ export async function runJob(
           : spec.type === 'ingest_pdf'
             ? await s.library.ingestPdf(spec.path, signal)
             : await s.library.updateMetadata(spec.paperId, spec.input, signal)
-      if (outcome.status !== 'duplicate') {
-        await s.summaries.autoAfterIngest(outcome.paperId).catch(logged('auto summarize'))
-        try {
-          s.citations.autoAfterIngest(outcome.paperId)
-        } catch (error) {
-          logged('auto citations')(error)
-        }
-        await s.similarity.enqueueStale([outcome.paperId]).catch(logged('embeddings'))
-      }
+      if (outcome.status !== 'duplicate') await afterIngest(s, outcome.paperId)
+      return { paperId: outcome.paperId, message: outcome.status }
+    }
+    case 'mapping_search':
+      return s.mappings.runSearch(spec, signal)
+    case 'mapping_snowball':
+      return s.mappings.runSnowball(spec, signal)
+    case 'screen_suggest':
+      return s.mappings.runSuggestions(spec, signal)
+    case 'ingest_record': {
+      const outcome = await s.mappings.ingestRecord(spec, signal)
+      if (outcome.status !== 'duplicate') await afterIngest(s, outcome.paperId)
       return { paperId: outcome.paperId, message: outcome.status }
     }
   }

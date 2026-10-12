@@ -132,6 +132,15 @@ export class LibraryService {
     }
   }
 
+  /** A paper from metadata the app already has (a mapping's record): the same dedupe, key, open-access PDF and write as any ingest. */
+  async ingestMetadata(meta: ResolvedMetadata, signal?: AbortSignal): Promise<IngestOutcome> {
+    try {
+      return await this.add(meta, { signal })
+    } catch (error) {
+      throw toUserFacing(error)
+    }
+  }
+
   /**
    * Attaches the PDF at `path` to an existing paper, or replaces its PDF when `replace` is set. Only the PDF and
    * `pdf_sha256` change: no metadata is resolved or merged. Its text is extracted and indexed in place of the old
