@@ -1,13 +1,15 @@
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import es from '../../src/renderer/i18n/es.json'
 import type { JobState } from '../../src/shared/jobs'
 import { FILE_PROBLEM_KINDS, JOB_OUTCOMES, TEXT_STATUSES, USER_ERROR_CODES } from '../../src/shared/library'
-import { PDF_POLICIES } from '../../src/shared/schemas'
+import { PAPER_KINDS, PDF_POLICIES } from '../../src/shared/schemas'
 import { CANDIDATE_DIRECTIONS, CHART_KINDS, CITATIONS_STATUSES } from '../../src/shared/relations'
 import { LLM_MODELS, RESEARCH_TYPES, SUMMARY_FIELD_KEYS } from '../../src/shared/summary'
 import type { CardStatus } from '../../src/renderer/lib/summaryView'
 import { SUMMARY_FILTERS } from '../../src/renderer/lib/badges'
-import { MAP_TABS, VIEWS } from '../../src/renderer/lib/navigation'
+import { MAP_TABS, MAPPING_TABS, VIEWS } from '../../src/renderer/lib/navigation'
+import { DUPLICATE_REASONS, OPENALEX_TYPES, PHASE_STATES, PHASES, QUEUE_FILTERS, SNOWBALL_DIRECTIONS } from '../../src/shared/mapping'
 import { SETTINGS_TABS } from '../../src/renderer/lib/settingsTabs'
 import { RELATION_TYPES } from '../../src/shared/typedRelations'
 import { TRASH_PROBLEMS } from '../../src/shared/trash'
@@ -39,6 +41,17 @@ describe('es.json covers every code the UI can receive', () => {
     ...SETTINGS_TABS.map((tab) => `settings.tabs.${tab}`),
     ...VIEWS.map((v) => `rail.${v}`),
     ...MAP_TABS.map((tab) => `map.tabs.${tab}`),
+    ...MAPPING_TABS.map((tab) => `mappings.tabs.${tab}`),
+    ...PHASE_STATES.map((s) => `mappings.state.${s}`),
+    ...PHASES.map((p) => `mappings.screening.phases.${p}`),
+    ...PHASES.map((p) => `mappings.screening.shortcuts_${p}`),
+    ...QUEUE_FILTERS.map((f) => `mappings.screening.filters.${f}`),
+    ...DUPLICATE_REASONS.map((r) => `mappings.screening.duplicate_reasons.${r}`),
+    ...SNOWBALL_DIRECTIONS.map((d) => `mappings.searches.directions.${d}`),
+    ...PAPER_KINDS.map((k) => `mappings.kinds.${k}`),
+    ...OPENALEX_TYPES.map((k) => `mappings.openalex_types.${k}`),
+    ...['identification', 'screening', 'included'].map((k) => `mappings.prisma.stages.${k}`),
+    ...['protocol.errors.title', 'protocol.errors.empty_item', 'protocol.errors.years', 'screening.without_text_one', 'screening.without_text_other'].map((k) => `mappings.${k}`),
     ...['citations', 'cited_by', 'embed', 'model_download', 'suggest_relations', 'fill_facets', 'suggest_facets', 'suggest_facets_auto'].map((type) => `jobs.${type}`),
     ...['mapping_search', 'mapping_snowball', 'screen_suggest', 'ingest_record'].map((type) => `jobs.${type}`),
     ...['coupling_one', 'coupling_other', 'cocitation_one', 'cocitation_other', 'direct', 'content'].map((k) => `relations.reasons.${k}`),
@@ -294,5 +307,17 @@ describe('cap errors name the setting that lifts them', () => {
   it('a chat answer at its cap points to the per-message cap, not the per-paper one', () => {
     expect(lookup('errors.chat_message_budget')).toContain(`«${lookup('settings.budget_chat') as string}»`)
     expect(lookup('errors.operation_budget')).toContain(`«${lookup('settings.budget_operation') as string}»`)
+  })
+})
+
+describe('mapping strings', () => {
+  /** Literal `t('mappings.…')` keys of a source file (template keys are covered by the lists above). */
+  const keysIn = (text: string): string[] => [...text.matchAll(/\bt\(\s*'(mappings\.[A-Za-z0-9_.-]+)'/g)].map((m) => m[1])
+
+  it('exist for every literal key the mapping components and helpers use', () => {
+    const dir = new URL('../../src/renderer/components/mappings/', import.meta.url)
+    const files = [new URL('../../src/renderer/lib/mappings.ts', import.meta.url), ...(existsSync(dir) ? readdirSync(dir).map((name) => new URL(name, dir)) : [])]
+    const missing = files.flatMap((file) => keysIn(readFileSync(file, 'utf8'))).filter((key) => typeof lookup(key) !== 'string' && typeof lookup(`${key}_other`) !== 'string')
+    expect(missing).toEqual([])
   })
 })
