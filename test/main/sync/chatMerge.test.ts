@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { checkMessages, parseChat, renderChat } from '../../../src/main/project/chatFile'
 import { CHAT_PATH, mergeChatText } from '../../../src/main/sync/chatMerge'
 import type { ChatFile } from '../../../src/shared/chat'
-import { assistantMessage, CHAT_ID_A, chatFile, userMessage } from '../../helpers/chats'
+import { actionMessage, assistantMessage, CHAT_ID_A, chatFile, userMessage } from '../../helpers/chats'
 
 const text = (f: ChatFile): string => renderChat(f)
 const read = (t: string): ChatFile => {
@@ -25,6 +25,22 @@ describe('mergeChatText', () => {
       meta: { ...ours.meta, title: 'Drain, explained', cost_usd: 0.05 },
       messages: [...BASE.messages, Q2, A2]
     })
+  })
+
+  it('joins actions appended on one machine, and takes each switch from the machine that changed it', () => {
+    const ours = chatFile([...BASE.messages, Q2, actionMessage({ at: '2026-10-11T13:00:02.000Z' }), A2], { actions: true, updated_at: '2026-10-11T13:00:05.000Z' })
+    const theirs = chatFile(BASE.messages, { sync: true, updated_at: '2026-10-11T12:30:00.000Z', updated_on: 'desktop' })
+    const merged = read(mergeChatText({ base: text(BASE), ours: text(ours), theirs: text(theirs) })!.text)
+    expect(merged.messages).toEqual(ours.messages)
+    expect(merged.meta).toMatchObject({ actions: true, sync: true })
+  })
+
+  it('splits a conversation whose two machines recorded different actions after the same question', () => {
+    const ours = chatFile([...BASE.messages, Q2, actionMessage({ at: '2026-10-11T13:00:02.000Z' })], { updated_at: '2026-10-11T13:00:05.000Z' })
+    const theirs = chatFile([...BASE.messages, Q2, actionMessage({ at: '2026-10-11T13:00:03.000Z', id: 'ffeedd' })], { updated_at: '2026-10-11T13:00:06.000Z', updated_on: 'desktop' })
+    const merged = mergeChatText({ base: text(BASE), ours: text(ours), theirs: text(theirs) })!
+    expect(merged.text).toBe(text(ours))
+    expect(read(merged.copy!.text).messages).toEqual(theirs.messages)
   })
 
   it('takes the longer side when it is theirs, and keeps unknown keys of both sides', () => {

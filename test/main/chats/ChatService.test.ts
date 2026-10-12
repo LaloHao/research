@@ -4,7 +4,7 @@ import { dirname } from 'node:path'
 import { asWritten } from '../../../src/main/chats/ChatService'
 import type { LlmModel } from '../../../src/shared/summary'
 import { parseChat, renderChat } from '../../../src/main/project/chatFile'
-import { assistantMessage, CHAT_AT, CHAT_ID_A, chatFile, DEVICE, DRAIN_QUOTE, setupChats, userMessage } from '../../helpers/chats'
+import { actionMessage, assistantMessage, CHAT_AT, CHAT_ID_A, chatFile, DEVICE, DRAIN_QUOTE, setupChats, userMessage } from '../../helpers/chats'
 import { DRAIN_ID, LOGHUB_ID } from '../../helpers/pair'
 
 const OTHER = '20261010-090000-c3d4'
@@ -12,6 +12,27 @@ const BROKEN = '20261009-090000-ffff'
 const LOGHUB_TRASH_ROW = { id: LOGHUB_ID, title: 'Loghub', authors_label: '', year: 2020, doi: null, openalex_id: null, trashed_at: CHAT_AT, device: null, problem: null }
 
 describe('ChatService conversations', () => {
+  it('shows recorded actions, marks the undone ones, and answers again a question whose answer failed after its actions', async () => {
+    const { store, chats, provider } = await setupChats()
+    const undo = actionMessage({ id: 'b0b1c2', at: '2026-10-11T12:00:04.000Z', tool: 'undo', approval: 'user', request: null, args: { action: 'a0b1c2' }, result: {} })
+    await store.writeChat(chatFile([userMessage(), actionMessage(), undo]), null)
+    await chats.reindex()
+    const c = await chats.open(CHAT_ID_A)
+    expect(c.canRetry).toBe(true)
+    expect(c.messages.slice(1)).toMatchObject([
+      { role: 'action', id: 'a0b1c2', undone: true, undoable: false },
+      { role: 'action', tool: 'undo', undone: false, undoable: false }
+    ])
+    expect(chats.list({ text: 'write_note' })).toEqual([])
+    expect(chats.list({ text: 'Parses online' })).toEqual([])
+    await chats.retry(CHAT_ID_A)
+    await chats.idle()
+    expect((await chats.open(CHAT_ID_A)).messages.map((m) => m.role)).toEqual(['user', 'action', 'action', 'assistant'])
+    expect(provider.chatCalls[0].input.endsWith('<question>\nWhat does Drain do?\n</question>')).toBe(true)
+    expect(provider.chatCalls[0].input).not.toContain('<conversation>')
+    expect((await chats.open(CHAT_ID_A)).canRetry).toBe(false)
+  })
+
   it('lists the conversations in chats/, newest first, by words or by paper, with unreadable files flagged', async () => {
     const { store, chats } = await setupChats()
     await store.writeChat(chatFile(), null)

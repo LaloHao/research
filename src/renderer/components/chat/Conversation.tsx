@@ -354,7 +354,7 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
           {chat?.messages.map((m, i) =>
             m.role === 'user' ? (
               <UserMessageView key={i} message={m} />
-            ) : (
+            ) : m.role === 'assistant' ? (
               <AnswerView
                 key={i}
                 chatId={chat.summary.id}
@@ -365,7 +365,7 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
                 savesToOwnPaper={savesToOwnPaper}
                 onOpenCitation={openCitation}
               />
-            )
+            ) : null
           )}
           {running && (
             <div className="chat-message assistant live">

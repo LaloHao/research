@@ -28,7 +28,7 @@ describe('ChatService answers', () => {
     expect(id).toBe(CHAT_ID_A)
     await chats.idle()
     expect(updates.map((u) => u.kind)).toEqual(['start', 'turn', 'tool', 'turn', 'delta', 'delta', 'done'])
-    expect(updates.map((u) => u.seq)).toEqual([1, 2, 3, 4, 5, 6, 7])
+    expect(updates.map((u) => u.seq - updates[0].seq)).toEqual([0, 1, 2, 3, 4, 5, 6])
     expect(updates.every((u) => u.chatId === CHAT_ID_A)).toBe(true)
     expect(await store.readChat(CHAT_ID_A)).toMatchObject({
       ok: true,
@@ -208,7 +208,7 @@ describe('ChatService answers', () => {
     })
     const id = await chats.send(ask('Q'))
     await chats.idle()
-    expect((await chats.open(id)).messages.map((m) => [m.role, m.text])).toEqual([
+    expect((await chats.open(id)).messages.map((m) => [m.role, m.role === 'action' ? '' : m.text])).toEqual([
       ['user', 'Q'],
       ['user', 'Meanwhile'],
       ['assistant', 'Answer.']

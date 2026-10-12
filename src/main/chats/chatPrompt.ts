@@ -1,4 +1,4 @@
-import type { ChatExcerpt, ChatMessage, ChatScope } from '../../shared/chat'
+import type { ActionMessage, ChatExcerpt, ChatMessage, ChatScope } from '../../shared/chat'
 import { citationsToText } from '../../shared/chatCitations'
 import type { ThesisContext } from '../../shared/summary'
 import { escapePromptData } from '../llm/promptTags'
@@ -55,6 +55,13 @@ const escapeAttribute = (s: string): string => s.replace(/[^a-z0-9]/gi, '')
 const oneLine = (s: string): string => s.replace(/\s+/g, ' ').trim()
 const cut = (s: string, n: number): string => (s.length <= n ? s : `${s.slice(0, n).trimEnd()}…`)
 
+/** An action as one line: what was asked, how it ended and what it left (JSON, so its data never breaks the line). */
+export function actionLine(m: ActionMessage): string {
+  const args = Object.keys(m.args).length > 0 ? ` ${JSON.stringify(m.args)}` : ''
+  const result = Object.keys(m.result).length > 0 ? ` -> ${JSON.stringify(m.result)}` : ''
+  return `${m.tool} ${m.state}${args}${result}`
+}
+
 export function chatSystemPrompt(scope: ChatScope): string {
   const about =
     scope === 'library'
@@ -77,11 +84,15 @@ export function chatSystemPrompt(scope: ChatScope): string {
   ].join('\n')
 }
 
-const digestLine = (m: ChatMessage): string =>
-  m.role === 'user' ? `- user: ${cut(oneLine(m.text), DIGEST_QUESTION_CHARS)}` : `- assistant: ${cut(oneLine(citationsToText(m.text)), DIGEST_ANSWER_CHARS)}`
+const digestLine = (m: ChatMessage): string => {
+  if (m.role === 'user') return `- user: ${cut(oneLine(m.text), DIGEST_QUESTION_CHARS)}`
+  if (m.role === 'assistant') return `- assistant: ${cut(oneLine(citationsToText(m.text)), DIGEST_ANSWER_CHARS)}`
+  return `- action: ${cut(oneLine(actionLine(m)), DIGEST_ANSWER_CHARS)}`
+}
 
-/** What a message weighs in the verbatim part: its text and the excerpt it quotes. */
-const verbatimSize = (m: ChatMessage): number => m.text.length + (m.role === 'user' && m.excerpt ? oneLine(m.excerpt.quote).length : 0)
+/** What a message weighs in the verbatim part: its text and the excerpt it quotes, or an action's line. */
+const verbatimSize = (m: ChatMessage): number =>
+  m.role === 'action' ? actionLine(m).length : m.text.length + (m.role === 'user' && m.excerpt ? oneLine(m.excerpt.quote).length : 0)
 
 /**
  * The newest messages verbatim; older ones as one short line each, the oldest dropped first and counted. Pure and
@@ -98,9 +109,10 @@ export function trimHistory(history: ChatMessage[]): TrimmedHistory {
     start--
   }
   const recent = history.slice(start)
-  if (recent.length === 1 && verbatimSize(recent[0]) > RECENT_CHARS) {
-    const room = Math.max(0, RECENT_CHARS - 1 - (verbatimSize(recent[0]) - recent[0].text.length))
-    recent[0] = { ...recent[0], text: cut(recent[0].text, room) }
+  const only = recent[0]
+  if (recent.length === 1 && only.role !== 'action' && verbatimSize(only) > RECENT_CHARS) {
+    const room = Math.max(0, RECENT_CHARS - 1 - (verbatimSize(only) - only.text.length))
+    recent[0] = { ...only, text: cut(only.text, room) }
   }
 
   const digest: string[] = []
@@ -123,6 +135,8 @@ const excerptOpen = (e: ChatExcerpt): string => `<excerpt paper="${escapeAttribu
 
 /** One message in its own <turn>; its text can neither close the turn nor pass for another one. */
 function turnBlock(m: ChatMessage): string[] {
+  // An action alone may hold a long argument (a note's text): its line is cut to the verbatim limit.
+  if (m.role === 'action') return ['<turn role="action">', escapePromptData(cut(actionLine(m), RECENT_CHARS)), '</turn>']
   const text = escapePromptData(m.text).replace(TURN_HEADER, '$1\\')
   if (m.role === 'assistant') return [`<turn role="assistant"${m.stopped ? ' stopped="true"' : ''}>`, text, '</turn>']
   const excerpt = m.excerpt ? [excerptOpen(m.excerpt), escapePromptData(oneLine(m.excerpt.quote)), '</excerpt>'] : []
