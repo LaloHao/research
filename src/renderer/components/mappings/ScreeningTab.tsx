@@ -164,6 +164,13 @@ export function ScreeningTab({ view }: { view: MappingView }): React.JSX.Element
     }
   }
   useEvent('mappings-changed', refreshConfirmation)
+  // A paper trashed, restored or added in the library changes what full text can add, suggest and show.
+  useEvent('library-changed', () => {
+    if (phase !== 'full_text') return
+    loadIngest()
+    load(true)
+    refreshConfirmation()
+  })
 
   useEffect(
     () => () => {
