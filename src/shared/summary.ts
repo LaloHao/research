@@ -195,7 +195,7 @@ export type LlmConfig = z.infer<typeof LlmConfigShape>
 export const SUMMARY_STATUSES = ['none', 'generated', 'reviewed', 'stale', 'too_long', 'failed'] as const
 export type SummaryStatus = (typeof SUMMARY_STATUSES)[number]
 
-export const COST_OPERATIONS = ['summarize', 'suggest_relations', 'suggest_facets', 'fill_facets', 'chat'] as const
+export const COST_OPERATIONS = ['summarize', 'suggest_relations', 'suggest_facets', 'fill_facets', 'chat', 'screening'] as const
 export type CostOperation = (typeof COST_OPERATIONS)[number]
 
 /** One line of costs/<device-id>.jsonl. */
