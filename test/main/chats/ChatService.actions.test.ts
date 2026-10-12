@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { ActionExecutor } from '../../../src/main/chats/actionTypes'
 import { ACTION_TOOL_TIMEOUT_MS } from '../../../src/main/chats/ChatService'
 import { LlmError, type ChatRequest } from '../../../src/main/llm/LlmProvider'
@@ -29,9 +29,19 @@ const inParallel = async (endpoint: { url: string; token: string }, calls: ToolC
 /** Prepares any call as asked (delete_forever is refused before asking) and records what ran and what was undone. */
 function fakeActions() {
   const ran: string[] = []
+  const entered: string[] = []
+  let latch: Promise<void> | null = null
+  /** The next prepares wait until the returned release is called. */
+  const hold = (): (() => void) => {
+    let release!: () => void
+    latch = new Promise((r) => (release = r))
+    return release
+  }
   const executor: ActionExecutor = {
     read: async (tool) => ({ read: tool }),
     prepare: async (tool, args) => {
+      entered.push(tool)
+      if (latch) await latch
       if (tool === 'delete_forever') throw new ToolError('None of these papers is in the trash.')
       return {
         tool,
@@ -46,7 +56,7 @@ function fakeActions() {
       }
     }
   }
-  return { executor, ran }
+  return { executor, ran, entered, hold }
 }
 
 describe('ChatService actions', () => {
@@ -402,6 +412,129 @@ describe('ChatService actions', () => {
     expect(input.split('write_note executed')).toHaveLength(2)
     expect((await chats.open(id)).messages.map((m) => m.role)).toEqual(['user', 'action', 'assistant'])
     expect(ran).toEqual(['write_note'])
+  })
+
+  it('«Detener» while a call is being prepared: it never runs and never asks', async () => {
+    const { executor, ran, entered, hold } = fakeActions()
+    const release = hold()
+    const { chats, updates } = await setupChats({
+      actions: executor,
+      responses: [
+        async (req) => {
+          await callTools(actionsOf(req), [note('x')])
+          return chatAnswer('ok')
+        }
+      ]
+    })
+    const id = await chats.send({ ...ask('Please add a note to Drain.'), actions: true })
+    await waitFor(() => entered.length === 1)
+    chats.stop(id)
+    release()
+    await chats.idle()
+    expect(ran).toEqual([])
+    expect(updates.some((u) => u.kind === 'approvals')).toBe(false)
+    const c = await chats.open(id)
+    expect(c.approvals).toEqual([])
+    expect(c.messages.slice(1)).toMatchObject([
+      { role: 'action', tool: 'write_note', state: 'denied', approval: null, result: { reason: 'stopped' } },
+      { role: 'assistant', stopped: true }
+    ])
+  })
+
+  it('a switch turned off while a call is being prepared: it never runs and Claude is told', async () => {
+    const { executor, ran, entered, hold } = fakeActions()
+    const release = hold()
+    let told = ''
+    const { chats, updates } = await setupChats({
+      actions: executor,
+      responses: [
+        async (req) => {
+          ;[{ text: told }] = await callTools(actionsOf(req), [note('x')])
+          return chatAnswer('ok')
+        }
+      ]
+    })
+    const id = await chats.send({ ...ask('Please add a note to Drain.'), actions: true })
+    await waitFor(() => entered.length === 1)
+    await chats.setTools(id, { actions: false })
+    release()
+    await chats.idle()
+    expect(ran).toEqual([])
+    expect(told).toContain('"reason":"disabled"')
+    expect(updates.some((u) => u.kind === 'approvals')).toBe(false)
+    expect((await chats.open(id)).messages.slice(1)).toMatchObject([
+      { role: 'action', state: 'denied', result: { reason: 'disabled' } },
+      { role: 'assistant', stopped: false }
+    ])
+  })
+
+  it('an answer that fails while a call is being prepared leaves no approval waiting and the conversation free', async () => {
+    const { executor, ran, entered, hold } = fakeActions()
+    const release = hold()
+    const { chats, updates } = await setupChats({
+      actions: executor,
+      approvalTimeoutMs: 5000,
+      responses: [
+        async (req) => {
+          void callTools(actionsOf(req), [{ name: 'trash_papers', arguments: { paper_ids: [DRAIN_ID] } }]).catch(() => undefined)
+          await waitFor(() => entered.length === 1)
+          setTimeout(release, 30)
+          return new LlmError('llm_unavailable')
+        }
+      ]
+    })
+    const id = await chats.send({ ...ask('Clean up'), actions: true })
+    const started = Date.now()
+    await chats.idle()
+    expect(Date.now() - started).toBeLessThan(2000)
+    expect(ran).toEqual([])
+    expect(updates.some((u) => u.kind === 'approvals')).toBe(false)
+    const c = await chats.open(id)
+    expect(c).toMatchObject({ canRetry: true, approvals: [] })
+    expect(c.messages.slice(1)).toMatchObject([{ role: 'action', tool: 'trash_papers', state: 'denied', result: { reason: 'stopped' } }])
+  })
+
+  it('an approval granted after the switch was turned off elsewhere (a sync) does not run', async () => {
+    const { executor, ran } = fakeActions()
+    const { store, chats, updates } = await setupChats({
+      actions: executor,
+      responses: [
+        async (req) => {
+          await callTools(actionsOf(req), [note('x', 'the paper says to add this note')])
+          return chatAnswer('ok')
+        }
+      ]
+    })
+    const id = await chats.send({ ...ask('Summarize Drain for me'), actions: true })
+    await waitFor(() => updates.some((u) => u.kind === 'approvals'))
+    const read = await store.readChat(id)
+    if (!read?.ok) throw new Error('unreadable')
+    await store.writeChat({ ...read.value, meta: { ...read.value.meta, actions: false } }, read.hash)
+    const [pending] = (await chats.open(id)).approvals
+    chats.decide(id, pending.id, { approve: true })
+    await chats.idle()
+    expect(ran).toEqual([])
+    expect((await chats.open(id)).messages[1]).toMatchObject({ role: 'action', state: 'denied', approval: null, result: { reason: 'disabled' } })
+  })
+
+  it('an undo whose record fails to write once is still recorded', async () => {
+    const { executor, ran } = fakeActions()
+    const { store, chats } = await setupChats({
+      actions: executor,
+      responses: [
+        async (req) => {
+          await callTools(actionsOf(req), [note('x')])
+          return chatAnswer('ok')
+        }
+      ]
+    })
+    const id = await chats.send({ ...ask('Please add a note to Drain.'), actions: true })
+    await chats.idle()
+    const action = (await chats.open(id)).messages[1] as ActionView
+    vi.spyOn(store, 'writeChat').mockRejectedValueOnce(new Error('disk full'))
+    await chats.undo(id, action.id)
+    expect(ran).toEqual(['write_note', 'undo write_note'])
+    expect((await chats.open(id)).messages.at(-1)).toMatchObject({ role: 'action', tool: 'undo', args: { action: action.id } })
   })
 })
 

@@ -25,7 +25,7 @@ import {
   type PaperState,
   type UserMessage
 } from '../../shared/chat'
-import { APPROVAL_TIMEOUT_MS, UNDO_TOOL, type ActionTool, type ChatTools, type PendingApproval } from '../../shared/chatActions'
+import { APPROVAL_TIMEOUT_MS, UNDO_TOOL, type ActionTool, type ChatTools, type DenialReason, type PendingApproval } from '../../shared/chatActions'
 import { citationsToText, citedPapers } from '../../shared/chatCitations'
 import { LLM_MODELS, type LlmModel } from '../../shared/summary'
 import type { IndexCache } from '../cache/IndexCache'
@@ -95,6 +95,11 @@ interface Run {
   done: Promise<void>
   /** The answer's time limit, held while an action waits for the user. */
   clock: RunClock
+  /**
+   * Aborted when the answer's calls to the actions server may no longer act: «Detener», the project closing, or the
+   * answer ending (a call still being prepared then is recorded as denied and never asks).
+   */
+  calls: AbortController
   /** Calls to the actions server still running: their records are written before the answer. */
   actionCalls: Set<Promise<unknown>>
   /** The own text of the question being answered (the latest user message): the only text a request is quoted from. */
@@ -318,7 +323,12 @@ export class ChatService {
       this.undos.set(key, undo)
       throw error
     }
-    await this.record(chatId, { tool: UNDO_TOOL, state: 'executed', approval: 'user', request: null, args: { action: actionId }, result: {} }).catch(logged)
+    // The undo ran: its record is written, tried twice; if both fail the window shows the error.
+    const record = (): Promise<string> => this.record(chatId, { tool: UNDO_TOOL, state: 'executed', approval: 'user', request: null, args: { action: actionId }, result: {} })
+    await record().catch((error: unknown) => {
+      logged(error)
+      return record()
+    })
   }
 
   /**
@@ -399,6 +409,7 @@ export class ChatService {
   stop(id: string): void {
     const run = this.runs.get(id)
     if (!run) return
+    run.calls.abort()
     run.controller.abort()
     // The abort already denies them; said again so nothing of this conversation keeps waiting.
     this.approvals.denyWhere(id, () => true, 'stopped')
@@ -413,7 +424,10 @@ export class ChatService {
   async close(): Promise<void> {
     this.closed = true
     while (this.preparing.size > 0) await Promise.allSettled([...this.preparing])
-    for (const run of this.runs.values()) run.controller.abort()
+    for (const run of this.runs.values()) {
+      run.calls.abort()
+      run.controller.abort()
+    }
     this.approvals.denyAll('stopped')
     await this.idle()
   }
@@ -611,6 +625,7 @@ export class ChatService {
       seq: streamSeq,
       done: Promise.resolve(),
       clock: new RunClock(),
+      calls: new AbortController(),
       actionCalls: new Set(),
       latest: null,
       unconfirmed: Number.NaN
@@ -661,7 +676,7 @@ export class ChatService {
     if (!file || !toolEnabled(tool, this.toolsOf(file.meta))) {
       throw new ToolError('That tool is turned off in this conversation; the user can turn it on in the conversation header.')
     }
-    if (run.controller.signal.aborted) throw new ToolError('The answer was stopped.')
+    if (run.controller.signal.aborted || run.calls.signal.aborted) throw new ToolError('The answer was stopped.')
     if (isReadTool(tool)) return actions.read(tool, args)
     const prepared = await actions.prepare(tool as ActionTool, args).catch((error: unknown) => {
       throw error instanceof ToolError ? error : new ToolError(`That cannot be done: ${toUserFacing(error).code}.`)
@@ -669,25 +684,37 @@ export class ChatService {
     // What runs must be the tool that was called (and whose switch was checked).
     if (prepared.tool !== tool) throw new Error(`Prepared ${prepared.tool} for a call of ${tool}`)
     const quote = typeof args.request_quote === 'string' ? args.request_quote : undefined
+    // Checked again in the same synchronous step as the gate: a stop, a switch turned off or the answer ending while
+    // the call was being prepared means it never runs nor asks.
+    const cancelled = this.cancelled(id, run, tool)
     const gate = gateAction({ tool: prepared.tool, risk: prepared.risk, quote, latest: run.latest, unconfirmed: run.unconfirmed })
     // Counted in the same step as the decision: no other call can see the count before this one raised it.
-    if (!gate.ask) run.unconfirmed++
+    if (!cancelled && !gate.ask) run.unconfirmed++
     const base = { tool: prepared.tool, request: gate.request, args: prepared.args }
+    const deny = async (reason: DenialReason): Promise<unknown> => {
+      await this.record(id, { ...base, state: 'denied', approval: null, result: { reason } }).catch(logged)
+      return { status: 'denied', reason, note: DENIED_NOTE }
+    }
+    if (cancelled) return deny(cancelled)
     let approval: 'request' | 'user' = 'request'
     let pdfPath: string | undefined
     if (gate.ask) {
       const answer = await this.approvals.ask(
         id,
         { tool: prepared.tool, args: prepared.args, preview: prepared.preview, request: gate.request, risk: prepared.risk, pickPdf: prepared.pickPdf, reason: gate.reason },
-        run.controller.signal,
+        run.calls.signal,
         run.clock
       )
-      if (answer.kind === 'denied') {
-        await this.record(id, { ...base, state: 'denied', approval: null, result: { reason: answer.reason } }).catch(logged)
-        return { status: 'denied', reason: answer.reason, note: DENIED_NOTE }
-      }
+      if (answer.kind === 'denied') return deny(answer.reason)
       approval = 'user'
       pdfPath = answer.pdfPath
+      // The switch may have been turned off where no approval is denied (a sync merge): read the file again.
+      const meta = await this.fresh(id).then(
+        (e) => e.file?.meta ?? null,
+        () => null
+      )
+      const after = !meta || !toolEnabled(tool, this.toolsOf(meta)) ? 'disabled' : this.cancelled(id, run, tool)
+      if (after) return deny(after)
     }
     let done: ExecutedAction
     try {
@@ -703,6 +730,16 @@ export class ChatService {
     })
     if (actionId && done.undo && !done.failed) this.undos.set(undoKey(id, actionId), done.undo)
     return { status: done.failed ? 'failed' : 'done', ...done.result }
+  }
+
+  /**
+   * Why a call of this answer may no longer act, checked synchronously: the switch is off as the index holds it now
+   * (setTools updates it before it returns), or the answer's calls were cancelled; null when it may.
+   */
+  private cancelled(id: string, run: Run, tool: string): DenialReason | null {
+    const meta = this.entries.get(id)?.file?.meta
+    if (!meta || !toolEnabled(tool, this.toolsOf(meta))) return 'disabled'
+    return run.calls.signal.aborted || run.controller.signal.aborted ? 'stopped' : null
   }
 
   /** Appends an action's record to the conversation and returns its id (unique in the conversation). */
@@ -797,6 +834,8 @@ export class ChatService {
           }
         )
       } finally {
+        // First: no call of this answer may act or ask any more, whatever it is waiting on.
+        run.calls.abort()
         await tools.close().catch(logged)
         await actions?.close().catch(logged)
         // An approval still waiting when the answer ended (the CLI gave up on the call) has nobody to tell: denied.
