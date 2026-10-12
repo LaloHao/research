@@ -166,8 +166,9 @@ const yearGap = (a: number | null, b: number | null): number => (a === null || b
  *   most kinds wins); when every record sharing one also conflicts on another kind (a preprint and its published
  *   version), the pair is doubtful (`conflicting_ids`);
  * - title: the same normal form, with no identifier in conflict, is the same work when the title is long enough, the
- *   years are equal and known, and the first authors' family names agree (when both have authors); also when the
- *   candidate replicates a record without identifiers exactly (title, year, venue and first author). Otherwise the same
+ *   years are equal and known, and both have authors with the same first family name; also when the candidate
+ *   replicates a record without identifiers exactly (title, year, venue and first author, or both without authors:
+ *   an exact re-import). Without authors on either side it is never joined otherwise. Otherwise the same
  *   title a year apart at most (or without a year) is doubtful (`same_title`, or `conflicting_ids`), the nearest year
  *   first;
  * - titles with a token Dice similarity of at least 0.9, a year apart at most, are doubtful (`similar_title`).
@@ -222,8 +223,7 @@ export class RecordMatcher {
     const sameTitle = (this.byTitle.get(title) ?? []).filter((e) => !skip(e.root))
     const same = sameTitle.find((e) => {
       if (conflicting(ids, e.ids)) return false
-      const authorsAgree = !family || !e.family || family === e.family
-      if (strong && c.year !== null && e.record.year === c.year && authorsAgree) return true
+      if (strong && c.year !== null && e.record.year === c.year && family !== '' && family === e.family) return true
       return !hasIds(ids) && !hasIds(e.ids) && e.record.year === c.year && e.venue === venue && e.family === family
     })
     if (same) return { kind: 'same', record: same.root, basis: 'title' }

@@ -129,7 +129,23 @@ describe('RecordMatcher', () => {
       reason: 'same_title'
     })
     expect(m.match(candidate({ identifiers: {}, title: 'Message from the General Chair', authors: [{ family: 'Smíth' }] }))).toEqual({ kind: 'same', record: chair.id })
-    expect(m.match(candidate({ identifiers: {}, title: 'Message from the General Chair', authors: [] }))).toEqual({ kind: 'same', record: chair.id })
+    expect(m.match(candidate({ identifiers: {}, title: 'Message from the General Chair', authors: [] }))).toEqual({
+      kind: 'doubtful',
+      record: chair.id,
+      reason: 'same_title'
+    })
+  })
+
+  it('asks about a title and year match when either side lacks authors, unless it is an exact re-import', () => {
+    const front = record({ identifiers: {}, title: 'Message from the General Chair', authors: [], venue: 'ICSE' })
+    const m = new RecordMatcher([front])
+    const ask = { kind: 'doubtful', record: front.id, reason: 'same_title' }
+    expect(m.match(candidate({ identifiers: {}, title: 'Message from the General Chair', authors: [], venue: 'ICSE Companion' }))).toEqual(ask)
+    expect(m.match(candidate({ identifiers: {}, title: 'Message from the General Chair', authors: [{ family: 'Smith' }], venue: 'ICSE' }))).toEqual(ask)
+    expect(m.match(candidate({ identifiers: { doi: '10.1109/icse.2017.1' }, title: 'Message from the General Chair', authors: [], venue: 'ICSE' }))).toEqual(ask)
+    expect(m.match(candidate({ identifiers: {}, title: 'Message from the General Chair.', authors: [], venue: 'ICSE' }))).toEqual({ kind: 'same', record: front.id })
+    const withDoi = record({ id: hexId('r', 2), authors: [] })
+    expect(new RecordMatcher([withDoi]).match(candidate({ identifiers: {}, authors: [] }))).toEqual({ kind: 'doubtful', record: withDoi.id, reason: 'same_title' })
   })
 
   it('tells mixed-script titles apart, and matches a non-Latin title again', () => {
