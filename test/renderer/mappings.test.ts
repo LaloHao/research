@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { TFunction } from 'i18next'
 import {
   draftOf,
+  draftOutdated,
   draftProblems,
   filtersFor,
   highlight,
@@ -15,7 +16,8 @@ import {
   screeningCommand,
   searchFilters,
   searchSource,
-  withThesisQuestions
+  withThesisQuestions,
+  yearValue
 } from '../../src/renderer/lib/mappings'
 import { EMPTY_PHASE_VIEW } from '../../src/shared/mapping'
 import { AT, protocolFile, search } from '../helpers/mappings'
@@ -79,6 +81,27 @@ describe('protocol drafts', () => {
     const draft = draftOf(protocolFile())
     const next = withThesisQuestions(draft, { research_questions: [{ id: 'RQ1', text: 'which techniques anonymize logs?' }, { id: 'RQ2', text: 'How are they evaluated?' }] })
     expect(next.research_questions).toEqual([...draft.research_questions, { id: null, text: 'How are they evaluated?' }])
+  })
+
+  it('reads a year field as typed: empty is no year, anything else is checked by draftProblems', () => {
+    expect(yearValue('')).toBeNull()
+    expect(yearValue('  ')).toBeNull()
+    expect(yearValue('2')).toBe(2)
+    expect(yearValue('2019')).toBe(2019)
+    const draft = draftOf(protocolFile())
+    expect(draftProblems({ ...draft, years: { from: yearValue('2'), to: null } })).toEqual(['mappings.protocol.errors.years'])
+    expect(draftProblems({ ...draft, years: { from: yearValue('2019.5'), to: null } })).toEqual(['mappings.protocol.errors.years'])
+    expect(draftProblems({ ...draft, years: { from: yearValue('abc'), to: null } })).toEqual(['mappings.protocol.errors.years'])
+  })
+
+  it('tells when the saved protocol changed under a draft being edited', () => {
+    const file = protocolFile()
+    const edit = { base: file.version, from: draftOf(file) }
+    expect(draftOutdated(edit, file)).toBe(false)
+    // Edited in place elsewhere (before any decision the version stays 1).
+    expect(draftOutdated(edit, protocolFile({}, { objective: 'Changed on another machine.' }))).toBe(true)
+    // A new version elsewhere, even with the same body.
+    expect(draftOutdated(edit, protocolFile({ version: 2 }))).toBe(true)
   })
 
   it('prefills the OpenAlex types from the accepted publication types', () => {

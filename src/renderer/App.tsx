@@ -5,6 +5,7 @@ import type { FacetFilter } from '../shared/relations'
 import { ChatView } from './components/chat/ChatView'
 import { LibraryView } from './components/library/LibraryView'
 import { MapView } from './components/map/MapView'
+import { MappingsView } from './components/mappings/MappingsView'
 import { Rail } from './components/Rail'
 import { RelationsFileBanner } from './components/RelationsFileBanner'
 import { SettingsView } from './components/SettingsView'
@@ -121,6 +122,7 @@ function ProjectShell({ project, view, onViewChange: setView, inert }: ProjectSh
             onOpenCandidates={openCandidates}
           />
         )}
+        {view === 'mappings' && <MappingsView />}
         {view === 'chat' && <ChatView />}
         {view === 'trash' && <TrashView />}
         {view === 'sync' && <SyncView sync={sync} />}

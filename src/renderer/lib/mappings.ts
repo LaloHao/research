@@ -116,6 +116,19 @@ export function draftProblems(d: ProtocolDraft): string[] {
   return out
 }
 
+/** A year field as typed: empty is no year; anything else (even half typed, or not a number) is checked by `draftProblems`. */
+export function yearValue(text: string): number | null {
+  return text.trim() === '' ? null : Number(text)
+}
+
+/**
+ * The saved protocol changed under a draft being edited (a sync, another window): a new version, or the same version
+ * edited in place before any decision. `edit` is the version and the protocol the editing started from.
+ */
+export function draftOutdated(edit: { base: number; from: ProtocolDraft }, file: ProtocolFile): boolean {
+  return edit.base !== file.version || !sameDraft(edit.from, draftOf(file))
+}
+
 /** «Copiar las preguntas de la tesis»: the thesis's questions the draft does not have yet (same text, ignoring case), as new items. */
 export function withThesisQuestions(d: ProtocolDraft, thesis: Pick<ThesisContext, 'research_questions'>): ProtocolDraft {
   const have = new Set(d.research_questions.map((q) => q.text.trim().toLowerCase()))
