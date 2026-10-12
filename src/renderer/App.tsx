@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ProjectInfo } from '../shared/ipc'
 import type { FacetFilter } from '../shared/relations'
+import { ChatView } from './components/chat/ChatView'
 import { LibraryView } from './components/library/LibraryView'
 import { MapView } from './components/map/MapView'
 import { Rail } from './components/Rail'
@@ -120,6 +121,7 @@ function ProjectShell({ project, view, onViewChange: setView, inert }: ProjectSh
             onOpenCandidates={openCandidates}
           />
         )}
+        {view === 'chat' && <ChatView />}
         {view === 'trash' && <TrashView />}
         {view === 'sync' && <SyncView sync={sync} />}
         {view === 'settings' && <SettingsView project={project} />}

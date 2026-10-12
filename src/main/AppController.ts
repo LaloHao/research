@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import type { ChatStreamUpdate } from '../shared/chat'
 import type { ProjectInfo, ResearchEvent } from '../shared/ipc'
 import type { ModelInfo } from '../shared/relations'
 import type { PdfPolicy } from '../shared/schemas'
@@ -17,7 +18,9 @@ export class AppController {
     private readonly settingsFile: string,
     private readonly emit: (event: ResearchEvent) => void,
     /** `autoSync: null` turns the automatic sync off (tests); otherwise it follows the settings. */
-    private readonly sessionDefaults: Omit<SessionOptions, 'contactEmail' | 'openalexApiKey'> = {}
+    private readonly sessionDefaults: Omit<SessionOptions, 'contactEmail' | 'openalexApiKey'> = {},
+    /** Chat answers as they stream, for the window. */
+    private readonly emitChatStream: (update: ChatStreamUpdate) => void = () => undefined
   ) {}
 
   async init(): Promise<void> {
@@ -150,6 +153,8 @@ export class AppController {
     session.on('project', () => this.emit('project-changed'))
     session.on('sync', () => this.emit('sync-changed'))
     session.on('facets', () => this.emit('facets-changed'))
+    session.on('chats', () => this.emit('chats-changed'))
+    session.onChatStream((u) => this.emitChatStream(u))
     this.emit('project-changed')
     // The first automatic sync may already be running (it starts as the session opens, before these listeners).
     this.emit('sync-changed')

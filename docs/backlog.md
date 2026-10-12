@@ -7,8 +7,7 @@
 
 ## Upcoming stages
 
-- Principle for every future LLM use (3b, 3c, chat): Claude gets **read-only tools** over the library (full-text search, semantic search, grep over the project files, reading a paper's pages, reading a summary and its facets, querying citations and neighbours) and never write tools; the 3b relation suggester and the 3c facet suggester already use them (src/main/mcp/).
-- Stage 4: chat (per paper and global) over the library. Syncing from the chat goes through a separate MCP server used only for that (tools `sync_status`, `sync_now`, `resolve_conflict` over the app's `SyncService`), enabled per conversation and always behind the user's approval; it is not part of the read-only library tools.
+- Principle for every LLM use: **reading always, acting only from the chat.** Claude gets read-only tools over the library (full-text search, semantic search, finding a passage in a paper, reading a paper's pages, reading a summary and its facets, querying citations and neighbours; src/main/mcp/), used by the 3b relation suggester, the 3c facet suggester and the chat. Write tools exist only in the chat's actions server (stage 4b), offered only to a conversation whose «Acciones» or «Sincronizar con git» switch is on, and the app enforces the confirmation rule: reversible free actions run on their own only when the user's latest message asked for them in the quoted words; whatever spends money, removes or deletes, attaches a file or syncs is always approved in the conversation. No other LLM use gets write tools.
 - Stage 5: formal systematic mapping. Design decision already taken: a project can hold **several mappings** (each with its own protocol, research questions, inclusion/exclusion criteria, search log and screening) over one shared library, so papers, PDFs and summaries are never analysed twice; excluding a paper from one mapping never removes it from the library.
 
 ## Stage 2 technical minutiae
@@ -125,3 +124,42 @@
 - `facet-suggestions.yaml` with conflict markers (only possible after a hand-run git merge; the app's sync never leaves them) has no automatic resolution button, unlike `relations.yaml`: it must be fixed by hand.
 - A suggestion edited before acceptance keeps its original id (e.g. `new_facet__data_source` for a facet saved as `data_origin`), so a later run may suggest the original key again.
 - The cache schema went from 8 to 9 in place (`ALTER TABLE`); any other older schema is still rebuilt from scratch.
+
+## Stage 4a technical minutiae
+
+- Every message re-sends the conversation (the newest 8 messages / 24 000 characters verbatim plus a one-line digest of older ones, within 4 000 characters): input grows with long conversations, and the digest is mechanical (cut lines), not a summary written by Claude. Resuming CLI sessions was ruled out (see the 4a plan's decisions).
+- The stream-json event shapes are those of the documented SDK stream, checked only against `claude --help`; `scripts/record-chat-fixture.sh` re-records `test/fixtures/llm/chat-stream.jsonl` from the real CLI (a few cents) when the parser needs checking.
+- A stopped or timed-out answer is charged at its per-message cap as an estimate; the CLI's partial usage is not read.
+- A conversation's `cost_usd` adds up its answers only; a failed answer's charge shows in the month's total, not in the conversation.
+- Text written in a turn before a tool call is shown while streaming but not saved: the saved answer is the final turn's text.
+- Citations are re-verified every time a conversation opens (each cited paper's indexed text is read once per open).
+- The chat index lives in memory and re-reads every file in `chats/` on each external change; fine for hundreds of conversations.
+- Two machines splitting the same conversation in concurrent syncs can each create their copy (`<id>-<hash of the other's text>`), leaving two copies after both merges; git's own clean text merge of `chats/<id>.md` (when it can resolve the file on its own) bypasses the app's conversation merger entirely, so a criss-cross of concurrent hand edits and app writes can still produce duplicate copies even when git merges cleanly.
+- A message edited by hand on one machine while the other continued the conversation splits it into two, like any divergence.
+- «Preguntar a Claude» is offered in the PDF tab and Contenido, not in Texto.
+- The PDF tab draws a selectable text layer on every page (needed for selections), which takes longer on very long PDFs; the text layers use plain `pdfjs.TextLayer` without pdf.js's own `TextLayerBuilder` selection helpers (`endOfContent`/`selecting`), so dragging a selection past the end of a text run can jump to a larger selection than in a page that uses those helpers. Every page's canvas is still rendered eagerly up front; only the page's text layer is lazy (built the first time the page nears the visible area).
+- The citation side panel has no «Abrir paper» button to jump to the paper's detail in the library.
+- «Guardar en notas del paper» has no «Deshacer»; the appended block is edited in the notes by hand.
+- A quote containing `"]]` cannot be written in a marker (it is broken up as `" ]]`).
+- Answers in different conversations may run at the same time; only the monthly cap's reservations bound them together.
+- Conversation search is a substring match over titles and messages, without ranking.
+- A conversation file with conflict markers or an invalid frontmatter shows as «Archivo con errores» and can only be fixed or deleted by hand.
+- Model ids from the CLI that would break the chat file's schema (whitespace, a leading `$`, or the literal `detenida`) are sanitized to a safe form, or to `unknown` if nothing usable remains; the ledger records the same sanitized id, so it can differ from the CLI's raw id.
+- One answer at a time per conversation (`chat_busy`): a send, retry or delete while an answer of that conversation is in flight (or while the project is closing) is refused rather than queued, and the model selector is disabled meanwhile. Rename, archive and save-to-notes are allowed during an answer: its final write re-reads the file and keeps them.
+- A paid answer whose final write fails (file deleted or made invalid meanwhile) is lost; the question stays for «Reintentar».
+- Closing a project waits for any chat send or retry in flight, then stops the run and saves what arrived as a stopped answer; a send that starts in the narrow window just before close is still admitted and then stopped the same way.
+
+## Stage 4b technical minutiae
+
+- The CLI's wait for a tool call held by an approval is raised with `MCP_TOOL_TIMEOUT=600000` in the CLI's environment; the variable is documented for Claude Code but was not checked against a real run (that costs money). If a real run shows the CLI giving up earlier, an approval longer than its limit fails the call while the card still waits.
+- Undo tokens (chat «Deshacer», like Revisar's) live in memory: after closing or switching the project, a restart, or on the other machine, the records stay but «Deshacer» is gone.
+- A request quote needs at least 8 folded letters or digits and matches on whole words at both ends; a short «sí» to «¿Lo agrego?» asks instead of running. A quote can also match words inside a negation or a question ("no agregues una nota a Drain" contains "agregues una nota a Drain"): the check only proves those words are in the user's own latest message, not that the user meant that exact call. The quoted words need not be about the action at all: any 8+ letter phrase of the latest message unlocks up to 3 free, reversible actions for that message, even unrelated ones, so text Claude reads (a paper, a tool result, an earlier answer) could steer it into them without the user asking. This is why the app also caps unconfirmed actions at 3 per message (the 4th and later always ask), why editing a summary value or resolving a proposed value always asks regardless of the quote, and why every unasked action can still be undone. add_paper, which fetches what its identifier names, additionally runs unasked only when that identifier (DOI and arXiv ids without case, trailing slashes aside; URLs as typed) is in the user's latest message; any other identifier, such as a URL taken from a paper, asks.
+- An unasked action whose record failed to write (the conversation file deleted or broken meanwhile) does not count toward that cap of 3 on a retry.
+- add_paper's risk is decided when the call is prepared: if «Resumir automáticamente al agregar» is turned on while a free add_paper card waits, approving it queues a summary the card never priced (the summary reads the setting when the job runs).
+- add_paper and attach_pdf wait up to 60 s for their job; after that the record says the job goes on in Actividad, without the new key or an undo.
+- Undoing a note written into a paper without notes leaves an empty notes.md.
+- A hand-edited action record whose YAML no longer reads keeps its heading and is read (and written back) with empty arguments and result.
+- Not available from the chat: «Editar y aceptar» of a facet suggestion, merging a restored paper with its twin, sync setup and «Cancelar» of a pending sync, metadata updates, citation fetches, and form edits other than proposed values.
+- Relation suggestions from the chat are always forced (like the paper's button), even when no new candidate appeared.
+- The chat's own cost shows the answer only; jobs it started are charged by the jobs (Actividad, monthly total), not in the conversation's cost.
+- An approval that waits keeps that answer's actions server open; answers in other conversations go on in parallel, bounded by the budget guard.

@@ -5,7 +5,7 @@ import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
 import { parseCap, parseCount, parseUsd, type NumberIssue, type Parsed } from '../../lib/numberField'
 
-type NumericField = 'perOperation' | 'perBatch' | 'perMonth' | 'maxInput' | 'perFacets' | 'facetsAfter'
+type NumericField = 'perOperation' | 'perBatch' | 'perMonth' | 'maxInput' | 'perFacets' | 'perChat' | 'facetsAfter'
 
 export function ClaudeSection(): React.JSX.Element {
   const { t } = useTranslation()
@@ -15,6 +15,7 @@ export function ClaudeSection(): React.JSX.Element {
   const [autoFacets, setAutoFacets] = useState(false)
   const [facetsAfter, setFacetsAfter] = useState('')
   const [perFacets, setPerFacets] = useState('')
+  const [perChat, setPerChat] = useState('')
   const [perOperation, setPerOperation] = useState('')
   const [perBatch, setPerBatch] = useState('')
   const [perMonth, setPerMonth] = useState('')
@@ -32,6 +33,7 @@ export function ClaudeSection(): React.JSX.Element {
       setAutoFacets(config.auto_suggest_facets)
       setFacetsAfter(String(config.auto_suggest_facets_after))
       setPerFacets(String(config.budget.per_facet_suggestion_usd))
+      setPerChat(String(config.budget.per_chat_message_usd))
       setPerOperation(String(config.budget.per_operation_usd))
       setPerBatch(String(config.budget.per_batch_usd))
       setPerMonth(config.budget.per_month_usd === null ? '' : String(config.budget.per_month_usd))
@@ -170,6 +172,14 @@ export function ClaudeSection(): React.JSX.Element {
         issue={issues.perFacets}
         onChange={(v) => edit('perFacets', setPerFacets, v)}
         onBlur={() => commit('perFacets', parseUsd(perFacets), (value) => saveBudget({ per_facet_suggestion_usd: value }))}
+      />
+      <NumberField
+        id="budget-chat"
+        label={t('settings.budget_chat')}
+        value={perChat}
+        issue={issues.perChat}
+        onChange={(v) => edit('perChat', setPerChat, v)}
+        onBlur={() => commit('perChat', parseUsd(perChat), (value) => saveBudget({ per_chat_message_usd: value }))}
       />
       <NumberField
         id="max-input"

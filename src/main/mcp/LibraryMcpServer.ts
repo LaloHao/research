@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
+import { neutralizePromptTags } from '../llm/promptTags'
 import { ToolError, type LibraryTools } from './libraryTools'
 
 export const MCP_SERVER_NAME = 'library'
@@ -20,6 +21,8 @@ export interface LibraryMcpOptions {
   /** Tool calls allowed in this run; later calls get an error asking the model to answer. */
   maxToolCalls: number
   maxChars?: number
+  /** Wraps every answer in <library_data> tags; the chat's prompt names them as data, never instructions. */
+  markData?: boolean
 }
 
 export interface LibraryMcpHandle {
@@ -29,12 +32,26 @@ export interface LibraryMcpHandle {
   close(): Promise<void>
 }
 
-type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean }
-type Run = (name: string, fn: () => Promise<unknown>) => Promise<ToolResult>
+export type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean }
+export type Run = (name: string, fn: () => Promise<unknown>) => Promise<ToolResult>
+/** Registers a server's tools on a fresh McpServer; each tool's work goes through `run` (budget, data marking, errors). */
+export type DefineTools = (server: McpServer, run: Run) => void
 
 export function truncate(text: string, max = MAX_RESPONSE_CHARS): string {
   if (text.length <= max) return text
   return `${text.slice(0, max)}\n[truncated: ${text.length - max} more characters; ask for less: fewer pages, a narrower query, a lower limit]`
+}
+
+export const DATA_OPEN = '<library_data>'
+export const DATA_CLOSE = '</library_data>'
+
+/**
+ * A tool answer as tagged library data. Every prompt tag inside it (this one, `<question>`, `<turn>` and the rest,
+ * with invisible or full-width variants) is neutralized by the same code as the chat's own input, so paper text can
+ * neither end the block nor fake a request; the escape is valid JSON and the rest is left exactly as it was.
+ */
+export function markAsData(text: string): string {
+  return `${DATA_OPEN}\n${neutralizePromptTags(text)}\n${DATA_CLOSE}`
 }
 
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: 'text', text: t }], ...(isError ? { isError: true } : {}) })
@@ -145,10 +162,10 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 }
 
 /**
- * An MCP server over the library for one agent run: streamable HTTP on 127.0.0.1, random port and bearer token,
+ * An MCP server for one agent run (any set of tools): streamable HTTP on 127.0.0.1, random port and bearer token,
  * stateless (a fresh McpServer per request; the call budget lives here, across requests).
  */
-export async function startLibraryMcpServer(tools: LibraryTools, opts: LibraryMcpOptions): Promise<LibraryMcpHandle> {
+export async function startMcpServer(name: string, define: DefineTools, opts: LibraryMcpOptions): Promise<LibraryMcpHandle> {
   const token = randomBytes(24).toString('hex')
   const maxChars = opts.maxChars ?? MAX_RESPONSE_CHARS
   const calls: ToolCallRecord[] = []
@@ -162,7 +179,8 @@ export async function startLibraryMcpServer(tools: LibraryTools, opts: LibraryMc
     try {
       const value = await fn()
       record.ok = true
-      return text(truncate(typeof value === 'string' ? value : JSON.stringify(value), maxChars))
+      const body = truncate(typeof value === 'string' ? value : JSON.stringify(value), maxChars)
+      return text(opts.markData ? markAsData(body) : body)
     } catch (error) {
       // Only a ToolError's message reaches the model; anything else (a broken model, a file error) stays opaque.
       return text(error instanceof ToolError ? error.message : 'The tool failed.', true)
@@ -179,8 +197,8 @@ export async function startLibraryMcpServer(tools: LibraryTools, opts: LibraryMc
     } catch {
       return void res.writeHead(400).end()
     }
-    const server = new McpServer({ name: MCP_SERVER_NAME, version: '1.0.0' })
-    defineTools(server, tools, run)
+    const server = new McpServer({ name, version: '1.0.0' })
+    define(server, run)
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
     res.on('close', () => {
       void transport.close()
@@ -211,4 +229,9 @@ export async function startLibraryMcpServer(tools: LibraryTools, opts: LibraryMc
         http.close(() => resolve())
       })
   }
+}
+
+/** The read-only library server of the agent runs and the chat. */
+export function startLibraryMcpServer(tools: LibraryTools, opts: LibraryMcpOptions): Promise<LibraryMcpHandle> {
+  return startMcpServer(MCP_SERVER_NAME, (server, run) => defineTools(server, tools, run), opts)
 }

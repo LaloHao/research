@@ -4,6 +4,10 @@ import { join } from 'node:path'
 import { AppController } from '../../src/main/AppController'
 import { toYaml } from '../../src/main/project/yamlFile'
 import type { ResearchEvent } from '../../src/shared/ipc'
+import type { ChatStreamUpdate } from '../../src/shared/chat'
+import { renderChat } from '../../src/main/project/chatFile'
+import { chatFile, CHAT_ID_A } from '../helpers/chats'
+import { chatAnswer, FakeLlmProvider } from '../helpers/llm'
 import { FakeEmbeddingRuntime } from '../helpers/embeddings'
 import { newFacetSuggestion } from '../helpers/facets'
 import { hangingRemote, processAlive, twoMachines } from '../helpers/git'
@@ -198,6 +202,31 @@ describe('AppController', () => {
       await new Promise((r) => setTimeout(r, 20))
     }
     expect((await c.requireSession().facets.list()).pending).toBe(1)
+    await c.shutdown()
+  })
+
+  it('streams chat answers to the window and tells it when chats/ changes outside the app', async () => {
+    const events: ResearchEvent[] = []
+    const updates: ChatStreamUpdate[] = []
+    const llm = new FakeLlmProvider([], [], [chatAnswer('Hello there.')])
+    const c = new AppController(join(await tmpDir(), 'settings.json'), (e) => events.push(e), { autoSync: null, llm }, (u) => updates.push(u))
+    await c.init()
+    const root = await tmpDir()
+    await c.createProject(root, 'Thesis')
+    const id = await c.requireSession().chats.send({ chatId: null, scope: 'library', model: 'sonnet', text: 'Hi', excerpt: null })
+    await c.requireSession().chats.idle()
+    expect(updates.map((u) => [u.chatId, u.kind]).at(-1)).toEqual([id, 'done'])
+    expect(updates.some((u) => u.kind === 'delta')).toBe(true)
+    expect(events).toContain('chats-changed')
+    events.length = 0
+    const other = CHAT_ID_A.replace('a1b2', 'ffff')
+    await writeFile(join(root, 'chats', `${other}.md`), renderChat(chatFile(undefined, { id: other })))
+    const start = Date.now()
+    while (!events.includes('chats-changed')) {
+      if (Date.now() - start > 3000) throw new Error('no chats-changed event')
+      await new Promise((r) => setTimeout(r, 20))
+    }
+    expect(c.requireSession().chats.list()).toHaveLength(2)
     await c.shutdown()
   })
 })

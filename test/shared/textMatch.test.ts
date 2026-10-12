@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { findInNormalized, locateInOriginal, normalizeForMatch, normalizeWithMap, quoteFound } from '../../src/shared/textMatch'
+import { findInNormalized, locateInOriginal, normalizeForMatch, normalizeWithMap, quoteFound, sliceWhole } from '../../src/shared/textMatch'
 
 describe('normalizeForMatch', () => {
   it('folds ligatures, typographic quotes and dashes, whitespace and case', () => {
@@ -115,6 +115,22 @@ describe('normalizeWithMap', () => {
   })
 })
 
+describe('normalizeWithMap outside the BMP', () => {
+  it('has one map entry per UTF-16 unit of its text, pointing at a code point start', () => {
+    for (const s of ['\u{1F44D}\u{1F44D} add a note', 'add a note to \u{1D403}\u{1D42B}\u{1D41A}\u{1D422}\u{1D427}', 'x\u{1F600}y\u{20BB7}z \u{1F468}‍\u{1F469}']) {
+      const { text, map } = normalizeWithMap(s)
+      expect(text).toBe(normalizeForMatch(s))
+      expect(map.length).toBe(text.length)
+      for (const idx of map) {
+        expect(idx).toBeGreaterThanOrEqual(0)
+        expect(idx).toBeLessThan(s.length)
+        // Never the low half of a surrogate pair.
+        expect(s.charCodeAt(idx) >= 0xdc00 && s.charCodeAt(idx) <= 0xdfff).toBe(false)
+      }
+    }
+  })
+})
+
 describe('locateInOriginal', () => {
   it('finds an exact quote and keeps original case, accents and punctuation', () => {
     const original = 'Para la detección, afinamos un modelo BERT con 12k líneas.'
@@ -151,6 +167,19 @@ describe('locateInOriginal', () => {
     expect(original.slice(r!.start, r!.end)).toBe('We   fine-tune\n\na BERT   model')
   })
 
+  it('maps back over emoji and math alphanumerics, ending at whole code points', () => {
+    const emoji = '\u{1F44D}\u{1F44D} we fine-tune a BERT model \u{1F389} today'
+    const a = locateInOriginal('we fine-tune a BERT model', emoji)
+    expect(emoji.slice(a!.start, a!.end)).toBe('we fine-tune a BERT model')
+    const b = locateInOriginal('BERT model \u{1F389}', emoji)
+    expect(emoji.slice(b!.start, b!.end)).toBe('BERT model \u{1F389}')
+    const bold = 'We use \u{1D403}\u{1D42B}\u{1D41A}\u{1D422}\u{1D427} parses logs'
+    const c = locateInOriginal('we use drain', bold)
+    expect(bold.slice(c!.start, c!.end)).toBe('We use \u{1D403}\u{1D42B}\u{1D41A}\u{1D422}\u{1D427}')
+    const d = locateInOriginal('drain parses logs', bold)
+    expect(bold.slice(d!.start, d!.end)).toBe('\u{1D403}\u{1D42B}\u{1D41A}\u{1D422}\u{1D427} parses logs')
+  })
+
   it('returns null when the quote is not found', () => {
     const original = 'We fine-tune a BERT model on logs.'
     expect(locateInOriginal('we train a GPT model on synthetic traces', original)).toBeNull()
@@ -163,5 +192,16 @@ describe('locateInOriginal', () => {
     const r = locateInOriginal('detección de señales', original)
     expect(r).not.toBeNull()
     expect(original.slice(r!.start, r!.end)).toBe('detección de señales')
+  })
+})
+
+describe('sliceWhole', () => {
+  it('keeps the first n UTF-16 units, backing off one when they would end inside a surrogate pair', () => {
+    expect(sliceWhole('abcdef', 3)).toBe('abc')
+    expect(sliceWhole('ab', 5)).toBe('ab')
+    expect(sliceWhole('ab\u{1F600}cd', 3)).toBe('ab')
+    expect(sliceWhole('ab\u{1F600}cd', 4)).toBe('ab\u{1F600}')
+    expect(sliceWhole('\u{1F600}', 1)).toBe('')
+    expect(sliceWhole('abc', 0)).toBe('')
   })
 })

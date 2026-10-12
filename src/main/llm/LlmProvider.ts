@@ -1,3 +1,5 @@
+import type { RunClock } from './RunClock'
+
 /** `operation_budget`: the call reached its own --max-budget-usd (fails that paper only); `budget_exceeded`: a batch or monthly cap refused it. */
 export const LLM_ERROR_CODES = ['llm_unavailable', 'llm_quota', 'llm_invalid_output', 'llm_timeout', 'budget_exceeded', 'operation_budget'] as const
 export type LlmErrorCode = (typeof LLM_ERROR_CODES)[number]
@@ -58,7 +60,39 @@ export interface AgentRequest extends CompleteRequest {
   maxTurns: number
 }
 
+/**
+ * A chat answer: Markdown (no JSON schema), streamed, with the tools of `servers` and nothing else. Today the read-only
+ * library server; a later stage adds its own server to this list.
+ */
+export interface ChatRequest {
+  system: string
+  /** The conversation and its context, as data. */
+  input: string
+  model: string
+  maxUsd: number
+  servers: McpEndpoint[]
+  /** Tool budget plus spare turns, so a refused call still ends in an answer; the servers enforce the call budget, and the CLI the turns when it supports --max-turns. */
+  maxTurns: number
+  signal?: AbortSignal
+  timeoutMs?: number
+  /** Counts `timeoutMs`; the caller holds it while an action waits for the user, so that wait does not count. */
+  clock?: RunClock
+  /** How long the CLI waits for one tool call (an action waiting for approval holds its call open). */
+  toolTimeoutMs?: number
+}
+
+/** `turn`: the model starts a new turn (after a tool call), so the text shown so far is replaced. */
+export type ChatEvent = { kind: 'delta'; text: string } | { kind: 'turn' } | { kind: 'tool'; name: string }
+
+export interface ChatResult {
+  /** The final turn's text. */
+  text: string
+  costUsd: number
+  model: string
+}
+
 export interface LlmProvider {
   complete(req: CompleteRequest): Promise<CompleteResult>
   runAgent(req: AgentRequest): Promise<CompleteResult>
+  chat(req: ChatRequest, onEvent: (event: ChatEvent) => void): Promise<ChatResult>
 }

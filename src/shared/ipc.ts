@@ -1,3 +1,5 @@
+import type { ChatConversation, ChatListQuery, ChatSendRequest, ChatStreamUpdate, ChatSummary } from './chat'
+import type { ChatTools } from './chatActions'
 import type { FacetSuggestionList, FacetSuggestPlan, SuggestionEdit } from './facetSuggestions'
 import type { JobRecord } from './jobs'
 import type { PaperDetail, PaperRow, UserErrorCode } from './library'
@@ -99,6 +101,20 @@ export const IPC = {
   facetsRevert: 'facets:revert',
   facetsFillPlan: 'facets:fill-plan',
   facetsFill: 'facets:fill',
+  chatsList: 'chats:list',
+  chatsOpen: 'chats:open',
+  chatsSend: 'chats:send',
+  chatsRetry: 'chats:retry',
+  chatsStop: 'chats:stop',
+  chatsRename: 'chats:rename',
+  chatsArchive: 'chats:archive',
+  chatsSetModel: 'chats:set-model',
+  chatsRemove: 'chats:remove',
+  chatsSaveToNotes: 'chats:save-to-notes',
+  chatsBibtex: 'chats:bibtex',
+  chatsSetTools: 'chats:set-tools',
+  chatsDecide: 'chats:decide',
+  chatsUndo: 'chats:undo',
   exportSave: 'export:save',
   syncStatus: 'sync:status',
   syncRun: 'sync:run',
@@ -113,12 +129,24 @@ export const IPC = {
 
 /**
  * `sync-changed`: the git sync's state changed. `facets-changed`: the facet suggestions changed (a run, a decision,
- * or facet-suggestions.yaml edited outside the app). `flush-request`: the window is about to close; save pending
- * edits, then call `flushDone()`. `close-request`: there are changes not synced; ask, then answer with `closeDecision()`.
+ * or facet-suggestions.yaml edited outside the app). `chats-changed`: a conversation was written, deleted or changed
+ * outside the app (answers stream on CHAT_STREAM_CHANNEL instead). `flush-request`: the window is about to close; save
+ * pending edits, then call `flushDone()`. `close-request`: there are changes not synced; ask, then answer with `closeDecision()`.
  */
-export type ResearchEvent = 'library-changed' | 'jobs-changed' | 'project-changed' | 'sync-changed' | 'facets-changed' | 'flush-request' | 'close-request'
+export type ResearchEvent =
+  | 'library-changed'
+  | 'jobs-changed'
+  | 'project-changed'
+  | 'sync-changed'
+  | 'facets-changed'
+  | 'chats-changed'
+  | 'flush-request'
+  | 'close-request'
 
 export const eventChannel = (event: ResearchEvent): string => `event:${event}`
+
+/** The push channel of `ChatStreamUpdate`s (an answer as it streams). */
+export const CHAT_STREAM_CHANNEL = 'chat:stream'
 
 export interface ProjectInfo {
   root: string
@@ -142,6 +170,10 @@ export type RelationDecisionResult = { ok: true; undoToken: string } | { ok: fal
 export type ResolveConflictResult = { ok: true; dropped: number } | { ok: false; error: string }
 /** A decision on a facet suggestion; `undoToken` is what «Deshacer» sends back. */
 export type FacetDecisionResult = RelationDecisionResult
+export type ChatOpenResult = { ok: true; chat: ChatConversation } | { ok: false; error: string }
+/** The conversation's id once the message is written (a new one is created by its first message). */
+export type ChatSendResult = { ok: true; chatId: string } | { ok: false; error: string }
+export type TextResult = { ok: true; text: string } | { ok: false; error: string }
 
 export interface LlmInfo {
   config: LlmConfig
@@ -277,6 +309,39 @@ export interface ResearchApi {
     /** Papers (these, or all) with an up-to-date summary and facets still unfilled, with the estimated cost. */
     fillPlan(ids?: string[]): Promise<SummaryPlan>
     fill(ids?: string[]): Promise<RunBatchResult>
+  }
+  chats: {
+    /** Newest first, by words in the title or the messages, or by paper. */
+    list(query?: ChatListQuery): Promise<ChatSummary[]>
+    /** The conversation with its citations checked, and the answer being written, if any. */
+    open(id: string): Promise<ChatOpenResult>
+    /** Writes the message and starts the answer, which arrives through `onStream`. */
+    send(req: ChatSendRequest): Promise<ChatSendResult>
+    /** «Reintentar»: answers the unanswered last question. */
+    retry(id: string): Promise<ActionResult>
+    /** «Detener»: what arrived is saved as a stopped answer. */
+    stop(id: string): Promise<void>
+    rename(id: string, title: string): Promise<ActionResult>
+    archive(id: string, archived: boolean): Promise<ActionResult>
+    /** The model for the next answers. */
+    setModel(id: string, model: LlmModel): Promise<ActionResult>
+    /** «Borrar»: `confirmed` is the user's answer to the UI's question; the conversation is deleted only when true. */
+    remove(id: string, confirmed: boolean): Promise<ActionResult>
+    /**
+     * «Guardar en notas del paper»: answer `index` at the end of a paper's notes.md. `paperId` only when the user picked
+     * a paper; without it a paper chat saves to its own paper (a global chat needs a pick).
+     */
+    saveToNotes(id: string, index: number, paperId?: string): Promise<ActionResult>
+    /** «Copiar BibTeX de las citas» of answer `index`. */
+    bibtex(id: string, index: number): Promise<TextResult>
+    /** The conversation's switches («Acciones», «Sincronizar con git»). */
+    setTools(id: string, tools: Partial<ChatTools>): Promise<ActionResult>
+    /** «Aprobar» or «Rechazar» on an approval card; approving attach_pdf first asks for the file in the app's dialog. */
+    decide(id: string, approvalId: string, approve: boolean): Promise<ActionResult>
+    /** «Deshacer» of an action of the conversation. */
+    undo(id: string, actionId: string): Promise<ActionResult>
+    /** Answers as they stream; `seq` orders them against `open()`'s `partial`. */
+    onStream(callback: (update: ChatStreamUpdate) => void): () => void
   }
   exports: {
     /** Asks where to save, then writes the file there. */

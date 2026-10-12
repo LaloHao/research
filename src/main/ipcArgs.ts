@@ -1,5 +1,6 @@
 import { isAbsolute, win32 } from 'node:path'
 import { z } from 'zod'
+import { ACTION_ID, CHAT_ID, MAX_CHAT_MESSAGE, MAX_CHAT_TITLE, MAX_EXCERPT, PAPER_KEY } from '../shared/chat'
 import { SUGGESTION_ID } from '../shared/facetSuggestions'
 import { CANDIDATE_DIRECTIONS, OPENALEX_ID } from '../shared/relations'
 import { PDF_POLICIES } from '../shared/schemas'
@@ -9,6 +10,13 @@ import { MAX_JUSTIFICATION, RELATION_ID, RELATION_STATUSES, RELATION_TYPES } fro
 
 const paperIdSchema = z.string().regex(/^[a-z][a-z0-9]*$/)
 const facetKeySchema = z.string().regex(/^[a-z][a-z0-9_]*$/)
+/** A conversation id: `<yyyymmdd>-<hhmmss>-<4 hex>`, plus up to 8 sync-copy suffixes. */
+const chatIdSchema = z.string().max(100).regex(CHAT_ID)
+/** A paper key named by the chat (scope, excerpt, filter, notes target), with a bound on its length. */
+const chatPaperSchema = z.string().max(200).regex(PAPER_KEY)
+/** An approval or an action of a conversation: six lowercase hex characters. */
+const actionIdSchema = z.string().length(6).regex(ACTION_ID)
+const llmModelSchema = z.enum(LLM_MODELS)
 
 /** Validators for arguments arriving from the renderer: anything unexpected is rejected before it reaches the app. */
 export const ipcArgs = {
@@ -52,7 +60,8 @@ export const ipcArgs = {
         per_operation_usd: z.number().positive().optional(),
         per_batch_usd: z.number().positive().optional(),
         per_month_usd: z.number().positive().nullable().optional(),
-        per_facet_suggestion_usd: z.number().positive().optional()
+        per_facet_suggestion_usd: z.number().positive().optional(),
+        per_chat_message_usd: z.number().positive().optional()
       })
       .optional()
   }),
@@ -93,6 +102,38 @@ export const ipcArgs = {
       z.strictObject({ kind: z.literal('alias'), to: facetKeySchema })
     ])
     .optional(),
+  chatId: chatIdSchema,
+  /** «Renombrar»: 1–120 characters once trimmed (the service also collapses whitespace). */
+  chatTitle: z.string().trim().min(1).max(MAX_CHAT_TITLE),
+  chatListQuery: z.strictObject({ text: z.string().max(200).optional(), paper: chatPaperSchema.optional() }).optional(),
+  /** A message to send; checked again by the chat service. */
+  chatSend: z.strictObject({
+    chatId: chatIdSchema.nullable(),
+    scope: z.union([z.literal('library'), z.strictObject({ paper: chatPaperSchema })]),
+    model: llmModelSchema,
+    text: z.string().trim().min(1).max(MAX_CHAT_MESSAGE),
+    excerpt: z
+      .strictObject({ paper: chatPaperSchema, page: z.number().int().positive().nullable(), quote: z.string().trim().min(1).max(MAX_EXCERPT) })
+      .nullable(),
+    /** The switches of a new conversation; ignored for an existing one. */
+    actions: z.boolean().optional(),
+    sync: z.boolean().optional()
+  }),
+  chatModel: llmModelSchema,
+  /** A conversation's switches to change («Acciones», «Sincronizar con git»): at least one, only these two. */
+  chatTools: z
+    .strictObject({ actions: z.boolean().optional(), sync: z.boolean().optional() })
+    .refine((t) => t.actions !== undefined || t.sync !== undefined, 'no switch given'),
+  /** A pending approval of a conversation. */
+  approvalId: actionIdSchema,
+  /** «Aprobar» (true) or «Rechazar» (false): the user's click on the card, nothing else. */
+  approve: z.boolean(),
+  /** An action recorded in a conversation («Deshacer»). */
+  actionId: actionIdSchema,
+  /** A message's position in a conversation. */
+  messageIndex: z.number().int().min(0).max(100_000),
+  /** «Guardar en notas del paper»: the paper the user picked; absent or null when they did not pick one. */
+  notesPaper: chatPaperSchema.nullable().optional(),
   /** Papers to move to or out of the trash: at least one key. */
   trashIds: z.array(paperIdSchema).min(1),
   /** Planning «Vaciar papelera» names the whole trash explicitly; an empty or missing list never means everything. */

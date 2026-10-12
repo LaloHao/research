@@ -8,6 +8,8 @@ import type { DeletePlanResult, RestoreOutcome, TrashOutcome } from '../shared/t
 import {
   IPC,
   type ActionResult,
+  type ChatOpenResult,
+  type ChatSendResult,
   type FacetDecisionResult,
   type LlmInfo,
   type ProjectInfo,
@@ -15,9 +17,11 @@ import {
   type RelationDecisionResult,
   type ResolveConflictResult,
   type RunBatchResult,
-  type SaveResult
+  type SaveResult,
+  type TextResult
 } from '../shared/ipc'
 import type { AppController } from './AppController'
+import { WindowDecisions } from './chats/windowDecisions'
 import { arg, ipcArgs } from './ipcArgs'
 import { toUserFacing } from './library/UserFacingError'
 import { RELATIONS_FILE } from './project/relationsFile'
@@ -35,6 +39,13 @@ async function actionResult(action: () => Promise<unknown>): Promise<ActionResul
 
 async function pickFolder(window: BrowserWindow | null, create: boolean): Promise<string | null> {
   const options: Electron.OpenDialogOptions = { properties: create ? ['openDirectory', 'createDirectory'] : ['openDirectory'] }
+  const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
+  return result.canceled ? null : (result.filePaths[0] ?? null)
+}
+
+/** The native PDF picker of «Adjuntar PDF», also used when the user approves a chat's attach_pdf. */
+async function choosePdf(window: BrowserWindow | null): Promise<string | null> {
+  const options: Electron.OpenDialogOptions = { properties: ['openFile'], filters: [{ name: 'PDF', extensions: ['pdf'] }] }
   const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
   return result.canceled ? null : (result.filePaths[0] ?? null)
 }
@@ -82,12 +93,7 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
       replace: arg(ipcArgs.flag, replace, 'replace')
     })
   })
-  ipcMain.handle(IPC.libraryChoosePdf, async (): Promise<string | null> => {
-    const window = getWindow()
-    const options: Electron.OpenDialogOptions = { properties: ['openFile'], filters: [{ name: 'PDF', extensions: ['pdf'] }] }
-    const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
-    return result.canceled ? null : (result.filePaths[0] ?? null)
-  })
+  ipcMain.handle(IPC.libraryChoosePdf, (): Promise<string | null> => choosePdf(getWindow()))
   ipcMain.handle(IPC.libraryUpdateMetadata, (_e, paperId: unknown, input: unknown) => {
     app.requireSession().queue.enqueue({
       type: 'update_metadata',
@@ -383,6 +389,100 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     } catch (error) {
       return { ok: false, error: toUserFacing(error).code }
     }
+  })
+
+  // Chat over the library (read-only tools; answers stream on CHAT_STREAM_CHANNEL). Every call is tracked so closing
+  // the project waits for it before the cache closes.
+  const decisions = new WindowDecisions(() => choosePdf(getWindow()))
+  const chats = <T>(work: (session: ReturnType<AppController['requireSession']>) => Promise<T>): Promise<T> => {
+    const session = app.requireSession()
+    return session.track(work(session))
+  }
+  ipcMain.handle(IPC.chatsList, (_e, raw: unknown) => app.requireSession().chats.list(arg(ipcArgs.chatListQuery, raw, 'query')))
+  ipcMain.handle(IPC.chatsOpen, async (_e, rawId: unknown): Promise<ChatOpenResult> => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    try {
+      return { ok: true, chat: await chats((s) => s.chats.open(id)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).code }
+    }
+  })
+  ipcMain.handle(IPC.chatsSend, async (_e, raw: unknown): Promise<ChatSendResult> => {
+    const req = arg(ipcArgs.chatSend, raw, 'request')
+    try {
+      return { ok: true, chatId: await chats((s) => s.chats.send(req)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).code }
+    }
+  })
+  ipcMain.handle(IPC.chatsRetry, (_e, rawId: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    return actionResult(() => chats((s) => s.chats.retry(id)))
+  })
+  ipcMain.handle(IPC.chatsStop, (_e, rawId: unknown): void => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    app.requireSession().chats.stop(id)
+  })
+  ipcMain.handle(IPC.chatsRename, (_e, rawId: unknown, rawTitle: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    const title = arg(ipcArgs.chatTitle, rawTitle, 'title')
+    return actionResult(() => chats((s) => s.chats.rename(id, title)))
+  })
+  ipcMain.handle(IPC.chatsArchive, (_e, rawId: unknown, rawArchived: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    const archived = arg(ipcArgs.flag, rawArchived, 'archived')
+    return actionResult(() => chats((s) => s.chats.setArchived(id, archived)))
+  })
+  ipcMain.handle(IPC.chatsSetModel, (_e, rawId: unknown, rawModel: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    const model = arg(ipcArgs.chatModel, rawModel, 'model')
+    return actionResult(() => chats((s) => s.chats.setModel(id, model)))
+  })
+  // «Borrar»: `confirmed` is what the renderer's confirmation answered; the service deletes only when it is true.
+  ipcMain.handle(IPC.chatsRemove, (_e, rawId: unknown, rawConfirmed: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    const confirmed = arg(ipcArgs.flag, rawConfirmed, 'confirmed')
+    return actionResult(() => chats((s) => s.chats.remove(id, confirmed)))
+  })
+  ipcMain.handle(IPC.chatsSaveToNotes, (_e, rawId: unknown, rawIndex: unknown, rawPaper: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    const index = arg(ipcArgs.messageIndex, rawIndex, 'index')
+    // Only a paper the user picked; otherwise the service uses a paper chat's own paper.
+    const picked = arg(ipcArgs.notesPaper, rawPaper, 'paper')
+    return actionResult(() => chats((s) => s.chats.saveToNotes(id, index, picked ?? undefined)))
+  })
+  ipcMain.handle(IPC.chatsBibtex, async (_e, rawId: unknown, rawIndex: unknown): Promise<TextResult> => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    const index = arg(ipcArgs.messageIndex, rawIndex, 'index')
+    try {
+      return { ok: true, text: await chats((s) => s.chats.citationsBibtex(id, index)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).code }
+    }
+  })
+
+  // «Acciones» / «Sincronizar con git»: turning one off also denies the waiting approvals of its tools.
+  ipcMain.handle(IPC.chatsSetTools, (_e, rawId: unknown, rawTools: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    const tools = arg(ipcArgs.chatTools, rawTools, 'tools')
+    return actionResult(() => chats((s) => s.chats.setTools(id, tools)))
+  })
+  // «Aprobar» / «Rechazar»: `approve` is the user's click on the card. attach_pdf's file is picked here, in the app's
+  // own dialog on its window: never a path from the model or the window. The dialog's wait is not tracked (closing the
+  // project denies the approval; deciding it afterwards reports it gone).
+  ipcMain.handle(IPC.chatsDecide, (_e, rawId: unknown, rawApproval: unknown, rawApprove: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    const approvalId = arg(ipcArgs.approvalId, rawApproval, 'approval')
+    const approve = arg(ipcArgs.approve, rawApprove, 'approve')
+    // The session's service is captured before the PDF dialog may wait: if the project is closed or switched
+    // meanwhile, the decision lands on the old service, which answers approval_gone, never on the new project's.
+    return actionResult(() => decisions.decide(app.requireSession().chats, id, approvalId, approve))
+  })
+  // «Deshacer»: tracked, so closing the project waits for the undo before the cache closes.
+  ipcMain.handle(IPC.chatsUndo, (_e, rawId: unknown, rawAction: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    const actionId = arg(ipcArgs.actionId, rawAction, 'action')
+    return actionResult(() => chats((s) => s.chats.undo(id, actionId)))
   })
 
   // A file the user chose to save (a chart, the graph, CSV data), wherever they picked; never written into the project on our own.

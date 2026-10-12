@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import Markdown, { type UrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { findQuoteRanges } from '../../lib/textHighlight'
+import { SelectionAsk, type SelectionAskTarget } from './SelectionAsk'
 
 const ALLOWED_LINK_SCHEME = /^(https?:|mailto:)/i
 const ALLOWED_IMAGE_SCHEME = /^https?:/i
@@ -78,9 +79,20 @@ export interface ContentFocus {
  * first match scrolled into view. This never mutates the rendered DOM (no splitting or wrapping
  * text nodes), so it can't conflict with React's own reconciliation of that same tree. A quote
  * that cannot be found shows a small notice instead.
+ *
+ * With `onAsk`, a selection in the text offers «Preguntar a Claude» (web content has no pages: page null).
  */
-export function ContentView({ content, focus }: { content: string; focus: ContentFocus | null }): React.JSX.Element {
+export function ContentView({
+  content,
+  focus,
+  onAsk
+}: {
+  content: string
+  focus: ContentFocus | null
+  onAsk?: (target: SelectionAskTarget) => boolean
+}): React.JSX.Element {
   const { t } = useTranslation()
+  const wrapRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [notFound, setNotFound] = useState(false)
 
@@ -128,11 +140,12 @@ export function ContentView({ content, focus }: { content: string; focus: Conten
   }, [content, focus])
 
   return (
-    <div className="content-view-wrap">
+    <div className="content-view-wrap" ref={wrapRef}>
       {notFound && <p className="content-notice muted">{t('paper.content.quote_not_found')}</p>}
       <div className="content-view" ref={containerRef}>
         {markdown}
       </div>
+      {onAsk && <SelectionAsk containerRef={wrapRef} onAsk={onAsk} />}
     </div>
   )
 }

@@ -1,5 +1,6 @@
 import { readdirSync, statSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
+import { CHATS_DIR } from './chatFile'
 import { FACET_SUGGESTIONS_FILE } from './facetSuggestionsFile'
 import { RELATIONS_FILE } from './relationsFile'
 import { TRASH_DIR } from './trashPaths'
@@ -14,6 +15,8 @@ export interface WatchHandlers {
   onFacetSuggestions?(): void
   /** `.trash/` appeared or went away, or a folder moved in or out of it (a removal or restore, here or through git). */
   onTrash?(): void
+  /** `chats/` appeared or went away, or a conversation file in it was written, replaced or removed. */
+  onChats?(): void
 }
 
 export const PAPER_FOLDER = '.'
@@ -148,12 +151,40 @@ export function watchProject(root: string, handlers: WatchHandlers, debounceMs =
     if (notify) trashChanged()
   }
 
+  const chatsDir = join(root, CHATS_DIR)
+  let chatsWatcher: FSWatcher | null = null
+  const chatsChanged = (): void => schedule(CHATS_DIR, () => handlers.onChats?.())
+  const closeChatsDir = (): void => {
+    chatsWatcher?.close()
+    chatsWatcher = null
+  }
+  /**
+   * Watches chats/ once it exists: conversations come and go in it (atomic writes, git checkouts, deletions). A root
+   * event for chats/ itself (`rearm`) always re-opens the watch: the folder may have been removed and recreated between
+   * two events (a git checkout), and the old watch would be left on the deleted folder. Its inode cannot tell: the
+   * filesystem may hand the new folder the same one.
+   */
+  const syncChatsDir = (rearm: boolean): void => {
+    if (closed) return
+    if (rearm || !isDir(chatsDir)) closeChatsDir()
+    if (isDir(chatsDir))
+      chatsWatcher ??= watchDir(
+        chatsDir,
+        (name) => {
+          if (!name.startsWith('.')) chatsChanged()
+        },
+        closeChatsDir
+      )
+    if (rearm) chatsChanged()
+  }
+
   const rootWatcher = watchDir(
     root,
     (name) => {
       if (name === PROJECT_FILE) schedule(PROJECT_FILE, () => handlers.onConfig())
       else if (name === RELATIONS_FILE) schedule(RELATIONS_FILE, () => handlers.onRelations?.())
       else if (name === FACET_SUGGESTIONS_FILE) schedule(FACET_SUGGESTIONS_FILE, () => handlers.onFacetSuggestions?.())
+      else if (name === CHATS_DIR) syncChatsDir(true)
       else if (name === TRASH_DIR) syncTrashDir(true)
       else if (name === 'papers') syncPapersDir()
     },
@@ -161,12 +192,14 @@ export function watchProject(root: string, handlers: WatchHandlers, debounceMs =
   )
   syncPapersDir()
   syncTrashDir(false)
+  syncChatsDir(false)
 
   return () => {
     closed = true
     rootWatcher?.close()
     closePapersDir()
     closeTrashDir()
+    closeChatsDir()
     for (const timer of timers.values()) clearTimeout(timer)
     timers.clear()
   }

@@ -141,7 +141,7 @@ export const DEFAULT_LLM_CONFIG = {
   /** Up-to-date summaries added since the last facet suggestion run before the automatic trigger runs again. */
   auto_suggest_facets_after: 10,
   max_input_chars: 400000,
-  budget: { per_operation_usd: 0.5, per_batch_usd: 10, per_month_usd: null as number | null, per_facet_suggestion_usd: 2 }
+  budget: { per_operation_usd: 0.5, per_batch_usd: 10, per_month_usd: null as number | null, per_facet_suggestion_usd: 2, per_chat_message_usd: 0.5 }
 }
 
 /** Strict version (no fallback), used to validate edits from the UI. */
@@ -158,7 +158,9 @@ export const LlmConfigShape = z.object({
       per_batch_usd: z.number().positive().default(10),
       per_month_usd: z.number().positive().nullable().default(null),
       /** The cap of one «Sugerir facetas» run, which reads the whole library. */
-      per_facet_suggestion_usd: z.number().positive().default(2)
+      per_facet_suggestion_usd: z.number().positive().default(2),
+      /** One chat answer (its --max-budget-usd); counts for the monthly cap too. */
+      per_chat_message_usd: z.number().positive().default(0.5)
     })
     .prefault({})
 })
@@ -182,7 +184,8 @@ export const LlmConfigSchema = z
         per_operation_usd: z.number().positive().catch(B.per_operation_usd),
         per_batch_usd: z.number().positive().catch(B.per_batch_usd),
         per_month_usd: z.number().positive().nullable().catch(B.per_month_usd),
-        per_facet_suggestion_usd: z.number().positive().catch(B.per_facet_suggestion_usd)
+        per_facet_suggestion_usd: z.number().positive().catch(B.per_facet_suggestion_usd),
+        per_chat_message_usd: z.number().positive().catch(B.per_chat_message_usd)
       })
       .catch(() => ({ ...B }))
   })
@@ -192,13 +195,13 @@ export type LlmConfig = z.infer<typeof LlmConfigShape>
 export const SUMMARY_STATUSES = ['none', 'generated', 'reviewed', 'stale', 'too_long', 'failed'] as const
 export type SummaryStatus = (typeof SUMMARY_STATUSES)[number]
 
-export const COST_OPERATIONS = ['summarize', 'suggest_relations', 'suggest_facets', 'fill_facets'] as const
+export const COST_OPERATIONS = ['summarize', 'suggest_relations', 'suggest_facets', 'fill_facets', 'chat'] as const
 export type CostOperation = (typeof COST_OPERATIONS)[number]
 
 /** One line of costs/<device-id>.jsonl. */
 export interface CostEntry {
   at: string
-  /** The paper the call worked on; '' for a project-wide call (a facet suggestion run). */
+  /** The paper the call worked on; '' for a project-wide call (a facet suggestion run, a library chat answer). */
   paper_id: string
   batch_id: string | null
   model: string

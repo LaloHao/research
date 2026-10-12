@@ -1,0 +1,38 @@
+import type { ActionPreview, ActionReadTool, ActionRisk, ActionTool } from '../../shared/chatActions'
+
+/** What an action did. */
+export interface ExecutedAction {
+  /** Kept in the conversation's record and told to Claude: paper keys, counts, outcome codes. */
+  result: Record<string, unknown>
+  /** It ran but did not do what was asked (a sync that stopped on an error): recorded as failed. */
+  failed?: boolean
+  /** «Deshacer»; null when the action cannot be undone. */
+  undo: (() => Promise<void>) | null
+}
+
+/**
+ * An action checked and described, ready to run once the rule (or the user) allows it. The caller runs this same
+ * object's `execute` after the approval: what runs is what the card showed (the gate keeps a frozen copy for the card,
+ * so neither side may build a second PreparedAction in between).
+ */
+export interface PreparedAction {
+  tool: ActionTool
+  /** The validated arguments, without the request quote, as the record keeps them. */
+  args: Record<string, unknown>
+  preview: ActionPreview
+  /** Why it must be approved in the conversation whatever the user's message said; null for a reversible free action. */
+  risk: ActionRisk | null
+  /** Approving opens the file picker (attach_pdf). */
+  pickPdf: boolean
+  /**
+   * `pdfPath`: the file the user picked (attach_pdf). `identifier`: add_paper run without asking fetches the identifier
+   * as the user typed it instead of the model's.
+   */
+  execute(opts: { pdfPath?: string; identifier?: string }): Promise<ExecutedAction>
+}
+
+/** The library's side of the actions: reads, and preparing a call (a ToolError when it cannot be done). */
+export interface ActionExecutor {
+  read(tool: ActionReadTool, args: Record<string, unknown>): Promise<unknown>
+  prepare(tool: ActionTool, args: Record<string, unknown>): Promise<PreparedAction>
+}

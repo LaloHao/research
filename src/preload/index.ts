@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { eventChannel, IPC, type ResearchApi } from '../shared/ipc'
+import type { ChatStreamUpdate } from '../shared/chat'
+import { CHAT_STREAM_CHANNEL, eventChannel, IPC, type ResearchApi } from '../shared/ipc'
 
 const api: ResearchApi = {
   settings: {
@@ -105,6 +106,29 @@ const api: ResearchApi = {
     revert: (undoToken) => ipcRenderer.invoke(IPC.facetsRevert, undoToken),
     fillPlan: (ids) => ipcRenderer.invoke(IPC.facetsFillPlan, ids),
     fill: (ids) => ipcRenderer.invoke(IPC.facetsFill, ids)
+  },
+  chats: {
+    list: (query) => ipcRenderer.invoke(IPC.chatsList, query),
+    open: (id) => ipcRenderer.invoke(IPC.chatsOpen, id),
+    send: (req) => ipcRenderer.invoke(IPC.chatsSend, req),
+    retry: (id) => ipcRenderer.invoke(IPC.chatsRetry, id),
+    stop: (id) => ipcRenderer.invoke(IPC.chatsStop, id),
+    rename: (id, title) => ipcRenderer.invoke(IPC.chatsRename, id, title),
+    archive: (id, archived) => ipcRenderer.invoke(IPC.chatsArchive, id, archived),
+    setModel: (id, model) => ipcRenderer.invoke(IPC.chatsSetModel, id, model),
+    // `confirmed` comes from the window's confirmation, never assumed here.
+    remove: (id, confirmed) => ipcRenderer.invoke(IPC.chatsRemove, id, confirmed),
+    saveToNotes: (id, index, paperId) => ipcRenderer.invoke(IPC.chatsSaveToNotes, id, index, paperId),
+    bibtex: (id, index) => ipcRenderer.invoke(IPC.chatsBibtex, id, index),
+    setTools: (id, tools) => ipcRenderer.invoke(IPC.chatsSetTools, id, tools),
+    // `approve` is the user's click on the card; a PDF to attach is picked by the main process, never sent from here.
+    decide: (id, approvalId, approve) => ipcRenderer.invoke(IPC.chatsDecide, id, approvalId, approve),
+    undo: (id, actionId) => ipcRenderer.invoke(IPC.chatsUndo, id, actionId),
+    onStream: (callback) => {
+      const handler = (_e: Electron.IpcRendererEvent, update: ChatStreamUpdate): void => callback(update)
+      ipcRenderer.on(CHAT_STREAM_CHANNEL, handler)
+      return () => ipcRenderer.removeListener(CHAT_STREAM_CHANNEL, handler)
+    }
   },
   exports: {
     save: (defaultName, data) => ipcRenderer.invoke(IPC.exportSave, defaultName, data)

@@ -14,6 +14,8 @@ import { TRASH_PROBLEMS } from '../../src/shared/trash'
 import { CONFLICT_SIDES, SYNC_ERROR_CODES } from '../../src/shared/sync'
 import { SYNC_STATES } from '../../src/renderer/lib/sync'
 import { FACET_SUGGESTION_KINDS, SUGGESTION_VALIDITIES } from '../../src/shared/facetSuggestions'
+import { CITATION_STATES } from '../../src/shared/chat'
+import { ACTION_RISKS, ACTION_TOOLS, DENIAL_REASONS } from '../../src/shared/chatActions'
 
 const lookup = (path: string): unknown => path.split('.').reduce<unknown>((node, key) => (node as Record<string, unknown> | undefined)?.[key], es)
 const JOB_STATES: JobState[] = ['queued', 'running', 'done', 'failed', 'cancelled']
@@ -62,6 +64,10 @@ describe('es.json covers every code the UI can receive', () => {
     'summary.thesis_outdated',
     ...CITATIONS_STATUSES.map((s) => `relations.state.${s}`),
     'paper.tabs.relations',
+    'paper.tabs.chat',
+    'chat.ask_claude',
+    'chat.ask_claude_unquotable',
+    'settings.budget_chat',
     'relations.external_one',
     'relations.external_other',
     'library.citations_queued',
@@ -181,8 +187,111 @@ describe('es.json covers every code the UI can receive', () => {
     'facets.file.conflict',
     'facets.file.invalid',
     'settings.tabs.form_count',
-    ...['auto_suggest_facets', 'auto_suggest_facets_help', 'auto_suggest_facets_after', 'budget_facets'].map((k) => `settings.${k}`)
+    ...['auto_suggest_facets', 'auto_suggest_facets_help', 'auto_suggest_facets_after', 'budget_facets'].map((k) => `settings.${k}`),
+    ...CITATION_STATES.map((s) => `chat.citation.${s}`),
+    ...[
+      'new',
+      'search_placeholder',
+      'paper_filter_all',
+      'library_scope',
+      'archived_one',
+      'archived_other',
+      'empty',
+      'no_results',
+      'intro_library',
+      'intro_paper',
+      'copy_title',
+      'other_machine',
+      'problem',
+      'about_paper',
+      'paper_in_trash_banner',
+      'paper_missing_banner',
+      'model',
+      'total_cost',
+      'rename',
+      'rename_save',
+      'archive',
+      'unarchive',
+      'delete',
+      'delete_confirm',
+      'delete_yes',
+      'cancel',
+      'you',
+      'claude',
+      'placeholder',
+      'send',
+      'stop',
+      'retry',
+      'thinking',
+      'tools_one',
+      'tools_other',
+      'stopped',
+      'stopped_empty',
+      'empty_answer',
+      'unanswered',
+      'answer_cost',
+      'unverified_one',
+      'unverified_other',
+      'quoted',
+      'copy',
+      'copied',
+      'save_notes',
+      'save_notes_pick',
+      'save_notes_confirm',
+      'cited_option',
+      'saved_notes',
+      'copy_bibtex',
+      'copied_bibtex',
+      'no_citations',
+      'excerpt',
+      'excerpt_no_page',
+      'remove_excerpt',
+      'close_evidence'
+    ].map((k) => `chat.${k}`),
+    ...ACTION_TOOLS.map((tool) => `chat.actions.tools.${tool}`),
+    ...['undo', 'unknown', 'resolve_proposed_value_accept', 'resolve_proposed_value_map', 'attach_pdf_replace', 'fill_facets_all', 'review_summary_all'].map((k) => `chat.actions.tools.${k}`),
+    ...['confirm', 'reject', 'back_to_suggested', 'change_type', 'reverse', 'accept', 'restore'].map((d) => `chat.actions.decisions.${d}`),
+    ...DENIAL_REASONS.map((r) => `chat.actions.denied.${r}`),
+    ...ACTION_RISKS.map((r) => `chat.actions.risk.${r}`),
+    ...['estimate_one', 'estimate_other', 'cap', 'caps', 'month', 'month_no_cap'].map((k) => `chat.actions.cost.${k}`),
+    ...['ours', 'theirs'].map((c) => `chat.actions.conflict_choice.${c}`),
+    ...[
+      'switch_actions',
+      'switch_actions_hint',
+      'switch_sync',
+      'switch_sync_hint',
+      'record_head',
+      'thesis',
+      'executed_request',
+      'executed_user',
+      'still_running',
+      'undone_by_you',
+      'undone',
+      'failed',
+      'undo',
+      'approval_title',
+      'not_requested',
+      'requested',
+      'limit',
+      'relations_deleted_one',
+      'relations_deleted_other',
+      'replaces_pdf',
+      'approve',
+      'deny',
+      'pick_pdf',
+      'expires_one',
+      'expires_other'
+    ].map((k) => `chat.actions.${k}`),
+    'chat.actions.review_status.verified',
+    'chat.actions.review_status.generated'
   ])('%s', (path) => {
     expect(typeof lookup(path)).toBe('string')
+  })
+})
+
+describe('cap errors name the setting that lifts them', () => {
+  it('a chat answer at its cap points to the per-message cap, not the per-paper one', () => {
+    expect(lookup('errors.chat_message_budget')).toContain(`«${lookup('settings.budget_chat') as string}»`)
+    expect(lookup('errors.operation_budget')).toContain(`«${lookup('settings.budget_operation') as string}»`)
   })
 })

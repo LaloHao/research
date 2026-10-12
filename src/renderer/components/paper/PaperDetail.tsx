@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { ChatExcerpt } from '../../../shared/chat'
 import type { PaperDetail as Detail } from '../../../shared/library'
 import { useEvent } from '../../hooks/useEvent'
+import { excerptFromSelection, paperChatOf, updatePaperChat, type PaperChatState } from '../../lib/chat'
 import { errorText } from '../../lib/errorText'
 import { paperTabs, type Tab } from '../../lib/paperTabs'
 import { AttachPdfStatus, useAttachPdf } from './AttachPdf'
@@ -11,12 +13,24 @@ import { NotesEditor } from './NotesEditor'
 import { PdfViewer, type PdfFocus } from './PdfViewer'
 import { RelationsTab } from './RelationsTab'
 import { RemovePaper } from './RemovePaper'
+import type { SelectionAskTarget } from './SelectionAsk'
 import { TextTab } from './TextTab'
+import { PaperChatTab } from '../chat/PaperChatTab'
 import { SummaryTab } from '../summary/SummaryTab'
 
 type PdfState = { status: 'loading' } | { status: 'ready'; data: Uint8Array } | { status: 'missing' } | { status: 'error'; message: string }
 
-function PdfTab({ id, hasPdf, focus }: { id: string; hasPdf: boolean; focus: PdfFocus | null }): React.JSX.Element {
+function PdfTab({
+  id,
+  hasPdf,
+  focus,
+  onAsk
+}: {
+  id: string
+  hasPdf: boolean
+  focus: PdfFocus | null
+  onAsk: (target: SelectionAskTarget) => boolean
+}): React.JSX.Element {
   const { t } = useTranslation()
   const [state, setState] = useState<PdfState>({ status: 'loading' })
   useEffect(() => {
@@ -54,7 +68,7 @@ function PdfTab({ id, hasPdf, focus }: { id: string; hasPdf: boolean; focus: Pdf
       )}
       <AttachPdfStatus attach={attach} />
       <div className="pdf-drop-scroll">
-        {state.status === 'ready' && <PdfViewer data={state.data} focus={focus} />}
+        {state.status === 'ready' && <PdfViewer data={state.data} focus={focus} onAsk={onAsk} />}
         {state.status === 'loading' && <div className="center muted">{t('paper.pdf_loading')}</div>}
         {state.status === 'error' && <div className="center error">{t('paper.pdf_error', { message: state.message })}</div>}
         {missing && (
@@ -72,7 +86,17 @@ function PdfTab({ id, hasPdf, focus }: { id: string; hasPdf: boolean; focus: Pdf
 }
 
 /** The Contenido tab of a web page without a PDF: its text, plus a way to attach one. */
-function ContentTab({ id, content, focus }: { id: string; content: string; focus: ContentFocus | null }): React.JSX.Element {
+function ContentTab({
+  id,
+  content,
+  focus,
+  onAsk
+}: {
+  id: string
+  content: string
+  focus: ContentFocus | null
+  onAsk: (target: SelectionAskTarget) => boolean
+}): React.JSX.Element {
   const { t } = useTranslation()
   const attach = useAttachPdf(id, false)
   return (
@@ -84,7 +108,7 @@ function ContentTab({ id, content, focus }: { id: string; content: string; focus
       </div>
       <AttachPdfStatus attach={attach} />
       <div className="pdf-drop-scroll">
-        <ContentView content={content} focus={focus} />
+        <ContentView content={content} focus={focus} onAsk={onAsk} />
       </div>
       {attach.dragging && <div className="drop-overlay">{t('paper.attach.drop_hint')}</div>}
     </div>
@@ -114,6 +138,29 @@ export function PaperDetail({
   const [contentFocus, setContentFocus] = useState<ContentFocus | null>(null)
   const contentFocusSeq = useRef(0)
   const [copied, setCopied] = useState(false)
+  // The selection quoted in the paper's chat («Preguntar a Claude») and the conversation open there, kept while the
+  // user switches tabs. Tagged with its paper: another paper sees none of it, and a late update from a paper the user
+  // left (its first message answered after the switch) is ignored.
+  const [chatState, setChatState] = useState<PaperChatState | null>(null)
+  const shownId = useRef(id)
+  shownId.current = id
+  const { chatId, excerpt } = paperChatOf(chatState, id)
+  const setChatId = useCallback((next: string | null) => setChatState((s) => updatePaperChat(s, id, shownId.current, { chatId: next })), [id])
+  const setExcerpt = useCallback(
+    (next: ChatExcerpt | null) => setChatState((s) => updatePaperChat(s, id, shownId.current, { excerpt: next })),
+    [id]
+  )
+  /** «Preguntar a Claude»: false when the selection cannot be quoted (the button then says so). */
+  const ask = useCallback(
+    (target: SelectionAskTarget): boolean => {
+      const next = excerptFromSelection(target.quote, id, target.page)
+      if (!next) return false
+      setExcerpt(next)
+      setTab('chat')
+      return true
+    },
+    [id, setExcerpt]
+  )
 
   const refresh = useCallback(() => {
     window.research.library.detail(id).then(
@@ -209,16 +256,19 @@ export function PaperDetail({
       <div className="tab-body">
         {active === 'summary' && <SummaryTab key={detail.id} detail={detail} onOpenEvidence={openEvidence} />}
         {/* Keyed by the PDF hash too, so a replaced PDF is loaded again. */}
-        {active === 'pdf' && <PdfTab key={`${id}:${paper.pdf_sha256 ?? ''}`} id={id} hasPdf={detail.hasPdf} focus={focus} />}
+        {active === 'pdf' && <PdfTab key={`${id}:${paper.pdf_sha256 ?? ''}`} id={id} hasPdf={detail.hasPdf} focus={focus} onAsk={ask} />}
         {active === 'text' && <TextTab key={id} id={id} />}
         {active === 'content' &&
           (detail.hasPdf ? (
-            <ContentView key={id} content={detail.content ?? ''} focus={contentFocus} />
+            <ContentView key={id} content={detail.content ?? ''} focus={contentFocus} onAsk={ask} />
           ) : (
-            <ContentTab key={id} id={id} content={detail.content ?? ''} focus={contentFocus} />
+            <ContentTab key={id} id={id} content={detail.content ?? ''} focus={contentFocus} onAsk={ask} />
           ))}
         {active === 'relations' && (
           <RelationsTab key={id} paperId={id} title={paper.title} onOpenEvidence={openEvidence} onOpenCandidates={onOpenCandidates} onSelectPaper={onSelectPaper} />
+        )}
+        {active === 'chat' && (
+          <PaperChatTab key={id} paperId={id} selected={chatId} onSelectedChange={setChatId} excerpt={excerpt} onExcerptChange={setExcerpt} />
         )}
         {active === 'notes' && <NotesEditor key={id} paperId={id} />}
       </div>

@@ -190,4 +190,71 @@ describe('typed relation arguments', () => {
       expect(() => arg(ipcArgs.suggestionEdit, bad, 'edit')).toThrow()
     }
   })
+
+  it('accepts chat ids, titles, queries, messages and the per-message cap, nothing else', () => {
+    expect(arg(ipcArgs.llmPatch, { budget: { per_chat_message_usd: 0.2 } }, 'patch')).toEqual({ budget: { per_chat_message_usd: 0.2 } })
+    expect(() => arg(ipcArgs.llmPatch, { budget: { per_chat_message_usd: 0 } }, 'patch')).toThrow()
+    expect(arg(ipcArgs.chatId, '20261011-120000-a1b2-0f9e8d', 'id')).toBe('20261011-120000-a1b2-0f9e8d')
+    for (const bad of ['', '../x', '20261011-120000-A1B2', `20261011-120000-a1b2${'-0f9e8d'.repeat(9)}`, 7, null]) {
+      expect(() => arg(ipcArgs.chatId, bad, 'id')).toThrow()
+    }
+    expect(arg(ipcArgs.chatTitle, '  Drain ', 'title')).toBe('Drain')
+    for (const bad of ['   ', 'x'.repeat(121), 3]) expect(() => arg(ipcArgs.chatTitle, bad, 'title')).toThrow()
+    expect(arg(ipcArgs.chatListQuery, undefined, 'query')).toBeUndefined()
+    expect(arg(ipcArgs.chatListQuery, { text: 'drain', paper: 'he2017drain' }, 'query')).toEqual({ text: 'drain', paper: 'he2017drain' })
+    for (const bad of [{ paper: 'He' }, { text: 'x'.repeat(201) }, { paper: 'a'.repeat(201) }, { extra: 1 }, 'drain']) {
+      expect(() => arg(ipcArgs.chatListQuery, bad, 'query')).toThrow()
+    }
+    const send = { chatId: null, scope: { paper: 'he2017drain' }, model: 'sonnet', text: ' Why? ', excerpt: { paper: 'he2017drain', page: 3, quote: 'a tree' } }
+    expect(arg(ipcArgs.chatSend, send, 'request')).toEqual({ ...send, text: 'Why?' })
+    expect(arg(ipcArgs.chatSend, { ...send, chatId: '20261011-120000-a1b2', scope: 'library', excerpt: null }, 'request')).toMatchObject({ scope: 'library' })
+    for (const bad of [
+      { ...send, text: '  ' },
+      { ...send, text: 'x'.repeat(20001) },
+      { ...send, chatId: '../x' },
+      { ...send, scope: 'global' },
+      { ...send, scope: { paper: 'a'.repeat(201) } },
+      { ...send, scope: { paper: 'he2017drain', extra: 1 } },
+      { ...send, model: 'gpt' },
+      { ...send, excerpt: { paper: 'he2017drain', page: 0, quote: 'a' } },
+      { ...send, excerpt: { paper: 'he2017drain', page: 1.5, quote: 'a' } },
+      { ...send, excerpt: { paper: 'He', page: 1, quote: 'a' } },
+      { ...send, excerpt: { paper: 'he2017drain', page: null, quote: ' ' } },
+      { ...send, excerpt: { paper: 'he2017drain', page: null, quote: 'x'.repeat(1001) } },
+      { ...send, excerpt: undefined },
+      { ...send, extra: 1 }
+    ]) {
+      expect(() => arg(ipcArgs.chatSend, bad, 'request')).toThrow()
+    }
+    expect(arg(ipcArgs.chatModel, 'opus', 'model')).toBe('opus')
+    for (const bad of ['gpt', '', null]) expect(() => arg(ipcArgs.chatModel, bad, 'model')).toThrow()
+    expect(arg(ipcArgs.messageIndex, 3, 'index')).toBe(3)
+    for (const bad of [-1, 1.5, '3', 100_001]) expect(() => arg(ipcArgs.messageIndex, bad, 'index')).toThrow()
+    // «Guardar en notas del paper»: a paper only when the user picked one.
+    expect(arg(ipcArgs.notesPaper, undefined, 'paper')).toBeUndefined()
+    expect(arg(ipcArgs.notesPaper, null, 'paper')).toBeNull()
+    expect(arg(ipcArgs.notesPaper, 'he2017drain', 'paper')).toBe('he2017drain')
+    for (const bad of ['He', '../x', 'a'.repeat(201), 3]) expect(() => arg(ipcArgs.notesPaper, bad, 'paper')).toThrow()
+  })
+
+  it('accepts the chat switches, approval and action ids, and the switches of a new conversation', () => {
+    expect(arg(ipcArgs.chatTools, { actions: true }, 'tools')).toEqual({ actions: true })
+    expect(arg(ipcArgs.chatTools, { actions: false, sync: true }, 'tools')).toEqual({ actions: false, sync: true })
+    for (const bad of [{ actions: 'yes' }, { other: true }, { actions: 1 }, { sync: null }, {}, null, 'actions', [true]]) {
+      expect(() => arg(ipcArgs.chatTools, bad, 'tools')).toThrow()
+    }
+    expect(arg(ipcArgs.approvalId, 'a0b1c2', 'approval')).toBe('a0b1c2')
+    expect(arg(ipcArgs.actionId, 'a0b1c2', 'action')).toBe('a0b1c2')
+    for (const bad of ['', 'A0B1C2', 'a0b1c2d', 'a0b1c', '../x', 'a0b1c2\n', 7, null]) {
+      expect(() => arg(ipcArgs.approvalId, bad, 'approval')).toThrow()
+      expect(() => arg(ipcArgs.actionId, bad, 'action')).toThrow()
+    }
+    // The decision is a plain boolean (the user's click), never a string or a path.
+    expect(arg(ipcArgs.approve, true, 'approve')).toBe(true)
+    for (const bad of ['true', 1, null, undefined, { approve: true }, '/tmp/a.pdf']) expect(() => arg(ipcArgs.approve, bad, 'approve')).toThrow()
+    const send = { chatId: null, scope: 'library', model: 'sonnet', text: 'Hi', excerpt: null, actions: true, sync: false }
+    expect(arg(ipcArgs.chatSend, send, 'request')).toEqual(send)
+    expect(() => arg(ipcArgs.chatSend, { ...send, actions: 1 }, 'request')).toThrow()
+    expect(() => arg(ipcArgs.chatSend, { ...send, sync: 'on' }, 'request')).toThrow()
+  })
 })

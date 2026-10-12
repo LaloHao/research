@@ -6,12 +6,16 @@ import { AGENT_CLI_FLAGS, type AgentCliFlags } from './agentCliFlags'
 import {
   LlmError,
   type AgentRequest,
+  type ChatEvent,
+  type ChatRequest,
+  type ChatResult,
   type CompleteRequest,
   type CompleteResult,
   type LlmErrorCode,
   type LlmProvider,
   type McpEndpoint
 } from './LlmProvider'
+import { RunClock } from './RunClock'
 
 const DEFAULT_TIMEOUT_MS = 5 * 60_000
 
@@ -38,8 +42,14 @@ export function cliArgs(req: CompleteRequest): string[] {
 }
 
 export function mcpConfig(mcp: McpEndpoint): object {
-  return { mcpServers: { [mcp.name]: { type: 'http', url: mcp.url, headers: { Authorization: `Bearer ${mcp.token}` } } } }
+  return mcpConfigs([mcp])
 }
+
+export function mcpConfigs(servers: McpEndpoint[]): object {
+  return { mcpServers: Object.fromEntries(servers.map((s) => [s.name, { type: 'http', url: s.url, headers: { Authorization: `Bearer ${s.token}` } }])) }
+}
+
+const allowedFor = (name: string, flags: AgentCliFlags): string => (flags.allowedTools === 'glob' ? `mcp__${name}__*` : `mcp__${name}`)
 
 /** Only the tools of `req.mcp` are allowed; the CLI's own tools, other MCP servers and user settings are off. */
 export function agentArgs(req: AgentRequest, configPath: string, flags: AgentCliFlags): string[] {
@@ -60,7 +70,7 @@ export function agentArgs(req: AgentRequest, configPath: string, flags: AgentCli
     configPath,
     '--strict-mcp-config',
     '--allowedTools',
-    flags.allowedTools === 'glob' ? `mcp__${req.mcp.name}__*` : `mcp__${req.mcp.name}`,
+    allowedFor(req.mcp.name, flags),
     ...flags.permissionArgs,
     '--no-session-persistence',
     '--setting-sources',
@@ -70,7 +80,40 @@ export function agentArgs(req: AgentRequest, configPath: string, flags: AgentCli
   ]
 }
 
-interface CliOutput {
+/**
+ * A streamed chat answer: like an agent run (only the given servers' tools, nothing of the user's setup, no saved
+ * session), with Markdown instead of a JSON schema. `--verbose` is passed because print mode has required it with
+ * stream-json; `--include-partial-messages` makes the text arrive while it is written.
+ */
+export function chatArgs(req: ChatRequest, configPath: string, flags: AgentCliFlags): string[] {
+  return [
+    '-p',
+    '--output-format',
+    'stream-json',
+    '--verbose',
+    '--include-partial-messages',
+    '--model',
+    req.model,
+    '--max-budget-usd',
+    String(req.maxUsd),
+    ...(flags.maxTurns ? ['--max-turns', String(req.maxTurns)] : []),
+    '--tools',
+    '',
+    '--mcp-config',
+    configPath,
+    '--strict-mcp-config',
+    '--allowedTools',
+    req.servers.map((s) => allowedFor(s.name, flags)).join(','),
+    ...flags.permissionArgs,
+    '--no-session-persistence',
+    '--setting-sources',
+    '',
+    '--system-prompt',
+    req.system
+  ]
+}
+
+export interface CliOutput {
   subtype?: string
   is_error?: boolean
   api_error_status?: number | null
@@ -80,7 +123,7 @@ interface CliOutput {
   modelUsage?: Record<string, unknown>
 }
 
-function classify(text: string, status: number | null | undefined, subtype: string | undefined): LlmErrorCode {
+export function classifyCliError(text: string, status: number | null | undefined, subtype: string | undefined): LlmErrorCode {
   // The call's own --max-budget-usd: fails that paper, never the batch (budget_exceeded is BudgetGuard.admit's refusal).
   if (subtype?.includes('max_budget')) return 'operation_budget'
   if (subtype?.includes('max_turns')) return 'llm_invalid_output'
@@ -99,22 +142,84 @@ function mainModel(usage: Record<string, unknown> | undefined, requested: string
   return ranked[0]?.[0] ?? requested ?? 'unknown'
 }
 
+/** Throws the LlmError of a failed run (keeping its cost); returns the cost otherwise. */
+function checkOutcome(out: CliOutput, stderr: string, exitCode: number | null): number {
+  const cost = Number(out.total_cost_usd ?? 0)
+  if (out.is_error || (out.subtype && out.subtype !== 'success') || (exitCode !== 0 && exitCode !== null)) {
+    throw new LlmError(classifyCliError(`${out.result ?? ''}\n${stderr}`, out.api_error_status, out.subtype), cost)
+  }
+  return cost
+}
+
 export function parseCliOutput(stdout: string, stderr: string, exitCode: number | null, requestedModel?: string): CompleteResult {
   let out: CliOutput
   try {
     out = JSON.parse(stdout) as CliOutput
   } catch {
-    throw new LlmError(classify(`${stdout}\n${stderr}`, null, undefined), 0)
+    throw new LlmError(classifyCliError(`${stdout}\n${stderr}`, null, undefined), 0)
   }
-  const cost = Number(out.total_cost_usd ?? 0)
-  if (out.is_error || (out.subtype && out.subtype !== 'success') || (exitCode !== 0 && exitCode !== null)) {
-    throw new LlmError(classify(`${out.result ?? ''}\n${stderr}`, out.api_error_status, out.subtype), cost)
-  }
+  const cost = checkOutcome(out, stderr, exitCode)
   if (out.structured_output === undefined || out.structured_output === null) throw new LlmError('llm_invalid_output', cost)
   return { value: out.structured_output, costUsd: cost, model: mainModel(out.modelUsage, requestedModel) }
 }
 
-/** Runs `claude -p`: plain completions with no tools, no MCP servers, no user settings and no saved session; agent runs with only the given MCP server's tools. */
+export type StreamItem =
+  | { kind: 'turn' }
+  | { kind: 'delta'; text: string }
+  | { kind: 'tool'; name: string }
+  /** A whole assistant message: its text is used only when no partial messages arrived. */
+  | { kind: 'assistant'; text: string }
+  | { kind: 'result'; output: CliOutput }
+
+type Json = Record<string, unknown>
+const asObject = (v: unknown): Json | null => (v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Json) : null)
+
+/**
+ * One line of `--output-format stream-json`: the API's events wrapped as `stream_event`, whole `assistant` messages
+ * and the final `result`. Events of a subagent (with a parent tool use) and anything unknown are skipped.
+ */
+export function parseStreamLine(line: string): StreamItem | null {
+  let msg: Json | null
+  try {
+    msg = asObject(JSON.parse(line))
+  } catch {
+    return null
+  }
+  if (!msg || msg.parent_tool_use_id) return null
+  if (msg.type === 'result') return { kind: 'result', output: msg as CliOutput }
+  if (msg.type === 'assistant') {
+    const content = asObject(msg.message)?.content
+    const text = (Array.isArray(content) ? content : [])
+      .map(asObject)
+      .filter((b): b is Json => b !== null && b.type === 'text' && typeof b.text === 'string')
+      .map((b) => b.text as string)
+      .join('')
+    return text ? { kind: 'assistant', text } : null
+  }
+  if (msg.type !== 'stream_event') return null
+  const event = asObject(msg.event)
+  if (event?.type === 'message_start') return { kind: 'turn' }
+  const block = asObject(event?.content_block)
+  if (event?.type === 'content_block_start' && block?.type === 'tool_use') return { kind: 'tool', name: String(block.name ?? '').split('__').pop() ?? '' }
+  const delta = asObject(event?.delta)
+  if (event?.type === 'content_block_delta' && delta?.type === 'text_delta' && typeof delta.text === 'string') return { kind: 'delta', text: delta.text }
+  return null
+}
+
+const MAX_NOISE_LINES = 50
+
+function isJson(line: string): boolean {
+  try {
+    JSON.parse(line)
+    return true
+  } catch {
+    return false
+  }
+}
+
+type RunInput = { input: string; maxUsd: number; signal?: AbortSignal; timeoutMs?: number; clock?: RunClock; toolTimeoutMs?: number }
+
+/** Runs `claude -p`: plain completions with no tools, no MCP servers, no user settings and no saved session; agent and chat runs with only the given MCP servers' tools. */
 export class ClaudeCliProvider implements LlmProvider {
   constructor(
     private readonly opts: {
@@ -127,56 +232,144 @@ export class ClaudeCliProvider implements LlmProvider {
   ) {}
 
   complete(req: CompleteRequest): Promise<CompleteResult> {
-    return this.spawnCli(cliArgs(req), req)
+    return this.runCli(cliArgs(req), req, (stdout, stderr, code) => parseCliOutput(stdout, stderr, code, req.model))
   }
 
   /** The token travels in a 0600 temp file (never in argv) that is removed when the run ends, however it ends. */
-  async runAgent(req: AgentRequest): Promise<CompleteResult> {
-    if (req.signal?.aborted) throw abortError()
+  runAgent(req: AgentRequest): Promise<CompleteResult> {
+    return this.withMcpConfig([req.mcp], req.signal, (configPath) =>
+      this.runCli(agentArgs(req, configPath, this.flags), req, (stdout, stderr, code) => parseCliOutput(stdout, stderr, code, req.model))
+    )
+  }
+
+  /** Streams the answer line by line as events; the result line gives the final text, cost and model. */
+  chat(req: ChatRequest, onEvent: (event: ChatEvent) => void): Promise<ChatResult> {
+    return this.withMcpConfig(req.servers, req.signal, (configPath) => {
+      const state = {
+        /** The unfinished last line, in pieces: joined only when its newline arrives, so a long line is never rescanned. */
+        pending: [] as string[],
+        result: null as CliOutput | null,
+        streamed: false,
+        /** Whether the CLI got as far as streaming anything: then a run with no result line may have spent money. */
+        started: false,
+        /** Stdout lines that are not JSON (the CLI's own error output); streamed paper text is never classified. */
+        noise: [] as string[]
+      }
+      // A failing listener is the caller's problem: the run keeps streaming and still returns its result and cost.
+      const emit = (event: ChatEvent): void => {
+        try {
+          onEvent(event)
+        } catch (error) {
+          console.error('chat stream listener', error)
+        }
+      }
+      const handle = (line: string): void => {
+        const item = parseStreamLine(line)
+        if (!item) {
+          if (line.trim() && !isJson(line) && state.noise.length < MAX_NOISE_LINES) state.noise.push(line)
+          return
+        }
+        state.started = true
+        // Nothing reaches the caller once it stopped the run, even from the rest of the chunk being read.
+        if (req.signal?.aborted) return
+        if (item.kind === 'result') state.result = item.output
+        else if (item.kind === 'assistant') {
+          // Without partial messages, each whole message is a turn of its own.
+          if (!state.streamed) {
+            emit({ kind: 'turn' })
+            emit({ kind: 'delta', text: item.text })
+          }
+        } else {
+          if (item.kind === 'delta') state.streamed = true
+          emit(item)
+        }
+      }
+      const onStdout = (chunk: string): void => {
+        const lines = chunk.split('\n')
+        const last = lines.pop() ?? ''
+        if (lines.length > 0) {
+          lines[0] = state.pending.join('') + lines[0]
+          state.pending = []
+          for (const line of lines) handle(line)
+        }
+        if (last) state.pending.push(last)
+      }
+      return this.runCli(
+        chatArgs(req, configPath, this.flags),
+        req,
+        (_stdout, stderr, code) => {
+          const rest = state.pending.join('')
+          state.pending = []
+          if (rest.trim()) handle(rest)
+          const out = state.result
+          if (!out) {
+            const kind = classifyCliError(`${state.noise.join('\n')}\n${stderr}`, null, undefined)
+            // Cut off after it started: its real cost is unknown, so the cap it may have spent is charged as an estimate.
+            throw state.started ? new LlmError(kind, req.maxUsd, { estimated: true }) : new LlmError(kind, 0)
+          }
+          const cost = checkOutcome(out, stderr, code)
+          return { text: typeof out.result === 'string' ? out.result : '', costUsd: cost, model: mainModel(out.modelUsage, req.model) }
+        },
+        onStdout
+      )
+    })
+  }
+
+  private get flags(): AgentCliFlags {
+    return this.opts.cliFlags ?? AGENT_CLI_FLAGS
+  }
+
+  private async withMcpConfig<T>(servers: McpEndpoint[], signal: AbortSignal | undefined, run: (configPath: string) => Promise<T>): Promise<T> {
+    if (signal?.aborted) throw abortError()
     const dir = await mkdtemp(join(tmpdir(), 'research-mcp-'))
     const configPath = join(dir, 'mcp.json')
     try {
-      await writeFile(configPath, JSON.stringify(mcpConfig(req.mcp)), { mode: 0o600 })
-      return await this.spawnCli(agentArgs(req, configPath, this.opts.cliFlags ?? AGENT_CLI_FLAGS), req)
+      await writeFile(configPath, JSON.stringify(mcpConfigs(servers)), { mode: 0o600 })
+      return await run(configPath)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
   }
 
-  private spawnCli(args: string[], req: CompleteRequest): Promise<CompleteResult> {
+  private runCli<T>(args: string[], req: RunInput, parse: (stdout: string, stderr: string, code: number | null) => T, onStdout?: (chunk: string) => void): Promise<T> {
     return new Promise((resolve, reject) => {
       if (req.signal?.aborted) return reject(abortError())
-      const child = spawn(this.opts.command ?? 'claude', [...(this.opts.prefixArgs ?? []), ...args], {
-        env: this.opts.env ?? process.env,
-        stdio: ['pipe', 'pipe', 'pipe']
-      })
+      const base = this.opts.env ?? process.env
+      // The CLI's own wait for a tool call: an action waiting for the user's approval keeps its call open that long.
+      const env = req.toolTimeoutMs ? { ...base, MCP_TOOL_TIMEOUT: String(req.toolTimeoutMs) } : base
+      const child = spawn(this.opts.command ?? 'claude', [...(this.opts.prefixArgs ?? []), ...args], { env, stdio: ['pipe', 'pipe', 'pipe'] })
       let stdout = ''
       let stderr = ''
       let settled = false
       const finish = (fn: () => void): void => {
         if (settled) return
         settled = true
-        clearTimeout(timer)
+        disarm()
         req.signal?.removeEventListener('abort', onAbort)
         fn()
       }
       // Killed after it started: its real cost is unknown, so the per-operation cap it may spend is charged as an estimate.
-      const timer = setTimeout(() => {
+      const disarm = (req.clock ?? new RunClock()).start(req.timeoutMs ?? this.opts.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS, () => {
         child.kill('SIGKILL')
         finish(() => reject(new LlmError('llm_timeout', req.maxUsd, { estimated: true })))
-      }, req.timeoutMs ?? this.opts.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS)
+      })
       const onAbort = (): void => {
         child.kill('SIGKILL')
         finish(() => reject(Object.assign(abortError(), { costUsd: req.maxUsd, estimated: true })))
       }
       req.signal?.addEventListener('abort', onAbort)
-      child.stdout.on('data', (d: Buffer) => (stdout += d.toString('utf8')))
-      child.stderr.on('data', (d: Buffer) => (stderr += d.toString('utf8')))
+      child.stdout.setEncoding('utf8')
+      child.stderr.setEncoding('utf8')
+      child.stdout.on('data', (d: string) => {
+        stdout += d
+        if (!settled) onStdout?.(d)
+      })
+      child.stderr.on('data', (d: string) => (stderr += d))
       child.on('error', (error) => finish(() => reject(new LlmError('llm_unavailable', 0, { cause: error }))))
       child.on('close', (code) =>
         finish(() => {
           try {
-            resolve(parseCliOutput(stdout, stderr, code, req.model))
+            resolve(parse(stdout, stderr, code))
           } catch (error) {
             reject(error)
           }

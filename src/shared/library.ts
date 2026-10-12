@@ -72,6 +72,13 @@ export const USER_ERROR_CODES = [
   'suggestion_outdated',
   'facet_suggestions_conflict',
   'summary_outdated',
+  'chat_busy',
+  'chat_not_found',
+  'chat_invalid',
+  'paper_not_in_library',
+  'chat_message_budget',
+  'approval_gone',
+  'undo_unavailable',
   'unknown'
 ] as const
 export type UserErrorCode = (typeof USER_ERROR_CODES)[number]

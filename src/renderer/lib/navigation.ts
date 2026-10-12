@@ -1,5 +1,5 @@
 /** Views of the side rail, in order (settings stays last). */
-export const VIEWS = ['library', 'map', 'trash', 'sync', 'settings'] as const
+export const VIEWS = ['library', 'map', 'chat', 'trash', 'sync', 'settings'] as const
 export type View = (typeof VIEWS)[number]
 
 export const MAP_TABS = ['graph', 'charts', 'candidates'] as const
