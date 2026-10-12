@@ -36,10 +36,10 @@ import type { MappingService } from './mapping/MappingService'
 import { RELATIONS_FILE } from './project/relationsFile'
 import type { SyncService } from './sync/SyncService'
 
-/** Writes travel back as `{ ok }`; failures carry the code the UI translates. */
 /** How long «Buscar» waits for OpenAlex's count before showing the confirmation without it. */
 const COUNT_TIMEOUT_MS = 20_000
 
+/** Writes travel back as `{ ok }`; failures carry the code the UI translates. */
 async function actionResult(action: () => Promise<unknown>): Promise<ActionResult> {
   try {
     await action()
