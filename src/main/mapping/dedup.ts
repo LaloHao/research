@@ -1,22 +1,51 @@
 import { randomBytes } from 'node:crypto'
+import type { Author } from '../../shared/schemas'
 import type { DuplicateReason, MappingRecord, RecordIdentifiers, WorkCandidate } from '../../shared/mapping'
-import { arxivFromDoi, normalizeArxiv, normalizeDoi } from '../ingest/identifiers'
+import { asciiFold } from '../ingest/citekey'
+import { arxivDoi, arxivFromDoi, normalizeArxiv, normalizeDoi, parseInput } from '../ingest/identifiers'
 import { bareOpenAlexId } from '../ingest/openalex'
-import { normalizeTitle } from '../library/dedupe'
 import { sha256 } from '../project/atomicWrite'
 
 const KINDS = ['doi', 'arxiv', 'openalex'] as const
 type Clean = Pick<RecordIdentifiers, (typeof KINDS)[number]>
-/** Shorter titles ("Introduction") never make two records the same work on their own. */
+/**
+ * How much of a title it takes to stand for its work, counted on its normal form: one per character (spaces included,
+ * as before), 2.5 per character of a script written without spaces (6 Chinese characters are enough). Shorter titles
+ * ("Introduction") never make two records the same work, nor a shared record id, on their own.
+ */
 const MIN_TITLE = 15
+const DENSE_WEIGHT = 2.5
 export const SIMILAR_TITLE = 0.9
 
-/** DOIs lowercase and bare, arXiv ids without version (also from an arXiv DOI), OpenAlex ids bare. Only these three keys. */
+const DOI = /^10\.\d{4,9}\/\S+$/
+const OPENALEX = /^W\d+$/
+
+/**
+ * DOIs lowercase and bare (also from doi.org URLs), arXiv ids without version (also from arXiv URLs and arXiv DOIs),
+ * OpenAlex ids bare. Values that are not identifiers ("N/A", "-") are dropped. Only these three keys.
+ */
 export function cleanIdentifiers(ids: RecordIdentifiers): Clean {
-  const doi = ids.doi ? normalizeDoi(ids.doi) || undefined : undefined
-  const arxiv = (ids.arxiv ? normalizeArxiv(ids.arxiv) : null) ?? (doi ? arxivFromDoi(doi) : null) ?? undefined
-  const openalex = ids.openalex ? bareOpenAlexId(ids.openalex).toUpperCase() || undefined : undefined
+  let doi = ids.doi ? cleanDoi(ids.doi) : undefined
+  const fromDoi = doi ? arxivFromDoi(doi) : null
+  const doiArxiv = fromDoi ? normalizeArxiv(fromDoi) : null
+  if (doiArxiv) doi = arxivDoi(doiArxiv)
+  const arxiv = (ids.arxiv ? cleanArxiv(ids.arxiv) : null) ?? doiArxiv ?? undefined
+  const oa = ids.openalex ? bareOpenAlexId(ids.openalex).toUpperCase() : ''
+  const openalex = OPENALEX.test(oa) ? oa : undefined
   return { ...(doi ? { doi } : {}), ...(arxiv ? { arxiv } : {}), ...(openalex ? { openalex } : {}) }
+}
+
+function cleanDoi(raw: string): string | undefined {
+  const parsed = parseInput(raw.trim().replace(/^(https?:\/\/)www\./i, '$1'))
+  const doi = parsed.kind === 'doi' ? parsed.doi : normalizeDoi(raw)
+  return DOI.test(doi) ? doi : undefined
+}
+
+function cleanArxiv(raw: string): string | null {
+  const direct = normalizeArxiv(raw)
+  if (direct) return direct
+  const parsed = parseInput(raw)
+  return parsed.kind === 'arxiv' ? parsed.arxiv : null
 }
 
 /** Some identifier kind both have, with different values. */
@@ -24,21 +53,69 @@ function conflicting(a: Clean, b: Clean): boolean {
   return KINDS.some((k) => a[k] !== undefined && b[k] !== undefined && a[k] !== b[k])
 }
 
-/** A title that can stand for its work: long enough once normalized (a non-Latin title folds to nothing). */
-const keyTitle = (normalized: string): boolean => normalized.length >= MIN_TITLE
+const shared = (a: Clean, b: Clean): number => KINDS.filter((k) => a[k] !== undefined && a[k] === b[k]).length
+const hasIds = (a: Clean): boolean => KINDS.some((k) => a[k] !== undefined)
+
+/** Scripts written without spaces between words: their characters are compared in pairs. */
+const DENSE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u
+const DENSE_RUNS = /([\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]+)/u
 
 /**
- * What a record's id is derived from: its best identifier, else its normalized title and year, so one work gets one id
- * on every machine. A title that cannot tell works apart (short, folding to nothing, or without a year) gets a random
- * key instead: two machines must never derive one id for two works, since the sync would join them silently.
+ * A title's normal form for deduplication: Latin accents folded as the library does, lowercase, letters, marks and
+ * digits of every script kept, anything else a single space. Latin titles give the library's own normal form.
  */
-export function recordKey(c: Pick<WorkCandidate, 'title' | 'year' | 'identifiers'>): string {
+export function titleForm(title: string): string {
+  return asciiFold(title)
+    .replace(/ς/g, 'σ')
+    .replace(/[^\p{L}\p{N}\p{M}]+/gu, ' ')
+    .trim()
+    .normalize('NFKC')
+}
+
+function titleWeight(form: string): number {
+  let w = 0
+  for (const ch of form) w += DENSE.test(ch) ? DENSE_WEIGHT : 1
+  return w
+}
+
+const strongTitle = (form: string): boolean => titleWeight(form) >= MIN_TITLE
+
+/** Words of the normal form; runs of a script without spaces become their character pairs. */
+function titleTokens(form: string): Set<string> {
+  const out = new Set<string>()
+  for (const word of form.split(' ')) {
+    for (const part of word.split(DENSE_RUNS)) {
+      if (!part) continue
+      if (!DENSE.test(part)) {
+        out.add(part)
+        continue
+      }
+      const chars = [...part]
+      if (chars.length === 1) out.add(part)
+      for (let i = 0; i + 1 < chars.length; i++) out.add(chars[i] + chars[i + 1])
+    }
+  }
+  return out
+}
+
+/** The first author's family name, folded; '' when there is none. */
+function firstFamily(authors: Author[]): string {
+  return authors.length > 0 ? titleForm(authors[0].family) : ''
+}
+
+/**
+ * What a record's id is derived from, so one work gets one id on every machine: its best identifier (an arXiv DOI keys
+ * as its arXiv id), else its title's normal form, year and first author's family name. A title that cannot tell works
+ * apart (too short, or without a year) gets a random key instead, since the sync would silently join two works that
+ * derived one id. Not deterministic then: call it once per new record (not once per retry of a write).
+ */
+export function recordKey(c: Pick<WorkCandidate, 'title' | 'year' | 'identifiers' | 'authors'>): string {
   const ids = cleanIdentifiers(c.identifiers)
-  if (ids.doi) return `doi:${ids.doi}`
+  if (ids.doi && !(ids.arxiv && ids.doi === arxivDoi(ids.arxiv))) return `doi:${ids.doi}`
   if (ids.arxiv) return `arxiv:${ids.arxiv}`
   if (ids.openalex) return `openalex:${ids.openalex}`
-  const title = normalizeTitle(c.title)
-  if (keyTitle(title) && c.year !== null) return `title:${title}|${c.year}`
+  const title = titleForm(c.title)
+  if (strongTitle(title) && c.year !== null) return `title:${title}|${c.year}|${firstFamily(c.authors)}`
   return `unkeyed:${randomBytes(8).toString('hex')}`
 }
 
@@ -50,96 +127,174 @@ export function recordIdFor(key: string, taken: (id: string) => boolean): string
   }
 }
 
-const words = (title: string): Set<string> => new Set(normalizeTitle(title).split(' ').filter(Boolean))
-
-/** Dice coefficient of the titles' word sets (case, accents and punctuation ignored); 0 when either has no words. */
-export function titleSimilarity(a: string, b: string): number {
-  const x = words(a)
-  const y = words(b)
+function dice(x: Set<string>, y: Set<string>): number {
   if (x.size === 0 || y.size === 0) return 0
-  let shared = 0
-  for (const w of x) if (y.has(w)) shared++
-  return (2 * shared) / (x.size + y.size)
+  const [small, big] = x.size <= y.size ? [x, y] : [y, x]
+  let n = 0
+  for (const w of small) if (big.has(w)) n++
+  return (2 * n) / (x.size + y.size)
+}
+
+/** Dice coefficient of the titles' tokens (case, accents and punctuation ignored; character pairs for CJK and the like). */
+export function titleSimilarity(a: string, b: string): number {
+  return dice(titleTokens(titleForm(a)), titleTokens(titleForm(b)))
 }
 
 export type RecordMatch = { kind: 'same'; record: string } | { kind: 'doubtful'; record: string; reason: DuplicateReason } | null
 
+/** A match with how it was found: `basis` tells an identifier match from a title one. */
+type FullMatch = { kind: 'same'; record: string; basis: 'id' | 'title' } | { kind: 'doubtful'; record: string; reason: DuplicateReason }
+
+interface Entry {
+  record: MappingRecord
+  /** The record a match with this one resolves to: itself, or the record it was merged into. */
+  root: string
+  ids: Clean
+  title: string
+  tokens: Set<string>
+  family: string
+  venue: string
+}
+
 const yearsNear = (a: number | null, b: number | null): boolean => a === null || b === null || Math.abs(a - b) <= 1
+/** How far two years are; an unknown year comes after any known year one apart. */
+const yearGap = (a: number | null, b: number | null): number => (a === null || b === null ? 1.5 : Math.abs(a - b))
 
 /**
- * Matches candidates against the records of a mapping (merged ones left out). It never joins two works on a guess:
- * - a shared identifier is the same work only when no identifier kind conflicts and every record sharing one agrees;
- *   otherwise the pair is doubtful (`conflicting_ids`), e.g. a preprint and its published version;
- * - the same normalized title (at least 15 characters) and the same known year, with no identifier in conflict, is the
- *   same work; the same title with conflicting identifiers, a year one apart or a missing year is doubtful;
- * - titles with a word Dice similarity of at least 0.9, a year apart at most, are doubtful (`similar_title`).
+ * Matches candidates against the records of a mapping. It never joins two works on a guess:
+ * - identifiers: a record sharing one with the candidate and conflicting on none is the same work (the one sharing
+ *   most kinds wins); when every record sharing one also conflicts on another kind (a preprint and its published
+ *   version), the pair is doubtful (`conflicting_ids`);
+ * - title: the same normal form, with no identifier in conflict, is the same work when the title is long enough, the
+ *   years are equal and known, and the first authors' family names agree (when both have authors); also when the
+ *   candidate replicates a record without identifiers exactly (title, year, venue and first author). Otherwise the same
+ *   title a year apart at most (or without a year) is doubtful (`same_title`, or `conflicting_ids`), the nearest year
+ *   first;
+ * - titles with a token Dice similarity of at least 0.9, a year apart at most, are doubtful (`similar_title`).
+ * Merged records are indexed too and resolve to the record they were merged into, so a confirmed «Es el mismo» or
+ * «Son distintos» stays settled when the same works arrive again.
  */
 export class RecordMatcher {
-  private readonly byId = new Map<string, MappingRecord[]>()
-  private readonly byTitle = new Map<string, MappingRecord[]>()
-  private readonly byYear = new Map<number | null, MappingRecord[]>()
-  private readonly clean = new Map<string, Clean>()
+  private readonly byId = new Map<string, Entry[]>()
+  private readonly byTitle = new Map<string, Entry[]>()
+  private readonly postings = new Map<string, Entry[]>()
 
   constructor(records: Iterable<MappingRecord>) {
-    for (const r of records) if (!r.merged_into) this.add(r)
+    const all = new Map<string, MappingRecord>()
+    for (const r of records) all.set(r.id, r)
+    for (const r of all.values()) {
+      const root = rootOf(r, all)
+      if (root) this.index(r, root)
+    }
   }
 
+  /** A record added during the same import (active). */
   add(r: MappingRecord): void {
-    const ids = cleanIdentifiers(r.identifiers)
-    this.clean.set(r.id, ids)
-    for (const kind of KINDS) {
-      const value = ids[kind]
-      if (value) push(this.byId, `${kind}:${value}`, r)
-    }
-    const title = normalizeTitle(r.title)
-    if (title) push(this.byTitle, title, r)
-    push(this.byYear, r.year, r)
+    this.index(r, r.id)
   }
 
   match(c: WorkCandidate): RecordMatch {
+    const m = this.matchFull(c)
+    if (!m) return null
+    return m.kind === 'same' ? { kind: 'same', record: m.record } : m
+  }
+
+  /** The match, leaving out the records `skip` names (by the record it resolves to). */
+  matchFull(c: WorkCandidate, skip: (root: string) => boolean = () => false): FullMatch | null {
     const ids = cleanIdentifiers(c.identifiers)
-    const hits: MappingRecord[] = []
+    const hits: Entry[] = []
     for (const kind of KINDS) {
       const value = ids[kind]
-      for (const r of value ? (this.byId.get(`${kind}:${value}`) ?? []) : []) if (!hits.includes(r)) hits.push(r)
+      if (!value) continue
+      for (const e of this.byId.get(`${kind}:${value}`) ?? []) if (!skip(e.root) && !hits.includes(e)) hits.push(e)
     }
     if (hits.length > 0) {
-      const clash = hits.find((r) => conflicting(ids, this.ids(r)))
-      return clash ? { kind: 'doubtful', record: clash.id, reason: 'conflicting_ids' } : { kind: 'same', record: hits[0].id }
+      const clean = hits.filter((e) => !conflicting(ids, e.ids)).sort((a, b) => shared(ids, b.ids) - shared(ids, a.ids))
+      if (clean.length > 0) return { kind: 'same', record: clean[0].root, basis: 'id' }
+      return { kind: 'doubtful', record: hits[0].root, reason: 'conflicting_ids' }
     }
 
-    const title = normalizeTitle(c.title)
-    const sameTitle = title ? (this.byTitle.get(title) ?? []) : []
-    const same = sameTitle.find((r) => keyTitle(title) && r.year !== null && r.year === c.year && !conflicting(ids, this.ids(r)))
-    if (same) return { kind: 'same', record: same.id }
-    for (const r of sameTitle) {
-      const near = yearsNear(r.year, c.year)
-      if (conflicting(ids, this.ids(r)) && (near || keyTitle(title))) return { kind: 'doubtful', record: r.id, reason: 'conflicting_ids' }
-      if (near) return { kind: 'doubtful', record: r.id, reason: 'same_title' }
-    }
-
+    const title = titleForm(c.title)
     if (!title) return null
-    for (const r of this.near(c.year)) {
-      if (titleSimilarity(r.title, c.title) >= SIMILAR_TITLE) return { kind: 'doubtful', record: r.id, reason: 'similar_title' }
+    const family = firstFamily(c.authors)
+    const venue = titleForm(c.venue ?? '')
+    const strong = strongTitle(title)
+    const sameTitle = (this.byTitle.get(title) ?? []).filter((e) => !skip(e.root))
+    const same = sameTitle.find((e) => {
+      if (conflicting(ids, e.ids)) return false
+      const authorsAgree = !family || !e.family || family === e.family
+      if (strong && c.year !== null && e.record.year === c.year && authorsAgree) return true
+      return !hasIds(ids) && !hasIds(e.ids) && e.record.year === c.year && e.venue === venue && e.family === family
+    })
+    if (same) return { kind: 'same', record: same.root, basis: 'title' }
+    const byYear = [...sameTitle].sort((a, b) => yearGap(a.record.year, c.year) - yearGap(b.record.year, c.year))
+    for (const e of byYear) {
+      const near = yearsNear(e.record.year, c.year)
+      if (conflicting(ids, e.ids) && (near || strong)) return { kind: 'doubtful', record: e.root, reason: 'conflicting_ids' }
+      if (near) return { kind: 'doubtful', record: e.root, reason: 'same_title' }
     }
-    return null
+
+    const similar = this.similar(titleTokens(title), c.year, skip)
+    return similar ? { kind: 'doubtful', record: similar.root, reason: 'similar_title' } : null
   }
 
-  private ids(r: MappingRecord): Clean {
-    return this.clean.get(r.id) ?? cleanIdentifiers(r.identifiers)
+  private index(r: MappingRecord, root: string): void {
+    const title = titleForm(r.title)
+    const e: Entry = { record: r, root, ids: cleanIdentifiers(r.identifiers), title, tokens: titleTokens(title), family: firstFamily(r.authors), venue: titleForm(r.venue ?? '') }
+    for (const kind of KINDS) {
+      const value = e.ids[kind]
+      if (value) push(this.byId, `${kind}:${value}`, e)
+    }
+    if (!title) return
+    push(this.byTitle, title, e)
+    for (const t of e.tokens) push(this.postings, t, e)
   }
 
-  /** Records a year apart at most (or without a year): the only ones whose titles are compared. */
-  private near(year: number | null): MappingRecord[] {
-    if (year === null) return [...this.byYear.values()].flat()
-    return [year - 1, year, year + 1, null].flatMap((y) => this.byYear.get(y) ?? [])
+  /**
+   * The most similar title a year apart at most. Dice ≥ 0.9 needs at least 9/11 of the candidate's tokens shared, so
+   * any match holds one of its (n − ⌈9n/11⌉ + 1) rarest tokens: only the records listed under those are compared.
+   */
+  private similar(tokens: Set<string>, year: number | null, skip: (root: string) => boolean): Entry | null {
+    const n = tokens.size
+    if (n === 0) return null
+    const need = Math.ceil((n * 9) / 11 - 1e-9)
+    const probes = [...tokens].sort((a, b) => (this.postings.get(a)?.length ?? 0) - (this.postings.get(b)?.length ?? 0)).slice(0, n - need + 1)
+    const seen = new Set<Entry>()
+    let best: Entry | null = null
+    let bestScore = 0
+    for (const t of probes) {
+      for (const e of this.postings.get(t) ?? []) {
+        if (seen.has(e)) continue
+        seen.add(e)
+        if (!yearsNear(e.record.year, year) || skip(e.root)) continue
+        const m = e.tokens.size
+        if (m * 11 < n * 9 || m * 9 > n * 11) continue
+        const score = dice(tokens, e.tokens)
+        if (score >= SIMILAR_TITLE && score > bestScore) {
+          best = e
+          bestScore = score
+        }
+      }
+    }
+    return best
   }
 }
 
-function push<K>(map: Map<K, MappingRecord[]>, key: K, r: MappingRecord): void {
+/** The active record `r` resolves to through its `merged_into` chain; null when the chain breaks or loops. */
+function rootOf(r: MappingRecord, all: Map<string, MappingRecord>): string | null {
+  let cur = r
+  for (let steps = 0; cur.merged_into; steps++) {
+    const next = all.get(cur.merged_into)
+    if (!next || steps > all.size) return null
+    cur = next
+  }
+  return cur.id
+}
+
+function push<K>(map: Map<K, Entry[]>, key: K, e: Entry): void {
   const list = map.get(key)
-  if (list) list.push(r)
-  else map.set(key, [r])
+  if (list) list.push(e)
+  else map.set(key, [e])
 }
 
 export function newRecord(
@@ -201,42 +356,25 @@ export function mergeCandidate(r: MappingRecord, c: WorkCandidate, searchId: str
 }
 
 /**
- * Records that share an identifier although entry would have matched them: two machines added the same work under
- * different keys and the sync kept both. Each later record (by `added_at`, then id) is paired with the earliest record
- * sharing an identifier with it that it is not told distinct from and not already waiting on as a doubtful duplicate.
+ * Possible duplicates among active records that entry could not catch: two machines added one work under different
+ * ids (different keys, or random keys of weak titles) and the sync kept both. Each record, in `added_at` then id order,
+ * is matched with the matcher's own rules against the earlier ones; a match becomes a pair with its reason (`same_id`
+ * for a shared identifier, `same_title` for a title the matcher would have joined, else the doubtful reason). Pairs the
+ * user already settled (`distinct_from`) and records already waiting on a doubtful pair (`duplicate_of`) are left out.
  * Pass only active records.
  */
-export function identifierCollisions(records: MappingRecord[]): { record: string; other: string }[] {
+export function syncDuplicates(records: MappingRecord[]): { record: string; other: string; reason: DuplicateReason }[] {
   const sorted = [...records].sort((a, b) => (a.added_at < b.added_at ? -1 : a.added_at > b.added_at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-  const owners = new Map<string, MappingRecord[]>()
-  const out: { record: string; other: string }[] = []
+  const byId = new Map(sorted.map((r) => [r.id, r]))
+  const matcher = new RecordMatcher([])
+  const out: { record: string; other: string; reason: DuplicateReason }[] = []
   for (const r of sorted) {
-    const ids = cleanIdentifiers(r.identifiers)
-    let paired = false
-    for (const kind of KINDS) {
-      const value = ids[kind]
-      if (!value) continue
-      const key = `${kind}:${value}`
-      const earlier = owners.get(key) ?? []
-      if (!paired) {
-        const other = earlier.find((o) => o.id !== r.id && !told(r, o))
-        if (other) {
-          out.push({ record: r.id, other: other.id })
-          paired = true
-        }
-      }
-      if (!earlier.includes(r)) owners.set(key, [...earlier, r])
+    if (!r.duplicate_of) {
+      const told = (other: string): boolean => other === r.id || r.distinct_from.includes(other) || (byId.get(other)?.distinct_from.includes(r.id) ?? false) || byId.get(other)?.duplicate_of?.record === r.id
+      const m = matcher.matchFull(r, told)
+      if (m) out.push({ record: r.id, other: m.record, reason: m.kind === 'same' ? (m.basis === 'id' ? 'same_id' : 'same_title') : m.reason })
     }
+    matcher.add(r)
   }
   return out
-}
-
-/** The user already said they are distinct, or the pair already waits as a doubtful duplicate. */
-function told(a: MappingRecord, b: MappingRecord): boolean {
-  return (
-    a.distinct_from.includes(b.id) ||
-    b.distinct_from.includes(a.id) ||
-    a.duplicate_of?.record === b.id ||
-    b.duplicate_of?.record === a.id
-  )
 }
