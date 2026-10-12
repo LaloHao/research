@@ -30,10 +30,17 @@ describe('FacetSuggestionsFileSchema', () => {
     expect(file.suggestions[2]).toMatchObject({ later: true })
   })
 
+  it('accepts any short non-empty alias source, like value_aliases, but only a snake_case target', () => {
+    expect(FacetSuggestionSchema.safeParse(aliasSuggestion({ from: ['3gpp_rules', 'Regex Rules'] })).success).toBe(true)
+    expect(FacetSuggestionSchema.safeParse(aliasSuggestion({ to: '3gpp_rules', id: 'alias__sanitization_technique__3gpp_rules' })).success).toBe(false)
+  })
+
   it('refuses an id that does not match, an invalid facet, an empty alias source and another schema version', () => {
     expect(FacetSuggestionSchema.safeParse(newFacetSuggestion({ id: 'new_facet__other' })).success).toBe(false)
     expect(FacetSuggestionSchema.safeParse(newFacetSuggestion({ facet: { key: 'rigor_two', type: 'scale', description: 'd', min: 5, max: 1 } })).success).toBe(false)
     expect(FacetSuggestionSchema.safeParse(aliasSuggestion({ from: [] })).success).toBe(false)
+    expect(FacetSuggestionSchema.safeParse(aliasSuggestion({ from: [''] })).success).toBe(false)
+    expect(FacetSuggestionSchema.safeParse(aliasSuggestion({ from: ['x'.repeat(201)] })).success).toBe(false)
     expect(FacetSuggestionsFileSchema.safeParse({ schema_version: 2, suggestions: [] }).success).toBe(false)
   })
 

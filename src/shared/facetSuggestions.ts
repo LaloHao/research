@@ -11,6 +11,14 @@ export type FacetSuggestionStatus = (typeof FACET_SUGGESTION_STATUSES)[number]
 const key = z.string().regex(FACET_KEY_PATTERN)
 const paperKey = z.string().regex(/^[a-z][a-z0-9]*$/)
 
+/** Longest alias source kept: a proposed value is free text (`3gpp_rules`, a hand-edited entry), like `value_aliases`' keys. */
+export const ALIAS_SOURCE_MAX_CHARS = 200
+/** Any non-empty proposed value may be aliased away, as `value_aliases` accepts; only the target must be a facet value. */
+export function isAliasSource(v: string): boolean {
+  return v.length > 0 && v.length <= ALIAS_SOURCE_MAX_CHARS
+}
+const aliasSource = z.string().refine(isAliasSource, { message: `must be 1–${ALIAS_SOURCE_MAX_CHARS} characters` })
+
 /** `<kind>__<target>`: the kind plus what it changes, so a suggestion keeps its id across runs and machines. */
 export const SUGGESTION_ID = /^(?:new_facet__[a-z][a-z0-9_]*|(?:new_value|alias)__[a-z][a-z0-9_]*__[a-z][a-z0-9_]*)$/
 
@@ -68,7 +76,7 @@ export const FacetSuggestionSchema = z
   .discriminatedUnion('kind', [
     z.looseObject({ ...common, kind: z.literal('new_facet'), facet: FacetDefSchema }),
     z.looseObject({ ...common, kind: z.literal('new_value'), facet: key, value: key }),
-    z.looseObject({ ...common, kind: z.literal('alias'), facet: key, from: z.array(key).min(1), to: key })
+    z.looseObject({ ...common, kind: z.literal('alias'), facet: key, from: z.array(aliasSource).min(1), to: key })
   ])
   .refine((s) => (s.status === 'suggested' ? s.id === suggestionId(s) : s.id.startsWith(idPrefix(s))), { message: 'id does not match the suggestion', path: ['id'] })
 export type FacetSuggestion = z.infer<typeof FacetSuggestionSchema>
