@@ -8,6 +8,8 @@ import { ProjectStore } from '../../../src/main/project/ProjectStore'
 import { FakeEmbeddingRuntime, fakeVector } from '../../helpers/embeddings'
 import { DRAIN_ID, DRAIN_PAGES, drainPaper, LOGHUB_ID, LOGHUB_PAGES, seedPair } from '../../helpers/pair'
 import { tmpDir } from '../../helpers/tmp'
+import type { FacetEntry } from '../../../src/shared/summary'
+import { sampleSummary } from '../../helpers/summaries'
 
 async function setup(embeddings: EmbeddingRuntime | null = null) {
   const store = await ProjectStore.create(await tmpDir(), 'Thesis')
@@ -154,5 +156,90 @@ describe('libraryTools', () => {
     expect((await tools.searchSimilar('fixed depth parse tree'))[0].paper_id).toBe(DRAIN_ID)
     await expect((await setup(new FakeEmbeddingRuntime(false))).tools.searchSimilar('tree')).rejects.toThrow(/unavailable/)
     await expect((await setup(null)).tools.searchSimilar('tree')).rejects.toThrow(/unavailable/)
+  })
+
+  const FORM = {
+    facets: [
+      { key: 'technique', type: 'multi' as const, description: 'Technique', values: ['ner', 'rules_regex'] },
+      { key: 'notes', type: 'text' as const, description: 'Notes' }
+    ],
+    value_aliases: {}
+  }
+  const facetEntry = (over: Partial<FacetEntry>): FacetEntry => ({ proposed: [], status: 'generated', evidence: [], ...over })
+
+  it('lists papers by key a page at a time, saying which have a summary', async () => {
+    const { tools, cache } = await setup()
+    cache.setSummaryState(LOGHUB_ID, 'generated', 2, '', 'm')
+    expect(await tools.listPapers()).toEqual({
+      total: 2,
+      offset: 0,
+      papers: [
+        { paper_id: DRAIN_ID, title: drainPaper().title, year: 2017, has_summary: false },
+        { paper_id: LOGHUB_ID, title: 'Loghub: A Large Collection of System Log Datasets', year: 2020, has_summary: true }
+      ]
+    })
+    expect(await tools.listPapers(1, 1)).toMatchObject({ total: 2, offset: 1, papers: [{ paper_id: LOGHUB_ID }] })
+    expect((await tools.listPapers(-3, 9999)).papers).toHaveLength(2)
+  })
+
+  it("reads one paper's summary and facets with their review status, only for facets of the current form", async () => {
+    const { tools, store, cache } = await setup()
+    await store.updateConfig({ extraction_form: FORM })
+    await store.writeSummary(DRAIN_ID, sampleSummary(), 'body', null)
+    await store.writeExtraction(
+      DRAIN_ID,
+      {
+        schema_version: 1,
+        form_hash: 'h',
+        facets: {
+          technique: facetEntry({ values: ['ner'], proposed: ['regex_rules'], status: 'verified' }),
+          notes: facetEntry({ text: 'none' }),
+          dropped: facetEntry({ text: 'a facet no longer in the form' })
+        }
+      },
+      null
+    )
+    cache.setSummaryState(DRAIN_ID, 'generated', 3, '', 'm')
+    const card = await tools.getSummary(DRAIN_ID)
+    expect(card).toMatchObject({
+      paper_id: DRAIN_ID,
+      status: 'generated',
+      thesis_relation: null,
+      facets: { technique: { value: ['ner'], proposed: ['regex_rules'], status: 'verified' }, notes: { value: 'none', proposed: [], status: 'generated' } }
+    })
+    expect(Object.keys(card.facets)).toEqual(['technique', 'notes'])
+    expect(card.fields?.tldr).toEqual({ value: 't', status: 'generated' })
+    expect((await tools.getSummary(LOGHUB_ID)).fields).toBeNull()
+    await expect(tools.getSummary('nope2020x')).rejects.toBeInstanceOf(ToolError)
+  })
+
+  it('sums up how each facet is used, with the proposed values not in the form and who proposed them', async () => {
+    const { tools, store } = await setup()
+    await expect(tools.facetOverview()).rejects.toBeInstanceOf(ToolError)
+    await store.updateConfig({ extraction_form: FORM })
+    await store.writeExtraction(DRAIN_ID, { schema_version: 1, form_hash: 'h', facets: { technique: facetEntry({ values: ['ner'], proposed: ['regex_rules'] }) } }, null)
+    await store.writeExtraction(
+      LOGHUB_ID,
+      { schema_version: 1, form_hash: 'h', facets: { technique: facetEntry({ values: ['ner', 'rules_regex'], proposed: ['regex_rules'] }), notes: facetEntry({ text: 'x' }) } },
+      null
+    )
+    expect(await tools.facetOverview()).toEqual({
+      papers: 2,
+      facets: [
+        {
+          key: 'technique',
+          type: 'multi',
+          description: 'Technique',
+          allowed: ['ner', 'rules_regex'],
+          filled: 2,
+          values: [
+            { value: 'ner', papers: 2 },
+            { value: 'rules_regex', papers: 1 }
+          ],
+          proposed: [{ value: 'regex_rules', papers: [DRAIN_ID, LOGHUB_ID] }]
+        },
+        { key: 'notes', type: 'text', description: 'Notes', allowed: [], filled: 1, values: [], proposed: [] }
+      ]
+    })
   })
 })

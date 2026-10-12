@@ -4,10 +4,10 @@ import { BudgetGuard, limitsFromConfig } from '../../src/main/llm/BudgetGuard'
 import { CostLedger } from '../../src/main/llm/CostLedger'
 import type { AgentRequest, CompleteRequest, CompleteResult, LlmProvider } from '../../src/main/llm/LlmProvider'
 import { DEFAULT_EXTRACTION_FORM } from '../../src/main/summary/extractionForm'
-import type { LlmOutput } from '../../src/main/summary/llmOutput'
+import type { LlmFacet, LlmOutput } from '../../src/main/summary/llmOutput'
 import { Summarizer } from '../../src/main/summary/Summarizer'
 import { ProjectStore } from '../../src/main/project/ProjectStore'
-import { SUMMARY_TEXT_FIELDS, type ExtractionForm, type ThesisContext } from '../../src/shared/summary'
+import { SUMMARY_TEXT_FIELDS, type ExtractionForm, type FacetDef, type ThesisContext } from '../../src/shared/summary'
 import { samplePaper } from './papers'
 import { tmpDir } from './tmp'
 
@@ -66,6 +66,27 @@ export function llmOutputFor(form: ExtractionForm, quote = 'we fine-tune a BERT 
     } as unknown as LlmOutput['fields'],
     facets: Object.fromEntries(
       form.facets.map((f) => {
+        switch (f.type) {
+          case 'single':
+            return [f.key, { value: f.values[0], proposed: [], evidence: ev }]
+          case 'multi':
+            return [f.key, { values: [f.values[0]], proposed: [], evidence: ev }]
+          case 'text':
+            return [f.key, { text: 'not addressed', evidence: [] }]
+          case 'scale':
+            return [f.key, { score: f.min, justification: 'tangential', evidence: [] }]
+        }
+      })
+    )
+  }
+}
+
+/** A schema-valid fill answer for `facets`, citing `quote` on page 1 for the facets with choices. */
+export function fillOutputFor(facets: FacetDef[], quote = 'we fine-tune a BERT model'): { facets: Record<string, LlmFacet> } {
+  const ev = [{ quote, page: 1 }]
+  return {
+    facets: Object.fromEntries(
+      facets.map((f): [string, LlmFacet] => {
         switch (f.type) {
           case 'single':
             return [f.key, { value: f.values[0], proposed: [], evidence: ev }]

@@ -24,7 +24,7 @@ import type { CostLedger } from '../llm/CostLedger'
 import { toUserFacing, UserFacingError } from '../library/UserFacingError'
 import { facetRowsFor } from '../map/facetStats'
 import type { ProjectStore } from '../project/ProjectStore'
-import { DEFAULT_EXTRACTION_FORM, formHash, loadForm } from './extractionForm'
+import { DEFAULT_EXTRACTION_FORM, formHashFor, loadForm, sortKeys, unfilledFacets } from './extractionForm'
 import { renderSummaryMarkdown } from './markdown'
 import {
   acceptProposed,
@@ -46,20 +46,23 @@ import {
   type FacetPatch
 } from './merge'
 import { pagesFromChunks } from './paperText'
+import type { FacetFiller } from './FacetFiller'
 import type { Summarizer } from './Summarizer'
 import { editThesisRelation, hasThesisContext, thesisHash, type ThesisPatch } from './thesis'
 
 const BATCH_STOPPERS = new Set(['llm_quota', 'budget_exceeded'])
 const ELIGIBLE = new Set(['none', 'stale', 'failed'])
+const UP_TO_DATE = new Set(['generated', 'reviewed'])
 
-/** Brings the summary columns of one cache row up to date (status, pending count, searchable text). */
+/** Brings the summary columns of one cache row up to date (status, pending count, unfilled facets, searchable text). */
 export async function indexSummary(store: ProjectStore, cache: IndexCache, id: string): Promise<void> {
   const s = await store.readSummary(id)
   const e = await store.readExtraction(id)
   const summary = s?.ok ? s.value : null
   const extraction = e?.ok ? e.value : null
-  const form = loadForm(store.config.extraction_form)
-  const facetDefs = form.status === 'ok' ? form.form.facets : null
+  const load = loadForm(store.config.extraction_form)
+  const form = load.status === 'ok' ? load : null
+  const facetDefs = form ? form.form.facets : null
   const facetKeys = facetDefs ? facetDefs.map((f) => f.key) : null
   const currentThesis = currentThesisHash(store)
   const status = summaryState({
@@ -67,7 +70,8 @@ export async function indexSummary(store: ProjectStore, cache: IndexCache, id: s
     facetDefs,
     summary,
     extraction,
-    formHash: form.status === 'ok' ? form.hash : null,
+    // Per paper: a facet the paper has no entry for (added after it was summarized) leaves it up to date, only unfilled.
+    formHash: form ? (extraction ? formHashFor(form.form, Object.keys(extraction.facets)) : form.hash) : null,
     thesisHash: currentThesis,
     textChars: cache.textChars(id),
     maxChars: store.config.llm.max_input_chars,
@@ -78,7 +82,9 @@ export async function indexSummary(store: ProjectStore, cache: IndexCache, id: s
     status,
     countPending(summary, extraction, facetKeys, currentThesis, facetDefs),
     summarySearchText(summary, extraction),
-    summary?.generated.model ?? null
+    summary?.generated.model ?? null,
+    // Only an up-to-date summary has unfilled facets: a stale one is regenerated whole, never filled.
+    form && summary && extraction && (status === 'generated' || status === 'reviewed') ? unfilledFacets(form.form, extraction).length : 0
   )
   // The map's charts, lenses and similarity read facet values from the index, never from the files.
   cache.setFacets(id, facetRowsFor(extraction, facetDefs), extraction?.thesis_relation?.score ?? null)
@@ -93,6 +99,8 @@ export interface SummaryServiceDeps {
   store: ProjectStore
   cache: IndexCache
   summarizer: Summarizer
+  /** Fills facets added to the form after a paper was summarized. */
+  filler: FacetFiller
   budget: BudgetGuard
   ledger: CostLedger
   reindex: (id: string) => Promise<void>
@@ -108,6 +116,26 @@ interface PaperFiles {
   title: string
   summary: { value: SummaryFile; hash: string } | null
   extraction: { value: ExtractionFile; hash: string } | null
+}
+
+/** One paper's classification before a form change rewrote it, and its hash after: enough to undo exactly that change. */
+export interface ExtractionChange {
+  paperId: string
+  before: ExtractionFile
+  afterHash: string
+}
+
+/** One paper a form change rewrites: its files as read, and the classification it gets. */
+interface PaperRewrite {
+  id: string
+  files: PaperFiles
+  next: ExtractionFile
+}
+
+/** Hashes of what saveOrRestore wrote (summary: null when the paper has no summary.md). */
+interface SavedHashes {
+  extraction: string
+  summary: string | null
 }
 
 /** Summaries of one project: jobs, batches, review edits and proposed values. */
@@ -187,6 +215,56 @@ export class SummaryService {
     return { batchId, count: ids.length }
   }
 
+  /** Papers whose up-to-date summary lacks facets of the current form (among `ids` when given), none being filled or summarized now. */
+  private fillableIds(ids?: string[]): string[] {
+    const { cache } = this.deps
+    const rows = ids ? ids.flatMap((id) => cache.getPaper(id) ?? []) : cache.listPapers()
+    return rows
+      .filter(
+        (r) =>
+          !r.problem &&
+          r.unfilled_facets > 0 &&
+          UP_TO_DATE.has(r.summary_status) &&
+          r.text_status === 'ok' &&
+          !cache.hasActiveJob('fill_facets', r.id) &&
+          !cache.hasActiveJob('summarize', r.id)
+      )
+      .map((r) => r.id)
+  }
+
+  /** «Llenar facetas nuevas» / «Llenar en N papers»: how many papers and the estimated cost. */
+  fillPlan(ids?: string[]): SummaryPlan {
+    const count = this.fillableIds(ids).length
+    return { count, estimateUsd: count * this.deps.budget.currentEstimate('fill_facets'), batchLimitUsd: this.deps.store.config.llm.budget.per_batch_usd }
+  }
+
+  /** One fill_facets job per fillable paper, in one batch (so the batch cap applies). */
+  requestFill(ids?: string[]): { batchId: string; count: number } {
+    if (loadForm(this.deps.store.config.extraction_form).status !== 'ok') throw new UserFacingError('invalid_form')
+    const batchId = randomUUID()
+    const fillable = this.fillableIds(ids)
+    for (const paperId of fillable) this.deps.enqueue({ type: 'fill_facets', paperId, batchId })
+    return { batchId, count: fillable.length }
+  }
+
+  async runFill(paperId: string, opts: { batchId?: string; signal?: AbortSignal }): Promise<{ paperId: string; message: 'facets_filled' | 'facets_nothing_to_fill' }> {
+    try {
+      const { filled } = await this.deps.filler.fill({ paperId, batchId: opts.batchId, signal: opts.signal })
+      return { paperId, message: filled.length > 0 ? 'facets_filled' : 'facets_nothing_to_fill' }
+    } catch (error) {
+      if (opts.signal?.aborted) throw error
+      const facing = toUserFacing(error)
+      if (opts.batchId && BATCH_STOPPERS.has(facing.code)) this.deps.cancelBatch(opts.batchId)
+      throw facing
+    } finally {
+      if (!opts.signal?.aborted) {
+        // A failing reindex must not replace the fill's own outcome.
+        await this.deps.reindex(paperId).catch((error: unknown) => console.error('reindex', paperId, error))
+        this.deps.emit()
+      }
+    }
+  }
+
   async autoAfterIngest(paperId: string): Promise<void> {
     if (!this.deps.store.config.llm.auto_summarize) return
     const row = this.deps.cache.getPaper(paperId)
@@ -227,7 +305,8 @@ export class SummaryService {
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new InvalidEdit(`Invalid value for ${key}`)
       const form = await this.ensureForm()
       const files = await this.read(paperId)
-      await this.save(paperId, files, { extraction: editFacet(requireExtraction(files), form, key, value as FacetPatch) })
+      const extraction = requireExtraction(files)
+      await this.save(paperId, files, { extraction: keepUpToDate(form, extraction, editFacet(extraction, form, key, value as FacetPatch)) })
     }
     await this.changed([paperId])
   }
@@ -254,6 +333,55 @@ export class SummaryService {
     const form = await this.ensureForm()
     if (!choiceFacet(form, facetKey).values.includes(to)) throw new InvalidEdit(`Invalid value for ${facetKey}`)
     await this.replaceProposals((e) => mapProposed(e, facetKey, from, to), addAlias(form, facetKey, from, to))
+  }
+
+  /**
+   * Saves `next` (validated like updateForm) after rewriting, in every paper, what `rewrite` changes (null: nothing).
+   * All or nothing: every paper is read and checked first; if a write fails, or the form is no longer `base` (when
+   * given) by the time it would be saved, the papers already rewritten are put back and the form is left as it was.
+   * Returns what changed, for undoFormChange.
+   */
+  async changeForm(
+    next: ExtractionForm,
+    rewrite: ((e: ExtractionFile) => ExtractionFile | null) | null,
+    base?: ExtractionForm
+  ): Promise<ExtractionChange[]> {
+    const load = loadForm(next)
+    if (load.status !== 'ok') throw new UserFacingError('invalid_form')
+    if (base) this.assertForm(base)
+    const pending: PaperRewrite[] = []
+    if (rewrite) {
+      for (const id of await this.deps.store.listPaperIds()) {
+        const raw = await this.readRaw(id)
+        // An unreadable extraction.yaml cannot tell whether the paper proposed the value; it is left alone.
+        if (!raw.extraction?.ok) continue
+        const after = rewrite(raw.extraction.value)
+        if (!after) continue
+        if (raw.summary && !raw.summary.ok) throw new UserFacingError('file_problem')
+        pending.push({ id, files: { title: raw.title, summary: raw.summary, extraction: raw.extraction }, next: after })
+      }
+    }
+    return this.rewriteAndSaveForm(pending, load.form, base)
+  }
+
+  /**
+   * Undoes a changeForm: only while the form is exactly `expected` and every rewritten classification is exactly what
+   * the change left (InvalidEdit otherwise, before anything is written). All or nothing, like changeForm. Returns the
+   * undo's own changes, so it can in turn be undone (undoFormChange(expected, previous, returned)).
+   */
+  async undoFormChange(previous: ExtractionForm, expected: ExtractionForm, changes: ExtractionChange[]): Promise<ExtractionChange[]> {
+    const load = loadForm(previous)
+    if (load.status !== 'ok') throw new UserFacingError('invalid_form')
+    this.assertForm(expected)
+    const pending: PaperRewrite[] = []
+    for (const change of changes) {
+      if (!this.deps.store.paperExists(change.paperId)) throw new InvalidEdit(`${change.paperId} is gone`)
+      const raw = await this.readRaw(change.paperId)
+      if (!raw.extraction?.ok || raw.extraction.hash !== change.afterHash) throw new InvalidEdit(`${change.paperId} changed since`)
+      if (raw.summary && !raw.summary.ok) throw new UserFacingError('file_problem')
+      pending.push({ id: change.paperId, files: { title: raw.title, summary: raw.summary, extraction: raw.extraction }, next: change.before })
+    }
+    return this.rewriteAndSaveForm(pending, load.form, expected)
   }
 
   /** Fields and facets still `generated`, paper by paper (in `ids` order when given, otherwise in list order). */
@@ -304,16 +432,22 @@ export class SummaryService {
   }
 
   /**
-   * What saving `next` over the current form would do. 0 stale summaries when the facet hashes are equal (editing
-   * descriptions or adding/removing facets or a scale's min/max changes the hash; adding/removing allowed values does not).
+   * What saving `next` over the current form would do. A summary goes stale when a facet it has entries for is removed or
+   * changes its key, type, description or a scale's min/max; adding a facet, or adding/removing allowed values, stales nothing.
    * `removedValuesInUse` only looks at single/multi facets kept under the same key in both forms.
    */
   async formImpact(next: ExtractionForm): Promise<FormImpact> {
     const { store, cache } = this.deps
     const current = loadForm(store.config.extraction_form)
     if (current.status !== 'ok') return { staleCount: 0, removedValuesInUse: [] }
-    const staleCount =
-      formHash(next) === current.hash ? 0 : cache.listPapers().filter((r) => r.summary_status === 'generated' || r.summary_status === 'reviewed').length
+    // Per paper, like the stale check: only facets a paper has entries for count, so adding a facet stales nothing.
+    let staleCount = 0
+    for (const row of cache.listPapers()) {
+      if (row.summary_status !== 'generated' && row.summary_status !== 'reviewed') continue
+      const e = await store.readExtraction(row.id)
+      if (!e?.ok) continue
+      if (formHashFor(next, Object.keys(e.value.facets)) !== e.value.form_hash) staleCount++
+    }
 
     // One candidate (with its removed values) per kept single/multi facet; checked against each paper's
     // extraction with a single read, instead of re-reading every paper once per facet.
@@ -433,6 +567,59 @@ export class SummaryService {
     this.deps.statesRefreshed?.()
   }
 
+  /** InvalidEdit unless the saved form is exactly `form`. */
+  private assertForm(form: ExtractionForm): void {
+    const current = loadForm(this.deps.store.config.extraction_form)
+    const wanted = loadForm(form)
+    if (current.status !== 'ok' || wanted.status !== 'ok' || JSON.stringify(sortKeys(current.form)) !== JSON.stringify(sortKeys(wanted.form))) {
+      throw new InvalidEdit('The form changed since')
+    }
+  }
+
+  /**
+   * Writes each paper's new classification, then the form. If anything fails (or the form is no longer `base`), the
+   * papers already written are put back (hash-checked) before the error is rethrown, and the form is not saved.
+   * Every state is refreshed either way.
+   */
+  private async rewriteAndSaveForm(pending: PaperRewrite[], form: ExtractionForm, base?: ExtractionForm): Promise<ExtractionChange[]> {
+    const written: { p: PaperRewrite; hashes: SavedHashes }[] = []
+    try {
+      for (const p of pending) written.push({ p, hashes: await this.saveOrRestore(p.id, p.files, p.next) })
+      if (base) this.assertForm(base)
+      await this.deps.store.updateConfig({ extraction_form: form })
+    } catch (error) {
+      for (const { p, hashes } of written.reverse()) {
+        const files: PaperFiles = {
+          title: p.files.title,
+          summary: p.files.summary && hashes.summary ? { value: p.files.summary.value, hash: hashes.summary } : p.files.summary,
+          extraction: { value: p.next, hash: hashes.extraction! }
+        }
+        await this.save(p.id, files, { extraction: p.files.extraction!.value }).catch((e: unknown) => console.error('could not put back', p.id, e))
+      }
+      throw error
+    } finally {
+      await this.refreshStates()
+    }
+    return written.map(({ p, hashes }) => ({ paperId: p.id, before: p.files.extraction!.value, afterHash: hashes.extraction! }))
+  }
+
+  /** save() of a new classification; if summary.md then cannot be written, the classification is put back before rethrowing. */
+  private async saveOrRestore(paperId: string, files: PaperFiles, next: ExtractionFile): Promise<SavedHashes> {
+    const { store } = this.deps
+    const extractionHash = await store.writeExtraction(paperId, next, files.extraction?.hash ?? null)
+    const summary = files.summary?.value
+    if (!summary) return { extraction: extractionHash, summary: null }
+    try {
+      const summaryHash = await store.writeSummary(paperId, summary, renderSummaryMarkdown(files.title, summary, next), files.summary!.hash)
+      return { extraction: extractionHash, summary: summaryHash }
+    } catch (error) {
+      if (files.extraction) {
+        await store.writeExtraction(paperId, files.extraction.value, extractionHash).catch((e: unknown) => console.error('could not put back', paperId, e))
+      }
+      throw error
+    }
+  }
+
   /**
    * All or nothing up front: every affected paper is read once and checked before anything is written.
    * If a write still fails midway, the form and the index are updated for what was written, so a retry finishes the rest.
@@ -488,6 +675,15 @@ export class SummaryService {
     for (const id of ids) await this.deps.reindex(id)
     this.deps.emit()
   }
+}
+
+/**
+ * Filling an unfilled facet by hand moves the paper's form hash forward over it, like filling it with Claude, so the
+ * paper stays up to date; a stale paper keeps its old hash.
+ */
+function keepUpToDate(form: ExtractionForm, before: ExtractionFile, after: ExtractionFile): ExtractionFile {
+  if (formHashFor(form, Object.keys(before.facets)) !== before.form_hash) return after
+  return { ...after, form_hash: formHashFor(form, Object.keys(after.facets)) }
 }
 
 function fieldKey(key: string): SummaryFieldKey {

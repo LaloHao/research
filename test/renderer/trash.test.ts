@@ -1,6 +1,6 @@
 import type { TFunction } from 'i18next'
 import { describe, expect, it } from 'vitest'
-import { batchRemoveReady, deviceKind, facetKey, filterTrash, movedKeys, prune, restorable, restoreDetails, shortDevice, toggle, toggleAll, trashedDay } from '../../src/renderer/lib/trash'
+import { batchConfirmHolds, batchRemoveReady, deviceKind, facetKey, filterTrash, movedKeys, prune, restorable, restoreDetails, shortDevice, toggle, toggleAll, trashedDay } from '../../src/renderer/lib/trash'
 import type { TrashEntry } from '../../src/shared/trash'
 
 const entry = (over: Partial<TrashEntry> = {}): TrashEntry => ({
@@ -87,5 +87,14 @@ describe('trash view', () => {
     expect(batchRemoveReady({ query: '', rowsQuery: '', facetFilters: filters, facetIdsKey: null })).toBe(false)
     expect(batchRemoveReady({ query: '', rowsQuery: '', facetFilters: filters, facetIdsKey: facetKey([]) })).toBe(false)
     expect(batchRemoveReady({ query: '', rowsQuery: '', facetFilters: filters, facetIdsKey: key })).toBe(true)
+  })
+
+  it('runs a confirmed batch only on the visible list it was confirmed for, with the rows matching the search and filters', () => {
+    expect(batchConfirmHolds({ visibleKey: 'a b' }, { visibleKey: 'a b', ready: true })).toBe(true)
+    // The visible papers changed since the confirmation (a filter narrowed, a reload landed).
+    expect(batchConfirmHolds({ visibleKey: 'a b' }, { visibleKey: 'a', ready: true })).toBe(false)
+    // Rows or facet ids still loading for the current search or filters.
+    expect(batchConfirmHolds({ visibleKey: 'a b' }, { visibleKey: 'a b', ready: false })).toBe(false)
+    expect(batchConfirmHolds(null, { visibleKey: 'a b', ready: true })).toBe(false)
   })
 })

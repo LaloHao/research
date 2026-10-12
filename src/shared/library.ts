@@ -24,6 +24,8 @@ export interface PaperRow {
   summary_status: SummaryStatus
   /** Fields and facets still `generated` (not yet verified or edited). */
   pending_review: number
+  /** Facets of the current form the paper's (up-to-date) classification has no entry for yet: «Faceta nueva sin llenar». */
+  unfilled_facets: number
   /** `generated.model` of the last summary, or `null` when there is none. */
   summary_model: string | null
   /** Whether citations were fetched from OpenAlex ('none' until the first try). */
@@ -67,6 +69,9 @@ export const USER_ERROR_CODES = [
   'trash_problem',
   'folder_busy',
   'not_in_trash',
+  'suggestion_outdated',
+  'facet_suggestions_conflict',
+  'summary_outdated',
   'unknown'
 ] as const
 export type UserErrorCode = (typeof USER_ERROR_CODES)[number]
@@ -89,7 +94,10 @@ export const JOB_OUTCOMES = [
   'embedded',
   'model_downloaded',
   'relations_suggested',
-  'relations_no_candidates'
+  'relations_no_candidates',
+  'facets_suggested',
+  'facets_filled',
+  'facets_nothing_to_fill'
 ] as const
 
 export interface PaperDetail {

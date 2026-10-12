@@ -24,6 +24,10 @@ export function jobLabel(t: TFunction, job: JobRecord): string {
       return t('jobs.model_download')
     case 'suggest_relations':
       return t('jobs.suggest_relations', { id: job.spec.paperId })
+    case 'fill_facets':
+      return t('jobs.fill_facets', { id: job.spec.paperId })
+    case 'suggest_facets':
+      return t(job.spec.auto ? 'jobs.suggest_facets_auto' : 'jobs.suggest_facets')
   }
 }
 

@@ -13,6 +13,7 @@ import { RELATION_TYPES } from '../../src/shared/typedRelations'
 import { TRASH_PROBLEMS } from '../../src/shared/trash'
 import { CONFLICT_SIDES, SYNC_ERROR_CODES } from '../../src/shared/sync'
 import { SYNC_STATES } from '../../src/renderer/lib/sync'
+import { FACET_SUGGESTION_KINDS, SUGGESTION_VALIDITIES } from '../../src/shared/facetSuggestions'
 
 const lookup = (path: string): unknown => path.split('.').reduce<unknown>((node, key) => (node as Record<string, unknown> | undefined)?.[key], es)
 const JOB_STATES: JobState[] = ['queued', 'running', 'done', 'failed', 'cancelled']
@@ -27,7 +28,7 @@ describe('es.json covers every code the UI can receive', () => {
     ...JOB_STATES.map((s) => `jobs.state.${s}`),
     ...PDF_POLICIES.map((p) => `settings.pdf_policy.${p}`),
     ...FILE_PROBLEM_KINDS.map((k) => `paper.problem_kinds.${k}`),
-    ...['problem', 'incomplete', 'web', 'no_pdf', 'summary_none', 'to_review', 'reviewed', 'stale', 'summary_failed', 'no_citations'].map((b) => `badges.${b}`),
+    ...['problem', 'incomplete', 'web', 'no_pdf', 'summary_none', 'to_review', 'reviewed', 'stale', 'summary_failed', 'no_citations', 'unfilled'].map((b) => `badges.${b}`),
     ...SUMMARY_FIELD_KEYS.map((k) => `summary.fields.${k}`),
     ...RESEARCH_TYPES.map((r) => `summary.research_types.${r}`),
     ...CARD_STATUSES.map((s) => `summary.status.${s}`),
@@ -36,7 +37,7 @@ describe('es.json covers every code the UI can receive', () => {
     ...SETTINGS_TABS.map((tab) => `settings.tabs.${tab}`),
     ...VIEWS.map((v) => `rail.${v}`),
     ...MAP_TABS.map((tab) => `map.tabs.${tab}`),
-    ...['citations', 'cited_by', 'embed', 'model_download', 'suggest_relations'].map((type) => `jobs.${type}`),
+    ...['citations', 'cited_by', 'embed', 'model_download', 'suggest_relations', 'fill_facets', 'suggest_facets', 'suggest_facets_auto'].map((type) => `jobs.${type}`),
     ...['coupling_one', 'coupling_other', 'cocitation_one', 'cocitation_other', 'direct', 'content'].map((k) => `relations.reasons.${k}`),
     ...['score', 'no_value', 'no_relation', 'other_values', 'legend_count', 'model_missing', 'export_png', 'exported'].map((k) => `map.graph.${k}`),
     ...['typed', 'hide_suggested', 'typed_hover'].map((k) => `map.graph.${k}`),
@@ -124,7 +125,63 @@ describe('es.json covers every code the UI can receive', () => {
       'diff_too_large'
     ].map((k) => `sync.conflicts.${k}`),
     ...['title', 'body', 'sync_and_close', 'close_anyway', 'cancel', 'syncing', 'conflicts', 'open_sync'].map((k) => `sync.close.${k}`),
-    ...['title', 'enabled', 'enabled_help', 'minutes', 'minutes_help'].map((k) => `sync.auto.${k}`)
+    ...['title', 'enabled', 'enabled_help', 'minutes', 'minutes_help'].map((k) => `sync.auto.${k}`),
+    ...SUGGESTION_VALIDITIES.filter((v) => v !== 'ok').map((v) => `facets.invalid.${v}`),
+    ...FACET_SUGGESTION_KINDS.map((k) => `facets.kinds.${k}`),
+    ...[
+      'title',
+      'intro',
+      'suggest',
+      'confirm_one',
+      'confirm_other',
+      'queued',
+      'running',
+      'pending_one',
+      'pending_other',
+      'none',
+      'last_run',
+      'last_run_failed',
+      'rationale',
+      'examples',
+      'example_quote',
+      'example_page',
+      'quote_not_found',
+      'close_quote',
+      'accept',
+      'edit_accept',
+      'save_accept',
+      'cancel',
+      'reject',
+      'restore',
+      'undo',
+      'value_label',
+      'to_label',
+      'values_label',
+      'accepted_title_one',
+      'accepted_title_other',
+      'rejected_title_one',
+      'rejected_title_other',
+      'form_dirty',
+      'fill_offer_one',
+      'fill_offer_other',
+      'fill_one',
+      'fill_other',
+      'fill_queued_one',
+      'fill_queued_other',
+      'later',
+      'unfilled',
+      'unfilled_banner',
+      'fill_paper',
+      'fill_confirm_one',
+      'fill_confirm_other'
+    ].map((k) => `facets.${k}`),
+    ...['fill_facets', 'fill_facets_all', 'fill_facets_filtered', 'fill_none'].map((k) => `library.${k}`),
+    ...['accepted', 'rejected', 'restored'].map((k) => `facets.done.${k}`),
+    ...['new_value', 'alias'].map((k) => `facets.proposal.${k}`),
+    'facets.file.conflict',
+    'facets.file.invalid',
+    'settings.tabs.form_count',
+    ...['auto_suggest_facets', 'auto_suggest_facets_help', 'auto_suggest_facets_after', 'budget_facets'].map((k) => `settings.${k}`)
   ])('%s', (path) => {
     expect(typeof lookup(path)).toBe('string')
   })

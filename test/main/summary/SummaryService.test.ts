@@ -6,13 +6,14 @@ import { ProjectSession } from '../../../src/main/library/ProjectSession'
 import { DEFAULT_EXTRACTION_FORM } from '../../../src/main/summary/extractionForm'
 import { toYaml } from '../../../src/main/project/yamlFile'
 import { thesisHash } from '../../../src/main/summary/thesis'
-import { FakeLlmProvider, llmOutputFor, PAPER_TEXT } from '../../helpers/llm'
+import { FakeLlmProvider, fillOutputFor, llmOutputFor, PAPER_TEXT } from '../../helpers/llm'
 import { samplePaper } from '../../helpers/papers'
 import { tmpDir } from '../../helpers/tmp'
 import { sampleThesis } from '../../helpers/summaries'
 import { parse } from 'yaml'
 
 const ok = (form = DEFAULT_EXTRACTION_FORM) => ({ value: llmOutputFor(form), costUsd: 0.03, model: 'claude-sonnet-5' })
+const DATA_SOURCE = { key: 'data_source', type: 'multi' as const, description: 'Where the analyzed data comes from', values: ['production_logs', 'public_dataset'] }
 
 /** A session whose papers have indexed text, without network or PDFs. */
 async function session(responses: ConstructorParameters<typeof FakeLlmProvider>[0] = [ok()], ids = ['he2017drain']) {
@@ -156,11 +157,11 @@ describe('SummaryService', () => {
     await s.close()
   })
 
-  it('marks summaries stale when the form changes', async () => {
+  it('marks summaries stale when a facet they have changes', async () => {
     const s = await session()
     await s.summaries.request('he2017drain')
     await s.queue.whenIdle()
-    const form = { ...DEFAULT_EXTRACTION_FORM, facets: [...DEFAULT_EXTRACTION_FORM.facets, { key: 'venue_type', type: 'text' as const, description: 'Kind of venue' }] }
+    const form = { ...DEFAULT_EXTRACTION_FORM, facets: DEFAULT_EXTRACTION_FORM.facets.map((f) => (f.key === 'rigor' ? { ...f, description: 'Changed' } : f)) }
     await s.store.updateConfig({ extraction_form: form })
     await s.library.indexPaper('he2017drain')
     expect(s.library.list()[0].summary_status).toBe('stale')
@@ -178,6 +179,27 @@ describe('SummaryService', () => {
   })
 
   describe('editing the extraction form', () => {
+    it('adding a facet leaves summaries up to date with the facet unfilled; changing or removing a facet they have makes them stale', async () => {
+      const s = await session()
+      await s.summaries.request('he2017drain')
+      await s.queue.whenIdle()
+      const added = { ...DEFAULT_EXTRACTION_FORM, facets: [...DEFAULT_EXTRACTION_FORM.facets, DATA_SOURCE] }
+      expect(await s.summaries.formImpact(added)).toEqual({ staleCount: 0, removedValuesInUse: [] })
+      await s.summaries.updateForm(added)
+      expect(s.library.list()[0]).toMatchObject({ summary_status: 'generated', unfilled_facets: 1 })
+      // Rewording the unfilled facet touches nothing the paper has.
+      const reworded = { ...added, facets: added.facets.map((f) => (f.key === 'data_source' ? { ...f, description: 'Origin of the data' } : f)) }
+      expect(await s.summaries.formImpact(reworded)).toMatchObject({ staleCount: 0 })
+      const removed = { ...added, facets: added.facets.filter((f) => f.key !== 'rigor') }
+      expect(await s.summaries.formImpact(removed)).toMatchObject({ staleCount: 1 })
+      const changed = { ...added, facets: added.facets.map((f) => (f.key === 'rigor' ? { ...f, description: 'Changed' } : f)) }
+      expect(await s.summaries.formImpact(changed)).toMatchObject({ staleCount: 1 })
+      await s.summaries.updateForm(changed)
+      // A stale summary is regenerated whole, so it counts no unfilled facets even though data_source is still missing.
+      expect(s.library.list()[0]).toMatchObject({ summary_status: 'stale', unfilled_facets: 0 })
+      await s.close()
+    })
+
     it('formImpact: adding or removing allowed values does not make summaries stale', async () => {
       const s = await session()
       await s.summaries.request('he2017drain')
@@ -482,7 +504,7 @@ describe('SummaryService: papers longer than max_input_chars', () => {
   })
 
   it('remembers a forced summary was truncated and forces regenerations and stale batches automatically', async () => {
-    const venue = { ...DEFAULT_EXTRACTION_FORM, facets: [...DEFAULT_EXTRACTION_FORM.facets, { key: 'venue_type', type: 'text' as const, description: 'Kind of venue' }] }
+    const venue = { ...DEFAULT_EXTRACTION_FORM, facets: DEFAULT_EXTRACTION_FORM.facets.map((f) => (f.key === 'rigor' ? { ...f, description: 'Changed' } : f)) }
     let form = DEFAULT_EXTRACTION_FORM
     const s = await session([() => ok(form)], ['a2020x', 'b2020x'])
     await tooLong(s)
@@ -537,7 +559,7 @@ describe('SummaryService: config changes refresh every summary state', () => {
     let libraryEvents = 0
     s.on('library', () => libraryEvents++)
     const raw = parse(await readFile(join(s.store.root, 'project.yaml'), 'utf8'))
-    raw.extraction_form.facets.push({ key: 'venue_type', type: 'text', description: 'Kind of venue' })
+    raw.extraction_form.facets.find((f: { key: string }) => f.key === 'rigor').description = 'Changed'
     await writeFile(join(s.store.root, 'project.yaml'), toYaml(raw))
     // What the watcher calls on a change of project.yaml.
     await s.reloadConfig()
@@ -561,7 +583,7 @@ describe('SummaryService: config changes refresh every summary state', () => {
       await new Promise((resolve) => setTimeout(resolve, 700))
       expect(s.library.list()[0].summary_status).toBe('generated')
       const raw = parse(await readFile(join(s.store.root, 'project.yaml'), 'utf8'))
-      raw.extraction_form.facets.push({ key: 'venue_type', type: 'text', description: 'Kind of venue' })
+      raw.extraction_form.facets.find((f: { key: string }) => f.key === 'rigor').description = 'Changed'
       await writeFile(join(s.store.root, 'project.yaml'), toYaml(raw))
       await vi.waitFor(() => expect(s.library.list()[0].summary_status).toBe('stale'), { timeout: 3000, interval: 50 })
     } finally {
@@ -576,6 +598,37 @@ describe('SummaryService: config changes refresh every summary state', () => {
     expect(s.library.list()[0].summary_status).toBe('too_long')
     await s.summaries.updateLlm({ max_input_chars: 400000 })
     expect(s.library.list()[0].summary_status).toBe('none')
+    await s.close()
+  })
+
+  it('fills new facets through the queue without regenerating the summary', async () => {
+    const fill = { value: fillOutputFor([DATA_SOURCE]), costUsd: 0.01, model: 'claude-haiku-5' }
+    const s = await session([ok(), fill])
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    const before = await s.store.readSummary('he2017drain')
+    await s.summaries.updateForm({ ...DEFAULT_EXTRACTION_FORM, facets: [...DEFAULT_EXTRACTION_FORM.facets, DATA_SOURCE] })
+    expect(s.summaries.fillPlan()).toMatchObject({ count: 1, batchLimitUsd: 10 })
+    expect(s.summaries.requestFill()).toMatchObject({ count: 1 })
+    await s.queue.whenIdle()
+    expect(s.queue.list()[0]).toMatchObject({ spec: { type: 'fill_facets', paperId: 'he2017drain' }, state: 'done', message: 'facets_filled' })
+    expect(s.library.list()[0]).toMatchObject({ summary_status: 'generated', unfilled_facets: 0 })
+    expect(s.summaries.fillPlan().count).toBe(0)
+    expect(s.queue.list().filter((j) => j.spec.type === 'summarize')).toHaveLength(1)
+    const after = await s.store.readSummary('he2017drain')
+    expect(after?.ok && after.value.generated).toEqual(before?.ok && before.value.generated)
+    await s.close()
+  })
+
+  it('filling a new facet by hand keeps the summary up to date', async () => {
+    const s = await session([ok()])
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    await s.summaries.updateForm({ ...DEFAULT_EXTRACTION_FORM, facets: [...DEFAULT_EXTRACTION_FORM.facets, DATA_SOURCE] })
+    expect(s.library.list()[0]).toMatchObject({ summary_status: 'generated', unfilled_facets: 1 })
+    await s.summaries.edit('he2017drain', 'facets', 'data_source', { values: ['public_dataset'] })
+    expect(s.library.list()[0]).toMatchObject({ summary_status: 'generated', unfilled_facets: 0 })
+    expect(s.summaries.fillPlan().count).toBe(0)
     await s.close()
   })
 })

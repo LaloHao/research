@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { BudgetGuard, limitsFromConfig } from '../../../src/main/llm/BudgetGuard'
+import { BudgetGuard, limitsFromConfig, operationCap, type BudgetLimits } from '../../../src/main/llm/BudgetGuard'
 import { DEFAULT_LLM_CONFIG } from '../../../src/shared/summary'
 
-const limits = (over: Partial<{ perOperationUsd: number; perBatchUsd: number; perMonthUsd: number | null }> = {}) => () => ({
+const limits = (over: Partial<BudgetLimits> = {}) => (): BudgetLimits => ({
   perOperationUsd: 0.5,
   perBatchUsd: 1,
   perMonthUsd: null,
@@ -68,6 +68,19 @@ describe('BudgetGuard', () => {
   })
 
   it('reads limits from the project config', () => {
-    expect(limitsFromConfig(DEFAULT_LLM_CONFIG)).toEqual({ perOperationUsd: 0.5, perBatchUsd: 10, perMonthUsd: null })
+    expect(limitsFromConfig(DEFAULT_LLM_CONFIG)).toEqual({ perOperationUsd: 0.5, perBatchUsd: 10, perMonthUsd: null, perFacetSuggestionUsd: 2 })
+  })
+
+  it('caps a facet suggestion run with its own cap, every other operation with the per-operation one', async () => {
+    expect(operationCap({ perOperationUsd: 0.5, perBatchUsd: 10, perMonthUsd: null, perFacetSuggestionUsd: 2 }, 'suggest_facets')).toBe(2)
+    expect(operationCap({ perOperationUsd: 0.5, perBatchUsd: 10, perMonthUsd: null }, 'suggest_facets')).toBe(0.5)
+    expect(operationCap({ perOperationUsd: 0.5, perBatchUsd: 10, perMonthUsd: null, perFacetSuggestionUsd: 2 }, 'fill_facets')).toBe(0.5)
+    const g = new BudgetGuard(limits({ perFacetSuggestionUsd: 2, perBatchUsd: 10 }), async () => 0, 0.05, { suggest_facets: 0.5 })
+    expect(g.currentEstimate('suggest_facets')).toBe(0.5)
+    ;(await g.admit(undefined, 'suggest_facets')).settle(1.5)
+    expect(g.currentEstimate('suggest_facets')).toBe(1.5)
+    ;(await g.admit(undefined, 'suggest_facets')).settle(3)
+    expect(g.currentEstimate('suggest_facets')).toBe(2)
+    expect(g.currentEstimate('fill_facets')).toBe(0.05)
   })
 })

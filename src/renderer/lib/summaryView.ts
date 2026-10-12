@@ -11,6 +11,7 @@ import {
   type SummaryFieldKey,
   type SummaryFields,
   type SummaryFile,
+  type SummaryStatus,
   type ThesisContext,
   type ThesisRelation
 } from '../../shared/summary'
@@ -73,4 +74,10 @@ export type ThesisCardData =
 export function thesisCard(extraction: ExtractionFile | null, thesis: ThesisContext): ThesisCardData {
   if (!thesis.title.trim() && !thesis.description.trim()) return { status: 'no_context' }
   return { status: 'ok', relation: extraction?.thesis_relation ?? null, questions: thesis.research_questions }
+}
+
+/** Form facets an up-to-date classification has no entry for: «Faceta nueva sin llenar». */
+export function unfilledFacetKeys(form: ExtractionForm | null, extraction: ExtractionFile | null, status: SummaryStatus): string[] {
+  if (!form || !extraction || (status !== 'generated' && status !== 'reviewed')) return []
+  return form.facets.filter((f) => !extraction.facets[f.key]).map((f) => f.key)
 }

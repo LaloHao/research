@@ -38,6 +38,32 @@ export function draftFromForm(form: ExtractionForm): FormDraft {
   return { facets: form.facets.map((facet) => ({ id: crypto.randomUUID(), facet })), value_aliases: form.value_aliases }
 }
 
+/**
+ * The saved form loaded again (it changed on disk): a facet whose key is still there keeps its id, so input typed for
+ * it and keyed by id (a value not added yet, a bound not committed) survives the reload; other facets get a fresh id.
+ */
+export function rebaseDraft(previous: FormDraft, saved: ExtractionForm): FormDraft {
+  const ids = new Map(previous.facets.map((f) => [f.facet.key, f.id]))
+  return { facets: saved.facets.map((facet) => ({ id: ids.get(facet.key) ?? crypto.randomUUID(), facet })), value_aliases: saved.value_aliases }
+}
+
+/**
+ * Input typed in the editor that is not in the draft yet, so it doesn't make the draft dirty but would be lost by
+ * rewriting the saved form: a value typed but not added, a scale bound typed but not committed (or invalid), or a new
+ * facet being filled in. Input left for facets no longer in the draft doesn't count.
+ */
+export function hasPendingInput(draft: FormDraft, newValueText: Record<string, string>, scaleText: Record<string, string>, addingFacet: boolean): boolean {
+  if (addingFacet) return true
+  return draft.facets.some(({ id, facet }) => {
+    if ((newValueText[id] ?? '').trim() !== '') return true
+    if (facet.type !== 'scale') return false
+    return (['min', 'max'] as const).some((field) => {
+      const text = scaleText[`${id}.${field}`]
+      return text !== undefined && text.trim() !== String(facet[field])
+    })
+  })
+}
+
 /** The plain `ExtractionForm` a draft represents, dropping the local-only ids. */
 export function formFromDraft(draft: FormDraft): ExtractionForm {
   return { facets: draft.facets.map((d) => d.facet), value_aliases: draft.value_aliases }

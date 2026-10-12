@@ -149,6 +149,7 @@ export class AppController {
     session.on('jobs', () => this.emit('jobs-changed'))
     session.on('project', () => this.emit('project-changed'))
     session.on('sync', () => this.emit('sync-changed'))
+    session.on('facets', () => this.emit('facets-changed'))
     this.emit('project-changed')
     // The first automatic sync may already be running (it starts as the session opens, before these listeners).
     this.emit('sync-changed')

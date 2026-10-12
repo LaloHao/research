@@ -130,12 +130,18 @@ export type ExtractionFile = z.infer<typeof ExtractionFileSchema>
 export const LLM_MODELS = ['sonnet', 'haiku', 'opus'] as const
 export type LlmModel = (typeof LLM_MODELS)[number]
 
+/** Largest «Papers resumidos nuevos para sugerir» the app accepts from the renderer. */
+export const AUTO_SUGGEST_FACETS_AFTER_MAX = 1000
+
 export const DEFAULT_LLM_CONFIG = {
   model: 'sonnet' as const,
   auto_summarize: false,
   auto_suggest_relations: false,
+  auto_suggest_facets: false,
+  /** Up-to-date summaries added since the last facet suggestion run before the automatic trigger runs again. */
+  auto_suggest_facets_after: 10,
   max_input_chars: 400000,
-  budget: { per_operation_usd: 0.5, per_batch_usd: 10, per_month_usd: null as number | null }
+  budget: { per_operation_usd: 0.5, per_batch_usd: 10, per_month_usd: null as number | null, per_facet_suggestion_usd: 2 }
 }
 
 /** Strict version (no fallback), used to validate edits from the UI. */
@@ -143,12 +149,16 @@ export const LlmConfigShape = z.object({
   model: z.enum(LLM_MODELS).default('sonnet'),
   auto_summarize: z.boolean().default(false),
   auto_suggest_relations: z.boolean().default(false),
+  auto_suggest_facets: z.boolean().default(false),
+  auto_suggest_facets_after: z.number().int().positive().default(10),
   max_input_chars: z.number().int().positive().default(400000),
   budget: z
     .object({
       per_operation_usd: z.number().positive().default(0.5),
       per_batch_usd: z.number().positive().default(10),
-      per_month_usd: z.number().positive().nullable().default(null)
+      per_month_usd: z.number().positive().nullable().default(null),
+      /** The cap of one «Sugerir facetas» run, which reads the whole library. */
+      per_facet_suggestion_usd: z.number().positive().default(2)
     })
     .prefault({})
 })
@@ -164,12 +174,15 @@ export const LlmConfigSchema = z
     model: LlmConfigShape.shape.model.catch(DEFAULT_LLM_CONFIG.model),
     auto_summarize: LlmConfigShape.shape.auto_summarize.catch(DEFAULT_LLM_CONFIG.auto_summarize),
     auto_suggest_relations: LlmConfigShape.shape.auto_suggest_relations.catch(DEFAULT_LLM_CONFIG.auto_suggest_relations),
+    auto_suggest_facets: LlmConfigShape.shape.auto_suggest_facets.catch(DEFAULT_LLM_CONFIG.auto_suggest_facets),
+    auto_suggest_facets_after: LlmConfigShape.shape.auto_suggest_facets_after.catch(DEFAULT_LLM_CONFIG.auto_suggest_facets_after),
     max_input_chars: LlmConfigShape.shape.max_input_chars.catch(DEFAULT_LLM_CONFIG.max_input_chars),
     budget: z
       .object({
         per_operation_usd: z.number().positive().catch(B.per_operation_usd),
         per_batch_usd: z.number().positive().catch(B.per_batch_usd),
-        per_month_usd: z.number().positive().nullable().catch(B.per_month_usd)
+        per_month_usd: z.number().positive().nullable().catch(B.per_month_usd),
+        per_facet_suggestion_usd: z.number().positive().catch(B.per_facet_suggestion_usd)
       })
       .catch(() => ({ ...B }))
   })
@@ -179,12 +192,13 @@ export type LlmConfig = z.infer<typeof LlmConfigShape>
 export const SUMMARY_STATUSES = ['none', 'generated', 'reviewed', 'stale', 'too_long', 'failed'] as const
 export type SummaryStatus = (typeof SUMMARY_STATUSES)[number]
 
-export const COST_OPERATIONS = ['summarize', 'suggest_relations'] as const
+export const COST_OPERATIONS = ['summarize', 'suggest_relations', 'suggest_facets', 'fill_facets'] as const
 export type CostOperation = (typeof COST_OPERATIONS)[number]
 
 /** One line of costs/<device-id>.jsonl. */
 export interface CostEntry {
   at: string
+  /** The paper the call worked on; '' for a project-wide call (a facet suggestion run). */
   paper_id: string
   batch_id: string | null
   model: string

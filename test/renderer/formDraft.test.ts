@@ -7,11 +7,13 @@ import {
   addValue,
   draftFromForm,
   formFromDraft,
+  hasPendingInput,
   isDirty,
   removeAlias,
   removeFacet,
   removeValue,
   replaceFacet,
+  rebaseDraft,
   updateFacet,
   validateDraft,
   validateNewValue,
@@ -238,5 +240,72 @@ describe('every draft issue code has a Spanish message', () => {
   const issues = es.settings.form_editor.issues as Record<string, unknown>
   it.each(DRAFT_ISSUE_CODES)('%s', (code) => {
     expect(typeof issues[code]).toBe('string')
+  })
+})
+
+describe('rebaseDraft', () => {
+  const before: ExtractionForm = {
+    facets: [
+      { key: 'method', type: 'single', description: 'How', values: ['survey'] },
+      { key: 'rating', type: 'scale', description: 'Score', min: 1, max: 5 }
+    ],
+    value_aliases: {}
+  }
+  const after: ExtractionForm = {
+    facets: [
+      { key: 'method', type: 'single', description: 'How', values: ['survey', 'interview'] },
+      { key: 'rating', type: 'scale', description: 'Score', min: 1, max: 5 },
+      { key: 'sample', type: 'text', description: 'Who' }
+    ],
+    value_aliases: { method: { poll: 'survey' } }
+  }
+
+  it('keeps the id of every facet whose key is still there, and gives new ones a fresh id', () => {
+    const previous = draftFromForm(before)
+    const next = rebaseDraft(previous, after)
+    expect(formFromDraft(next)).toEqual(after)
+    expect(next.facets[0].id).toBe(previous.facets[0].id)
+    expect(next.facets[1].id).toBe(previous.facets[1].id)
+    expect(previous.facets.map((f) => f.id)).not.toContain(next.facets[2].id)
+  })
+
+  it('drops the ids of removed facets', () => {
+    const previous = draftFromForm(after)
+    const next = rebaseDraft(previous, before)
+    expect(next.facets.map((f) => f.id)).toEqual(previous.facets.slice(0, 2).map((f) => f.id))
+  })
+})
+
+describe('hasPendingInput', () => {
+  const form: ExtractionForm = {
+    facets: [
+      { key: 'method', type: 'single', description: 'How', values: ['survey'] },
+      { key: 'rating', type: 'scale', description: 'Score', min: 1, max: 5 }
+    ],
+    value_aliases: {}
+  }
+  const draft = draftFromForm(form)
+  const [method, rating] = draft.facets.map((f) => f.id)
+
+  it('is false with nothing typed, or with only blanks and committed bounds', () => {
+    expect(hasPendingInput(draft, {}, {}, false)).toBe(false)
+    expect(hasPendingInput(draft, { [method]: '  ' }, { [`${rating}.min`]: '1', [`${rating}.max`]: ' 5 ' }, false)).toBe(false)
+  })
+
+  it('is true for a value typed but not added', () => {
+    expect(hasPendingInput(draft, { [method]: 'interview' }, {}, false)).toBe(true)
+  })
+
+  it('is true for a bound typed but not committed, or invalid', () => {
+    expect(hasPendingInput(draft, {}, { [`${rating}.max`]: '7' }, false)).toBe(true)
+    expect(hasPendingInput(draft, {}, { [`${rating}.min`]: 'x' }, false)).toBe(true)
+  })
+
+  it('is true while a new facet is being filled in', () => {
+    expect(hasPendingInput(draft, {}, {}, true)).toBe(true)
+  })
+
+  it('ignores input left for facets no longer in the draft', () => {
+    expect(hasPendingInput(draft, { gone: 'x' }, { 'gone.min': '3' }, false)).toBe(false)
   })
 })

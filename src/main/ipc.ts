@@ -8,6 +8,7 @@ import type { DeletePlanResult, RestoreOutcome, TrashOutcome } from '../shared/t
 import {
   IPC,
   type ActionResult,
+  type FacetDecisionResult,
   type LlmInfo,
   type ProjectInfo,
   type ProjectOpenResult,
@@ -347,6 +348,41 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     const root = app.requireSession().store.root
     const file = join(root, RELATIONS_FILE)
     shell.showItemInFolder(existsSync(file) ? file : root)
+  })
+
+  // Facet suggestions by Claude, and filling the facets they add.
+  ipcMain.handle(IPC.facetsList, () => {
+    const session = app.requireSession()
+    return session.track(session.facets.list())
+  })
+  ipcMain.handle(IPC.facetsPlan, () => app.requireSession().facets.plan())
+  ipcMain.handle(IPC.facetsSuggest, (): Promise<ActionResult> => actionResult(() => app.requireSession().facets.request()))
+  ipcMain.handle(IPC.facetsAccept, (_e, rawId: unknown, rawEdit: unknown): Promise<FacetDecisionResult> => {
+    const id = arg(ipcArgs.suggestionId, rawId, 'id')
+    const edit = arg(ipcArgs.suggestionEdit, rawEdit, 'edit')
+    return decision(() => app.requireSession().facets.accept(id, edit))
+  })
+  ipcMain.handle(IPC.facetsReject, (_e, rawId: unknown): Promise<FacetDecisionResult> => {
+    const id = arg(ipcArgs.suggestionId, rawId, 'id')
+    return decision(() => app.requireSession().facets.reject(id))
+  })
+  ipcMain.handle(IPC.facetsRestore, (_e, rawId: unknown): Promise<FacetDecisionResult> => {
+    const id = arg(ipcArgs.suggestionId, rawId, 'id')
+    return decision(() => app.requireSession().facets.restore(id))
+  })
+  ipcMain.handle(IPC.facetsRevert, (_e, rawToken: unknown): Promise<ActionResult> => {
+    const token = arg(ipcArgs.undoToken, rawToken, 'token')
+    return actionResult(() => app.requireSession().facets.revert(token))
+  })
+  ipcMain.handle(IPC.facetsFillPlan, (_e, rawIds: unknown) => app.requireSession().summaries.fillPlan(arg(ipcArgs.paperIds, rawIds, 'ids')))
+  ipcMain.handle(IPC.facetsFill, (_e, rawIds: unknown): RunBatchResult => {
+    const ids = arg(ipcArgs.paperIds, rawIds, 'ids')
+    try {
+      const { batchId, count } = app.requireSession().summaries.requestFill(ids)
+      return { ok: true, batchId, count }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).code }
+    }
   })
 
   // A file the user chose to save (a chart, the graph, CSV data), wherever they picked; never written into the project on our own.

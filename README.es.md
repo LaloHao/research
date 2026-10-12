@@ -2,7 +2,7 @@
 
 *[English version](./README.md)*
 
-App de escritorio personal para la investigación de una tesis: biblioteca de papers con BibTeX, búsqueda de texto completo, resúmenes con Claude, citas desde OpenAlex, papers similares, un mapa del área, una papelera versionada para quitar y restaurar papers, sincronización entre equipos con git desde la app y, en etapas siguientes, relaciones tipadas, chat y mapeo sistemático.
+App de escritorio personal para la investigación de una tesis: biblioteca de papers con BibTeX, búsqueda de texto completo, resúmenes con Claude, citas desde OpenAlex, papers similares, un mapa del área, relaciones tipadas y facetas sugeridas por Claude, una papelera versionada para quitar y restaurar papers, sincronización entre equipos con git desde la app y, en etapas siguientes, chat y mapeo sistemático.
 
 ## Requisitos
 

@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { LLM_MODELS, type LlmConfig, type LlmModel } from '../../../shared/summary'
+import { AUTO_SUGGEST_FACETS_AFTER_MAX, LLM_MODELS, type LlmConfig, type LlmModel } from '../../../shared/summary'
 import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
 import { parseCap, parseCount, parseUsd, type NumberIssue, type Parsed } from '../../lib/numberField'
 
-type NumericField = 'perOperation' | 'perBatch' | 'perMonth' | 'maxInput'
+type NumericField = 'perOperation' | 'perBatch' | 'perMonth' | 'maxInput' | 'perFacets' | 'facetsAfter'
 
 export function ClaudeSection(): React.JSX.Element {
   const { t } = useTranslation()
   const [model, setModel] = useState<LlmModel>('sonnet')
   const [autoSummarize, setAutoSummarize] = useState(false)
   const [autoSuggest, setAutoSuggest] = useState(false)
+  const [autoFacets, setAutoFacets] = useState(false)
+  const [facetsAfter, setFacetsAfter] = useState('')
+  const [perFacets, setPerFacets] = useState('')
   const [perOperation, setPerOperation] = useState('')
   const [perBatch, setPerBatch] = useState('')
   const [perMonth, setPerMonth] = useState('')
@@ -26,6 +29,9 @@ export function ClaudeSection(): React.JSX.Element {
       setModel(config.model)
       setAutoSummarize(config.auto_summarize)
       setAutoSuggest(config.auto_suggest_relations)
+      setAutoFacets(config.auto_suggest_facets)
+      setFacetsAfter(String(config.auto_suggest_facets_after))
+      setPerFacets(String(config.budget.per_facet_suggestion_usd))
       setPerOperation(String(config.budget.per_operation_usd))
       setPerBatch(String(config.budget.per_batch_usd))
       setPerMonth(config.budget.per_month_usd === null ? '' : String(config.budget.per_month_usd))
@@ -110,6 +116,29 @@ export function ClaudeSection(): React.JSX.Element {
         <span>{t('settings.auto_suggest_relations')}</span>
       </label>
       <small className="muted">{t('settings.auto_suggest_relations_help')}</small>
+      <label className="field checkbox">
+        <input
+          type="checkbox"
+          checked={autoFacets}
+          onChange={(e) => {
+            const next = e.target.checked
+            setAutoFacets(next)
+            save({ auto_suggest_facets: next })
+          }}
+        />
+        <span>{t('settings.auto_suggest_facets')}</span>
+      </label>
+      <small className="muted">{t('settings.auto_suggest_facets_help')}</small>
+      <NumberField
+        id="facets-after"
+        label={t('settings.auto_suggest_facets_after')}
+        value={facetsAfter}
+        issue={issues.facetsAfter}
+        integer
+        max={AUTO_SUGGEST_FACETS_AFTER_MAX}
+        onChange={(v) => edit('facetsAfter', setFacetsAfter, v)}
+        onBlur={() => commit('facetsAfter', parseCount(facetsAfter, AUTO_SUGGEST_FACETS_AFTER_MAX), (value) => save({ auto_suggest_facets_after: value }))}
+      />
       <NumberField
         id="budget-operation"
         label={t('settings.budget_operation')}
@@ -135,6 +164,14 @@ export function ClaudeSection(): React.JSX.Element {
         onBlur={() => commit('perMonth', parseCap(perMonth), (value) => saveBudget({ per_month_usd: value }))}
       />
       <NumberField
+        id="budget-facets"
+        label={t('settings.budget_facets')}
+        value={perFacets}
+        issue={issues.perFacets}
+        onChange={(v) => edit('perFacets', setPerFacets, v)}
+        onBlur={() => commit('perFacets', parseUsd(perFacets), (value) => saveBudget({ per_facet_suggestion_usd: value }))}
+      />
+      <NumberField
         id="max-input"
         label={t('settings.max_input')}
         value={maxInput}
@@ -157,12 +194,14 @@ interface NumberFieldProps {
   value: string
   issue: NumberIssue | undefined
   integer?: boolean
+  /** The largest value accepted, for the `too_large` message. */
+  max?: number
   onChange: (value: string) => void
   onBlur: () => void
 }
 
 /** A text input for numbers (so a half-typed value is never read as empty) with its own error under it. */
-function NumberField({ id, label, value, issue, integer, onChange, onBlur }: NumberFieldProps): React.JSX.Element {
+function NumberField({ id, label, value, issue, integer, max, onChange, onBlur }: NumberFieldProps): React.JSX.Element {
   const { t } = useTranslation()
   const errorId = `${id}-error`
   return (
@@ -180,7 +219,7 @@ function NumberField({ id, label, value, issue, integer, onChange, onBlur }: Num
       />
       {issue && (
         <small id={errorId} className="field-error" role="alert">
-          {t(`settings.invalid.${issue}`)}
+          {t(`settings.invalid.${issue}`, { max })}
         </small>
       )}
     </label>

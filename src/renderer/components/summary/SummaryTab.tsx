@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ActionResult } from '../../../shared/ipc'
 import type { JobRecord } from '../../../shared/jobs'
 import type { PaperDetail } from '../../../shared/library'
-import { LLM_MODELS, type LlmModel, type ThesisContext } from '../../../shared/summary'
+import { LLM_MODELS, type LlmModel, type SummaryPlan, type ThesisContext } from '../../../shared/summary'
 import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
-import { facetCards, summarizeAvailability, summaryCards, thesisCard } from '../../lib/summaryView'
+import { facetCards, summarizeAvailability, summaryCards, thesisCard, unfilledFacetKeys } from '../../lib/summaryView'
 import { FacetCard } from './FacetCard'
 import { FieldCard, formatDate, type OpenEvidence, type RunAction } from './FieldCard'
 import { ThesisCard } from './ThesisCard'
@@ -17,6 +17,24 @@ export function SummaryTab({ detail, onOpenEvidence }: { detail: PaperDetail; on
   const [estimate, setEstimate] = useState<number | null>(null)
   const [thesis, setThesis] = useState<ThesisContext | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [fillPlan, setFillPlan] = useState<SummaryPlan | null>(null)
+  const [fillConfirm, setFillConfirm] = useState(false)
+  const [filling, setFilling] = useState(false)
+  const fillRequest = useRef(0)
+  // What filling this paper's new facets would cost; 0 papers while it has none, or a fill or summary is queued.
+  const refreshFill = useCallback(() => {
+    const token = ++fillRequest.current
+    window.research.facets.fillPlan([detail.id]).then(
+      (plan) => {
+        if (token === fillRequest.current) setFillPlan(plan)
+      },
+      () => {
+        if (token !== fillRequest.current) return
+        setFillPlan(null)
+        setError(errorText(t, 'unknown'))
+      }
+    )
+  }, [detail.id, t])
 
   const refreshJobs = useCallback(() => {
     window.research.jobs.list().then(setJobs, () => setJobs([]))
@@ -33,7 +51,20 @@ export function SummaryTab({ detail, onOpenEvidence }: { detail: PaperDetail; on
   useEvent('jobs-changed', refreshJobs)
   useEvent('library-changed', refreshProject)
   useEvent('project-changed', refreshProject)
-  useEffect(() => setError(null), [detail.id])
+  useEffect(refreshFill, [refreshFill])
+  useEvent('jobs-changed', refreshFill)
+  useEvent('library-changed', refreshFill)
+  useEvent('project-changed', refreshFill)
+  useEvent('facets-changed', refreshFill)
+  useEffect(() => {
+    setError(null)
+    setFillConfirm(false)
+  }, [detail.id])
+  const unfilledCount = detail.summary ? unfilledFacetKeys(detail.form, detail.extraction, detail.summaryStatus).length : 0
+  // A confirmation does not outlive its banner (the summary went stale or the facets got filled).
+  useEffect(() => {
+    if (unfilledCount === 0) setFillConfirm(false)
+  }, [unfilledCount])
 
   const run: RunAction = async (action: () => Promise<ActionResult>) => {
     setError(null)
@@ -73,6 +104,20 @@ export function SummaryTab({ detail, onOpenEvidence }: { detail: PaperDetail; on
   const fallback = { model: summary.generated.model, at: summary.generated.at }
   const facets = facetCards(detail.form, detail.extraction)
   const relation = thesis ? thesisCard(detail.extraction, thesis) : null
+  const unfilled = unfilledFacetKeys(detail.form, detail.extraction, detail.summaryStatus)
+  const canFill = !busy && !filling && !!fillPlan && fillPlan.count > 0
+  // Queued only after the user confirms the estimate and the batch cap.
+  const fillNew = (): void => {
+    if (!canFill) return
+    setFilling(true)
+    void run(async () => {
+      const r = await window.research.facets.fill([detail.id])
+      return r.ok ? { ok: true as const } : r
+    }).finally(() => {
+      setFilling(false)
+      setFillConfirm(false)
+    })
+  }
 
   return (
     <div className="summary-tab">
@@ -110,6 +155,26 @@ export function SummaryTab({ detail, onOpenEvidence }: { detail: PaperDetail; on
         </div>
         {lastError}
         {actionError}
+        {unfilled.length > 0 && (
+          <div className="banner warning">
+            <span>{t('facets.unfilled_banner', { keys: unfilled.join(', ') })}</span>
+            {fillConfirm && fillPlan ? (
+              <>
+                <span>{t('facets.fill_confirm', { count: fillPlan.count, cost: fillPlan.estimateUsd.toFixed(2), limit: fillPlan.batchLimitUsd.toFixed(2) })}</span>
+                <button className="primary" disabled={!canFill} autoFocus onClick={fillNew}>
+                  {t('library.confirm')}
+                </button>
+                <button disabled={filling} onClick={() => setFillConfirm(false)}>
+                  {t('jobs.cancel')}
+                </button>
+              </>
+            ) : (
+              <button disabled={!canFill} onClick={() => setFillConfirm(true)}>
+                {t('facets.fill_paper', { cost: fillPlan ? fillPlan.estimateUsd.toFixed(2) : '…' })}
+              </button>
+            )}
+          </div>
+        )}
       </header>
 
       {summaryCards(summary).map((card) => (
@@ -120,7 +185,16 @@ export function SummaryTab({ detail, onOpenEvidence }: { detail: PaperDetail; on
         <section>
           <h3>{t('summary.classification')}</h3>
           {facets.map(({ def, entry }) => (
-            <FacetCard key={def.key} paperId={detail.id} def={def} entry={entry} fallback={fallback} onOpenEvidence={onOpenEvidence} run={run} />
+            <FacetCard
+              key={def.key}
+              paperId={detail.id}
+              def={def}
+              entry={entry}
+              fallback={fallback}
+              onOpenEvidence={onOpenEvidence}
+              run={run}
+              unfilled={unfilled.includes(def.key)}
+            />
           ))}
         </section>
       )}

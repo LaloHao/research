@@ -8,6 +8,8 @@ import { CitationService } from '../citations/CitationService'
 import { OpenAlexCitations } from '../citations/OpenAlexCitations'
 import type { EmbeddingRuntime } from '../embeddings/EmbeddingRuntime'
 import { PdfjsExtractor, type PdfExtractor } from '../extract/PdfExtractor'
+import { FacetSuggester } from '../facets/FacetSuggester'
+import { FacetSuggestionService } from '../facets/FacetSuggestionService'
 import { HttpClient, type FetchFn } from '../ingest/http'
 import { MetadataResolver } from '../ingest/MetadataResolver'
 import { JobQueue } from '../jobs/JobQueue'
@@ -24,6 +26,7 @@ import { interleaveReview } from '../relations/relationMerge'
 import { RelationService } from '../relations/RelationService'
 import { RelationSuggester } from '../relations/RelationSuggester'
 import { SimilarityService } from '../relations/SimilarityService'
+import { FacetFiller } from '../summary/FacetFiller'
 import { Summarizer } from '../summary/Summarizer'
 import { SummaryService } from '../summary/SummaryService'
 import { SyncScheduler } from '../sync/SyncScheduler'
@@ -58,16 +61,18 @@ export interface SessionOptions {
   gitEnv?: Record<string, string>
   /** Names this machine in sync commits; defaults to the host name. */
   machineName?: string
+  /** The clock of the facet suggestions (their automatic trigger runs at most once a day); tests pass their own. */
+  now?: () => Date
 }
 
-type SessionEvent = 'library' | 'jobs' | 'project' | 'sync'
+type SessionEvent = 'library' | 'jobs' | 'project' | 'sync' | 'facets'
 
 /** Files whose external change alters the bibliography (paper.yaml, or the paper folder appearing or going away). */
 const BIB_FILES = new Set(['paper.yaml', PAPER_FOLDER])
 
 /** Everything that lives while one project is open. */
 export class ProjectSession {
-  private readonly listeners: Record<SessionEvent, Set<() => void>> = { library: new Set(), jobs: new Set(), project: new Set(), sync: new Set() }
+  private readonly listeners: Record<SessionEvent, Set<() => void>> = { library: new Set(), jobs: new Set(), project: new Set(), sync: new Set(), facets: new Set() }
   private stopWatching: (() => void) | null = null
   private readonly inFlight = new Set<Promise<unknown>>()
   private scheduler: SyncScheduler | null = null
@@ -85,7 +90,8 @@ export class ProjectSession {
     readonly similarity: SimilarityService,
     readonly map: MapService,
     readonly relations: RelationService,
-    readonly sync: SyncService
+    readonly sync: SyncService,
+    readonly facets: FacetSuggestionService
   ) {}
 
   static async create(root: string, name: string, opts: SessionOptions): Promise<ProjectSession> {
@@ -124,20 +130,22 @@ export class ProjectSession {
       () => limitsFromConfig(store.config.llm),
       () => ledger.monthTotal(),
       0.05,
-      { suggest_relations: 0.25 }
+      { suggest_relations: 0.25, suggest_facets: 0.5 }
     )
     const llm = opts.llm ?? new ClaudeCliProvider()
     const summarizer = new Summarizer({ store, cache, provider: llm, budget, ledger })
+    const filler = new FacetFiller({ store, cache, provider: llm, budget, ledger })
     // The handler reads the services when a job runs: the queue has to exist before them.
     // One analysis at a time: skipping pairs already analyzed from the other paper relies on runs being sequential.
     const queue = new JobQueue(cache, (spec, signal, report) => runJob(session.services(), spec, signal, report), {
       total: 4,
-      byType: { summarize: 1, citations: 1, cited_by: 1, embed: 1, model_download: 1, suggest_relations: 1 }
+      byType: { summarize: 1, citations: 1, cited_by: 1, embed: 1, model_download: 1, suggest_relations: 1, fill_facets: 1, suggest_facets: 1 }
     })
     const summaries = new SummaryService({
       store,
       cache,
       summarizer,
+      filler,
       budget,
       ledger,
       reindex: (id) => library.indexPaper(id),
@@ -194,9 +202,31 @@ export class ProjectSession {
       gitEnv: opts.gitEnv,
       emit: () => session.emit('sync')
     })
-    const session: ProjectSession = new ProjectSession(store, cache, http, library, queue, summaries, citations, similarity, map, relations, sync)
+    const facets = new FacetSuggestionService({
+      store,
+      cache,
+      summaries,
+      suggester: new FacetSuggester({
+        store,
+        cache,
+        provider: llm,
+        budget,
+        ledger,
+        // A fresh read-only MCP server per agent run, closed when the run ends.
+        startTools: (o) => startLibraryMcpServer(libraryTools({ store, cache, map, embeddings: opts.embeddings ?? null }), o),
+        now: opts.now
+      }),
+      budget,
+      emit: () => session.emit('facets'),
+      enqueue: (spec) => queue.enqueue(spec),
+      // Accepting rewrites project.yaml: the form editor reloads without waiting for the watcher.
+      formChanged: () => session.emit('project'),
+      now: opts.now
+    })
+    const session: ProjectSession = new ProjectSession(store, cache, http, library, queue, summaries, citations, similarity, map, relations, sync, facets)
     await library.reindexAll()
     await relations.reindex()
+    await facets.reindex()
     library.onChange(() => session.emit('library'))
     queue.onChange(() => session.emit('jobs'))
     queue.start()
@@ -240,6 +270,16 @@ export class ProjectSession {
             )
             .catch((error) => console.error('relations.yaml', error))
         },
+        onFacetSuggestions: () => {
+          // Our own writes come through the watcher too and are already read: only a real external change counts.
+          void session
+            .track(
+              facets.reindexIfChanged().then((changed) => {
+                if (changed) session.emit('facets')
+              })
+            )
+            .catch((error) => console.error('facet-suggestions.yaml', error))
+        },
         onTrash: () => {
           void session
             .track(library.syncTrash().then(() => session.emit('library')))
@@ -282,7 +322,7 @@ export class ProjectSession {
   }
 
   services(): JobServices {
-    return { library: this.library, summaries: this.summaries, citations: this.citations, similarity: this.similarity, relations: this.relations }
+    return { library: this.library, summaries: this.summaries, citations: this.citations, similarity: this.similarity, relations: this.relations, facets: this.facets }
   }
 
   /** Summary entries and suggested relations still to review, paper by paper (in `ids` order when given, otherwise in list order). */
@@ -382,6 +422,7 @@ export interface JobServices {
   citations: CitationService
   similarity: SimilarityService
   relations: RelationService
+  facets: FacetSuggestionService
 }
 
 const logged =
@@ -402,6 +443,7 @@ export async function runJob(
       await s.similarity.enqueueStale([spec.paperId]).catch(logged('embeddings'))
       await s.similarity.paperChanged(spec.paperId).catch(logged('neighbours'))
       await s.relations.autoAfter(spec.paperId).catch(logged('auto relations'))
+      await s.facets.autoAfterSummary().catch(logged('auto facets'))
       return result
     }
     case 'citations': {
@@ -431,6 +473,14 @@ export async function runJob(
       return s.similarity.downloadModel(signal, report)
     case 'suggest_relations':
       return s.relations.run(spec.paperId, { force: spec.force, batchId: spec.batchId, model: spec.model, signal })
+    case 'suggest_facets':
+      return s.facets.run({ batchId: spec.batchId, model: spec.model, signal })
+    case 'fill_facets': {
+      const result = await s.summaries.runFill(spec.paperId, { batchId: spec.batchId, signal })
+      // New facet values feed the neighbours, like a summary's.
+      await s.similarity.paperChanged(spec.paperId).catch(logged('neighbours'))
+      return result
+    }
     case 'attach_pdf': {
       // Only the PDF and its text change: summaries, citations and embeddings stay as they are.
       const outcome = await s.library.attachPdf(spec.paperId, spec.path, { replace: spec.replace }, signal)
