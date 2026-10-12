@@ -7,6 +7,9 @@ import {
   filtersFor,
   highlight,
   keepPosition,
+  nextSnowballIteration,
+  openAlexPlanLines,
+  openAlexRequest,
   openAlexTypesFor,
   phaseLabel,
   planLines,
@@ -14,6 +17,7 @@ import {
   prismaLabels,
   sameDraft,
   screeningCommand,
+  snowballPlanLines,
   searchFilters,
   searchSource,
   withThesisQuestions,
@@ -160,5 +164,55 @@ describe('labels', () => {
     expect(labels.screened(5, 2)).toBe('mappings.prisma.screened_pending {"count":5,"pending":2}')
     expect(prismaFileName('Anonimización de logs: 2026', 'svg')).toBe('prisma-anonimizacion-de-logs-2026.svg')
     expect(prismaFileName('¿?', 'png')).toBe('prisma-mapeo.png')
+  })
+})
+
+describe('search confirmations', () => {
+  const form = { query: '  log anonymization ', fromYear: '2015', toYear: '', types: ['article' as const], cap: '500' }
+
+  it('builds the OpenAlex request the confirmation shows, or says why it cannot run', () => {
+    expect(openAlexRequest(form)).toEqual({ ok: true, req: { query: 'log anonymization', fromYear: 2015, toYear: null, types: ['article'], cap: 500 } })
+    expect(openAlexRequest({ ...form, query: '   ' })).toEqual({ ok: false, problem: 'query' })
+    expect(openAlexRequest({ ...form, fromYear: '20' })).toEqual({ ok: false, problem: 'years' })
+    expect(openAlexRequest({ ...form, fromYear: '2015.5' })).toEqual({ ok: false, problem: 'years' })
+    expect(openAlexRequest({ ...form, fromYear: '2024', toYear: '2015' })).toEqual({ ok: false, problem: 'years' })
+    // The cap is kept within 1 and the maximum; anything unreadable is the default.
+    const cap = (text: string): number | null => {
+      const r = openAlexRequest({ ...form, cap: text })
+      return r.ok ? r.req.cap : null
+    }
+    expect([cap('9000'), cap('0'), cap('-3'), cap(''), cap('abc'), cap('120.6')]).toEqual([5000, 1, 1, 500, 500, 121])
+  })
+
+  it('says what an OpenAlex search will fetch and with which filters', () => {
+    const lines = (over: Partial<typeof form>): string[] => {
+      const r = openAlexRequest({ ...form, ...over })
+      if (!r.ok) throw new Error(r.problem)
+      return openAlexPlanLines(t, r.req)
+    }
+    expect(lines({})).toEqual([
+      'mappings.searches.confirm_openalex {"cap":500,"pages":5}',
+      'mappings.searches.confirm_years_from {"from":2015}',
+      'mappings.searches.confirm_types {"types":"mappings.openalex_types.article"}',
+      'mappings.searches.confirm_free'
+    ])
+    expect(lines({ fromYear: '', toYear: '', types: [], cap: '150' })).toEqual([
+      'mappings.searches.confirm_openalex {"cap":150,"pages":2}',
+      'mappings.searches.confirm_years_any',
+      'mappings.searches.confirm_types_any',
+      'mappings.searches.confirm_free'
+    ])
+    expect(lines({ fromYear: '2015', toYear: '2026' })[1]).toBe('mappings.searches.confirm_years_range {"from":2015,"to":2026}')
+    expect(lines({ fromYear: '', toYear: '2026' })[1]).toBe('mappings.searches.confirm_years_to {"to":2026}')
+  })
+
+  it('numbers the next snowballing iteration and says what it will fetch', () => {
+    expect(nextSnowballIteration([search(), search({ kind: 'snowball' }), search({ kind: 'snowball', discarded: { at: AT, reason: 'x', machine: '' } })])).toBe(3)
+    expect(nextSnowballIteration([])).toBe(1)
+    expect(snowballPlanLines(t, { direction: 'backward', included: 4, iteration: 2 })).toEqual([
+      'mappings.searches.confirm_snowball {"iteration":2,"direction":"mappings.searches.directions.backward","count":4}',
+      'mappings.searches.confirm_snowball_cap {"cap":2000}',
+      'mappings.searches.confirm_free'
+    ])
   })
 })

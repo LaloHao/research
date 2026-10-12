@@ -2,6 +2,9 @@ import type { TFunction } from 'i18next'
 import {
   criterionText,
   QUEUE_FILTERS,
+  SEARCH_CAP,
+  SNOWBALL_CAP,
+  type OpenAlexSearchRequest,
   type OpenAlexType,
   type Phase,
   type PhaseView,
@@ -9,7 +12,8 @@ import {
   type ProtocolFile,
   type QueueFilter,
   type ScreeningPlan,
-  type Search
+  type Search,
+  type SnowballDirection
 } from '../../shared/mapping'
 import type { PaperKind } from '../../shared/schemas'
 import type { ThesisContext } from '../../shared/summary'
@@ -177,6 +181,68 @@ export function searchFilters(s: Search): string {
   return Object.entries(s.filters)
     .map(([key, value]) => `${key}: ${value}`)
     .join(' · ')
+}
+
+/** The OpenAlex form as typed. */
+export interface OpenAlexForm {
+  query: string
+  fromYear: string
+  toYear: string
+  types: OpenAlexType[]
+  cap: string
+}
+
+const validYear = (n: number | null): boolean => n === null || (Number.isInteger(n) && n >= 1800 && n <= 2200)
+
+/**
+ * The request «Buscar» asks to confirm, or why it cannot run yet: no search string, or a year out of range (or the
+ * first after the last). The cap is kept within 1 and the maximum; an unreadable cap is the default.
+ */
+export function openAlexRequest(form: OpenAlexForm): { ok: true; req: OpenAlexSearchRequest } | { ok: false; problem: 'query' | 'years' } {
+  const query = form.query.trim()
+  if (!query) return { ok: false, problem: 'query' }
+  const fromYear = yearValue(form.fromYear)
+  const toYear = yearValue(form.toYear)
+  if (!validYear(fromYear) || !validYear(toYear) || (fromYear !== null && toYear !== null && fromYear > toYear)) return { ok: false, problem: 'years' }
+  const typed = Number(form.cap)
+  const cap = form.cap.trim() !== '' && Number.isFinite(typed) ? Math.min(Math.max(Math.round(typed), 1), SEARCH_CAP.max) : SEARCH_CAP.default
+  return { ok: true, req: { query, fromYear, toYear, types: [...new Set(form.types)], cap } }
+}
+
+/** OpenAlex's search pages hold 100 results. */
+const OPENALEX_PAGE = 100
+
+/** The confirmation of «Buscar en OpenAlex»: how many results at most, the years and types it filters by, and that it costs no money. */
+export function openAlexPlanLines(t: TFunction, req: OpenAlexSearchRequest): string[] {
+  const { fromYear: from, toYear: to } = req
+  return [
+    t('mappings.searches.confirm_openalex', { cap: req.cap, pages: Math.ceil(req.cap / OPENALEX_PAGE) }),
+    from !== null && to !== null
+      ? t('mappings.searches.confirm_years_range', { from, to })
+      : from !== null
+        ? t('mappings.searches.confirm_years_from', { from })
+        : to !== null
+          ? t('mappings.searches.confirm_years_to', { to })
+          : t('mappings.searches.confirm_years_any'),
+    req.types.length > 0
+      ? t('mappings.searches.confirm_types', { types: req.types.map((type) => t(`mappings.openalex_types.${type}`)).join(', ') })
+      : t('mappings.searches.confirm_types_any'),
+    t('mappings.searches.confirm_free')
+  ]
+}
+
+/** The number the next snowballing iteration gets: snowballing searches so far (discarded ones too) + 1, as the log numbers it. */
+export function nextSnowballIteration(searches: readonly Search[]): number {
+  return searches.filter((s) => s.kind === 'snowball').length + 1
+}
+
+/** The confirmation of «Buscar candidatos»: the iteration, its direction, the records it starts from and how many works at most. */
+export function snowballPlanLines(t: TFunction, plan: { direction: SnowballDirection; included: number; iteration: number }): string[] {
+  return [
+    t('mappings.searches.confirm_snowball', { iteration: plan.iteration, direction: t(`mappings.searches.directions.${plan.direction}`), count: plan.included }),
+    t('mappings.searches.confirm_snowball_cap', { cap: SNOWBALL_CAP }),
+    t('mappings.searches.confirm_free')
+  ]
 }
 
 const usd = (n: number): string => n.toFixed(2)

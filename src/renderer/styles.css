@@ -355,3 +355,18 @@ button.danger { color: var(--error); border-color: var(--error); }
 .protocol-item { display: flex; gap: 8px; align-items: flex-start; }
 .protocol-item textarea { flex: 1; min-height: 2.4em; }
 .protocol-id { font-family: ui-monospace, monospace; min-width: 3.5em; padding-top: 4px; }
+.searches { display: flex; flex-direction: column; gap: 16px; }
+.search-forms { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; align-items: start; }
+.search-form { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; display: flex; flex-direction: column; gap: 8px; }
+.search-form summary { cursor: pointer; font-weight: 600; }
+.search-form label { display: flex; flex-direction: column; gap: 4px; }
+.search-form .row label, .search-form .checks label { flex-direction: row; align-items: center; }
+.search-form .checks { display: flex; flex-wrap: wrap; gap: 4px 12px; border: none; padding: 0; margin: 0; }
+.search-form p { margin: 0; }
+.search-confirm { flex-direction: column; align-items: stretch; background: var(--warning-soft); }
+.library-picker { max-height: 240px; overflow-y: auto; }
+.search-log h3 { margin: 0 0 4px; }
+.search-log-table { width: 100%; border-collapse: collapse; }
+.search-log-table th, .search-log-table td { text-align: left; vertical-align: top; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+.search-log-table tr.discarded td { opacity: 0.6; }
+.search-query { font-family: ui-monospace, monospace; white-space: pre-wrap; word-break: break-word; max-width: 320px; }
