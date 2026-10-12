@@ -32,8 +32,10 @@ export interface LibraryMcpHandle {
   close(): Promise<void>
 }
 
-type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean }
-type Run = (name: string, fn: () => Promise<unknown>) => Promise<ToolResult>
+export type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean }
+export type Run = (name: string, fn: () => Promise<unknown>) => Promise<ToolResult>
+/** Registers a server's tools on a fresh McpServer; each tool's work goes through `run` (budget, data marking, errors). */
+export type DefineTools = (server: McpServer, run: Run) => void
 
 export function truncate(text: string, max = MAX_RESPONSE_CHARS): string {
   if (text.length <= max) return text
@@ -160,10 +162,10 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 }
 
 /**
- * An MCP server over the library for one agent run: streamable HTTP on 127.0.0.1, random port and bearer token,
+ * An MCP server for one agent run (any set of tools): streamable HTTP on 127.0.0.1, random port and bearer token,
  * stateless (a fresh McpServer per request; the call budget lives here, across requests).
  */
-export async function startLibraryMcpServer(tools: LibraryTools, opts: LibraryMcpOptions): Promise<LibraryMcpHandle> {
+export async function startMcpServer(name: string, define: DefineTools, opts: LibraryMcpOptions): Promise<LibraryMcpHandle> {
   const token = randomBytes(24).toString('hex')
   const maxChars = opts.maxChars ?? MAX_RESPONSE_CHARS
   const calls: ToolCallRecord[] = []
@@ -195,8 +197,8 @@ export async function startLibraryMcpServer(tools: LibraryTools, opts: LibraryMc
     } catch {
       return void res.writeHead(400).end()
     }
-    const server = new McpServer({ name: MCP_SERVER_NAME, version: '1.0.0' })
-    defineTools(server, tools, run)
+    const server = new McpServer({ name, version: '1.0.0' })
+    define(server, run)
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
     res.on('close', () => {
       void transport.close()
@@ -227,4 +229,9 @@ export async function startLibraryMcpServer(tools: LibraryTools, opts: LibraryMc
         http.close(() => resolve())
       })
   }
+}
+
+/** The read-only library server of the agent runs and the chat. */
+export function startLibraryMcpServer(tools: LibraryTools, opts: LibraryMcpOptions): Promise<LibraryMcpHandle> {
+  return startMcpServer(MCP_SERVER_NAME, (server, run) => defineTools(server, tools, run), opts)
 }
