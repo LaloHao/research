@@ -89,7 +89,8 @@ describe('FacetFiller', () => {
         await s.store.writeExtraction(ID, editFacet(e.value, form, 'data_source', { values: ['public_dataset'] }), e.hash)
         return s.provider.complete(req)
       },
-      runAgent: (req) => s.provider.runAgent(req)
+      runAgent: (req) => s.provider.runAgent(req),
+      chat: (req, onEvent) => s.provider.chat(req, onEvent)
     }
     const filler = new FacetFiller({ store: s.store, cache: s.cache, provider, budget: s.budget, ledger: s.ledger })
     expect(await filler.fill({ paperId: ID })).toEqual({ filled: ['maturity'], costUsd: 0.01 })
@@ -108,7 +109,8 @@ describe('FacetFiller', () => {
         await s.store.updateConfig({ extraction_form: reworded })
         return s.provider.complete(req)
       },
-      runAgent: (req) => s.provider.runAgent(req)
+      runAgent: (req) => s.provider.runAgent(req),
+      chat: (req, onEvent) => s.provider.chat(req, onEvent)
     }
     const filler = new FacetFiller({ store: s.store, cache: s.cache, provider, budget: s.budget, ledger: s.ledger })
     const before = await s.store.readExtraction(ID)
@@ -142,7 +144,8 @@ describe('FacetFiller', () => {
         controller.abort()
         return result
       },
-      runAgent: (req) => s.provider.runAgent(req)
+      runAgent: (req) => s.provider.runAgent(req),
+      chat: (req, onEvent) => s.provider.chat(req, onEvent)
     }
     const filler = new FacetFiller({ store: s.store, cache: s.cache, provider, budget: s.budget, ledger: s.ledger })
     const before = await s.store.readExtraction(ID)

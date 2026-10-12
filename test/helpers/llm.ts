@@ -2,7 +2,7 @@ import { join } from 'node:path'
 import { IndexCache } from '../../src/main/cache/IndexCache'
 import { BudgetGuard, limitsFromConfig } from '../../src/main/llm/BudgetGuard'
 import { CostLedger } from '../../src/main/llm/CostLedger'
-import type { AgentRequest, CompleteRequest, CompleteResult, LlmProvider } from '../../src/main/llm/LlmProvider'
+import type { AgentRequest, ChatEvent, ChatRequest, ChatResult, CompleteRequest, CompleteResult, LlmProvider } from '../../src/main/llm/LlmProvider'
 import { DEFAULT_EXTRACTION_FORM } from '../../src/main/summary/extractionForm'
 import type { LlmFacet, LlmOutput } from '../../src/main/summary/llmOutput'
 import { Summarizer } from '../../src/main/summary/Summarizer'
@@ -15,12 +15,18 @@ type Response = CompleteResult | Error | ((req: CompleteRequest) => CompleteResu
 
 export type AgentResponse = CompleteResult | Error | ((req: AgentRequest) => CompleteResult | Error | Promise<CompleteResult | Error>)
 
+export type ChatResponse = ChatResult | Error | ((req: ChatRequest, emit: (e: ChatEvent) => void) => ChatResult | Error | Promise<ChatResult | Error>)
+
+export const chatAnswer = (text: string, costUsd = 0.02, model = 'claude-sonnet-5'): ChatResult => ({ text, costUsd, model })
+
 export class FakeLlmProvider implements LlmProvider {
   readonly calls: CompleteRequest[] = []
   readonly agentCalls: AgentRequest[] = []
+  readonly chatCalls: ChatRequest[] = []
   constructor(
     private readonly responses: Response[],
-    private readonly agentResponses: AgentResponse[] = []
+    private readonly agentResponses: AgentResponse[] = [],
+    private readonly chatResponses: ChatResponse[] = []
   ) {}
 
   async complete(req: CompleteRequest): Promise<CompleteResult> {
@@ -39,6 +45,25 @@ export class FakeLlmProvider implements LlmProvider {
     const r = typeof next === 'function' ? await next(req) : next
     if (r instanceof Error) throw r
     return r
+  }
+
+  /**
+   * The last configured response repeats. A plain result streams as one turn of 12-character deltas; a function decides
+   * what to stream (and may call the tools at `req.servers[0]`, see helpers/mcp.ts).
+   */
+  async chat(req: ChatRequest, onEvent: (e: ChatEvent) => void): Promise<ChatResult> {
+    this.chatCalls.push(req)
+    if (this.chatResponses.length === 0) throw new Error('FakeLlmProvider: no chat response configured')
+    const next = this.chatResponses.length > 1 ? this.chatResponses.shift()! : this.chatResponses[0]
+    if (typeof next === 'function') {
+      const r = await next(req, onEvent)
+      if (r instanceof Error) throw r
+      return r
+    }
+    if (next instanceof Error) throw next
+    onEvent({ kind: 'turn' })
+    for (const text of next.text.match(/[\s\S]{1,12}/g) ?? []) onEvent({ kind: 'delta', text })
+    return next
   }
 }
 

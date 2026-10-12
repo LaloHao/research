@@ -58,7 +58,35 @@ export interface AgentRequest extends CompleteRequest {
   maxTurns: number
 }
 
+/**
+ * A chat answer: Markdown (no JSON schema), streamed, with the tools of `servers` and nothing else. Today the read-only
+ * library server; a later stage adds its own server to this list.
+ */
+export interface ChatRequest {
+  system: string
+  /** The conversation and its context, as data. */
+  input: string
+  model: string
+  maxUsd: number
+  servers: McpEndpoint[]
+  /** Tool budget plus one turn for the answer; enforced by the servers' call budget, and by the CLI when it supports --max-turns. */
+  maxTurns: number
+  signal?: AbortSignal
+  timeoutMs?: number
+}
+
+/** `turn`: the model starts a new turn (after a tool call), so the text shown so far is replaced. */
+export type ChatEvent = { kind: 'delta'; text: string } | { kind: 'turn' } | { kind: 'tool'; name: string }
+
+export interface ChatResult {
+  /** The final turn's text. */
+  text: string
+  costUsd: number
+  model: string
+}
+
 export interface LlmProvider {
   complete(req: CompleteRequest): Promise<CompleteResult>
   runAgent(req: AgentRequest): Promise<CompleteResult>
+  chat(req: ChatRequest, onEvent: (event: ChatEvent) => void): Promise<ChatResult>
 }

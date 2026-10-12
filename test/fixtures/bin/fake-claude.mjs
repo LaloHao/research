@@ -52,6 +52,44 @@ process.stdin.on('end', async () => {
       process.stdout.write(JSON.stringify({ ...agentBase, structured_output: output }))
       return process.exit(0)
     }
+    case 'chat':
+    case 'chat_hang': {
+      const emit = (o) => process.stdout.write(JSON.stringify({ ...o, parent_tool_use_id: null, session_id: 'fake' }) + '\n')
+      const configPath = args[args.indexOf('--mcp-config') + 1]
+      const server = Object.values(JSON.parse(readFileSync(configPath, 'utf8')).mcpServers)[0]
+      emit({ type: 'system', subtype: 'init' })
+      const calls = JSON.parse(process.env.FAKE_CLAUDE_TOOL_CALLS ?? '[]')
+      if (calls.length > 0) {
+        emit({ type: 'stream_event', event: { type: 'message_start' } })
+        const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
+        const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js')
+        const client = new Client({ name: 'fake-claude', version: '1.0.0' })
+        await client.connect(new StreamableHTTPClientTransport(new URL(server.url), { requestInit: { headers: server.headers } }))
+        const toolResults = []
+        for (const call of calls) {
+          emit({ type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: `mcp__library__${call.name}` } } })
+          toolResults.push(await client.callTool(call))
+        }
+        await client.close()
+        if (log) appendFileSync(log, JSON.stringify({ toolResults }) + '\n')
+      }
+      emit({ type: 'stream_event', event: { type: 'message_start' } })
+      const deltas = JSON.parse(process.env.FAKE_CLAUDE_DELTAS ?? '["Drain parses ","logs online."]')
+      for (const text of deltas) emit({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } } })
+      if (mode === 'chat_hang') {
+        setInterval(() => {}, 1000)
+        return
+      }
+      const answer = deltas.join('')
+      emit({ type: 'assistant', message: { content: [{ type: 'text', text: answer }] } })
+      emit({ type: 'result', subtype: 'success', is_error: false, result: answer, total_cost_usd: 0.02, modelUsage: { 'claude-sonnet-5': { outputTokens: 40, costUSD: 0.02 } } })
+      return process.exit(0)
+    }
+    case 'chat_quota':
+      process.stdout.write(
+        JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, api_error_status: 429, result: 'Claude usage limit reached.', total_cost_usd: 0 }) + '\n'
+      )
+      return process.exit(1)
     case 'hang':
       setInterval(() => {}, 1000)
       return
