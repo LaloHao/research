@@ -374,11 +374,11 @@ export function ScreeningTab({ view }: { view: MappingView }): React.JSX.Element
     )
   }
 
-  const resolveDuplicate = (recordId: string, same: boolean): void => {
+  const resolveDuplicate = (recordId: string, otherId: string, same: boolean): void => {
     if (busy) return
     setBusy(true)
     setError(null)
-    window.research.mappings.resolveDuplicate(view.id, recordId, same).then(
+    window.research.mappings.resolveDuplicate(view.id, recordId, otherId, same).then(
       (r) => (r.ok ? setBusy(false) : fail(r.error)),
       () => fail('unknown')
     )
@@ -468,10 +468,10 @@ export function ScreeningTab({ view }: { view: MappingView }): React.JSX.Element
                 <p className="muted small">{t('mappings.screening.same_keeps', { title: d.other.title })}</p>
                 <div className="row small">
                   <span className="muted">{t(`mappings.screening.duplicate_reasons.${d.reason}`)}</span>
-                  <button disabled={busy} onClick={() => resolveDuplicate(d.record.id, true)}>
+                  <button disabled={busy} onClick={() => resolveDuplicate(d.record.id, d.other.id, true)}>
                     {t('mappings.screening.same')}
                   </button>
-                  <button disabled={busy} onClick={() => resolveDuplicate(d.record.id, false)}>
+                  <button disabled={busy} onClick={() => resolveDuplicate(d.record.id, d.other.id, false)}>
                     {t('mappings.screening.distinct')}
                   </button>
                 </div>

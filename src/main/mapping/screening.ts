@@ -138,6 +138,19 @@ function suggestionView(s: ScreeningSuggestion | undefined, version: number): Su
 const fullName = (a: { family: string; given?: string }): string => (a.given ? `${a.given} ${a.family}` : a.family)
 const byAdded = (a: MappingRecord, b: MappingRecord): number => byTime({ at: a.added_at, id: a.id }, { at: b.added_at, id: b.id })
 
+/**
+ * The record a doubtful pair is about now: the one named on entry, or the record it was merged into since («Es el mismo»
+ * merges into that one). The record named when the chain breaks, loops or leads back to the record itself.
+ */
+export function pairedWith(records: Map<string, MappingRecord>, recordId: string, named: string): string {
+  let cur = records.get(named)
+  for (let steps = 0; cur?.merged_into; steps++) {
+    if (steps > records.size) return named
+    cur = records.get(cur.merged_into)
+  }
+  return cur && cur.id !== recordId ? cur.id : named
+}
+
 /** One row per record, in record order, with its PRISMA column, its state in each phase and its latest suggestions. */
 export function recordRows(c: MappingContent): MappingRecordRow[] {
   const live = activeSearchIds(c.searches)
@@ -145,6 +158,7 @@ export function recordRows(c: MappingContent): MappingRecordRow[] {
   const heads = decisionHeads(c.decisions)
   const latest = latestSuggestions(c.suggestions)
   const version = c.protocol.version
+  const byId = new Map(c.records.map((r) => [r.id, r]))
   return [...c.records].sort(byAdded).map((r): MappingRecordRow => {
     const sources = r.sources.filter((s) => live.has(s))
     return {
@@ -163,7 +177,7 @@ export function recordRows(c: MappingContent): MappingRecordRow[] {
       sources: r.sources,
       active: r.merged_into === null && sources.length > 0,
       column: sources.some((s) => DATABASE_KINDS.has(kindOf.get(s)!)) ? 'databases' : 'other',
-      duplicate: r.duplicate_of ? { of: r.duplicate_of.record, reason: r.duplicate_of.reason } : null,
+      duplicate: r.duplicate_of ? { of: pairedWith(byId, r.id, r.duplicate_of.record), reason: r.duplicate_of.reason } : null,
       title_abstract: phaseView(headsOf(heads, r.id, 'title_abstract'), version),
       full_text: phaseView(headsOf(heads, r.id, 'full_text'), version),
       suggestions: {

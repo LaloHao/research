@@ -411,7 +411,8 @@ export interface ResearchApi {
     decide(id: string, req: DecideRequest): Promise<DecideResult>
     undo(id: string, decisionId: string): Promise<ActionResult>
     resolveConflict(id: string, recordId: string, phase: Phase, keepDecisionId: string): Promise<ActionResult>
-    resolveDuplicate(id: string, recordId: string, same: boolean): Promise<ActionResult>
+    /** «Es el mismo» / «Son distintos» about the pair shown (`otherId`); `conflict` when the pair changed since. */
+    resolveDuplicate(id: string, recordId: string, otherId: string, same: boolean): Promise<ActionResult>
     /** What «Sugerir cribado» would cost, before asking. */
     suggestPlan(id: string, phase: Phase): Promise<ScreeningPlan>
     /** «Sugerir» in the cost confirmation: `confirmed` is that click, `recordIds` the plan's (nothing else is asked about). */

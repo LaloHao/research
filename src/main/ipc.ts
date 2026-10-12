@@ -530,11 +530,13 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     const keep = arg(ipcArgs.decisionId, rawKeep, 'keep')
     return actionResult(() => mappings((m) => m.resolveConflict(id, recordId, phase, keep)))
   })
-  ipcMain.handle(IPC.mappingsResolveDuplicate, (_e, rawId: unknown, rawRecord: unknown, rawSame: unknown): Promise<ActionResult> => {
+  // The pair as the card showed it: a pair that changed since is refused (`conflict`).
+  ipcMain.handle(IPC.mappingsResolveDuplicate, (_e, rawId: unknown, rawRecord: unknown, rawOther: unknown, rawSame: unknown): Promise<ActionResult> => {
     const id = arg(ipcArgs.mappingId, rawId, 'id')
     const recordId = arg(ipcArgs.recordId, rawRecord, 'record')
+    const otherId = arg(ipcArgs.recordId, rawOther, 'other')
     const same = arg(ipcArgs.flag, rawSame, 'same')
-    return actionResult(() => mappings((m) => m.resolveDuplicate(id, recordId, same)))
+    return actionResult(() => mappings((m) => m.resolveDuplicate(id, recordId, otherId, same)))
   })
   ipcMain.handle(IPC.mappingsSuggestPlan, (_e, rawId: unknown, rawPhase: unknown) => {
     const id = arg(ipcArgs.mappingId, rawId, 'id')

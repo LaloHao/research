@@ -444,10 +444,9 @@ export class MappingService {
    * which takes its sources, the fields it lacked, its library link, its «Son distintos» answers and its current
    * decisions (`carriedDecisions`: a disagreement shows as a conflict). «Son distintos»: each names the other as
    * distinct, and neither is asked about again. The pair is read again from the files: when it is no longer the one
-   * the window showed (another machine answered meanwhile), nothing is written (`conflict`).
+   * the window showed (`otherId`: another machine answered or merged meanwhile), nothing is written (`conflict`).
    */
-  async resolveDuplicate(id: string, recordId: string, same: boolean): Promise<void> {
-    const shown = this.deps.cache.mappingRow(id, recordId)?.duplicate?.of ?? null
+  async resolveDuplicate(id: string, recordId: string, otherId: string, same: boolean): Promise<void> {
     const at = this.now().toISOString()
     await this.mutate(id, (files) => {
       const content = contentOf(files)
@@ -455,10 +454,10 @@ export class MappingService {
       const record = records.get(recordId)
       if (!record || record.merged_into) throw new UserFacingError('mapping_not_found')
       const pairOf = record.duplicate_of?.record ?? syncPairs(content).get(record.id)?.other ?? null
-      if (!pairOf) throw new UserFacingError(shown ? 'conflict' : 'mapping_not_found')
-      if (shown && shown !== pairOf) throw new UserFacingError('conflict')
+      if (!pairOf) throw new UserFacingError('conflict')
       const other = survivor(records, pairOf)
       if (!other || other.id === record.id) throw new UserFacingError('mapping_not_found')
+      if (other.id !== otherId) throw new UserFacingError('conflict')
       if (record.distinct_from.includes(other.id) || other.distinct_from.includes(record.id)) throw new UserFacingError('conflict')
       const writes: Write[] = []
       if (same) {

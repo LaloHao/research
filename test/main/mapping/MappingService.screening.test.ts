@@ -162,7 +162,7 @@ describe('MappingService screening', () => {
     await expect(service.decide(id, on(R2))).rejects.toMatchObject({ code: 'not_eligible' })
     await expect(service.resolveConflict(id, R2, 'title_abstract', hexId('d', 1))).rejects.toMatchObject({ code: 'not_eligible' })
     await service.decide(id, on(R1))
-    await service.resolveDuplicate(id, R2, true)
+    await service.resolveDuplicate(id, R2, R1, true)
     await expect(service.decide(id, on(R2))).rejects.toMatchObject({ code: 'not_eligible' })
 
     // A stored doubtful pair (made on entry) is refused the same way.
@@ -180,7 +180,7 @@ describe('«Es el mismo» and the screening', () => {
   it('keeps the decision when only the newer copy was decided', async () => {
     const theirs = decision({ id: hexId('d', 2), record: R2, decision: 'exclude', criterion: 'E1', machine: 'machine-b', at: at(2) })
     const { service, id, decisions } = await syncPair([theirs])
-    await service.resolveDuplicate(id, R2, true)
+    await service.resolveDuplicate(id, R2, R1, true)
     expect(service.queue(id, { phase: 'title_abstract', filter: 'exclude' }).map((r) => [r.id, r.title_abstract.criterion])).toEqual([[R1, 'E1']])
     const copy = (await decisions()).find((d) => d.record === R1)
     expect(copy).toMatchObject({ decision: 'exclude', criterion: 'E1', by: 'user', replaces: [], copied_from: theirs.id, machine: 'machine-b' })
@@ -191,7 +191,7 @@ describe('«Es el mismo» and the screening', () => {
     const mine = decision({ id: hexId('d', 1), record: R1, decision: 'include', at: at(1) })
     const theirs = decision({ id: hexId('d', 2), record: R2, decision: 'include', machine: 'machine-b', at: at(2) })
     const { service, id, decisions } = await syncPair([mine, theirs])
-    await service.resolveDuplicate(id, R2, true)
+    await service.resolveDuplicate(id, R2, R1, true)
     expect(await decisions()).toHaveLength(2)
     expect(service.queue(id, { phase: 'title_abstract', filter: 'include' })[0]).toMatchObject({ id: R1, title_abstract: { decisionId: mine.id } })
     expect((await service.open(id)).conflicts).toEqual([])
@@ -201,7 +201,7 @@ describe('«Es el mismo» and the screening', () => {
     const mine = decision({ id: hexId('d', 1), record: R1, decision: 'include', at: at(1) })
     const theirs = decision({ id: hexId('d', 2), record: R2, decision: 'exclude', criterion: 'E2', machine: 'machine-b', at: at(2) })
     const { service, id } = await syncPair([mine, theirs])
-    await service.resolveDuplicate(id, R2, true)
+    await service.resolveDuplicate(id, R2, R1, true)
     const [conflict] = (await service.open(id)).conflicts
     expect(conflict).toMatchObject({ record: { id: R1 }, phase: 'title_abstract' })
     expect(conflict.options.map((o) => [o.decision, o.machine])).toEqual([
@@ -214,7 +214,7 @@ describe('«Es el mismo» and the screening', () => {
 
   it('carries the merged record’s «Son distintos» answers to the survivor', async () => {
     const { service, id, records } = await syncPair([], { r3: true })
-    await service.resolveDuplicate(id, R2, true)
+    await service.resolveDuplicate(id, R2, R1, true)
     expect((await records()).find((r) => r.id === R1)?.distinct_from).toEqual([hexId('r', 3)])
     expect((await service.open(id)).duplicates).toEqual([])
   })
@@ -226,8 +226,51 @@ describe('«Es el mismo» and the screening', () => {
     const read = await store.readMappingFile(id, 'records')
     const answered = read!.ok ? read!.value.records.map((r) => ({ ...r, distinct_from: [r.id === R1 ? R2 : R1] })) : []
     await store.writeMappingFile(id, 'records', { schema_version: 1, records: answered }, read!.hash)
-    await expect(service.resolveDuplicate(id, R2, true)).rejects.toMatchObject({ code: 'conflict' })
+    await expect(service.resolveDuplicate(id, R2, R1, true)).rejects.toMatchObject({ code: 'conflict' })
     expect((await records()).find((r) => r.id === R2)?.merged_into).toBeNull()
+  })
+})
+
+describe('the pair the window showed', () => {
+  /** R3 was doubtful of R2 on entry; R2 has been merged into R1 since. */
+  async function chain() {
+    const env = await setupMappings()
+    const id = await env.service.create('Logs')
+    const { store } = env
+    await store.writeMappingFile(id, 'searches', { schema_version: 1, searches: [search({ id: hexId('s', 1), count: 3 })] }, null)
+    await store.writeMappingFile(
+      id,
+      'records',
+      {
+        schema_version: 1,
+        records: [
+          record({ id: R1, title: 'Drain: the survivor' }),
+          record({ id: R2, title: 'Drain: the merged copy', identifiers: {}, merged_into: R1, added_at: '2026-10-12T09:10:00.000Z' }),
+          record({
+            id: hexId('r', 3),
+            title: 'Drain: the doubtful one',
+            identifiers: { doi: '10.5555/drain.journal' },
+            duplicate_of: { record: R2, reason: 'conflicting_ids' },
+            added_at: '2026-10-12T09:20:00.000Z'
+          })
+        ]
+      },
+      null
+    )
+    return { ...env, id }
+  }
+
+  it('names the record that survives, through the merges since', async () => {
+    const { service, id } = await chain()
+    expect((await service.open(id)).duplicates).toEqual([expect.objectContaining({ record: expect.objectContaining({ id: hexId('r', 3) }), other: expect.objectContaining({ id: R1, title: 'Drain: the survivor' }) })])
+  })
+
+  it('refuses an answer about a pair the window no longer shows', async () => {
+    const { service, id, store } = await chain()
+    await expect(service.resolveDuplicate(id, hexId('r', 3), R2, true)).rejects.toMatchObject({ code: 'conflict' })
+    await service.resolveDuplicate(id, hexId('r', 3), R1, true)
+    const read = await store.readMappingFile(id, 'records')
+    expect(read?.ok && read.value.records.find((r) => r.id === hexId('r', 3))).toMatchObject({ merged_into: R1, duplicate_of: null })
   })
 })
 
