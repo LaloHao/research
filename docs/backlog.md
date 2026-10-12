@@ -146,5 +146,6 @@
 - Conversation search is a substring match over titles and messages, without ranking.
 - A conversation file with conflict markers or an invalid frontmatter shows as «Archivo con errores» and can only be fixed or deleted by hand.
 - Model ids from the CLI that would break the chat file's schema (whitespace, a leading `$`, or the literal `detenida`) are sanitized to a safe form, or to `unknown` if nothing usable remains; the ledger records the same sanitized id, so it can differ from the CLI's raw id.
-- One answer at a time per conversation (`chat_busy`); a send, retry, rename, archive, delete or save-to-notes while an answer of that conversation is in flight (or while the project is closing) is refused rather than queued.
+- One answer at a time per conversation (`chat_busy`): a send, retry or delete while an answer of that conversation is in flight (or while the project is closing) is refused rather than queued, and the model selector is disabled meanwhile. Rename, archive and save-to-notes are allowed during an answer: its final write re-reads the file and keeps them.
+- A paid answer whose final write fails (file deleted or made invalid meanwhile) is lost; the question stays for «Reintentar».
 - Closing a project waits for any chat send or retry in flight, then stops the run and saves what arrived as a stopped answer; a send that starts in the narrow window just before close is still admitted and then stopped the same way.
