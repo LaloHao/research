@@ -16,9 +16,11 @@ import {
 } from '../../shared/summary'
 import { TrashedFileSchema, type TrashedFile } from '../../shared/trash'
 import { RelationsFileSchema, type RelationsFile } from '../../shared/typedRelations'
+import { FacetSuggestionsFileSchema, type FacetSuggestionsFile } from '../../shared/facetSuggestions'
 import { atomicWrite, MOVE_RETRYABLE, moveDir, sha256 } from './atomicWrite'
 import { renderLibraryBib } from '../export/BibExporter'
 import { ConflictError, ProjectError, type ReadResult } from './errors'
+import { FACET_SUGGESTIONS_FILE, sortSuggestions } from './facetSuggestionsFile'
 import { gitattributesLines, gitignoreLines, withManagedBlock } from './gitFiles'
 import { RELATIONS_FILE, resolveConflictText, sortRelations } from './relationsFile'
 import { siblingName, TRASH_DIR, TRASHED_FILE } from './trashPaths'
@@ -62,6 +64,7 @@ export class ProjectStore {
     'writeExtraction',
     'writeRelations',
     'resolveRelationsConflict',
+    'writeFacetSuggestions',
     'updateConfig',
     'trashPaper',
     'restorePaper',
@@ -292,6 +295,18 @@ export class ProjectStore {
     const valid = RelationsFileSchema.parse({ ...merged.file, relations: sortRelations(merged.file.relations) })
     await this.writeChecked(path, toYaml(valid), currentHash)
     return { dropped: merged.dropped }
+  }
+
+  /** facet-suggestions.yaml at the project root; null when it does not exist yet. */
+  async readFacetSuggestions(): Promise<ReadResult<FacetSuggestionsFile> | null> {
+    const text = await readOptional(join(this.root, FACET_SUGGESTIONS_FILE))
+    return text === null ? null : parseYamlFile(text, FacetSuggestionsFileSchema)
+  }
+
+  /** Suggestions are always written sorted by id, so the sync merges two machines' changes entry by entry. */
+  async writeFacetSuggestions(file: FacetSuggestionsFile, expectedHash: string | null): Promise<string> {
+    const valid = FacetSuggestionsFileSchema.parse({ ...file, suggestions: sortSuggestions(file.suggestions) })
+    return this.writeChecked(join(this.root, FACET_SUGGESTIONS_FILE), toYaml(valid), expectedHash)
   }
 
   trashDir(id: string): string {

@@ -1,5 +1,6 @@
 import { readdirSync, statSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
+import { FACET_SUGGESTIONS_FILE } from './facetSuggestionsFile'
 import { RELATIONS_FILE } from './relationsFile'
 import { TRASH_DIR } from './trashPaths'
 
@@ -9,6 +10,8 @@ export interface WatchHandlers {
   onConfig(): void
   /** relations.yaml at the project root changed. */
   onRelations?(): void
+  /** facet-suggestions.yaml at the project root changed. */
+  onFacetSuggestions?(): void
   /** `.trash/` appeared or went away, or a folder moved in or out of it (a removal or restore, here or through git). */
   onTrash?(): void
 }
@@ -150,6 +153,7 @@ export function watchProject(root: string, handlers: WatchHandlers, debounceMs =
     (name) => {
       if (name === PROJECT_FILE) schedule(PROJECT_FILE, () => handlers.onConfig())
       else if (name === RELATIONS_FILE) schedule(RELATIONS_FILE, () => handlers.onRelations?.())
+      else if (name === FACET_SUGGESTIONS_FILE) schedule(FACET_SUGGESTIONS_FILE, () => handlers.onFacetSuggestions?.())
       else if (name === TRASH_DIR) syncTrashDir(true)
       else if (name === 'papers') syncPapersDir()
     },

@@ -1,7 +1,9 @@
 import { isDeepStrictEqual } from 'node:util'
 import { parse } from 'yaml'
+import { FacetSuggestionsFileSchema, type FacetSuggestion, type FacetSuggestionsFile, type LastRun } from '../../shared/facetSuggestions'
 import { TrashedFileSchema } from '../../shared/trash'
 import { RelationsFileSchema, type TypedRelation } from '../../shared/typedRelations'
+import { sortSuggestions } from '../project/facetSuggestionsFile'
 import { lenientSide, mergeAnalyzed, mergeRelations, sortRelations, type LenientSide } from '../project/relationsFile'
 import { toYaml } from '../project/yamlFile'
 
@@ -143,8 +145,65 @@ export function keepOurs({ ours }: MergeInput): string {
   return ours
 }
 
+/** One side of facet-suggestions.yaml, read strictly: an invalid entry or another schema version leaves the file to the user. */
+function suggestionsSide(text: string): FacetSuggestionsFile | null {
+  const parsed = FacetSuggestionsFileSchema.safeParse(yamlValue(text))
+  return parsed.success ? parsed.data : null
+}
+
+/** An unparseable timestamp counts as the oldest, so it always loses. */
+function instant(at: string): number {
+  const t = Date.parse(at)
+  return Number.isNaN(t) ? -Infinity : t
+}
+
+/** The automatic trigger's last run: the side that changed it, or the newest when both did (a tie keeps ours). */
+function mergeLastRun(base: LastRun | undefined, ours: LastRun | undefined, theirs: LastRun | undefined): LastRun | undefined {
+  if (isDeepStrictEqual(ours, theirs) || isDeepStrictEqual(theirs, base)) return ours
+  if (isDeepStrictEqual(ours, base)) return theirs
+  if (!ours || !theirs) return ours ?? theirs
+  return instant(theirs.at) > instant(ours.at) ? theirs : ours
+}
+
+const suggestionsById = (list: FacetSuggestion[]): Map<string, FacetSuggestion> => new Map(list.map((s) => [s.id, s]))
+
+/**
+ * facet-suggestions.yaml: union by id against the merge base. A suggestion changed on one machine only takes that
+ * machine's version (whatever the clocks say); changed on both, the newest `updated_at` wins (a tie keeps ours); removed
+ * on one side and untouched on the other, it stays removed. Never merged when a side has an invalid entry or another
+ * schema version (it would be dropped silently): that becomes a decision.
+ */
+export function mergeFacetSuggestionsText({ base, ours, theirs }: MergeInput): string | null {
+  const o = suggestionsSide(ours)
+  const t = suggestionsSide(theirs)
+  const b = base === null ? null : suggestionsSide(base)
+  if (!o || !t || (base !== null && !b)) return null
+  const oMap = suggestionsById(o.suggestions)
+  const tMap = suggestionsById(t.suggestions)
+  const bMap = b ? suggestionsById(b.suggestions) : null
+  const gone = bMap ? removedIds(bMap, oMap, tMap) : new Set<string>()
+  if (bMap) preferChangedSide(bMap, oMap, tMap)
+  const merged = new Map(oMap)
+  for (const [id, s] of tMap) {
+    const current = merged.get(id)
+    if (!current || instant(s.updated_at) > instant(current.updated_at)) merged.set(id, s)
+  }
+  const { last_run: _ours, ...oRest } = o
+  const { last_run: _theirs, ...tRest } = t
+  const lastRun = mergeLastRun(b?.last_run, o.last_run, t.last_run)
+  const file = FacetSuggestionsFileSchema.safeParse({
+    ...tRest,
+    ...oRest,
+    schema_version: 1,
+    suggestions: sortSuggestions([...merged.values()].filter((s) => !gone.has(s.id))),
+    ...(lastRun ? { last_run: lastRun } : {})
+  })
+  return file.success ? toYaml(file.data) : null
+}
+
 const MERGERS: [RegExp, Merger][] = [
   [/^relations\.yaml$/, mergeRelationsText],
+  [/^facet-suggestions\.yaml$/, mergeFacetSuggestionsText],
   [/^costs\/[A-Za-z0-9-]+\.jsonl$/, mergeCostsText],
   [/^project\.yaml$/, mergeProjectText],
   [/^\.trash\/[a-z][a-z0-9]*\/trashed\.yaml$/, mergeTrashedText],

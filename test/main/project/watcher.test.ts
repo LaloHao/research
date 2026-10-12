@@ -48,6 +48,16 @@ describe('watchProject', () => {
     expect([...files].some((f) => f.startsWith('.paper.yaml'))).toBe(false)
     expect(configs).toBe(1)
   })
+
+  it('reports a change of facet-suggestions.yaml', async () => {
+    const root = await tmpDir()
+    let changes = 0
+    const stop = watchProject(root, { onPaper: () => undefined, onConfig: () => undefined, onFacetSuggestions: () => changes++ }, 50)
+    await new Promise((r) => setTimeout(r, 100))
+    await atomicWrite(join(root, 'facet-suggestions.yaml'), 'schema_version: 1\nsuggestions: []\n')
+    await waitFor(() => changes > 0)
+    stop()
+  })
 })
 
 describe('watchProject after files are replaced', () => {

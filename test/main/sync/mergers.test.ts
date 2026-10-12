@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
 import { toYaml } from '../../../src/main/project/yamlFile'
-import { keepOurs, mergeCostsText, mergeProjectText, mergeRelationsText, mergerFor, mergeTrashedText } from '../../../src/main/sync/mergers'
+import { keepOurs, mergeCostsText, mergeFacetSuggestionsText, mergeProjectText, mergeRelationsText, mergerFor, mergeTrashedText } from '../../../src/main/sync/mergers'
+import type { FacetSuggestion } from '../../../src/shared/facetSuggestions'
+import { aliasSuggestion, newFacetSuggestion, newValueSuggestion } from '../../helpers/facets'
 import type { TypedRelation } from '../../../src/shared/typedRelations'
 import { typedRelation } from '../../helpers/relations'
 
@@ -115,5 +117,55 @@ describe('the other mergers', () => {
 
   it('keeps this machine\'s generated bibliography (the app writes it again)', () => {
     expect(keepOurs({ base: null, ours: 'mine', theirs: 'theirs' })).toBe('mine')
+  })
+})
+
+const suggestionsText = (suggestions: FacetSuggestion[], lastRun?: object): string => toYaml({ schema_version: 1, suggestions, ...(lastRun ? { last_run: lastRun } : {}) })
+const mergedSuggestions = (text: string | null) => parse(text ?? '') as { suggestions: FacetSuggestion[]; last_run?: { at: string } }
+
+describe('facet-suggestions.yaml', () => {
+  const FACET = newFacetSuggestion()
+  const VALUE = newValueSuggestion()
+  const ALIAS = aliasSuggestion()
+
+  it('is merged by the app', () => {
+    expect(mergerFor('facet-suggestions.yaml')).toBe(mergeFacetSuggestionsText)
+  })
+
+  it("joins by id, and a suggestion changed on one machine takes that machine's version whatever the clocks say", () => {
+    const base = suggestionsText([FACET, VALUE])
+    // This machine's clock is behind: its decision still wins, since the other machine left the suggestion as it was.
+    const ours = suggestionsText([{ ...FACET, status: 'rejected', updated_at: '2026-10-10T00:00:00.000Z' }, VALUE])
+    const theirs = suggestionsText([FACET, VALUE, ALIAS])
+    const out = mergedSuggestions(mergeFacetSuggestionsText({ base, ours, theirs }))
+    expect(out.suggestions.map((s) => [s.id, s.status])).toEqual([
+      [ALIAS.id, 'suggested'],
+      [FACET.id, 'rejected'],
+      [VALUE.id, 'suggested']
+    ])
+  })
+
+  it('takes the latest change when both machines changed a suggestion, and keeps a removal the other side did not touch', () => {
+    const base = suggestionsText([FACET, VALUE])
+    const ours = suggestionsText([{ ...FACET, status: 'rejected', updated_at: '2026-10-11T10:00:00.000Z' }])
+    const theirs = suggestionsText([{ ...FACET, status: 'accepted', updated_at: '2026-10-11T11:00:00.000Z' }, VALUE])
+    const out = mergedSuggestions(mergeFacetSuggestionsText({ base, ours, theirs }))
+    expect(out.suggestions.map((s) => [s.id, s.status])).toEqual([[FACET.id, 'accepted']])
+  })
+
+  it('keeps the last run only one machine changed, or the newest when both did', () => {
+    const run = (at: string, ok = true) => ({ at, ok, summarized: 3 })
+    const base = suggestionsText([], run('2026-10-10T00:00:00.000Z'))
+    const later = suggestionsText([], run('2026-10-11T00:00:00.000Z', false))
+    expect(mergedSuggestions(mergeFacetSuggestionsText({ base, ours: base, theirs: later })).last_run?.at).toBe('2026-10-11T00:00:00.000Z')
+    const newest = suggestionsText([], run('2026-10-12T00:00:00.000Z'))
+    expect(mergedSuggestions(mergeFacetSuggestionsText({ base, ours: newest, theirs: later })).last_run?.at).toBe('2026-10-12T00:00:00.000Z')
+    expect(mergedSuggestions(mergeFacetSuggestionsText({ base: null, ours: suggestionsText([]), theirs: later })).last_run?.at).toBe('2026-10-11T00:00:00.000Z')
+  })
+
+  it('leaves the file to the user when a side cannot be read or has another schema version', () => {
+    const ok = suggestionsText([FACET])
+    expect(mergeFacetSuggestionsText({ base: null, ours: ok, theirs: 'schema_version: 1\nsuggestions: [{ id: broken }]\n' })).toBeNull()
+    expect(mergeFacetSuggestionsText({ base: null, ours: ok, theirs: 'schema_version: 2\nsuggestions: []\n' })).toBeNull()
   })
 })
