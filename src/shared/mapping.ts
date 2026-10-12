@@ -105,6 +105,11 @@ export const ProtocolFileSchema = z.looseObject({
 })
 export type ProtocolFile = z.infer<typeof ProtocolFileSchema>
 
+/** The publication years a protocol or an OpenAlex search accepts. */
+export const YEAR_MIN = 1800
+export const YEAR_MAX = 2200
+const YearSchema = z.number().int().min(YEAR_MIN).max(YEAR_MAX).nullable()
+
 /** What «Guardar protocolo» sends: items keep their id, or have `null` to get the next free one. */
 const DraftItemSchema = z.object({ id: z.string().max(10).nullable(), text: z.string().trim().min(1).max(MAX_TEXT) })
 export const ProtocolDraftSchema = z.object({
@@ -113,7 +118,7 @@ export const ProtocolDraftSchema = z.object({
   research_questions: z.array(DraftItemSchema).max(50),
   inclusion: z.array(DraftItemSchema).max(50),
   exclusion: z.array(DraftItemSchema).max(50),
-  years: z.object({ from: z.number().int().min(1800).max(2200).nullable(), to: z.number().int().min(1800).max(2200).nullable() }),
+  years: z.object({ from: YearSchema, to: YearSchema }),
   publication_types: z.array(z.enum(PAPER_KINDS)).max(PAPER_KINDS.length)
 })
 export type ProtocolDraft = z.infer<typeof ProtocolDraftSchema>

@@ -13,7 +13,9 @@ import {
   type QueueFilter,
   type ScreeningPlan,
   type Search,
-  type SnowballDirection
+  type SnowballDirection,
+  YEAR_MAX,
+  YEAR_MIN
 } from '../../shared/mapping'
 import type { PaperKind } from '../../shared/schemas'
 import type { ThesisContext } from '../../shared/summary'
@@ -104,16 +106,12 @@ export function sameDraft(a: ProtocolDraft, b: ProtocolDraft): boolean {
   return JSON.stringify(a) === JSON.stringify(b)
 }
 
-/** The years `ProtocolDraftSchema` accepts. */
-const MIN_YEAR = 1800
-const MAX_YEAR = 2200
-
 /** es.json keys of what keeps the draft from being saved; empty when it can be. */
 export function draftProblems(d: ProtocolDraft): string[] {
   const out: string[] = []
   if (!d.title.trim()) out.push('mappings.protocol.errors.title')
   if ([...d.research_questions, ...d.inclusion, ...d.exclusion].some((item) => !item.text.trim())) out.push('mappings.protocol.errors.empty_item')
-  const outOfRange = (y: number | null): boolean => y !== null && (!Number.isInteger(y) || y < MIN_YEAR || y > MAX_YEAR)
+  const outOfRange = (y: number | null): boolean => y !== null && (!Number.isInteger(y) || y < YEAR_MIN || y > YEAR_MAX)
   if (outOfRange(d.years.from) || outOfRange(d.years.to) || (d.years.from !== null && d.years.to !== null && d.years.from > d.years.to)) {
     out.push('mappings.protocol.errors.years')
   }
@@ -192,7 +190,7 @@ export interface OpenAlexForm {
   cap: string
 }
 
-const validYear = (n: number | null): boolean => n === null || (Number.isInteger(n) && n >= 1800 && n <= 2200)
+const validYear = (n: number | null): boolean => n === null || (Number.isInteger(n) && n >= YEAR_MIN && n <= YEAR_MAX)
 
 /**
  * The request «Buscar» asks to confirm, or why it cannot run yet: no search string, or a year out of range (or the

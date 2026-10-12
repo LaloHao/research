@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { MAX_TEXT, type MappingView, type ProtocolDraft } from '../../../shared/mapping'
+import { MAX_TEXT, YEAR_MAX, YEAR_MIN, type MappingView, type ProtocolDraft } from '../../../shared/mapping'
 import { PAPER_KINDS } from '../../../shared/schemas'
 import { errorText } from '../../lib/errorText'
 import { draftOf, draftOutdated, draftProblems, sameDraft, withThesisQuestions, yearValue } from '../../lib/mappings'
@@ -146,8 +146,8 @@ export function ProtocolTab({ view, onSaved }: { view: MappingView; onSaved: () 
             {t('mappings.protocol.year_from')}{' '}
             <input
               type="number"
-              min={1800}
-              max={2200}
+              min={YEAR_MIN}
+              max={YEAR_MAX}
               value={draft.years.from === null || Number.isNaN(draft.years.from) ? '' : draft.years.from}
               onChange={(e) => update((d) => ({ ...d, years: { ...d.years, from: yearValue(e.target.value) } }))}
             />
@@ -156,8 +156,8 @@ export function ProtocolTab({ view, onSaved }: { view: MappingView; onSaved: () 
             {t('mappings.protocol.year_to')}{' '}
             <input
               type="number"
-              min={1800}
-              max={2200}
+              min={YEAR_MIN}
+              max={YEAR_MAX}
               value={draft.years.to === null || Number.isNaN(draft.years.to) ? '' : draft.years.to}
               onChange={(e) => update((d) => ({ ...d, years: { ...d.years, to: yearValue(e.target.value) } }))}
             />

@@ -17,7 +17,9 @@ import {
   SEARCH_CAP,
   SEARCH_ID,
   SNOWBALL_DIRECTIONS,
-  USER_DECISIONS
+  USER_DECISIONS,
+  YEAR_MAX,
+  YEAR_MIN
 } from '../shared/mapping'
 import { CANDIDATE_DIRECTIONS, OPENALEX_ID } from '../shared/relations'
 import { PDF_POLICIES } from '../shared/schemas'
@@ -38,7 +40,7 @@ const recordIdSchema = z.string().regex(RECORD_ID)
 /** The most records a confirmed plan sends back (a mapping of many searches at their cap). */
 const MAX_PLAN_RECORDS = 100_000
 const phaseSchema = z.enum(PHASES)
-const yearSchema = z.number().int().min(1800).max(2200).nullable()
+const yearSchema = z.number().int().min(YEAR_MIN).max(YEAR_MAX).nullable()
 /** The protocol draft with every nested object strict as well: only the editable fields reach the service. */
 const draftItemSchema = ProtocolDraftSchema.shape.inclusion.element.strict()
 const protocolDraftSchema = ProtocolDraftSchema.extend({

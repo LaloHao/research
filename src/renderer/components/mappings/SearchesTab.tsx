@@ -12,7 +12,9 @@ import {
   type MappingView,
   type OpenAlexSearchRequest,
   type OpenAlexType,
-  type SnowballDirection
+  type SnowballDirection,
+  YEAR_MAX,
+  YEAR_MIN
 } from '../../../shared/mapping'
 import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
@@ -125,10 +127,10 @@ function OpenAlexForm({ view }: { view: MappingView }): React.JSX.Element {
       <p className="muted small">{t('mappings.searches.query_help')}</p>
       <div className="row small">
         <label>
-          {t('mappings.searches.year_from')} <input type="number" min={1800} max={2200} value={fromYear} onChange={(e) => edit(setFromYear, true)(e.target.value)} />
+          {t('mappings.searches.year_from')} <input type="number" min={YEAR_MIN} max={YEAR_MAX} value={fromYear} onChange={(e) => edit(setFromYear, true)(e.target.value)} />
         </label>
         <label>
-          {t('mappings.searches.year_to')} <input type="number" min={1800} max={2200} value={toYear} onChange={(e) => edit(setToYear, true)(e.target.value)} />
+          {t('mappings.searches.year_to')} <input type="number" min={YEAR_MIN} max={YEAR_MAX} value={toYear} onChange={(e) => edit(setToYear, true)(e.target.value)} />
         </label>
         <label>
           {t('mappings.searches.cap')} <input type="number" min={1} max={SEARCH_CAP.max} value={cap} onChange={(e) => edit(setCap)(e.target.value)} />
