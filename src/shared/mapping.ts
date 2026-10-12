@@ -55,20 +55,24 @@ export const MAX_REASON = 500
 export const MAX_QUERY = 4000
 export const MAX_TEXT = 2000
 
+/**
+ * Every object stored in the five files is loose, nested ones included, so keys a later version adds survive a
+ * read-modify-write or a sync merge on an older machine. Input we own (the protocol draft) stays strict.
+ */
 const iso = z.string().min(1)
 const count = z.number().int().nonnegative()
 
-export const CriterionSchema = z.object({ id: z.string().regex(CRITERION_ID), text: z.string().trim().min(1).max(MAX_TEXT) })
+export const CriterionSchema = z.looseObject({ id: z.string().regex(CRITERION_ID), text: z.string().trim().min(1).max(MAX_TEXT) })
 export type Criterion = z.infer<typeof CriterionSchema>
-const QuestionSchema = z.object({ id: z.string().regex(RQ_ID), text: z.string().trim().min(1).max(MAX_TEXT) })
+const QuestionSchema = z.looseObject({ id: z.string().regex(RQ_ID), text: z.string().trim().min(1).max(MAX_TEXT) })
 
 const YearsSchema = z
-  .object({ from: z.number().int().nullable().default(null), to: z.number().int().nullable().default(null) })
+  .looseObject({ from: z.number().int().nullable().default(null), to: z.number().int().nullable().default(null) })
   .refine((y) => y.from === null || y.to === null || y.from <= y.to, { message: 'from must not be after to', path: ['to'] })
 
 /** The editable part of the protocol; earlier versions keep exactly this shape in `history`. */
 export const ProtocolBodySchema = z
-  .object({
+  .looseObject({
     title: z.string().trim().min(1).max(300),
     objective: z.string().max(MAX_TEXT * 3).default(''),
     research_questions: z.array(QuestionSchema).default([]),
@@ -93,11 +97,11 @@ export const ProtocolFileSchema = z.looseObject({
   /** Bumped by a change made once screening started; decisions and suggestions record the version they were made with. */
   version: z.number().int().positive(),
   /** Highest number ever given to a research question, an inclusion and an exclusion criterion: ids are never reused. */
-  last_ids: z.object({ rq: count.default(0), inclusion: count.default(0), exclusion: count.default(0) }).prefault({}),
+  last_ids: z.looseObject({ rq: count.default(0), inclusion: count.default(0), exclusion: count.default(0) }).prefault({}),
   created_at: iso,
   updated_at: iso,
   /** Earlier versions, each with the date a later one replaced it. */
-  history: z.array(z.object({ version: z.number().int().positive(), replaced_at: iso, protocol: ProtocolBodySchema })).default([])
+  history: z.array(z.looseObject({ version: z.number().int().positive(), replaced_at: iso, protocol: ProtocolBodySchema })).default([])
 })
 export type ProtocolFile = z.infer<typeof ProtocolFileSchema>
 
@@ -137,16 +141,16 @@ export const SearchSchema = z.looseObject({
   /** Entries without a title. */
   skipped: count.default(0),
   origin: z
-    .object({ direction: z.enum(SNOWBALL_DIRECTIONS), from: z.array(z.string().regex(RECORD_ID)), iteration: z.number().int().positive() })
+    .looseObject({ direction: z.enum(SNOWBALL_DIRECTIONS), from: z.array(z.string().regex(RECORD_ID)), iteration: z.number().int().positive() })
     .nullable()
     .default(null),
-  discarded: z.object({ at: iso, reason: z.string().trim().min(1).max(MAX_REASON), machine: z.string().default('') }).nullable().default(null)
+  discarded: z.looseObject({ at: iso, reason: z.string().trim().min(1).max(MAX_REASON), machine: z.string().default('') }).nullable().default(null)
 })
 export type Search = z.infer<typeof SearchSchema>
 export const SearchesFileSchema = z.looseObject({ schema_version: z.literal(1), searches: z.array(SearchSchema).default([]) })
 export type SearchesFile = z.infer<typeof SearchesFileSchema>
 
-export const RecordIdentifiersSchema = z.object({ doi: z.string().optional(), arxiv: z.string().optional(), openalex: z.string().optional() })
+export const RecordIdentifiersSchema = z.looseObject({ doi: z.string().optional(), arxiv: z.string().optional(), openalex: z.string().optional() })
 export type RecordIdentifiers = z.infer<typeof RecordIdentifiersSchema>
 
 export const MappingRecordSchema = z.looseObject({
@@ -163,7 +167,7 @@ export const MappingRecordSchema = z.looseObject({
   /** The library paper this record is. */
   paper_id: z.string().regex(PAPER_KEY).nullable().default(null),
   /** A possible duplicate waiting for «Es el mismo» or «Son distintos». */
-  duplicate_of: z.object({ record: z.string().regex(RECORD_ID), reason: z.enum(DUPLICATE_REASONS) }).nullable().default(null),
+  duplicate_of: z.looseObject({ record: z.string().regex(RECORD_ID), reason: z.enum(DUPLICATE_REASONS) }).nullable().default(null),
   /** Confirmed duplicate of that record: it leaves the screening and counts as a duplicate. */
   merged_into: z.string().regex(RECORD_ID).nullable().default(null),
   distinct_from: z.array(z.string().regex(RECORD_ID)).default([]),
@@ -229,9 +233,20 @@ export interface WorkCandidate {
   paperId?: string | null
 }
 
-/** A criterion's text in the current protocol, or in the latest earlier version that had it (a decision made before it was removed). */
-export function criterionText(file: ProtocolFile, id: string): string | null {
+/**
+ * A criterion's text as worded in protocol `version` (the decision's or suggestion's `protocol_version`), so a later
+ * change of wording never relabels an old decision. Without a version, or when that version does not name it, the
+ * current protocol, then the latest earlier version that had it (a decision made before it was removed).
+ */
+export function criterionText(file: ProtocolFile, id: string, version?: number): string | null {
   const find = (body: ProtocolBody): string | null => [...body.inclusion, ...body.exclusion].find((c) => c.id === id)?.text ?? null
+  if (version !== undefined) {
+    const bodies = version === file.version ? [file.protocol] : file.history.filter((h) => h.version === version).map((h) => h.protocol)
+    for (const body of bodies) {
+      const text = find(body)
+      if (text !== null) return text
+    }
+  }
   const current = find(file.protocol)
   if (current !== null) return current
   for (const h of [...file.history].sort((a, b) => b.version - a.version)) {
