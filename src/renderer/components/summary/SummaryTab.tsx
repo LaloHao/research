@@ -29,10 +29,12 @@ export function SummaryTab({ detail, onOpenEvidence }: { detail: PaperDetail; on
         if (token === fillRequest.current) setFillPlan(plan)
       },
       () => {
-        if (token === fillRequest.current) setFillPlan(null)
+        if (token !== fillRequest.current) return
+        setFillPlan(null)
+        setError(errorText(t, 'unknown'))
       }
     )
-  }, [detail.id])
+  }, [detail.id, t])
 
   const refreshJobs = useCallback(() => {
     window.research.jobs.list().then(setJobs, () => setJobs([]))
@@ -58,6 +60,11 @@ export function SummaryTab({ detail, onOpenEvidence }: { detail: PaperDetail; on
     setError(null)
     setFillConfirm(false)
   }, [detail.id])
+  const unfilledCount = detail.summary ? unfilledFacetKeys(detail.form, detail.extraction, detail.summaryStatus).length : 0
+  // A confirmation does not outlive its banner (the summary went stale or the facets got filled).
+  useEffect(() => {
+    if (unfilledCount === 0) setFillConfirm(false)
+  }, [unfilledCount])
 
   const run: RunAction = async (action: () => Promise<ActionResult>) => {
     setError(null)
@@ -154,7 +161,7 @@ export function SummaryTab({ detail, onOpenEvidence }: { detail: PaperDetail; on
             {fillConfirm && fillPlan ? (
               <>
                 <span>{t('facets.fill_confirm', { count: fillPlan.count, cost: fillPlan.estimateUsd.toFixed(2), limit: fillPlan.batchLimitUsd.toFixed(2) })}</span>
-                <button className="primary" disabled={!canFill} onClick={fillNew}>
+                <button className="primary" disabled={!canFill} autoFocus onClick={fillNew}>
                   {t('library.confirm')}
                 </button>
                 <button disabled={filling} onClick={() => setFillConfirm(false)}>

@@ -14,7 +14,7 @@ import { JobsPanel } from './JobsPanel'
 import { PaperList } from './PaperList'
 import { SummaryToolbar } from './SummaryToolbar'
 import { useTrashUndo } from '../TrashUndo'
-import { batchRemoveReady, facetKey } from '../../lib/trash'
+import { batchConfirmHolds, batchRemoveReady, facetKey } from '../../lib/trash'
 
 export function LibraryView({
   facetFilters,
@@ -46,9 +46,11 @@ export function LibraryView({
   const [removeConfirm, setRemoveConfirm] = useState<string[] | null>(null)
   const [removeBusy, setRemoveBusy] = useState(false)
   const [removeNotice, setRemoveNotice] = useState<{ error: boolean; text: string } | null>(null)
-  const [fillConfirm, setFillConfirm] = useState<{ ids: string[] | undefined; plan: SummaryPlan } | null>(null)
+  const [fillConfirm, setFillConfirm] = useState<{ ids: string[] | undefined; plan: SummaryPlan; visibleKey: string } | null>(null)
   const [fillBusy, setFillBusy] = useState(false)
   const [fillNotice, setFillNotice] = useState<{ error: boolean; text: string } | null>(null)
+  // Bumped when the visible papers change: a plan asked for the previous list must not open a confirmation.
+  const fillRequest = useRef(0)
   const undo = useTrashUndo()
   const showUndo = undo.show
 
@@ -137,6 +139,7 @@ export function LibraryView({
   useEffect(() => {
     setRemoveConfirm(null)
     setFillConfirm(null)
+    fillRequest.current++
     // Old notices go when the visible papers change, except the list a batch removal just left.
     if (visibleKey !== keepNoticeFor.current) setRemoveNotice(null)
     keepNoticeFor.current = null
@@ -197,17 +200,21 @@ export function LibraryView({
   const planFill = (): void => {
     if (fillBusy || !removeReady) return
     const ids = anyFilter ? visibleRows.map((row) => row.id) : undefined
+    const token = ++fillRequest.current
+    const plannedFor = visibleKey
     setFillBusy(true)
     setFillNotice(null)
     setFillConfirm(null)
     window.research.facets.fillPlan(ids).then(
       (plan) => {
         setFillBusy(false)
+        if (token !== fillRequest.current) return
         if (plan.count === 0) setFillNotice({ error: false, text: t('library.fill_none') })
-        else setFillConfirm({ ids, plan })
+        else setFillConfirm({ ids, plan, visibleKey: plannedFor })
       },
       () => {
         setFillBusy(false)
+        if (token !== fillRequest.current) return
         setFillNotice({ error: true, text: errorText(t, 'unknown') })
       }
     )
@@ -215,6 +222,10 @@ export function LibraryView({
 
   const runFill = (): void => {
     if (!fillConfirm || fillBusy) return
+    if (!batchConfirmHolds(fillConfirm, { visibleKey, ready: removeReady })) {
+      setFillConfirm(null)
+      return
+    }
     setFillBusy(true)
     window.research.facets.fill(fillConfirm.ids).then(
       (r) => {
@@ -326,7 +337,7 @@ export function LibraryView({
                 limit: fillConfirm.plan.batchLimitUsd.toFixed(2)
               })}
             </span>
-            <button className="primary" disabled={fillBusy} onClick={runFill}>
+            <button className="primary" disabled={fillBusy} autoFocus onClick={runFill}>
               {t('library.confirm')}
             </button>
             <button disabled={fillBusy} onClick={() => setFillConfirm(null)}>
