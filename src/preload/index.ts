@@ -95,6 +95,17 @@ const api: ResearchApi = {
     resolveConflict: () => ipcRenderer.invoke(IPC.relationsResolveConflict),
     showFile: () => ipcRenderer.invoke(IPC.relationsShowFile)
   },
+  facets: {
+    list: () => ipcRenderer.invoke(IPC.facetsList),
+    plan: () => ipcRenderer.invoke(IPC.facetsPlan),
+    suggest: () => ipcRenderer.invoke(IPC.facetsSuggest),
+    accept: (id, edit) => ipcRenderer.invoke(IPC.facetsAccept, id, edit),
+    reject: (id) => ipcRenderer.invoke(IPC.facetsReject, id),
+    restore: (id) => ipcRenderer.invoke(IPC.facetsRestore, id),
+    revert: (undoToken) => ipcRenderer.invoke(IPC.facetsRevert, undoToken),
+    fillPlan: (ids) => ipcRenderer.invoke(IPC.facetsFillPlan, ids),
+    fill: (ids) => ipcRenderer.invoke(IPC.facetsFill, ids)
+  },
   exports: {
     save: (defaultName, data) => ipcRenderer.invoke(IPC.exportSave, defaultName, data)
   },

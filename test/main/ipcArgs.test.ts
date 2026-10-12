@@ -164,4 +164,30 @@ describe('typed relation arguments', () => {
     expect(arg(ipcArgs.closeDecision, 'cancel', 'decision')).toBe('cancel')
     expect(() => arg(ipcArgs.closeDecision, 'sync', 'decision')).toThrow()
   })
+
+  it('accepts the facet suggestion settings, ids and edits, nothing else', () => {
+    expect(arg(ipcArgs.llmPatch, { auto_suggest_facets: true, auto_suggest_facets_after: 5, budget: { per_facet_suggestion_usd: 3 } }, 'patch')).toEqual({
+      auto_suggest_facets: true,
+      auto_suggest_facets_after: 5,
+      budget: { per_facet_suggestion_usd: 3 }
+    })
+    for (const bad of [{ auto_suggest_facets_after: 0 }, { auto_suggest_facets_after: 2.5 }, { budget: { per_facet_suggestion_usd: 0 } }]) {
+      expect(() => arg(ipcArgs.llmPatch, bad, 'patch')).toThrow()
+    }
+    for (const id of ['new_facet__data_source', 'new_value__data_type__metrics', 'alias__task__log_parsing']) expect(arg(ipcArgs.suggestionId, id, 'id')).toBe(id)
+    for (const bad of ['', 'data_source', 'new_facet__Data', 'x'.repeat(201), 3]) expect(() => arg(ipcArgs.suggestionId, bad, 'id')).toThrow()
+    expect(arg(ipcArgs.suggestionEdit, undefined, 'edit')).toBeUndefined()
+    expect(arg(ipcArgs.suggestionEdit, { kind: 'new_value', value: 'system_metrics' }, 'edit')).toEqual({ kind: 'new_value', value: 'system_metrics' })
+    expect(arg(ipcArgs.suggestionEdit, { kind: 'new_facet', facet: { key: 'maturity', type: 'scale', description: 'd', min: 1, max: 3 } }, 'edit')).toMatchObject({
+      facet: { key: 'maturity', min: 1, max: 3 }
+    })
+    for (const bad of [
+      { kind: 'alias', to: 'Bad' },
+      { kind: 'alias', to: 'ok', extra: 1 },
+      { kind: 'new_facet', facet: { key: 'a', type: 'scale', description: 'd', min: 3, max: 1 } },
+      { kind: 'other', value: 'x' }
+    ]) {
+      expect(() => arg(ipcArgs.suggestionEdit, bad, 'edit')).toThrow()
+    }
+  })
 })

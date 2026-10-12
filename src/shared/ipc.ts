@@ -1,3 +1,4 @@
+import type { FacetSuggestionList, FacetSuggestPlan, SuggestionEdit } from './facetSuggestions'
 import type { JobRecord } from './jobs'
 import type { PaperDetail, PaperRow, UserErrorCode } from './library'
 import type {
@@ -89,6 +90,15 @@ export const IPC = {
   relationsFileState: 'relations:file-state',
   relationsResolveConflict: 'relations:resolve-conflict',
   relationsShowFile: 'relations:show-file',
+  facetsList: 'facets:list',
+  facetsPlan: 'facets:plan',
+  facetsSuggest: 'facets:suggest',
+  facetsAccept: 'facets:accept',
+  facetsReject: 'facets:reject',
+  facetsRestore: 'facets:restore',
+  facetsRevert: 'facets:revert',
+  facetsFillPlan: 'facets:fill-plan',
+  facetsFill: 'facets:fill',
   exportSave: 'export:save',
   syncStatus: 'sync:status',
   syncRun: 'sync:run',
@@ -102,10 +112,11 @@ export const IPC = {
 } as const
 
 /**
- * `sync-changed`: the git sync's state changed. `flush-request`: the window is about to close; save pending edits, then
- * call `flushDone()`. `close-request`: there are changes not synced; ask, then answer with `closeDecision()`.
+ * `sync-changed`: the git sync's state changed. `facets-changed`: the facet suggestions changed (a run, a decision,
+ * or facet-suggestions.yaml edited outside the app). `flush-request`: the window is about to close; save pending
+ * edits, then call `flushDone()`. `close-request`: there are changes not synced; ask, then answer with `closeDecision()`.
  */
-export type ResearchEvent = 'library-changed' | 'jobs-changed' | 'project-changed' | 'sync-changed' | 'flush-request' | 'close-request'
+export type ResearchEvent = 'library-changed' | 'jobs-changed' | 'project-changed' | 'sync-changed' | 'facets-changed' | 'flush-request' | 'close-request'
 
 export const eventChannel = (event: ResearchEvent): string => `event:${event}`
 
@@ -129,6 +140,8 @@ export type SaveResult = { ok: true; path: string } | { ok: false; error?: strin
 export type RelationDecisionResult = { ok: true; undoToken: string } | { ok: false; error: string }
 /** "Resolver automáticamente": how many invalid entries had to be left out. */
 export type ResolveConflictResult = { ok: true; dropped: number } | { ok: false; error: string }
+/** A decision on a facet suggestion; `undoToken` is what «Deshacer» sends back. */
+export type FacetDecisionResult = RelationDecisionResult
 
 export interface LlmInfo {
   config: LlmConfig
@@ -247,6 +260,23 @@ export interface ResearchApi {
     fileState(): Promise<RelationsFileState>
     resolveConflict(): Promise<ResolveConflictResult>
     showFile(): Promise<void>
+  }
+  facets: {
+    /** Every suggestion with whether it still applies, the pending count, whether a run is going and the last run. */
+    list(): Promise<FacetSuggestionList>
+    /** What «Sugerir facetas» would cost: estimate and the run's own cap. */
+    plan(): Promise<FacetSuggestPlan>
+    /** Queues «Sugerir facetas» (nothing when one is queued or running). */
+    suggest(): Promise<ActionResult>
+    /** «Aceptar», or «Editar y aceptar» with the user's version. */
+    accept(id: string, edit?: SuggestionEdit): Promise<FacetDecisionResult>
+    reject(id: string): Promise<FacetDecisionResult>
+    /** A rejected suggestion back among the ones to review. */
+    restore(id: string): Promise<FacetDecisionResult>
+    revert(undoToken: string): Promise<ActionResult>
+    /** Papers (these, or all) with an up-to-date summary and facets still unfilled, with the estimated cost. */
+    fillPlan(ids?: string[]): Promise<SummaryPlan>
+    fill(ids?: string[]): Promise<RunBatchResult>
   }
   exports: {
     /** Asks where to save, then writes the file there. */

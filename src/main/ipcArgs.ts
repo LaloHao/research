@@ -1,9 +1,10 @@
 import { isAbsolute, win32 } from 'node:path'
 import { z } from 'zod'
+import { SUGGESTION_ID } from '../shared/facetSuggestions'
 import { CANDIDATE_DIRECTIONS, OPENALEX_ID } from '../shared/relations'
 import { PDF_POLICIES } from '../shared/schemas'
 import { AUTO_SYNC_MINUTES, CLOSE_DECISIONS, CONFLICT_CHOICES, CONFLICT_ID, CONFLICT_VERSION, isRemoteUrl } from '../shared/sync'
-import { ExtractionFormSchema, LLM_MODELS, ThesisContextSchema } from '../shared/summary'
+import { ExtractionFormSchema, FacetDefSchema, LLM_MODELS, ThesisContextSchema } from '../shared/summary'
 import { MAX_JUSTIFICATION, RELATION_ID, RELATION_STATUSES, RELATION_TYPES } from '../shared/typedRelations'
 
 const paperIdSchema = z.string().regex(/^[a-z][a-z0-9]*$/)
@@ -43,12 +44,15 @@ export const ipcArgs = {
     model: z.enum(LLM_MODELS).optional(),
     auto_summarize: z.boolean().optional(),
     auto_suggest_relations: z.boolean().optional(),
+    auto_suggest_facets: z.boolean().optional(),
+    auto_suggest_facets_after: z.number().int().min(1).max(1000).optional(),
     max_input_chars: z.number().int().positive().optional(),
     budget: z
       .strictObject({
         per_operation_usd: z.number().positive().optional(),
         per_batch_usd: z.number().positive().optional(),
-        per_month_usd: z.number().positive().nullable().optional()
+        per_month_usd: z.number().positive().nullable().optional(),
+        per_facet_suggestion_usd: z.number().positive().optional()
       })
       .optional()
   }),
@@ -79,6 +83,16 @@ export const ipcArgs = {
   /** Undo sends back only the token the main process handed out; never relation data. */
   undoToken: z.uuid(),
   justification: z.string().trim().min(1).max(MAX_JUSTIFICATION),
+  /** A suggestion id from facet-suggestions.yaml: `<kind>__<target>`. */
+  suggestionId: z.string().max(200).regex(SUGGESTION_ID),
+  /** «Editar y aceptar»: the user's version of the proposal, of one kind; checked again by the service. */
+  suggestionEdit: z
+    .discriminatedUnion('kind', [
+      z.strictObject({ kind: z.literal('new_facet'), facet: FacetDefSchema }),
+      z.strictObject({ kind: z.literal('new_value'), value: facetKeySchema }),
+      z.strictObject({ kind: z.literal('alias'), to: facetKeySchema })
+    ])
+    .optional(),
   /** Papers to move to or out of the trash: at least one key. */
   trashIds: z.array(paperIdSchema).min(1),
   /** Planning «Vaciar papelera» names the whole trash explicitly; an empty or missing list never means everything. */

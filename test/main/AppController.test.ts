@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AppController } from '../../src/main/AppController'
+import { toYaml } from '../../src/main/project/yamlFile'
 import type { ResearchEvent } from '../../src/shared/ipc'
 import { FakeEmbeddingRuntime } from '../helpers/embeddings'
+import { newFacetSuggestion } from '../helpers/facets'
 import { hangingRemote, processAlive, twoMachines } from '../helpers/git'
 import { tmpDir } from '../helpers/tmp'
 
@@ -180,5 +182,22 @@ describe('AppController', () => {
       await c.shutdown()
       await remote.kill()
     }
+  })
+
+  it('tells the UI when facet-suggestions.yaml changes outside the app', async () => {
+    const events: ResearchEvent[] = []
+    const c = new AppController(join(await tmpDir(), 'settings.json'), (e) => events.push(e), { autoSync: null })
+    await c.init()
+    const root = await tmpDir()
+    await c.createProject(root, 'Thesis')
+    events.length = 0
+    await writeFile(join(root, 'facet-suggestions.yaml'), toYaml({ schema_version: 1, suggestions: [newFacetSuggestion()] }))
+    const start = Date.now()
+    while (!events.includes('facets-changed')) {
+      if (Date.now() - start > 3000) throw new Error('no facets-changed event')
+      await new Promise((r) => setTimeout(r, 20))
+    }
+    expect((await c.requireSession().facets.list()).pending).toBe(1)
+    await c.shutdown()
   })
 })
