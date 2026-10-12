@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -32,10 +32,13 @@ async function setup(opts: { fetch?: FetchFn; seed?: boolean } = {}) {
     llm: new FakeLlmProvider([])
   })
   if (opts.seed !== false) await seedPair(s.store, s.cache)
+  /** The trash reads that went through the session (which tracks them, so closing waits for them). */
+  const tracked: string[] = []
   const actions = new ChatActions({
     store: s.store,
     cache: s.cache,
-    library: s.library,
+    listTrash: () => (tracked.push('listTrash'), s.listTrash()),
+    deletePlan: (ids) => (tracked.push('deletePlan'), s.deletePlan(ids)),
     queue: s.queue,
     summaries: s.summaries,
     relations: s.relations,
@@ -48,7 +51,7 @@ async function setup(opts: { fetch?: FetchFn; seed?: boolean } = {}) {
     now: () => new Date('2026-10-12T10:00:00.000Z'),
     jobWaitMs: 5000
   })
-  return { s, actions }
+  return { s, actions, tracked }
 }
 
 const toolError = { name: 'ToolError' }
@@ -112,7 +115,7 @@ describe('ChatActions', () => {
     await moved.undo!()
     expect(s.store.paperExists(DRAIN_ID)).toBe(true)
     await (await actions.prepare('trash_papers', { paper_ids: [DRAIN_ID] })).execute({})
-    expect(await actions.read('list_trash', {})).toMatchObject([{ paper_id: DRAIN_ID }])
+    expect(await actions.read('list_trash', {})).toMatchObject({ total: 1, items: [{ paper_id: DRAIN_ID }], next_offset: null })
     const plan = await actions.prepare('delete_forever', { paper_ids: [DRAIN_ID, LOGHUB_ID] })
     expect(plan).toMatchObject({ risk: 'removes', preview: { papers: [{ id: DRAIN_ID }], relations: 1 } })
     const restore = await actions.prepare('restore_papers', { paper_ids: [DRAIN_ID] })
@@ -205,7 +208,9 @@ describe('ChatActions', () => {
 
     await s.store.writeFacetSuggestions({ schema_version: 1, suggestions: [newValueSuggestion()] }, null)
     await s.facets.reindex()
-    expect(await actions.read('list_facet_suggestions', {})).toMatchObject([{ id: 'new_value__data_type__metrics', status: 'suggested', validity: 'ok' }])
+    expect(await actions.read('list_facet_suggestions', {})).toMatchObject({
+      items: [{ id: 'new_value__data_type__metrics', status: 'suggested', validity: 'ok' }]
+    })
     const values = (): string[] => {
       const info = s.summaries.formInfo()
       const facet = info.status === 'ok' ? info.form.facets.find((f) => f.key === 'data_type') : undefined
@@ -354,9 +359,10 @@ describe('ChatActions', () => {
       version: 'v1'
     }
     const resolved: unknown[] = []
+    let listed = [conflict]
     const sync = {
       status: async () => ({ setup: 'ready' }),
-      conflicts: async () => [conflict],
+      conflicts: async () => listed,
       resolve: async (choices: unknown): Promise<SyncResult> => {
         resolved.push(choices)
         return { ok: true, outcome: 'synced' }
@@ -365,7 +371,8 @@ describe('ChatActions', () => {
     const actions = new ChatActions({
       store: s.store,
       cache: s.cache,
-      library: s.library,
+      listTrash: () => s.listTrash(),
+      deletePlan: (ids) => s.deletePlan(ids),
       queue: s.queue,
       summaries: s.summaries,
       relations: s.relations,
@@ -391,6 +398,11 @@ describe('ChatActions', () => {
     expect(p).toMatchObject({ risk: 'sync', preview: { conflicts: [{ path: conflict.path, choice: 'theirs' }] } })
     expect(await p.execute({})).toMatchObject({ result: { outcome: 'synced' }, undo: null })
     expect(resolved).toEqual([{ [conflict.id]: { choice: 'theirs', version: 'v1' } }])
+    // Resolved elsewhere before the approval: it never turns into a whole sync.
+    const late = await actions.prepare('resolve_sync_conflicts', { choices: [{ id: conflict.id, choice: 'ours' }] })
+    listed = []
+    await expect(late.execute({})).rejects.toMatchObject({ code: 'conflict' })
+    expect(resolved).toHaveLength(1)
     await s.close()
   })
   it('runs what it checked and showed, whatever happens to the call object afterwards', async () => {
@@ -405,6 +417,71 @@ describe('ChatActions', () => {
     await p.execute({})
     const r = await s.store.readSummary(DRAIN_ID)
     expect(r?.ok ? r.value.fields.limitations.value : null).toEqual({ stated: ['Checked.'], inferred: [] })
+    await s.close()
+  })
+  it('queues exactly the papers the card listed, and says how many jobs it really queued', async () => {
+    const { s, actions } = await setup()
+    await s.queue.stop()
+    await s.summaries.request(LOGHUB_ID)
+    const busy = s.queue.list().find((j) => j.spec.type === 'summarize')!
+    const p = await actions.prepare('summarize', { paper_ids: [DRAIN_ID, LOGHUB_ID] })
+    expect(p.preview).toMatchObject({ papers: [{ id: DRAIN_ID }], cost: { count: 1 } })
+    expect(p.preview.papers).toHaveLength(1)
+    s.queue.cancel(busy.id)
+    expect(await p.execute({})).toMatchObject({ result: { queued: 1 } })
+    const batch = s.queue.list().filter((j) => j.spec.type === 'summarize' && j.state === 'queued')
+    expect(batch.map((j) => j.paperId ?? (j.spec as { paperId: string }).paperId)).toEqual([DRAIN_ID])
+
+    const fillPlan = vi.spyOn(s.summaries, 'fillPlan').mockImplementation((ids?: string[]) => {
+      const count = ids?.length === 1 && ids[0] === DRAIN_ID ? 1 : ids === undefined ? 1 : 0
+      return { count, estimateUsd: count * 0.05, batchLimitUsd: 10 }
+    })
+    const requestFill = vi.spyOn(s.summaries, 'requestFill').mockImplementation(() => ({ batchId: 'b', count: 1 }))
+    const fill = await actions.prepare('fill_facets', {})
+    expect(fill.preview).toMatchObject({ papers: [{ id: DRAIN_ID }], cost: { count: 1 } })
+    await fill.execute({})
+    expect(requestFill).toHaveBeenCalledWith([DRAIN_ID])
+    fillPlan.mockRestore()
+    requestFill.mockRestore()
+
+    await s.relations.request(LOGHUB_ID, { force: true })
+    const relations = await (await actions.prepare('suggest_relations', { paper_ids: [DRAIN_ID, LOGHUB_ID] })).execute({})
+    expect(relations.result).toMatchObject({ queued: 1, already_queued: [LOGHUB_ID] })
+    await s.close()
+  })
+
+  it('reports an attachment without a picked file, and one cancelled in Actividad, as failures', async () => {
+    const { s, actions } = await setup()
+    await s.queue.stop()
+    const p = await actions.prepare('attach_pdf', { paper_id: DRAIN_ID })
+    await expect(p.execute({})).rejects.toMatchObject({ code: 'file_problem' })
+    const pdf = join(await tmpDir(), 'drain.pdf')
+    await writeFile(pdf, await makePdf([['Drain.']]))
+    setTimeout(() => s.queue.cancel(s.queue.list().find((j) => j.spec.type === 'attach_pdf')!.id), 20)
+    expect(await p.execute({ pdfPath: pdf })).toMatchObject({ result: { state: 'cancelled' }, failed: true, undo: null })
+    await s.close()
+  })
+
+  it('reads the trash through the session, pages long lists, and fails a deletion that found nothing left', async () => {
+    const { s, actions, tracked } = await setup()
+    await s.trash([DRAIN_ID, LOGHUB_ID])
+    expect(await actions.read('list_trash', { limit: 1 })).toMatchObject({ total: 2, offset: 0, items: [{}], next_offset: 1 })
+    const second = (await actions.read('list_trash', { offset: 1, limit: 1 })) as { items: unknown[]; next_offset: number | null }
+    expect(second).toMatchObject({ total: 2, offset: 1, next_offset: null })
+    expect(second.items).toHaveLength(1)
+    const del = await actions.prepare('delete_forever', { paper_ids: [DRAIN_ID] })
+    expect(tracked).toEqual(expect.arrayContaining(['listTrash', 'deletePlan']))
+    await s.restore([DRAIN_ID], { merge: false })
+    expect(await del.execute({})).toMatchObject({ result: { deleted: 0 }, failed: true, undo: null })
+    await s.close()
+  })
+
+  it('says a relation is out of reach when one of its papers left the library', async () => {
+    const { s, actions } = await setup()
+    await s.store.writeRelations({ schema_version: 1, relations: [typedRelation()], analyzed: {} }, null)
+    await s.relations.reindex()
+    await s.trash([LOGHUB_ID])
+    await expect(actions.prepare('decide_relation', { relation_id: typedRelation().id, decision: 'confirm' })).rejects.toThrow(/not in the library/)
     await s.close()
   })
 })

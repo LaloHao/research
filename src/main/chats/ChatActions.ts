@@ -4,17 +4,16 @@ import { TOOL_RISK, type ActionCost, type ActionPreview, type ActionReadTool, ty
 import type { JobRecord } from '../../shared/jobs'
 import { USER_ERROR_CODES, type UserErrorCode } from '../../shared/library'
 import { FACET_KEY_PATTERN, SUMMARY_FIELD_KEYS, type CostOperation, type SummaryFieldKey } from '../../shared/summary'
-import type { RestoreOutcome, TrashOutcome } from '../../shared/trash'
+import type { DeletePlan, RestoreOutcome, TrashEntry, TrashOutcome, TrashTarget } from '../../shared/trash'
 import type { RelationView } from '../../shared/typedRelations'
 import type { IndexCache } from '../cache/IndexCache'
 import { computeFacetOverview, libraryExtractions } from '../facets/facetOverview'
 import type { FacetSuggestionService } from '../facets/FacetSuggestionService'
 import { parseInput } from '../ingest/identifiers'
 import type { JobQueue } from '../jobs/JobQueue'
-import type { LibraryService } from '../library/LibraryService'
-import { UserFacingError } from '../library/UserFacingError'
+import { toUserFacing, UserFacingError } from '../library/UserFacingError'
 import { limitsFromConfig, operationCap } from '../llm/BudgetGuard'
-import { ACTION_INPUTS, type ActionInput } from '../mcp/actionTools'
+import { ACTION_INPUTS, READ_PAGE_LIMIT, type ActionInput } from '../mcp/actionTools'
 import { ToolError } from '../mcp/libraryTools'
 import { ConflictError } from '../project/errors'
 import type { ProjectStore } from '../project/ProjectStore'
@@ -30,7 +29,9 @@ import { appendBlock } from './ChatService'
 export interface ChatActionsDeps {
   store: ProjectStore
   cache: IndexCache
-  library: LibraryService
+  /** The session's own trash reads, tracked like the UI's so closing the project waits for them. */
+  listTrash: () => Promise<TrashEntry[]>
+  deletePlan: (target: TrashTarget) => Promise<DeletePlan>
   queue: JobQueue
   summaries: SummaryService
   relations: RelationService
@@ -51,6 +52,17 @@ const DEFAULT_JOB_WAIT_MS = 60_000
 const MAX_NOTE_ATTEMPTS = 3
 /** Longest edit_summary value, as JSON (a note's own limit). */
 const MAX_EDIT_CHARS = 20_000
+/** Longest rationale or justification a read tool returns (the ids matter; the full text is in the app). */
+const MAX_READ_TEXT = 300
+
+const clip = (text: string): string => (text.length > MAX_READ_TEXT ? `${text.slice(0, MAX_READ_TEXT - 1)}…` : text)
+/** One page of a read tool's list, and where the next one starts (null: this was the last). */
+function pageOf<T>(items: T[], args: { offset?: number; limit?: number }) {
+  const offset = args.offset ?? 0
+  const limit = args.limit ?? READ_PAGE_LIMIT
+  const end = offset + limit
+  return { total: items.length, offset, items: items.slice(offset, end), next_offset: end < items.length ? end : null }
+}
 
 const isCode = (v: unknown): v is UserErrorCode => typeof v === 'string' && (USER_ERROR_CODES as readonly string[]).includes(v)
 const jobError = (r: JobRecord): UserFacingError => new UserFacingError(isCode(r.message) ? r.message : 'unknown')
@@ -68,7 +80,7 @@ const facetKey = (key: string, what = 'facet key'): string => {
     throw new ToolError(`${JSON.stringify(key)} is not a ${what}: lowercase letters, digits and underscores, starting with a letter.`)
   return key
 }
-const brief = (list: RelationView[]) => list.map((r) => ({ id: r.id, type: r.type, from: r.from, to: r.to, justification: r.justification }))
+const brief = (list: RelationView[]) => list.map((r) => ({ id: r.id, type: r.type, from: r.from, to: r.to, justification: clip(r.justification) }))
 
 /** The tool's arguments, validated again here (the server already did) so each case gets them typed. */
 function input<T extends ActionTool | ActionReadTool>(tool: T, args: Record<string, unknown>): ActionInput<T> {
@@ -85,7 +97,7 @@ export class ChatActions implements ActionExecutor {
   constructor(private readonly deps: ChatActionsDeps) {}
 
   async read(tool: ActionReadTool, args: Record<string, unknown>): Promise<unknown> {
-    const { relations, facets, library, sync } = this.deps
+    const { relations, facets, sync } = this.deps
     switch (tool) {
       case 'list_relations': {
         const { paper_id } = input('list_relations', args)
@@ -93,16 +105,20 @@ export class ChatActions implements ActionExecutor {
         const r = relations.forPaper(paper_id)
         return { suggested: brief(r.suggested), confirmed: brief(r.confirmed), rejected: brief(r.rejected) }
       }
-      case 'list_facet_suggestions':
-        return (await facets.list()).suggestions.map(({ suggestion: s, validity }) => ({
+      case 'list_facet_suggestions': {
+        const all = (await facets.list()).suggestions.map(({ suggestion: s, validity }) => ({
           id: s.id,
           kind: s.kind,
           status: s.status,
           validity,
-          rationale: s.rationale
+          rationale: clip(s.rationale)
         }))
-      case 'list_trash':
-        return (await library.listTrash()).map((e) => ({ paper_id: e.id, title: e.title, year: e.year, trashed_at: e.trashed_at }))
+        return pageOf(all, input('list_facet_suggestions', args))
+      }
+      case 'list_trash': {
+        const all = (await this.deps.listTrash()).map((e) => ({ paper_id: e.id, title: e.title, year: e.year, trashed_at: e.trashed_at }))
+        return pageOf(all, input('list_trash', args))
+      }
       case 'sync_status': {
         const s = await sync.status()
         return {
@@ -115,13 +131,15 @@ export class ChatActions implements ActionExecutor {
           error: s.error?.code ?? null
         }
       }
-      case 'sync_conflicts':
-        return (await sync.conflicts()).map((c) => ({ id: c.id, path: c.path, paper_id: c.paperId, ours: c.ours, theirs: c.theirs }))
+      case 'sync_conflicts': {
+        const all = (await sync.conflicts()).map((c) => ({ id: c.id, path: c.path, paper_id: c.paperId, ours: c.ours, theirs: c.theirs }))
+        return pageOf(all, input('sync_conflicts', args))
+      }
     }
   }
 
   async prepare(tool: ActionTool, call: Record<string, unknown>): Promise<PreparedAction> {
-    const { store, cache, library, summaries, relations, facets, sync } = this.deps
+    const { store, cache, summaries, relations, facets, sync } = this.deps
     // A copy of its own: what `execute` runs is what was checked and shown, whatever the caller does with its object later.
     const raw = structuredClone(call)
     // The record's (and the card's) own copy, so nothing done to it reaches what runs.
@@ -149,6 +167,8 @@ export class ChatActions implements ActionExecutor {
         const a = input('decide_relation', raw)
         if (a.decision === 'change_type' && !a.type) throw new ToolError('change_type needs the new type.')
         const [from, to] = a.relation_id.split('__')
+        const gone = [from, to].filter((id) => !store.paperExists(id))
+        if (gone.length > 0) throw new ToolError(`The relation's paper ${gone.join(', ')} is not in the library (it may be in the trash).`)
         const known = store.paperExists(from) ? relations.forPaper(from) : null
         const status = known ? (['suggested', 'confirmed', 'rejected'] as const).find((st) => known[st].some((r) => r.id === a.relation_id)) : undefined
         if (!known || !status) throw new ToolError('Unknown relation id: call list_relations for one of its papers first.')
@@ -211,7 +231,7 @@ export class ChatActions implements ActionExecutor {
       }
       case 'restore_papers': {
         const paper_ids = unique(input('restore_papers', raw).paper_ids)
-        const titles = new Map((await library.listTrash()).map((e) => [e.id, e.title]))
+        const titles = new Map((await this.deps.listTrash()).map((e) => [e.id, e.title]))
         const missing = paper_ids.filter((id) => !titles.has(id))
         if (missing.length > 0) throw new ToolError(`Not in the trash: ${missing.join(', ')}. Call list_trash.`)
         return make({ papers: paper_ids.map((id) => ({ id, title: titles.get(id) ?? id })), cost: null }, () => this.restorePapers(paper_ids))
@@ -228,11 +248,14 @@ export class ChatActions implements ActionExecutor {
       case 'summarize': {
         const paper_ids = unique(input('summarize', raw).paper_ids)
         this.requirePapers(paper_ids)
-        const plan = await summaries.plan(paper_ids)
-        if (plan.count === 0) throw new ToolError('None of these papers can be summarized now: they have no text, or a summary is already queued.')
-        return make({ papers: this.papers(paper_ids), cost: await this.cost(plan.count, 'summarize', plan.estimateUsd, true) }, async () => {
-          const { batchId, count } = await summaries.requestBatch({ ids: paper_ids })
-          return { result: { queued: count, batch: batchId }, undo: null }
+        // The papers the batch would summarize now; only these are queued when it runs (the service can only drop some).
+        const eligible: string[] = []
+        for (const id of paper_ids) if ((await summaries.plan([id])).count > 0) eligible.push(id)
+        if (eligible.length === 0) throw new ToolError('None of these papers can be summarized now: they have no text, or a summary is already queued.')
+        const plan = await summaries.plan(eligible)
+        return make({ papers: this.papers(eligible), cost: await this.cost(plan.count, 'summarize', plan.estimateUsd, true) }, async () => {
+          const { batchId, count } = await summaries.requestBatch({ ids: eligible })
+          return { result: { queued: count, batch: batchId }, failed: count === 0, undo: null }
         })
       }
       case 'suggest_relations': {
@@ -244,12 +267,8 @@ export class ChatActions implements ActionExecutor {
         const withText = paper_ids.filter((id) => cache.getPaper(id)?.text_status === 'ok')
         if (withText.length === 0) throw new ToolError('None of these papers has text to analyze.')
         const cost = await this.cost(withText.length, 'suggest_relations', withText.length * this.deps.estimate('suggest_relations'), true)
-        return make({ papers: this.papers(withText), cost }, async () => {
-          // Forced like the paper's own «Sugerir relaciones», in one batch so the batch cap applies.
-          const batchId = randomUUID()
-          for (const id of withText) await relations.request(id, { force: true, batchId })
-          return { result: { queued: withText.length, batch: batchId }, undo: null }
-        })
+        // Priced by hand, not with RelationService.plan: its eligibility is the unforced one, and these runs are forced.
+        return make({ papers: this.papers(withText), cost }, () => this.suggestRelations(withText))
       }
       case 'suggest_facets': {
         if (loadForm(store.config.extraction_form).status !== 'ok') throw new ToolError('The extraction form has a problem the user must fix first.')
@@ -264,11 +283,14 @@ export class ChatActions implements ActionExecutor {
         const requested = input('fill_facets', raw).paper_ids
         const paper_ids = requested ? unique(requested) : undefined
         if (paper_ids) this.requirePapers(paper_ids)
-        const plan = summaries.fillPlan(paper_ids)
-        if (plan.count === 0) throw new ToolError('No paper has new facets to fill.')
-        return make({ papers: this.papers(paper_ids ?? []), cost: await this.cost(plan.count, 'fill_facets', plan.estimateUsd, true) }, async () => {
-          const { batchId, count } = summaries.requestFill(paper_ids)
-          return { result: { queued: count, batch: batchId }, undo: null }
+        // The papers the card lists are the only ones filled when it runs, even with no paper_ids (all papers).
+        const candidates = paper_ids ?? cache.listPapers().map((r) => r.id)
+        const fillable = candidates.filter((id) => summaries.fillPlan([id]).count > 0)
+        if (fillable.length === 0) throw new ToolError('No paper has new facets to fill.')
+        const plan = summaries.fillPlan(fillable)
+        return make({ papers: this.papers(fillable), cost: await this.cost(plan.count, 'fill_facets', plan.estimateUsd, true) }, async () => {
+          const { batchId, count } = summaries.requestFill(fillable)
+          return { result: { queued: count, batch: batchId }, failed: count === 0, undo: null }
         })
       }
       case 'trash_papers': {
@@ -282,13 +304,14 @@ export class ChatActions implements ActionExecutor {
       }
       case 'delete_forever': {
         const paper_ids = unique(input('delete_forever', raw).paper_ids)
-        const plan = await library.deletePlan(paper_ids)
+        const plan = await this.deps.deletePlan(paper_ids)
         if (plan.ids.length === 0) throw new ToolError('None of these papers is in the trash: only papers in the trash can be deleted for good.')
-        const titles = new Map((await library.listTrash()).map((e) => [e.id, e.title]))
-        return make({ papers: plan.ids.map((id) => ({ id, title: titles.get(id) ?? id })), cost: null, relations: plan.relations }, async () => ({
-          result: { deleted: await this.deps.deleteForever(plan.ids) },
-          undo: null
-        }))
+        const titles = new Map((await this.deps.listTrash()).map((e) => [e.id, e.title]))
+        return make({ papers: plan.ids.map((id) => ({ id, title: titles.get(id) ?? id })), cost: null, relations: plan.relations }, async () => {
+          const deleted = await this.deps.deleteForever(plan.ids)
+          // Every planned paper left the trash before the approval: nothing was done.
+          return { result: { deleted }, failed: deleted === 0, undo: null }
+        })
       }
       case 'sync_now': {
         const status = await sync.status()
@@ -306,6 +329,9 @@ export class ChatActions implements ActionExecutor {
         if (new Set(choices.map((c) => c.id)).size !== choices.length) throw new ToolError('Give one choice per conflict id.')
         const conflicts = choices.map((c) => ({ path: open.get(c.id)!.path, choice: c.choice }))
         return make({ papers: [], cost: null, conflicts }, async () => {
+          // Conflicts resolved elsewhere meanwhile: SyncService.resolve would run a whole sync instead, which was not approved.
+          const now = new Set((await sync.conflicts()).map((c) => c.id))
+          if (choices.some((c) => !now.has(c.id))) throw new UserFacingError('conflict')
           // Each choice is bound to the version the card showed: a conflict that changed since stays open.
           const r = await sync.resolve(Object.fromEntries(choices.map((c) => [c.id, { choice: c.choice, version: open.get(c.id)!.version }])))
           return r.ok ? { result: { outcome: r.outcome }, undo: null } : { result: { sync_error: r.error.code }, failed: true, undo: null }
@@ -418,6 +444,7 @@ export class ChatActions implements ActionExecutor {
     const job = this.deps.queue.enqueue({ type: 'ingest_identifier', input: identifier })
     const done = await this.deps.queue.whenDone(job, this.jobWaitMs)
     if (!done) return { result: { job, state: 'running' }, undo: null }
+    if (done.state === 'cancelled') return { result: { job, state: 'cancelled' }, failed: true, undo: null }
     if (done.state !== 'done') throw jobError(done)
     const paper = done.paperId
     return { result: { paper, outcome: done.message }, undo: done.message === 'added' && paper ? () => this.trashAgain([paper]) : null }
@@ -425,12 +452,44 @@ export class ChatActions implements ActionExecutor {
 
   /** The PDF the user picked, through the same job as the paper's «Adjuntar PDF». */
   private async attachPdf(paperId: string, replace: boolean, path: string | undefined): Promise<ExecutedAction> {
-    if (!path) throw new UserFacingError('invalid_edit')
+    if (!path) throw new UserFacingError('file_problem')
     const job = this.deps.queue.enqueue({ type: 'attach_pdf', paperId, path, replace })
     const done = await this.deps.queue.whenDone(job, this.jobWaitMs)
     if (!done) return { result: { job, state: 'running' }, undo: null }
+    if (done.state === 'cancelled') return { result: { job, state: 'cancelled' }, failed: true, undo: null }
     if (done.state !== 'done') throw jobError(done)
     return { result: { paper: paperId, outcome: done.message }, undo: null }
+  }
+
+  /**
+   * Forced like the paper's own «Sugerir relaciones», in one batch so the batch cap applies. Reports the jobs it really
+   * queued: a paper with a forced run already queued or running gets none (an unforced queued one becomes forced, and
+   * counts), and one that fails (its text gone, relations.yaml in conflict) does not stop the rest.
+   */
+  private async suggestRelations(ids: string[]): Promise<ExecutedAction> {
+    const { cache, relations } = this.deps
+    const forced = (id: string): Set<number> =>
+      new Set(cache.activeJobs('suggest_relations', id).flatMap((j) => ((JSON.parse(j.spec) as { force?: boolean }).force ? [j.id] : [])))
+    const batchId = randomUUID()
+    let queued = 0
+    const already: string[] = []
+    const failed: { paper: string; error: string }[] = []
+    for (const id of ids) {
+      const before = forced(id)
+      try {
+        await relations.request(id, { force: true, batchId })
+      } catch (error) {
+        failed.push({ paper: id, error: toUserFacing(error).code })
+        continue
+      }
+      if ([...forced(id)].some((job) => !before.has(job))) queued++
+      else already.push(id)
+    }
+    return {
+      result: { queued, batch: batchId, ...(already.length > 0 ? { already_queued: already } : {}), ...(failed.length > 0 ? { failed } : {}) },
+      failed: queued === 0 && failed.length > 0,
+      undo: null
+    }
   }
 
   /** Appended like «Guardar en notas del paper», hash-checked and retried on a concurrent change. */

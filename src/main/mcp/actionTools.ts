@@ -14,6 +14,12 @@ const requestQuote = z
   .describe("The words of the user's latest message that ask for this action, copied verbatim")
 const section = z.enum(['fields', 'facets', 'thesis'])
 const entryKey = z.string().min(1).max(60)
+/** Paging of the read tools' lists. */
+export const READ_PAGE_LIMIT = 50
+const page = {
+  offset: z.number().int().min(0).max(100_000).optional().describe('Entries to skip (next_offset of the previous page)'),
+  limit: z.number().int().min(1).max(READ_PAGE_LIMIT).optional().describe(`Entries to return, at most ${READ_PAGE_LIMIT} (the default)`)
+}
 
 /** The arguments of each tool of the actions server. A path is never an argument: attach_pdf's file is picked by the user. */
 export const ACTION_INPUTS = {
@@ -64,14 +70,15 @@ export const ACTION_INPUTS = {
     request_quote: requestQuote
   },
   list_relations: { paper_id: paperId },
-  list_facet_suggestions: {},
-  list_trash: {},
+  list_facet_suggestions: page,
+  list_trash: page,
   sync_status: {},
-  sync_conflicts: {}
+  sync_conflicts: page
 } satisfies Record<ActionTool | ActionReadTool, Record<string, z.ZodType>>
 
 export type ActionInput<T extends ActionTool | ActionReadTool> = z.infer<z.ZodObject<(typeof ACTION_INPUTS)[T]>>
 
+const PAGED = ' Paged: { total, offset, items, next_offset }; call again with offset: next_offset for more.'
 const ASK = " Put in request_quote the words of the user's latest message that ask for it, copied verbatim; without them the app asks the user first."
 const ALWAYS_ASKS = ' The app always asks the user to approve it; the call waits for the answer.'
 
@@ -94,8 +101,8 @@ export const ACTION_DESCRIPTIONS: Record<ActionTool | ActionReadTool, string> = 
   sync_now: `Syncs the project with git now: commit, fetch, merge and push.${ALWAYS_ASKS}`,
   resolve_sync_conflicts: `Finishes a sync that stopped on conflicts, with a choice per conflict id from sync_conflicts: ours keeps this machine's version, theirs the other machine's.${ALWAYS_ASKS}`,
   list_relations: "A paper's typed relations, by status (suggested, confirmed, rejected), with their ids.",
-  list_facet_suggestions: 'The facet suggestions with their ids, status and whether each still applies to the form.',
-  list_trash: 'The papers in the trash, by key, with their titles.',
+  list_facet_suggestions: `The facet suggestions with their ids, status and whether each still applies to the form.${PAGED}`,
+  list_trash: `The papers in the trash, by key, with their titles.${PAGED}`,
   sync_status: "The git sync's state: whether it is set up, its phase, uncommitted changes, unpushed commits, conflicts and the last error.",
-  sync_conflicts: 'The conflicts of the sync waiting for a decision, with their ids, paths and what each machine did.'
+  sync_conflicts: `The conflicts of the sync waiting for a decision, with their ids, paths and what each machine did.${PAGED}`
 }
