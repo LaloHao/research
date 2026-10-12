@@ -41,7 +41,7 @@ describe('record identity', () => {
     expect(recordKey(candidate())).toBe('doi:10.1109/icws.2017.13')
     expect(recordKey(candidate({ identifiers: { arxiv: '2008.06448v2' } }))).toBe('arxiv:2008.06448')
     expect(recordKey(candidate({ identifiers: {}, title: 'Drain: An Online Log Parsing Approach!' }))).toBe('title:drain an online log parsing approach|2017|he')
-    expect(recordKey(candidate({ identifiers: {}, authors: [] }))).toBe('title:drain an online log parsing approach with fixed depth tree|2017|')
+    expect(recordKey(candidate({ identifiers: {}, authors: [] }))).toMatch(/^unkeyed:/)
     expect(recordKey(candidate({ identifiers: { doi: '10.48550/arXiv.2008.06448' } }))).toBe(recordKey(candidate({ identifiers: { arxiv: '2008.06448' } })))
     expect(recordKey(candidate({ identifiers: { doi: 'N/A' } }))).toMatch(/^title:/)
     const id = recordIdFor('doi:10.1109/icws.2017.13', () => false)
@@ -356,6 +356,25 @@ describe('re-imports', () => {
     const once = importInto([], cs, hexId('s', 1))
     expect(once).toHaveLength(3)
     expect(importInto(once, cs, hexId('s', 2))).toHaveLength(3)
+  })
+})
+
+describe('two machines', () => {
+  it('give distinct works without authors different ids, and the sync lists them as a question', () => {
+    const chair = (venue: string): WorkCandidate => candidate({ title: 'Message from the General Chair', year: 2019, authors: [], venue, identifiers: {} })
+    const [icse] = importInto([], [chair('ICSE')], hexId('s', 1))
+    const [ase] = importInto([], [chair('ASE')], hexId('s', 2))
+    expect(icse.id).not.toBe(ase.id)
+    const later = { ...ase, added_at: LATER }
+    expect(syncDuplicates([icse, later])).toEqual([{ record: later.id, other: icse.id, reason: 'same_title' }])
+  })
+
+  it('send an arXiv-only candidate to the version with its title when both versions are records', () => {
+    const preprint = record({ id: hexId('r', 1), title: 'Loghub: datasets (preprint)', year: 2020, identifiers: { doi: '10.48550/arxiv.2008.06448', arxiv: '2008.06448' } })
+    const published = record({ id: hexId('r', 2), title: 'Loghub: datasets', year: 2023, identifiers: { doi: '10.1109/issre.2023.71', arxiv: '2008.06448' } })
+    const m = new RecordMatcher([preprint, published])
+    expect(m.match(candidate({ title: 'Loghub: datasets', year: 2023, identifiers: { arxiv: '2008.06448' } }))).toEqual({ kind: 'same', record: published.id })
+    expect(m.match(candidate({ title: 'Loghub: datasets (preprint)', year: 2020, identifiers: { arxiv: '2008.06448' } }))).toEqual({ kind: 'same', record: preprint.id })
   })
 })
 

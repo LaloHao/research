@@ -106,7 +106,7 @@ function firstFamily(authors: Author[]): string {
 /**
  * What a record's id is derived from, so one work gets one id on every machine: its best identifier (an arXiv DOI keys
  * as its arXiv id), else its title's normal form, year and first author's family name. A title that cannot tell works
- * apart (too short, or without a year) gets a random key instead, since the sync would silently join two works that
+ * apart (too short, without a year, or without a first author) gets a random key instead, since the sync would silently join two works that
  * derived one id. Not deterministic then: call it once per new record (not once per retry of a write).
  */
 export function recordKey(c: Pick<WorkCandidate, 'title' | 'year' | 'identifiers' | 'authors'>): string {
@@ -115,7 +115,8 @@ export function recordKey(c: Pick<WorkCandidate, 'title' | 'year' | 'identifiers
   if (ids.arxiv) return `arxiv:${ids.arxiv}`
   if (ids.openalex) return `openalex:${ids.openalex}`
   const title = titleForm(c.title)
-  if (strongTitle(title) && c.year !== null) return `title:${title}|${c.year}|${firstFamily(c.authors)}`
+  const family = firstFamily(c.authors)
+  if (strongTitle(title) && c.year !== null && family) return `title:${title}|${c.year}|${family}`
   return `unkeyed:${randomBytes(8).toString('hex')}`
 }
 
@@ -163,8 +164,8 @@ const yearGap = (a: number | null, b: number | null): number => (a === null || b
 /**
  * Matches candidates against the records of a mapping. It never joins two works on a guess:
  * - identifiers: a record sharing one with the candidate and conflicting on none is the same work (the one sharing
- *   most kinds wins); when every record sharing one also conflicts on another kind (a preprint and its published
- *   version), the pair is doubtful (`conflicting_ids`);
+ *   most kinds wins, then the same title, then the nearest year); when every record sharing one also conflicts on
+ *   another kind (a preprint and its published version), the pair is doubtful (`conflicting_ids`);
  * - title: the same normal form, with no identifier in conflict, is the same work when the title is long enough, the
  *   years are equal and known, and both have authors with the same first family name; also when the candidate
  *   replicates a record without identifiers exactly (title, year, venue and first author, or both without authors:
@@ -210,7 +211,15 @@ export class RecordMatcher {
       for (const e of this.byId.get(`${kind}:${value}`) ?? []) if (!skip(e.root) && !hits.includes(e)) hits.push(e)
     }
     if (hits.length > 0) {
-      const clean = hits.filter((e) => !conflicting(ids, e.ids)).sort((a, b) => shared(ids, b.ids) - shared(ids, a.ids))
+      const title = titleForm(c.title)
+      const clean = hits
+        .filter((e) => !conflicting(ids, e.ids))
+        .sort(
+          (a, b) =>
+            shared(ids, b.ids) - shared(ids, a.ids) ||
+            Number(b.title === title) - Number(a.title === title) ||
+            yearGap(a.record.year, c.year) - yearGap(b.record.year, c.year)
+        )
       if (clean.length > 0) return { kind: 'same', record: clean[0].root, basis: 'id' }
       return { kind: 'doubtful', record: hits[0].root, reason: 'conflicting_ids' }
     }
