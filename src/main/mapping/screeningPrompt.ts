@@ -25,6 +25,7 @@ export interface ParsedSuggestion {
 export function protocolBlock(p: ProtocolFile): string {
   const b = p.protocol
   const lines = [
+    `Protocol version: ${p.version}`,
     `Title: ${b.title}`,
     b.objective ? `Objective: ${b.objective}` : null,
     ...b.research_questions.map((q) => `${q.id}: ${q.text}`),
@@ -121,12 +122,15 @@ const FieldsSchema = z.object({
 })
 
 /**
- * Uncertain names no criterion; an inclusion with an unknown criterion keeps the suggestion without one; an exclusion
- * must name one of the protocol's exclusion criteria, or the suggestion is dropped (null).
+ * A criterion that contradicts the decision drops the suggestion (null): uncertain naming any id, include naming an
+ * exclusion criterion, exclude without one of the protocol's exclusion criteria. An include naming an unknown id keeps
+ * the suggestion without a criterion.
  */
 function fitted(p: ProtocolFile, s: z.infer<typeof FieldsSchema>): Pick<ParsedSuggestion, 'decision' | 'criterion'> | null {
-  let criterion = s.decision === 'uncertain' ? null : s.criterion || null
-  if (s.decision === 'include' && !criterionFits(p, 'include', criterion)) criterion = null
+  let criterion = s.criterion || null
+  if (s.decision === 'include' && criterion !== null && !p.protocol.exclusion.some((c) => c.id === criterion) && !criterionFits(p, 'include', criterion)) {
+    criterion = null
+  }
   return criterionFits(p, s.decision, criterion) ? { decision: s.decision, criterion } : null
 }
 
@@ -188,6 +192,6 @@ export function parseFullText(raw: unknown, ctx: { protocol: ProtocolFile }): { 
   const parsed = FieldsSchema.extend({ page: PageSchema }).safeParse(raw)
   if (!parsed.success) return { ok: false, error: z.prettifyError(parsed.error) }
   const fit = fitted(ctx.protocol, parsed.data)
-  if (!fit) return { ok: false, error: 'An exclusion must name one of the exclusion criteria.' }
+  if (!fit) return { ok: false, error: 'The criterion must fit the decision: an exclusion names one exclusion criterion, an inclusion no exclusion criterion, an uncertain none.' }
   return { ok: true, suggestion: { record: '', ...fit, justification: parsed.data.justification, quote: parsed.data.quote, page: parsed.data.page } }
 }

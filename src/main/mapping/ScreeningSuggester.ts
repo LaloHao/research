@@ -1,3 +1,4 @@
+import { PAPER_KEY } from '../../shared/chat'
 import type { MappingRecord, ProtocolFile } from '../../shared/mapping'
 import type { LlmModel } from '../../shared/summary'
 import { quoteFound } from '../../shared/textMatch'
@@ -25,6 +26,17 @@ import {
   titleAbstractSystemPrompt,
   type ParsedSuggestion
 } from './screeningPrompt'
+
+/** Shorter quotes (a word or two) match almost any abstract, so they are never marked as verified. */
+const MIN_QUOTE_WORDS = 3
+const MIN_QUOTE_CHARS = 15
+
+/** The quote is long enough to mean something and is found in the text. */
+export function quoteVerified(quote: string | null, text: string): boolean {
+  if (!quote) return false
+  const q = quote.trim()
+  return q.length >= MIN_QUOTE_CHARS && q.split(/\s+/).length >= MIN_QUOTE_WORDS && quoteFound(q, text)
+}
 
 export interface ScreeningSuggesterDeps {
   store: ProjectStore
@@ -56,6 +68,7 @@ export class ScreeningSuggester {
   async titleAbstract(req: Common & { records: MappingRecord[] }): Promise<{ suggestions: SuggestedScreening[]; dropped: number; costUsd: number; model: string }> {
     const { store, provider, budget, ledger } = this.deps
     if (req.records.length === 0 || req.records.length > MAX_RECORDS_PER_CALL) throw new Error(`Screening calls take 1–${MAX_RECORDS_PER_CALL} records`)
+    if (new Set(req.records.map((r) => r.id)).size !== req.records.length) throw new Error('Screening calls take each record once: a record id is repeated')
     const llm = store.config.llm
     const reservation = await budget.admit(req.batchId, 'screening')
     let spent = 0
@@ -97,7 +110,7 @@ export class ScreeningSuggester {
       const byId = new Map(req.records.map((r) => [r.id, r]))
       const suggestions = parsed.suggestions.map((s) => {
         const r = byId.get(s.record)!
-        return { ...s, found: s.quote !== null && quoteFound(s.quote, `${r.title}\n${r.abstract ?? ''}`) }
+        return { ...s, found: quoteVerified(s.quote, `${r.title}\n${r.abstract ?? ''}`) }
       })
       return { suggestions, dropped: parsed.dropped, costUsd: spent, model }
     } finally {
@@ -108,7 +121,8 @@ export class ScreeningSuggester {
   /** One agent run with the read-only library tools over the record's library paper. */
   async fullText(req: Common & { record: MappingRecord; paperId: string }): Promise<{ suggestion: SuggestedScreening; costUsd: number; model: string }> {
     const { store, cache, provider, budget, ledger } = this.deps
-    if (!store.paperExists(req.paperId)) throw new UserFacingError('file_problem')
+    if (!PAPER_KEY.test(req.paperId) || !store.paperExists(req.paperId)) throw new UserFacingError('file_problem')
+    if (req.record.paper_id !== req.paperId) throw new UserFacingError('not_eligible')
     if (cache.getPaper(req.paperId)?.text_status !== 'ok') throw new UserFacingError('no_text')
     const llm = store.config.llm
     const reservation = await budget.admit(req.batchId, 'screening')
@@ -142,7 +156,8 @@ export class ScreeningSuggester {
         }
         throw error
       } finally {
-        await tools.close()
+        // A paid run is charged even when the server does not close cleanly.
+        await tools.close().catch((error: unknown) => console.warn(`screening ${req.paperId}: closing the library tools failed`, error))
       }
       spent += result.costUsd
       model = result.model

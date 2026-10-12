@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { join } from 'node:path'
+import { readdir, readFile } from 'node:fs/promises'
+import { join, relative } from 'node:path'
 import { IndexCache } from '../../../src/main/cache/IndexCache'
 import { BudgetGuard, limitsFromConfig } from '../../../src/main/llm/BudgetGuard'
 import { CostLedger } from '../../../src/main/llm/CostLedger'
@@ -16,7 +17,7 @@ const R1 = hexId('r', 1)
 const R2 = hexId('r', 2)
 const MODEL = 'claude-sonnet-5'
 
-async function setup(responses: (CompleteResult | Error)[], agent: AgentResponse[] = [], onClose: () => void = () => undefined) {
+async function setup(responses: (CompleteResult | Error)[], agent: AgentResponse[] = [], onClose: () => void | Promise<void> = () => undefined) {
   const store = await ProjectStore.create(await tmpDir(), 'Thesis')
   await store.updateConfig({ content_language: 'es' })
   await store.writePaper(samplePaper(), null)
@@ -35,7 +36,7 @@ async function setup(responses: (CompleteResult | Error)[], agent: AgentResponse
     ledger,
     startTools: async (o) => {
       toolRuns.push(o.maxToolCalls)
-      return { url: 'http://127.0.0.1:1/mcp', token: 't', calls: () => [], close: async () => void onClose() }
+      return { url: 'http://127.0.0.1:1/mcp', token: 't', calls: () => [], close: async () => onClose() }
     }
   })
   return { store, cache, provider, suggester, toolRuns, budgetCheck: () => ledger.monthTotal() }
@@ -89,6 +90,7 @@ describe('ScreeningSuggester, title and abstract', () => {
     await expect(suggester.titleAbstract({ protocol: protocolFile(), records: [] })).rejects.toThrow()
     const many = Array.from({ length: 21 }, (_, i) => record({ id: hexId('r', i + 1) }))
     await expect(suggester.titleAbstract({ protocol: protocolFile(), records: many })).rejects.toThrow()
+    await expect(suggester.titleAbstract({ protocol: protocolFile(), records: [record(), record()] })).rejects.toThrow(/repeated/)
     expect(provider.calls).toHaveLength(0)
   })
 })
@@ -99,7 +101,7 @@ describe('ScreeningSuggester, full text', () => {
       [],
       [answer({ decision: 'include', criterion: 'I1', justification: 'Evalúa un parser.', quote: 'five real-world log datasets', page: 1 }, 0.12)]
     )
-    const out = await suggester.fullText({ protocol: protocolFile(), record: record(), paperId: 'he2017drain', batchId: 'b2' })
+    const out = await suggester.fullText({ protocol: protocolFile(), record: record({ paper_id: 'he2017drain' }), paperId: 'he2017drain', batchId: 'b2' })
     expect(out.suggestion).toEqual({ record: R1, decision: 'include', criterion: 'I1', justification: 'Evalúa un parser.', quote: 'five real-world log datasets', page: 3, found: true })
     expect(toolRuns).toEqual([8])
     expect(provider.agentCalls[0]).toMatchObject({ maxTurns: 8, mcp: { name: 'library' } })
@@ -109,17 +111,56 @@ describe('ScreeningSuggester, full text', () => {
 
   it('needs a library paper with its text', async () => {
     const { suggester, provider } = await setup([], [answer({})])
-    await expect(suggester.fullText({ protocol: protocolFile(), record: record(), paperId: 'nope2020x' })).rejects.toMatchObject({ code: 'file_problem' })
+    await expect(suggester.fullText({ protocol: protocolFile(), record: record({ paper_id: 'nope2020x' }), paperId: 'nope2020x' })).rejects.toMatchObject({ code: 'file_problem' })
     const noText = await setup([], [answer({})])
     noText.cache.setText('he2017drain', 't', 'no_text', [])
-    await expect(noText.suggester.fullText({ protocol: protocolFile(), record: record(), paperId: 'he2017drain' })).rejects.toMatchObject({ code: 'no_text' })
+    await expect(noText.suggester.fullText({ protocol: protocolFile(), record: record({ paper_id: 'he2017drain' }), paperId: 'he2017drain' })).rejects.toMatchObject({ code: 'no_text' })
     expect([...provider.agentCalls, ...noText.provider.agentCalls]).toHaveLength(0)
+  })
+
+  it('refuses a malformed paper key or one that is not the record\'s paper', async () => {
+    const { suggester, provider } = await setup([], [answer({})])
+    await expect(suggester.fullText({ protocol: protocolFile(), record: record({ paper_id: 'he2017drain' }), paperId: '../x' })).rejects.toMatchObject({ code: 'file_problem' })
+    await expect(suggester.fullText({ protocol: protocolFile(), record: record({ paper_id: 'other2020x' }), paperId: 'he2017drain' })).rejects.toMatchObject({ code: 'not_eligible' })
+    expect(provider.agentCalls).toHaveLength(0)
+  })
+
+  it('still logs a paid run when closing the tools fails', async () => {
+    const ok = answer({ decision: 'uncertain', criterion: null, justification: 'x', quote: null, page: null }, 0.09)
+    const { suggester, store } = await setup([], [ok], async () => {
+      throw new Error('close failed')
+    })
+    const out = await suggester.fullText({ protocol: protocolFile(), record: record({ paper_id: 'he2017drain' }), paperId: 'he2017drain' })
+    expect(out.costUsd).toBe(0.09)
+    expect(await store.readCosts()).toEqual([expect.objectContaining({ operation: 'screening', cost_usd: 0.09 })])
+  })
+
+  it('writes nothing but its cost lines', async () => {
+    const ta = { suggestions: [{ record: R1, decision: 'include', criterion: 'I1', justification: 'x', quote: 'online log parser' }] }
+    const ft = answer({ decision: 'include', criterion: 'I1', justification: 'x', quote: 'five real-world log datasets', page: 3 })
+    const { suggester, store } = await setup([answer(ta)], [ft])
+    const snapshot = async (): Promise<Map<string, string>> => {
+      const files = new Map<string, string>()
+      for (const e of await readdir(store.root, { recursive: true, withFileTypes: true })) {
+        const path = relative(store.root, join(e.parentPath, e.name))
+        if (!e.isFile() || path.startsWith('.cache') || path.startsWith('costs')) continue
+        files.set(path, await readFile(join(store.root, path), 'utf8'))
+      }
+      return files
+    }
+    const before = await snapshot()
+    await suggester.titleAbstract({ protocol: protocolFile(), records: [record()] })
+    await suggester.fullText({ protocol: protocolFile(), record: record({ paper_id: 'he2017drain' }), paperId: 'he2017drain' })
+    expect(await snapshot()).toEqual(before)
+    expect(await store.readCosts()).toHaveLength(2)
   })
 
   it('charges a timed-out run at its estimate and closes the tools', async () => {
     let closed = 0
-    const { suggester, store, budgetCheck } = await setup([], [new LlmError('llm_timeout', 0.5, { estimated: true })], () => closed++)
-    await expect(suggester.fullText({ protocol: protocolFile(), record: record(), paperId: 'he2017drain', batchId: 'b4' })).rejects.toMatchObject({ code: 'llm_timeout' })
+    const { suggester, store, budgetCheck } = await setup([], [new LlmError('llm_timeout', 0.5, { estimated: true })], () => {
+      closed++
+    })
+    await expect(suggester.fullText({ protocol: protocolFile(), record: record({ paper_id: 'he2017drain' }), paperId: 'he2017drain', batchId: 'b4' })).rejects.toMatchObject({ code: 'llm_timeout' })
     expect(closed).toBe(1)
     expect(await store.readCosts()).toEqual([expect.objectContaining({ operation: 'screening', paper_id: 'he2017drain', cost_usd: 0.5, estimated: true })])
     expect(await budgetCheck()).toBe(0.5)
@@ -127,9 +168,9 @@ describe('ScreeningSuggester, full text', () => {
 
   it('refuses a malformed answer after logging its cost, and marks an absent quote as not found', async () => {
     const bad = await setup([], [answer({ decision: 'exclude', criterion: 'I1', justification: 'x', quote: null, page: null }, 0.07)])
-    await expect(bad.suggester.fullText({ protocol: protocolFile(), record: record(), paperId: 'he2017drain' })).rejects.toMatchObject({ code: 'llm_invalid_output' })
+    await expect(bad.suggester.fullText({ protocol: protocolFile(), record: record({ paper_id: 'he2017drain' }), paperId: 'he2017drain' })).rejects.toMatchObject({ code: 'llm_invalid_output' })
     expect((await bad.store.readCosts()).map((c) => c.cost_usd)).toEqual([0.07])
     const none = await setup([], [answer({ decision: 'uncertain', criterion: null, justification: 'x', quote: null, page: null })])
-    expect((await none.suggester.fullText({ protocol: protocolFile(), record: record(), paperId: 'he2017drain' })).suggestion).toMatchObject({ quote: null, found: false })
+    expect((await none.suggester.fullText({ protocol: protocolFile(), record: record({ paper_id: 'he2017drain' }), paperId: 'he2017drain' })).suggestion).toMatchObject({ quote: null, found: false })
   })
 })
