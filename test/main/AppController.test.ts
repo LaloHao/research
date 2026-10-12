@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AppController } from '../../src/main/AppController'
-import { appLog, MemorySink } from '../../src/main/log/appLog'
+import { appLog, MemorySink, redact, setLogSecrets } from '../../src/main/log/appLog'
 import { toYaml } from '../../src/main/project/yamlFile'
 import type { ResearchEvent } from '../../src/shared/ipc'
 import type { ChatStreamUpdate } from '../../src/shared/chat'
@@ -56,6 +56,18 @@ describe('AppController', () => {
       expect(sink.lines[2]).toContain(JSON.stringify({ root }))
     } finally {
       appLog.setSink(null)
+    }
+  })
+
+  it('has the log hide the API key and contact email of the settings, as they change', async () => {
+    try {
+      const c = await controller(join(await tmpDir(), 'settings.json'))
+      await c.setSettings({ openalexApiKey: 'Zq9plainkey', contactEmail: 'ana@uni.mx' })
+      expect(redact('key Zq9plainkey of ana@uni.mx')).toBe('key [secret] of [secret]')
+      await c.setSettings({ openalexApiKey: 'NewKey12345' })
+      expect(redact('Zq9plainkey NewKey12345')).toBe('Zq9plainkey [secret]')
+    } finally {
+      setLogSecrets([])
     }
   })
 

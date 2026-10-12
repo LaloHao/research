@@ -1,4 +1,4 @@
-import { appLog } from '../log/appLog'
+import { appLog, redact, scrubSecrets } from '../log/appLog'
 
 export type FetchFn = (url: string, init?: RequestInit) => Promise<Response>
 
@@ -92,15 +92,43 @@ function redactKey(url: string): string {
 export const MAX_ERROR_DETAIL = 500
 const MAX_ERROR_BODY = 64 * 1024
 
-/** The `message` of a JSON error answer (OpenAlex, Crossref): what the server says was wrong; null for anything else. */
-async function errorDetail(res: Response): Promise<string | null> {
+/** Reads at most `max` bytes of a body; null (and the rest cancelled) when it is longer. */
+async function readBounded(res: Response, max: number): Promise<string | null> {
+  const declared = Number(res.headers.get('content-length'))
+  if (Number.isFinite(declared) && declared > max) {
+    await res.body?.cancel().catch(() => undefined)
+    return null
+  }
+  if (!res.body) return ''
+  const reader = res.body.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    size += value.byteLength
+    if (size > max) {
+      await reader.cancel().catch(() => undefined)
+      return null
+    }
+    chunks.push(value)
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks))
+}
+
+/**
+ * The `message` of a JSON error answer (OpenAlex, Crossref): what the server says was wrong; null for anything else.
+ * It is shown and logged, so the app's own secrets (`secrets`, e.g. the API key and contact email a server may echo)
+ * and anything shaped like a credential are removed first.
+ */
+async function errorDetail(res: Response, secrets: readonly string[]): Promise<string | null> {
   try {
-    const body = await res.text()
-    if (body.length > MAX_ERROR_BODY) return null
+    const body = await readBounded(res, MAX_ERROR_BODY)
+    if (body === null) return null
     const parsed = JSON.parse(body) as unknown
     const message = typeof parsed === 'object' && parsed !== null ? (parsed as { message?: unknown }).message : undefined
     if (typeof message !== 'string') return null
-    const text = message.replace(/\s+/g, ' ').trim()
+    const text = redact(scrubSecrets(message, secrets)).replace(/\s+/g, ' ').trim()
     return text ? text.slice(0, MAX_ERROR_DETAIL) : null
   } catch {
     return null
@@ -141,6 +169,11 @@ export class HttpClient {
   constructor(private readonly opts: HttpClientOptions = {}) {
     this.contactEmail = opts.contactEmail?.trim() ?? ''
     this.openalexApiKey = opts.openalexApiKey?.trim() ?? ''
+  }
+
+  /** The secrets this client holds, in the forms a server could echo them (as typed and URL-encoded). */
+  private secrets(): string[] {
+    return [this.openalexApiKey, this.contactEmail].filter(Boolean).flatMap((v) => [v, encodeURIComponent(v)])
   }
 
   setContactEmail(email: string): void {
@@ -205,7 +238,7 @@ export class HttpClient {
         if (!RETRYABLE.has(res.status)) {
           // The body is only read for the answer that is given up on: it says why (e.g. OpenAlex's invalid query).
           expire(headerTimeoutMs)
-          throw new HttpError(res.status, redactKey(url), res.headers, await errorDetail(res))
+          throw new HttpError(res.status, redactKey(url), res.headers, await errorDetail(res, this.secrets()))
         }
         lastError = new HttpError(res.status, redactKey(url), res.headers)
         if (openalexBudgetSpent(lastError as HttpError)) throw lastError
@@ -213,7 +246,8 @@ export class HttpClient {
         if (Number.isFinite(retryAfter) && retryAfter > 0) retryAfterMs = Math.min(retryAfter * 1000, MAX_RETRY_AFTER_MS)
       } catch (error) {
         if (error instanceof HttpError && (!RETRYABLE.has(error.status) || openalexBudgetSpent(error))) {
-          logFailure(url, error, attempt + 1)
+          // A cancellation while the error body was read is not a failure worth logging.
+          if (!signal?.aborted) logFailure(url, error, attempt + 1)
           throw error
         }
         if (signal?.aborted) throw error

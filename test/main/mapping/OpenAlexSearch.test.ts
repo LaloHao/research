@@ -34,6 +34,8 @@ describe('searchFilter', () => {
   it('refuses a comma or a pipe, which OpenAlex reads as filter separators', () => {
     expect(() => searchFilter('logs, traces', null)).toThrow('search_query_separator')
     expect(() => searchFilter('logs|traces', null)).toThrow('search_query_separator')
+    expect(() => searchFilter(' !logs', null)).toThrow('search_query_separator')
+    expect(searchFilter('logs AND NOT traces!', null)).toBe('title_and_abstract.search.exact:logs AND NOT traces!')
   })
 })
 

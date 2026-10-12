@@ -199,7 +199,7 @@ export class JobQueue {
       this.emit()
     }
     const spec = JSON.parse(job.spec) as JobSpec
-    const fields = { id: job.id, ...jobFields(spec) }
+    const fields = { id: job.id, ...safeJobFields(spec) }
     const started = Date.now()
     appLog.info('job_start', fields)
     try {
@@ -229,6 +229,15 @@ export class JobQueue {
 
   private emit(): void {
     for (const listener of this.listeners) listener()
+  }
+}
+
+/** A spec queued by an older version may lack a field: the log must never stop the job from running. */
+function safeJobFields(spec: JobSpec): Record<string, unknown> {
+  try {
+    return jobFields(spec)
+  } catch {
+    return { type: (spec as { type?: unknown } | null)?.type ?? null }
   }
 }
 

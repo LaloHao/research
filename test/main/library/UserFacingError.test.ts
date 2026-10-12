@@ -33,11 +33,14 @@ describe('toUserFacing', () => {
 
   it('never calls an answer from a server a network error', () => {
     const msg = 'Wildcards (* or ?) require exact (no-stem) search.'
-    const invalid = toUserFacing(new HttpError(400, 'https://api.openalex.org/works?filter=x', null, msg))
+    const invalid = toUserFacing(new HttpError(400, 'https://api.openalex.org/works?filter=title_and_abstract.search.exact%3Aa*', null, msg))
     expect(invalid.code).toBe('search_query_invalid')
     expect(invalid.detail).toBe(msg)
     expect(invalid.message).toBe(`search_query_invalid: ${msg}`)
-    expect(toUserFacing(new HttpError(400, 'https://api.openalex.org/works?filter=x')).message).toBe('search_query_invalid: HTTP 400')
+    expect(toUserFacing(new HttpError(400, 'https://api.openalex.org/works?search=a%3F')).message).toBe('search_query_invalid: HTTP 400')
+    // A lookup by id is not a search the user typed.
+    expect(toUserFacing(new HttpError(400, 'https://api.openalex.org/works?filter=ids.openalex%3AW1', null, 'bad id')).message).toBe('request_rejected: HTTP 400: bad id')
+    expect(toUserFacing(new HttpError(400, 'https://api.openalex.org/works/W1')).code).toBe('request_rejected')
     expect(toUserFacing(new HttpError(400, 'https://api.crossref.org/works/x', null, 'bad')).message).toBe('request_rejected: HTTP 400: bad')
     expect(toUserFacing(new HttpError(422, 'https://x.test/a')).message).toBe('request_rejected: HTTP 422')
     expect(toUserFacing(new HttpError(403, 'https://x.test/a')).message).toBe('access_denied: HTTP 403')

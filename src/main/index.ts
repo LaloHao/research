@@ -11,15 +11,23 @@ import { registerIpc } from './ipc'
 import { arg, ipcArgs } from './ipcArgs'
 import { appLog, RotatingFileSink } from './log/appLog'
 
-// The app log lives with the app's data (never in a project folder): <userData>/logs/main.log.
-appLog.setSink(new RotatingFileSink(join(app.getPath('userData'), 'logs')))
-appLog.info('app_start', { version: app.getVersion(), electron: process.versions.electron, platform: process.platform, arch: process.arch })
-// Observes without changing what Electron does with an uncaught exception.
-process.on('uncaughtExceptionMonitor', (error, origin) => appLog.error('uncaught_exception', { origin, error }))
-process.on('unhandledRejection', (reason) => {
-  appLog.error('unhandled_rejection', { error: reason })
-  console.error('Unhandled rejection', reason)
-})
+/**
+ * Only the instance that holds the single-instance lock writes the log: a second launch that hands over to the running
+ * one must not write a misleading start, nor rotate the shared files with its own size count.
+ */
+function startLog(): void {
+  // The app log lives with the app's data (never in a project folder): <userData>/logs/main.log.
+  appLog.setSink(new RotatingFileSink(join(app.getPath('userData'), 'logs')))
+  appLog.info('app_start', { version: app.getVersion(), electron: process.versions.electron, platform: process.platform, arch: process.arch })
+  // Observes without changing what Electron does with an uncaught exception.
+  process.on('uncaughtExceptionMonitor', (error, origin) => appLog.error('uncaught_exception', { origin, error }))
+  // Unlike the monitor above, a listener marks the rejection as handled: intended. A promise nobody awaited must never
+  // take the app down (with unsaved edits and running jobs); it is logged and printed instead.
+  process.on('unhandledRejection', (reason) => {
+    appLog.error('unhandled_rejection', { error: reason })
+    console.error('Unhandled rejection', reason)
+  })
+}
 
 let mainWindow: BrowserWindow | null = null
 
@@ -165,6 +173,7 @@ function focusMainWindow(): void {
 const ALLOWED_PERMISSIONS = new Set(['clipboard-sanitized-write'])
 
 function start(): void {
+  startLog()
   app.on('second-instance', focusMainWindow)
 
   app.whenReady().then(async () => {

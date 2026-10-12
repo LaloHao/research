@@ -20,6 +20,21 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 describe('JobQueue', () => {
+  it('runs a job whose spec lacks a field the log reads (queued by an older version)', async () => {
+    const sink = new MemorySink()
+    appLog.setSink(sink)
+    try {
+      const queue = new JobQueue(await cache(), async () => ({ message: 'mapping_searched' }), 1)
+      queue.start()
+      const id = queue.enqueue({ type: 'mapping_search', mappingId: 'm1' } as unknown as JobSpec)
+      await queue.whenIdle()
+      expect(queue.list().find((j) => j.id === id)?.state).toBe('done')
+      expect(sink.lines.join('')).toContain('job_done {"id":1,"type":"mapping_search"')
+    } finally {
+      appLog.setSink(null)
+    }
+  })
+
   it('logs every job start, end and failure with its type, ids and error code and detail', async () => {
     const sink = new MemorySink()
     appLog.setSink(sink)

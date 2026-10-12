@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { HttpClient, HttpError, type FetchFn } from '../../../src/main/ingest/http'
+import { toUserFacing } from '../../../src/main/library/UserFacingError'
 import { appLog, MemorySink } from '../../../src/main/log/appLog'
 import { routeFetch } from '../../helpers/fakeFetch'
 
@@ -113,6 +114,49 @@ describe('HttpClient', () => {
     expect(fetch.count()).toBe(1)
     expect(error.url).not.toContain('secret')
     expect(error.url).not.toContain('uni.test')
+  })
+
+  it('scrubs the app own API key and email, and credential shapes, from the detail before it is shown or logged', async () => {
+    const sink = new MemorySink()
+    appLog.setSink(sink)
+    try {
+      const message = 'API key Zq9plainkey for ana%40uni.mx (ana@uni.mx) rejected; Invalid API key: other123; {"accessToken":"t1"} sk-proj-AbCdEf0123456789xyz #access_token=f1 Password = "hunter 2"'
+      const fetch = sequence(new Response(JSON.stringify({ message }), { status: 400 }))
+      const http = new HttpClient({ fetch, sleep: sleeper().sleep, contactEmail: 'ana@uni.mx', openalexApiKey: 'Zq9plainkey' })
+      const error = (await http.json(http.politeUrl('https://api.openalex.org/works?search=x')).catch((e: unknown) => e)) as HttpError
+      const shown = toUserFacing(error).message
+      const logged = sink.lines.join('')
+      for (const text of [error.detail ?? '', shown, logged]) {
+        for (const leak of ['Zq9plainkey', 'uni.mx', 'other123', 't1"', 'AbCdEf0123456789', 'f1', 'hunter']) expect(text).not.toContain(leak)
+      }
+      expect(shown.startsWith('search_query_invalid: API key [secret] for [secret] ([secret]) rejected; Invalid API key: redacted;')).toBe(true)
+    } finally {
+      appLog.setSink(null)
+    }
+  })
+
+  it('reads no more than 64 KB of an error body', async () => {
+    const big = JSON.stringify({ message: 'm', pad: 'x'.repeat(70 * 1024) })
+    const http = new HttpClient({ fetch: sequence(new Response(big, { status: 400 })), sleep: sleeper().sleep })
+    expect(((await http.text('https://x.test', '*/*').catch((e: unknown) => e)) as HttpError).detail).toBeNull()
+    const declared = new HttpClient({ fetch: sequence(new Response('{"message":"m"}', { status: 400, headers: { 'content-length': String(1024 * 1024) } })), sleep: sleeper().sleep })
+    expect(((await declared.text('https://x.test', '*/*').catch((e: unknown) => e)) as HttpError).detail).toBeNull()
+  })
+
+  it('does not log an error answer whose request was cancelled meanwhile', async () => {
+    const sink = new MemorySink()
+    appLog.setSink(sink)
+    try {
+      const controller = new AbortController()
+      const fetch: FetchFn = async () => {
+        controller.abort()
+        return new Response('{"message":"m"}', { status: 400 })
+      }
+      await new HttpClient({ fetch, sleep: sleeper().sleep }).text('https://x.test', '*/*', controller.signal).catch(() => undefined)
+      expect(sink.lines).toEqual([])
+    } finally {
+      appLog.setSink(null)
+    }
   })
 
   it('keeps no detail from an answer that is not JSON with a message', async () => {

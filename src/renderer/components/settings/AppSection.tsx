@@ -91,12 +91,21 @@ export function AppSection({ onSaved }: { onSaved: () => void }): React.JSX.Elem
 
   const shownError = loadError ?? Object.values(errors).find(Boolean) ?? null
   const [logsError, setLogsError] = useState<string | null>(null)
+  const [openingLogs, setOpeningLogs] = useState(false)
 
   const openLogs = (): void => {
+    if (openingLogs) return
     setLogsError(null)
+    setOpeningLogs(true)
     window.research.app.openLogs().then(
-      (r) => setLogsError(r.ok ? null : errorText(t, r.error)),
-      () => setLogsError(errorText(t, 'unknown'))
+      (r) => {
+        setOpeningLogs(false)
+        setLogsError(r.ok ? null : errorText(t, r.error))
+      },
+      () => {
+        setOpeningLogs(false)
+        setLogsError(errorText(t, 'unknown'))
+      }
     )
   }
 
@@ -153,7 +162,7 @@ export function AppSection({ onSaved }: { onSaved: () => void }): React.JSX.Elem
       <ModelsSection />
       <h3>{t('settings.logs')}</h3>
       <div className="field">
-        <button type="button" onClick={openLogs}>
+        <button type="button" disabled={openingLogs} onClick={openLogs}>
           {t('settings.open_logs')}
         </button>
         <small className="muted">{t('settings.logs_help')}</small>

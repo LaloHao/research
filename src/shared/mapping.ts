@@ -57,8 +57,11 @@ export const MAX_QUERY = 4000
 /** The fields an OpenAlex search of a mapping looks in (OpenAlex's own name), as the search log records it. */
 export const OPENALEX_SEARCH_FIELD = 'title_and_abstract'
 
-/** A comma or a pipe: OpenAlex reads them as filter separators, so a search string cannot carry them. */
-export const hasFilterSeparator = (query: string): boolean => /[,|]/.test(query)
+/**
+ * A comma or a pipe (OpenAlex reads them as filter separators) or a leading `!` (OpenAlex negates the whole filter):
+ * the string searched would not be the one logged, so a search string cannot carry them.
+ */
+export const hasFilterSeparator = (query: string): boolean => /[,|]/.test(query) || query.trimStart().startsWith('!')
 export const MAX_TEXT = 2000
 
 /**

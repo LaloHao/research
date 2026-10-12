@@ -1,10 +1,13 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { appLog, formatEntry, jobFields, LOG_FILE, MemorySink, redact, RendererErrorGate, RotatingFileSink } from '../../../src/main/log/appLog'
+import { appLog, formatEntry, jobFields, LOG_FILE, MemorySink, redact, RendererErrorGate, RotatingFileSink, setLogSecrets } from '../../../src/main/log/appLog'
 import { tmpDir } from '../../helpers/tmp'
 
-afterEach(() => appLog.setSink(null))
+afterEach(() => {
+  appLog.setSink(null)
+  setLogSecrets([])
+})
 
 describe('redact', () => {
   it('hides API keys, contact emails and tokens in URLs', () => {
@@ -30,7 +33,28 @@ describe('redact', () => {
     expect(redact('password=hunter2 api_key: "zzz" secret=s')).toBe('password=redacted api_key: "redacted" secret=redacted')
   })
 
+  it('hides the shapes a server message can echo a credential in', () => {
+    expect(redact('Invalid API key: abcdef123456')).toBe('Invalid API key: redacted')
+    expect(redact('{"accessToken":"a.b.c","clientSecret":"s3"}')).toBe('{"accessToken":"redacted","clientSecret":"redacted"}')
+    expect(redact('apiKey=zz1 refresh_token: r1')).toBe('apiKey=redacted refresh_token: redacted')
+    expect(redact('key sk-proj-AbCdEf0123456789_xyz leaked')).toBe('key [token] leaked')
+    expect(redact('https://app.test/cb#access_token=xyz&state=1')).toBe('https://app.test/cb#access_token=redacted&state=1')
+    expect(redact('Password = "hunter 2" then')).toBe('Password = "redacted" then')
+    expect(redact("password: 'two words'")).toBe("password: 'redacted'")
+  })
+
+  it('replaces the app own secrets literally, whatever their shape, and in URL-encoded form', () => {
+    setLogSecrets(['Zq9-plainkey', 'ana.lopez@uni.mx', 'abc'])
+    expect(redact('OpenAlex says Zq9-plainkey is not a valid key')).toBe('OpenAlex says [secret] is not a valid key')
+    expect(redact('sent by ana.lopez%40uni.mx and ANA.LOPEZ@UNI.MX')).toBe('sent by [secret] and [secret]')
+    // Too short to be told from ordinary words: left to the patterns.
+    expect(redact('abc')).toBe('abc')
+    setLogSecrets([])
+    expect(redact('Zq9-plainkey')).toBe('Zq9-plainkey')
+  })
+
   it('leaves ordinary text alone', () => {
+    expect(redact('max_tokens: 100, tokens used 5, the secret sauce')).toBe('max_tokens: 100, tokens used 5, the secret sauce')
     expect(redact('HTTP 400 on api.openalex.org/works: Wildcards (* or ?) require exact search.')).toBe(
       'HTTP 400 on api.openalex.org/works: Wildcards (* or ?) require exact search.'
     )
@@ -53,6 +77,13 @@ describe('formatEntry', () => {
     expect(line).toContain('api_key=redacted')
     expect(line).toContain('TypeError: boom for [email]')
     expect(line).not.toContain('x'.repeat(1001))
+  })
+
+  it('keeps longer stacks in any field named stack, and never a function source', () => {
+    const line = formatEntry('2026-10-12T10:00:00.000Z', 'error', 'renderer_error', { stack: 's'.repeat(3000), fn: () => 'secret source' })
+    expect(line).toContain('s'.repeat(3000))
+    expect(line).toContain('"fn":"[function]"')
+    expect(line).not.toContain('secret source')
   })
 })
 

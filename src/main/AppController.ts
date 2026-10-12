@@ -7,7 +7,7 @@ import type { PdfPolicy } from '../shared/schemas'
 import { DEFAULT_SETTINGS, type AppSettings } from '../shared/settings'
 import { loadSettings, saveSettings } from './appSettings'
 import { ProjectSession, type SessionOptions } from './library/ProjectSession'
-import { appLog } from './log/appLog'
+import { appLog, setLogSecrets } from './log/appLog'
 import { ProjectError } from './project/errors'
 
 /** App-level state: settings plus the one open project. Electron-free so it can be tested. */
@@ -26,6 +26,7 @@ export class AppController {
 
   async init(): Promise<void> {
     this.settings = await loadSettings(this.settingsFile)
+    this.registerSecrets()
     // Idempotent: persists a freshly generated deviceId when the settings file didn't have one yet.
     await saveSettings(this.settingsFile, this.settings)
     const last = this.settings.lastProjectPath
@@ -48,6 +49,7 @@ export class AppController {
   async setSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
     const before = this.settings
     this.settings = { ...this.settings, ...patch }
+    this.registerSecrets()
     await saveSettings(this.settingsFile, this.settings)
     this.session?.http.setContactEmail(this.settings.contactEmail)
     this.session?.http.setOpenAlexApiKey(this.settings.openalexApiKey)
@@ -141,6 +143,11 @@ export class AppController {
     appLog.info('app_shutdown', { project: session?.store.root ?? null })
     await session?.close()
     await this.sessionDefaults.embeddings?.dispose()
+  }
+
+  /** The app log replaces the secrets the settings hold wherever they appear, whatever their shape. */
+  private registerSecrets(): void {
+    setLogSecrets([this.settings.openalexApiKey, this.settings.contactEmail])
   }
 
   private sessionOptions(): SessionOptions {

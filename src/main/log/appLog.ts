@@ -24,37 +24,78 @@ export interface LogSink {
   write(line: string): void
 }
 
-const SECRET_PARAMS = 'api_key|apikey|api-key|mailto|email|token|access_token|refresh_token|id_token|key|password|passwd|pwd|secret|client_secret|signature|sig|auth'
+const SECRET_PARAMS =
+  'api_key|apikey|api-key|mailto|email|token|access_token|accesstoken|refresh_token|id_token|key|password|passwd|pwd|secret|client_secret|clientsecret|signature|sig|auth|code'
 
-const RULES: [RegExp, string][] = [
+/** A secret-looking name followed by `:` or `=` (`API key: …`, `"accessToken":"…"`, `client_secret=…`, `Password = "…"`). */
+const NAMED_SECRET =
+  /((?:access|refresh|id|auth|bearer|session)?[_-]?token|client[_-]?secret|secret|api[ _-]?key|private[_-]?key|password|passwd|pwd)(["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s"',&;}]+)/gi
+
+const RULES: [RegExp, string | ((...m: string[]) => string)][] = [
   // Credentials inside a URL (https://user:password@host, https://token@host).
   [/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#@]+@/gi, '$1redacted@'],
-  // Secret query parameters (?api_key=…&mailto=…).
-  [new RegExp(`([?&;](?:${SECRET_PARAMS})=)[^&#\\s"']*`, 'gi'), '$1redacted'],
+  // Secret parameters of a query or a fragment (?api_key=…&mailto=…, #access_token=…).
+  [new RegExp(`([?&;#](?:${SECRET_PARAMS})=)[^&#\\s"']*`, 'gi'), '$1redacted'],
   // An Authorization header, as text or JSON.
   [/(authorization["']?\s*[:=]\s*["']?)(?:(?:bearer|basic|token|digest)\s+)?[^\s"',;}]+/gi, '$1redacted'],
   [/\bbearer\s+[a-z0-9._~+/=-]+/gi, 'Bearer redacted'],
-  // Known token shapes (Anthropic, GitHub, GitLab, generic sk- keys).
-  [/\b(?:sk-ant-[a-z0-9_-]+|sk-[a-z0-9]{20,}|gh[pousr]_[a-z0-9]{20,}|github_pat_[a-z0-9_]+|glpat-[a-z0-9_-]{16,})/gi, '[token]'],
-  // `password=…`, `api_key: "…"` and the like outside a URL.
-  [/\b(password|passwd|pwd|secret|token|api[_-]?key)(["']?\s*[:=]\s*["']?)(?!redacted\b)[^\s"',&;}]+/gi, '$1$2redacted'],
+  // Known token shapes (Anthropic, OpenAI-style sk-/sk-proj-, GitHub, GitLab, Slack).
+  [/\b(?:sk-[a-z0-9_-]{16,}|gh[pousr]_[a-z0-9]{20,}|github_pat_[a-z0-9_]+|glpat-[a-z0-9_-]{16,}|xox[abprs]-[a-z0-9-]{10,})/gi, '[token]'],
+  // `password=…`, `API key: …`, `"accessToken":"…"` and the like outside a URL; a quoted value is replaced whole.
+  [
+    NAMED_SECRET,
+    (_m: string, name: string, sep: string, value: string) => {
+      if (/^["']?redacted["']?$/i.test(value) || value === '[token]') return `${name}${sep}${value}`
+      const quote = value[0] === '"' || value[0] === "'" ? value[0] : ''
+      return `${name}${sep}${quote}redacted${quote}`
+    }
+  ],
   // The contact email in a User-Agent, then any other email address.
   [/mailto:[^\s)"'>]+/gi, 'mailto:redacted'],
   [/(?<![a-z0-9._%+-])(?!redacted(?:@|%40))[a-z0-9._%+-]+(?:@|%40)[a-z0-9.-]+\.[a-z]{2,}/gi, '[email]']
 ]
 
-/** Removes API keys, contact emails, tokens, Authorization headers and passwords from a text. */
-export function redact(text: string): string {
+/** The secrets the app holds (API keys, the contact email), replaced literally before any pattern runs. */
+let knownSecrets: string[] = []
+
+/** Shorter values would replace ordinary words. */
+const MIN_SECRET = 6
+
+/** Registers the app's own secrets (and their URL-encoded forms) for `redact`; replaces the previous list. */
+export function setLogSecrets(values: readonly (string | null | undefined)[]): void {
+  const all = new Set<string>()
+  for (const raw of values) {
+    const value = raw?.trim()
+    if (!value || value.length < MIN_SECRET) continue
+    all.add(value)
+    all.add(encodeURIComponent(value))
+  }
+  knownSecrets = [...all].sort((a, b) => b.length - a.length)
+}
+
+/** Replaces each of `secrets` (exact text, any case) with `[secret]`. */
+export function scrubSecrets(text: string, secrets: readonly string[]): string {
   let out = text
-  for (const [pattern, replacement] of RULES) out = out.replace(pattern, replacement)
+  for (const secret of secrets) {
+    if (!secret) continue
+    out = out.replace(new RegExp(secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '[secret]')
+  }
+  return out
+}
+
+/** Removes the app's known secrets, then API keys, emails, tokens, Authorization headers and passwords by their shape. */
+export function redact(text: string): string {
+  let out = scrubSecrets(text, knownSecrets)
+  for (const [pattern, replacement] of RULES) out = out.replace(pattern, replacement as string)
   return out
 }
 
 const bound = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max)}…` : text)
 
-function clean(value: unknown, depth = 0): unknown {
+function clean(value: unknown, depth = 0, key = ''): unknown {
   if (value === null || value === undefined || typeof value === 'number' || typeof value === 'boolean') return value ?? null
-  if (typeof value === 'string') return bound(redact(value), MAX_VALUE)
+  if (typeof value === 'string') return bound(redact(value), key === 'stack' ? MAX_STACK : MAX_VALUE)
+  if (typeof value === 'function') return '[function]'
   if (value instanceof Error) {
     const out: Record<string, unknown> = { error: bound(redact(`${value.name}: ${value.message}`), MAX_VALUE) }
     const code = (value as { code?: unknown }).code
@@ -64,7 +105,7 @@ function clean(value: unknown, depth = 0): unknown {
   }
   if (depth >= 2) return '[object]'
   if (Array.isArray(value)) return value.slice(0, 20).map((v) => clean(v, depth + 1))
-  if (typeof value === 'object') return Object.fromEntries(Object.entries(value).slice(0, 30).map(([k, v]) => [k, clean(v, depth + 1)]))
+  if (typeof value === 'object') return Object.fromEntries(Object.entries(value).slice(0, 30).map(([k, v]) => [k, clean(v, depth + 1, k)]))
   return bound(redact(String(value)), MAX_VALUE)
 }
 

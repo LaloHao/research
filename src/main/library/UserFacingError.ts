@@ -23,6 +23,17 @@ export class UserFacingError extends Error {
   }
 }
 
+/** An OpenAlex request that carries a search string (`search=` or a `*.search*` filter), not a lookup by id. */
+function isOpenAlexSearch(url: string): boolean {
+  if (!isOpenAlexUrl(url)) return false
+  try {
+    const params = new URL(url).searchParams
+    return params.has('search') || /(^|,)[a-z_.]*\.search[a-z_.]*:/.test(params.get('filter') ?? '')
+  } catch {
+    return false
+  }
+}
+
 /** An answer from a server is never a network error: what it refused, and why when it said so. */
 function fromHttp(error: HttpError): UserFacingError {
   const { status } = error
@@ -31,7 +42,7 @@ function fromHttp(error: HttpError): UserFacingError {
   const make = (code: UserErrorCode, detail: string | null = null): UserFacingError => new UserFacingError(code, { cause: error, detail })
   if (status === 404 || status === 410) return make('not_found')
   if (status === 429) return make(isOpenAlexDailyLimit(error) ? 'openalex_limit' : 'rate_limited')
-  if (status === 400 && isOpenAlexUrl(error.url)) return make('search_query_invalid', error.detail ?? http)
+  if (status === 400 && isOpenAlexSearch(error.url)) return make('search_query_invalid', error.detail ?? http)
   if (status === 401 || status === 403) return make('access_denied', withDetail)
   if (status >= 500) return make('server_error', withDetail)
   return make('request_rejected', withDetail)
