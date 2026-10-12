@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { authorsLabel } from '../../shared/format'
 import {
   DATABASE_KINDS,
@@ -5,7 +6,9 @@ import {
   MAIN_REVIEWER,
   PHASE_STATES,
   PHASES,
+  criterionFits,
   type ConflictOption,
+  type DecideRequest,
   type Decision,
   type DuplicatePair,
   type MappingRecord,
@@ -72,7 +75,15 @@ export function headsOf(heads: ReadonlyMap<string, Decision[]>, record: string, 
   return heads.get(groupKey(record, phase, reviewer)) ?? []
 }
 
-const option = (d: Decision): ConflictOption => ({ decisionId: d.id, decision: d.decision, criterion: d.criterion, by: d.by, at: d.at, machine: d.machine })
+const option = (d: Decision): ConflictOption => ({
+  decisionId: d.id,
+  decision: d.decision,
+  criterion: d.criterion,
+  by: d.by,
+  at: d.at,
+  machine: d.machine,
+  protocolVersion: d.protocol_version
+})
 
 /**
  * A record's state in one phase: pending, the agreed current decision, or a conflict between disagreeing heads.
@@ -119,6 +130,7 @@ function suggestionView(s: ScreeningSuggestion | undefined, version: number): Su
     found: s.found,
     model: s.model,
     at: s.at,
+    protocolVersion: s.protocol_version,
     outdated: s.protocol_version < version
   }
 }
@@ -247,4 +259,63 @@ export function undoDecision(decisions: Decision[], id: string, ctx: { id: strin
     replaces: [id],
     undoes: id
   }
+}
+
+/** Why a decision cannot be taken: a criterion that does not fit, or a phase the record is not in. */
+export function decisionProblem(
+  req: Pick<DecideRequest, 'phase' | 'decision' | 'criterion'>,
+  protocol: ProtocolFile,
+  titleAbstract: PhaseState
+): 'criterion_required' | 'not_eligible' | null {
+  if (req.decision === 'not_retrieved' && req.phase !== 'full_text') return 'not_eligible'
+  if (req.phase === 'full_text' && titleAbstract !== 'include') return 'not_eligible'
+  if (!criterionFits(protocol, req.decision, req.criterion)) return 'criterion_required'
+  return null
+}
+
+/** A decision value that reads as undecided in its phase (`none`, or `not_retrieved` outside full text). */
+const readsPending = (d: Decision): boolean => d.decision === 'none' || (d.decision === 'not_retrieved' && d.phase !== 'full_text')
+
+/**
+ * The id of the copy of decision `original` carried onto record `survivor` by «Es el mismo»: derived from both, so a
+ * retry, or the other machine making the same merge, finds the copy already written (and the sync joins them by id).
+ */
+export function carriedDecisionId(original: string, survivor: string): string {
+  return `d${createHash('sha256').update(`${original}|${survivor}`).digest('hex').slice(0, 12)}`
+}
+
+/**
+ * «Es el mismo»: copies of the merged record's current decisions onto the surviving record, per phase and reviewer, so
+ * its screening is not lost. A value the survivor's current decisions already hold adds nothing; a different one sits
+ * beside them as a second head (a conflict, «Decisiones distintas en dos equipos»). When every current decision of the
+ * survivor reads as undecided (an undo back to `none`), the copy replaces them instead of disagreeing with them. Each
+ * copy is the user's (their «Es el mismo» click), keeps the original's value, criterion, protocol version, date and
+ * machine, names it in `copied_from`, and has an id derived from both records' decisions (`carriedDecisionId`).
+ */
+export function carriedDecisions(decisions: Decision[], merged: string, survivor: string): Decision[] {
+  const byId = uniqueById(decisions)
+  const heads = decisionHeads(decisions)
+  const out: Decision[] = []
+  for (const list of heads.values()) {
+    if (list[0].record !== merged) continue
+    const target = headsOf(heads, survivor, list[0].phase, list[0].reviewer)
+    const pending = target.every(readsPending)
+    for (const h of list) {
+      if (readsPending(h)) continue
+      const id = carriedDecisionId(h.id, survivor)
+      if (byId.has(id)) continue
+      if ([...target, ...out.filter((o) => o.phase === h.phase && o.reviewer === h.reviewer)].some((t) => !readsPending(t) && sameOutcome(t, h))) continue
+      out.push({
+        ...h,
+        id,
+        record: survivor,
+        by: 'user',
+        suggestion: null,
+        replaces: pending ? target.map((t) => t.id) : [],
+        undoes: null,
+        copied_from: h.id
+      })
+    }
+  }
+  return out
 }

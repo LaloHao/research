@@ -273,6 +273,8 @@ export interface ConflictOption {
   by: Decider
   at: string
   machine: string
+  /** The protocol version it was made with (its criterion is worded as in that version). */
+  protocolVersion: number
 }
 
 /** A record's state in one phase, from its current decisions. */
@@ -302,6 +304,8 @@ export interface SuggestionView {
   found: boolean
   model: string
   at: string
+  /** The protocol version it was made with (its criterion is worded as in that version). */
+  protocolVersion: number
   /** Made with an earlier version of the protocol. */
   outdated: boolean
 }

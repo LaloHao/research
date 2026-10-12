@@ -3,22 +3,27 @@ import { readFile, stat } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import {
+  MAIN_REVIEWER,
   MAPPING_ID,
   ProtocolDraftSchema,
   SearchSchema,
+  type DecideRequest,
+  type Decision,
   type ImportOutcome,
   type ImportSource,
   type MappingRecord,
   type MappingRecordRow,
   type MappingSummary,
   type MappingView,
+  type Phase,
   type ProtocolDraft,
+  type QueueQuery,
   type Search,
   type WorkCandidate
 } from '../../shared/mapping'
 import type { Paper } from '../../shared/schemas'
 import type { IndexCache } from '../cache/IndexCache'
-import { findDuplicate } from '../library/dedupe'
+import { findDuplicate, type DedupeEntry } from '../library/dedupe'
 import { UserFacingError } from '../library/UserFacingError'
 import { ConflictError, type ReadResult } from '../project/errors'
 import { EMPTY_MAPPING_LISTS, MAPPING_FILE_KINDS, MAPPING_FILE_NAMES, newMappingId, type MappingFileKind, type MappingFiles } from '../project/mappingFiles'
@@ -27,7 +32,21 @@ import { cleanIdentifiers, mergeCandidate, newRecord, RecordMatcher, recordIdFor
 import { decodeExport, MAX_EXPORT_BYTES, parseExport } from './importers/importFile'
 import { prismaCounts } from './prisma'
 import { applyDraft, newProtocol } from './protocol'
-import { conflictsOf, duplicatePairs, recordRows, screeningCounts, type MappingContent } from './screening'
+import {
+  activeSearchIds,
+  carriedDecisions,
+  conflictsOf,
+  decisionHeads,
+  decisionProblem,
+  duplicatePairs,
+  headsOf,
+  matchesFilter,
+  phaseView,
+  recordRows,
+  screeningCounts,
+  undoDecision,
+  type MappingContent
+} from './screening'
 
 export interface MappingServiceDeps {
   store: ProjectStore
@@ -85,12 +104,18 @@ function lastChange(c: MappingContent): string {
 }
 
 /**
- * Rows of records entry could not compare (two machines added one work under different ids and the sync kept both)
- * are marked as possible duplicates, with the reason the matcher gives.
+ * Pairs among the active records (not merged, brought by a live search) that entry could not compare: two machines
+ * added one work under different ids and the sync kept both. Keyed by the newer record of each pair.
  */
+function syncPairs(c: MappingContent): Map<string, ReturnType<typeof syncDuplicates>[number]> {
+  const live = activeSearchIds(c.searches)
+  const active = c.records.filter((r) => r.merged_into === null && r.sources.some((s) => live.has(s)))
+  return new Map(syncDuplicates(active).map((x) => [x.record, x]))
+}
+
+/** Rows of the records a sync joined are marked as possible duplicates, with the reason the matcher gives. */
 function withSyncDuplicates(rows: MappingRecordRow[], c: MappingContent): MappingRecordRow[] {
-  const activeIds = new Set(rows.filter((r) => r.active).map((r) => r.id))
-  const pairs = new Map(syncDuplicates(c.records.filter((r) => activeIds.has(r.id))).map((x) => [x.record, x]))
+  const pairs = syncPairs(c)
   return rows.map((row) => {
     const pair = pairs.get(row.id)
     return pair && !row.duplicate ? { ...row, duplicate: { of: pair.other, reason: pair.reason } } : row
@@ -116,6 +141,19 @@ function survivor(records: Map<string, MappingRecord>, id: string): MappingRecor
     cur = records.get(cur.merged_into)
   }
   return cur ?? null
+}
+
+/**
+ * The library paper a new record is, by DOI, arXiv id or title. A title alone never links a record and a paper whose
+ * DOIs differ (a journal version and the library's preprint, say): that link is left for the user.
+ */
+function libraryPaper(c: WorkCandidate, library: DedupeEntry[]): string | null {
+  const ids = cleanIdentifiers(c.identifiers)
+  const query = { doi: ids.doi, arxiv: ids.arxiv, title: c.title }
+  const found = findDuplicate(query, library)
+  if (!found || found.reason !== 'title' || !ids.doi) return found?.id ?? null
+  const doi = ids.doi.toLowerCase()
+  return findDuplicate(query, library.filter((e) => !e.doi || e.doi.toLowerCase() === doi))?.id ?? null
 }
 
 function fromPaper(p: Paper): WorkCandidate {
@@ -290,8 +328,7 @@ export class MappingService {
           outcome.merged++
           return
         }
-        const ids = cleanIdentifiers(c.identifiers)
-        const paperId = c.paperId ?? findDuplicate({ doi: ids.doi, arxiv: ids.arxiv, title: c.title }, library)?.id ?? null
+        const paperId = c.paperId ?? libraryPaper(c, library)
         const record = newRecord(c, {
           id: recordIdFor(keyOf(i), (x) => records.has(x)),
           searchId,
@@ -328,19 +365,29 @@ export class MappingService {
 
   /**
    * «Es el mismo»: the record is merged into the one it duplicates (or the record that one was merged into since),
-   * which takes its sources, the fields it lacked and its library link. «Son distintos»: each names the other as
-   * distinct, and neither is asked about again.
+   * which takes its sources, the fields it lacked, its library link, its «Son distintos» answers and its current
+   * decisions (`carriedDecisions`: a disagreement shows as a conflict). «Son distintos»: each names the other as
+   * distinct, and neither is asked about again. The pair is read again from the files: when it is no longer the one
+   * the window showed (another machine answered meanwhile), nothing is written (`conflict`).
    */
   async resolveDuplicate(id: string, recordId: string, same: boolean): Promise<void> {
-    const pairOf = this.deps.cache.mappingRow(id, recordId)?.duplicate?.of
-    if (!pairOf) throw new UserFacingError('mapping_not_found')
+    const shown = this.deps.cache.mappingRow(id, recordId)?.duplicate?.of ?? null
     const at = this.now().toISOString()
     await this.mutate(id, (files) => {
-      const records = new Map(files.records.value.records.map((r) => [r.id, r]))
+      const content = contentOf(files)
+      const records = new Map(content.records.map((r) => [r.id, r]))
       const record = records.get(recordId)
+      if (!record || record.merged_into) throw new UserFacingError('mapping_not_found')
+      const pairOf = record.duplicate_of?.record ?? syncPairs(content).get(record.id)?.other ?? null
+      if (!pairOf) throw new UserFacingError(shown ? 'conflict' : 'mapping_not_found')
+      if (shown && shown !== pairOf) throw new UserFacingError('conflict')
       const other = survivor(records, pairOf)
-      if (!record || !other || other.id === record.id || record.merged_into) throw new UserFacingError('mapping_not_found')
+      if (!other || other.id === record.id) throw new UserFacingError('mapping_not_found')
+      if (record.distinct_from.includes(other.id) || other.distinct_from.includes(record.id)) throw new UserFacingError('conflict')
+      const writes: Write[] = []
       if (same) {
+        const carried = carriedDecisions(content.decisions, record.id, other.id)
+        if (carried.length > 0) writes.push({ kind: 'decisions', file: { ...files.decisions.value, decisions: [...content.decisions, ...carried] } })
         records.set(other.id, {
           ...other,
           sources: union(other.sources, record.sources),
@@ -351,6 +398,10 @@ export class MappingService {
           kind: other.kind ?? record.kind,
           identifiers: { ...cleanIdentifiers(record.identifiers), ...other.identifiers },
           paper_id: other.paper_id ?? record.paper_id,
+          // Its «Son distintos» answers, from either side of each pair.
+          distinct_from: union(other.distinct_from, [...record.distinct_from, ...content.records.filter((r) => r.distinct_from.includes(record.id)).map((r) => r.id)]).filter(
+            (x) => x !== other.id && x !== record.id
+          ),
           updated_at: at
         })
         records.set(record.id, { ...record, merged_into: other.id, duplicate_of: null, updated_at: at })
@@ -358,7 +409,117 @@ export class MappingService {
         records.set(record.id, { ...record, duplicate_of: null, distinct_from: union(record.distinct_from, [other.id]), updated_at: at })
         records.set(other.id, { ...other, distinct_from: union(other.distinct_from, [record.id]), updated_at: at })
       }
-      return { writes: [{ kind: 'records', file: { ...files.records.value, records: [...records.values()] } }], result: undefined }
+      // Decisions first: an interruption never leaves a merged record whose decisions the survivor lacks.
+      writes.push({ kind: 'records', file: { ...files.records.value, records: [...records.values()] } })
+      return { writes, result: undefined }
+    })
+  }
+
+  /** A phase's queue under a filter, in record order, from the index. */
+  queue(id: string, query: QueueQuery): MappingRecordRow[] {
+    return this.deps.cache.mappingRows(id).filter((row) => matchesFilter(row, query.phase, query.filter))
+  }
+
+  /**
+   * «Incluir», «Excluir» (with its criterion), «Dudoso», «No se pudo conseguir», or «Aceptar sugerencia» (the suggestion
+   * exactly as it is): a new decision replacing the current ones of the record and phase. The same decision already
+   * current writes nothing. A record waiting for «Es el mismo» or «Son distintos», merged into another, or brought only
+   * by discarded searches is not decided (`not_eligible`). Returns the current decision's id, which «Deshacer» sends back.
+   */
+  decide(id: string, req: DecideRequest): Promise<string> {
+    const at = this.now().toISOString()
+    const decisionId = this.newId('d')
+    return this.mutate(id, (files) => {
+      const content = contentOf(files)
+      const { protocol, searches, records, decisions, suggestions } = content
+      const record = records.find((r) => r.id === req.recordId)
+      if (!record) throw new UserFacingError('mapping_not_found')
+      const live = activeSearchIds(searches)
+      if (record.merged_into || !record.sources.some((s) => live.has(s))) throw new UserFacingError('not_eligible')
+      if (record.duplicate_of || syncPairs(content).has(record.id)) throw new UserFacingError('not_eligible')
+      const heads = decisionHeads(decisions)
+      const titleAbstract = phaseView(headsOf(heads, record.id, 'title_abstract'), protocol.version).state
+      const problem = decisionProblem(req, protocol, titleAbstract)
+      if (problem) throw new UserFacingError(problem)
+      if (req.suggestionId !== null) {
+        const s = suggestions.find((x) => x.id === req.suggestionId)
+        if (!s || s.record !== record.id || s.phase !== req.phase || s.decision !== req.decision || s.criterion !== req.criterion) throw new UserFacingError('invalid_edit')
+      }
+      const by = req.suggestionId === null ? 'user' : 'suggestion'
+      const current = headsOf(heads, record.id, req.phase)
+      const only = current.length === 1 ? current[0] : null
+      if (
+        only &&
+        only.decision === req.decision &&
+        only.criterion === req.criterion &&
+        only.by === by &&
+        only.suggestion === req.suggestionId &&
+        only.protocol_version === protocol.version
+      ) {
+        return { writes: [], result: only.id }
+      }
+      const decision: Decision = {
+        id: decisionId,
+        record: record.id,
+        phase: req.phase,
+        reviewer: MAIN_REVIEWER,
+        decision: req.decision,
+        criterion: req.criterion,
+        note: null,
+        by,
+        suggestion: req.suggestionId,
+        protocol_version: protocol.version,
+        at,
+        machine: this.deps.machine,
+        replaces: current.map((d) => d.id),
+        undoes: null
+      }
+      return { writes: [{ kind: 'decisions', file: { ...files.decisions.value, decisions: [...decisions, decision] } }], result: decisionId }
+    })
+  }
+
+  /**
+   * «Deshacer»: appends a decision restoring the one `decisionId` replaced (or none), while `decisionId` is still the
+   * only current decision of its record and phase and did not resolve a conflict (`undo_unavailable` otherwise).
+   */
+  undo(id: string, decisionId: string): Promise<void> {
+    const ctx = { id: this.newId('d'), at: this.now().toISOString(), machine: this.deps.machine }
+    return this.mutate(id, (files) => {
+      const decisions = files.decisions.value.decisions
+      const next = undoDecision(decisions, decisionId, ctx)
+      if (!next) throw new UserFacingError('undo_unavailable')
+      return { writes: [{ kind: 'decisions', file: { ...files.decisions.value, decisions: [...decisions, next] } }], result: undefined }
+    })
+  }
+
+  /**
+   * «Quedarme con esta»: a decision equal to the one kept (its value, criterion, author, suggestion and protocol
+   * version), replacing every disagreeing current decision. `conflict` when there is no such conflict any more.
+   */
+  resolveConflict(id: string, recordId: string, phase: Phase, keepDecisionId: string): Promise<void> {
+    const ctx = { id: this.newId('d'), at: this.now().toISOString(), machine: this.deps.machine }
+    return this.mutate(id, (files) => {
+      const decisions = files.decisions.value.decisions
+      const heads = headsOf(decisionHeads(decisions), recordId, phase)
+      const keep = heads.find((d) => d.id === keepDecisionId)
+      if (!keep || heads.every((d) => d.decision === keep.decision && d.criterion === keep.criterion)) throw new UserFacingError('conflict')
+      const resolved: Decision = {
+        id: ctx.id,
+        record: keep.record,
+        phase: keep.phase,
+        reviewer: keep.reviewer,
+        decision: keep.decision,
+        criterion: keep.criterion,
+        note: null,
+        by: keep.by,
+        suggestion: keep.suggestion,
+        protocol_version: keep.protocol_version,
+        at: ctx.at,
+        machine: ctx.machine,
+        replaces: heads.map((d) => d.id),
+        undoes: null
+      }
+      return { writes: [{ kind: 'decisions', file: { ...files.decisions.value, decisions: [...decisions, resolved] } }], result: undefined }
     })
   }
 

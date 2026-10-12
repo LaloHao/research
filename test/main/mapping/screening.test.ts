@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  carriedDecisionId,
+  carriedDecisions,
   conflictsOf,
   decisionHeads,
+  decisionProblem,
   duplicatePairs,
   headsOf,
   matchesFilter,
@@ -224,5 +227,82 @@ describe('undoDecision', () => {
     expect(undoDecision([otherPhase, target2], target2.id, ctx)).toBeNull()
     const orphan = d(5, { replaces: [hexId('d', 77)] })
     expect(undoDecision([orphan], orphan.id, ctx)).toBeNull()
+  })
+})
+
+describe('decisionProblem', () => {
+  const p = protocolFile()
+  it('needs a fitting criterion, full text only after an inclusion, and «not retrieved» only on full text', () => {
+    expect(decisionProblem({ phase: 'title_abstract', decision: 'exclude', criterion: 'E1' }, p, 'pending')).toBeNull()
+    expect(decisionProblem({ phase: 'title_abstract', decision: 'exclude', criterion: null }, p, 'pending')).toBe('criterion_required')
+    expect(decisionProblem({ phase: 'title_abstract', decision: 'exclude', criterion: 'E9' }, p, 'pending')).toBe('criterion_required')
+    expect(decisionProblem({ phase: 'title_abstract', decision: 'uncertain', criterion: 'I1' }, p, 'pending')).toBe('criterion_required')
+    expect(decisionProblem({ phase: 'title_abstract', decision: 'not_retrieved', criterion: null }, p, 'pending')).toBe('not_eligible')
+    expect(decisionProblem({ phase: 'full_text', decision: 'include', criterion: null }, p, 'uncertain')).toBe('not_eligible')
+    expect(decisionProblem({ phase: 'full_text', decision: 'not_retrieved', criterion: null }, p, 'include')).toBeNull()
+  })
+})
+
+describe('protocol versions for criterion labels', () => {
+  it('gives each conflict option and suggestion the protocol version it was made with', () => {
+    const first = d(1)
+    const a = d(2, { decision: 'exclude', criterion: 'E1', replaces: [first.id], protocol_version: 1 })
+    const b = d(3, { decision: 'exclude', criterion: 'E2', replaces: [first.id], protocol_version: 2 })
+    const [row] = recordRows(content({ protocol: protocolFile({ version: 2 }), decisions: [first, a, b], suggestions: [suggestion({ protocol_version: 1 })] }))
+    expect(row.title_abstract.options.map((o) => [o.decisionId, o.protocolVersion])).toEqual([
+      [a.id, 1],
+      [b.id, 2]
+    ])
+    expect(row.suggestions.title_abstract).toMatchObject({ protocolVersion: 1, outdated: true })
+  })
+})
+
+describe('carriedDecisions («Es el mismo»)', () => {
+  const merged = R2
+  const survivor = R1
+
+  it('copies the merged record’s current decisions onto the survivor, with ids derived from both', () => {
+    const old = d(1, { record: merged })
+    const head = d(2, { record: merged, decision: 'exclude', criterion: 'E1', replaces: [old.id], by: 'suggestion', suggestion: hexId('g', 1), machine: 'machine-b' })
+    const ft = d(3, { record: merged, phase: 'full_text', decision: 'none' })
+    const copies = carriedDecisions([old, head, ft], merged, survivor)
+    expect(copies).toEqual([
+      {
+        ...head,
+        id: carriedDecisionId(head.id, survivor),
+        record: survivor,
+        by: 'user',
+        suggestion: null,
+        replaces: [],
+        undoes: null,
+        copied_from: head.id
+      }
+    ])
+    expect(carriedDecisionId(head.id, survivor)).toMatch(/^d[0-9a-f]{12}$/)
+    expect(carriedDecisionId(head.id, survivor)).toBe(carriedDecisionId(head.id, survivor))
+    expect(carriedDecisionId(head.id, survivor)).not.toBe(carriedDecisionId(head.id, hexId('r', 3)))
+    // Already copied (a retry, or the other machine made the same merge): nothing more.
+    expect(carriedDecisions([old, head, ft, ...copies], merged, survivor)).toEqual([])
+  })
+
+  it('adds nothing where the survivor already agrees, and a disagreement becomes a conflict', () => {
+    const mine = d(1, { record: survivor, decision: 'include' })
+    const alike = d(2, { record: merged, decision: 'include' })
+    expect(carriedDecisions([mine, alike], merged, survivor)).toEqual([])
+    const unlike = d(3, { record: merged, decision: 'uncertain' })
+    const copies = carriedDecisions([mine, unlike], merged, survivor)
+    expect(copies).toHaveLength(1)
+    const [row] = recordRows(content({ records: [record({ id: survivor })], decisions: [mine, unlike, ...copies] }))
+    expect(row.title_abstract.state).toBe('conflict')
+  })
+
+  it('replaces a survivor’s decision that was undone back to none, instead of a conflict with it', () => {
+    const mine = d(1, { record: survivor })
+    const undone = d(2, { record: survivor, decision: 'none', replaces: [mine.id], undoes: mine.id })
+    const theirs = d(3, { record: merged, decision: 'exclude', criterion: 'E2' })
+    const copies = carriedDecisions([mine, undone, theirs], merged, survivor)
+    expect(copies).toMatchObject([{ replaces: [undone.id] }])
+    const [row] = recordRows(content({ records: [record({ id: survivor })], decisions: [mine, undone, theirs, ...copies] }))
+    expect(row.title_abstract).toMatchObject({ state: 'exclude', criterion: 'E2' })
   })
 })
