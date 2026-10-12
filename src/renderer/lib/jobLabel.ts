@@ -28,6 +28,14 @@ export function jobLabel(t: TFunction, job: JobRecord): string {
       return t('jobs.fill_facets', { id: job.spec.paperId })
     case 'suggest_facets':
       return t(job.spec.auto ? 'jobs.suggest_facets_auto' : 'jobs.suggest_facets')
+    case 'mapping_search':
+      return t('jobs.mapping_search', { query: job.spec.query })
+    case 'mapping_snowball':
+      return t('jobs.mapping_snowball')
+    case 'screen_suggest':
+      return t('jobs.screen_suggest', { count: job.spec.recordIds.length })
+    case 'ingest_record':
+      return t('jobs.ingest_record')
   }
 }
 

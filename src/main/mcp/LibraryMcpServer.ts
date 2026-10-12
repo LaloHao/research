@@ -5,6 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
 import { neutralizePromptTags } from '../llm/promptTags'
+import type { AgentToolLog } from '../log/agentLog'
 import { ToolError, type LibraryTools } from './libraryTools'
 
 export const MCP_SERVER_NAME = 'library'
@@ -23,6 +24,8 @@ export interface LibraryMcpOptions {
   maxChars?: number
   /** Wraps every answer in <library_data> tags; the chat's prompt names them as data, never instructions. */
   markData?: boolean
+  /** The run's live log: each call by its tool and a bounded summary of its arguments (never their text). */
+  log?: AgentToolLog
 }
 
 export interface LibraryMcpHandle {
@@ -33,7 +36,8 @@ export interface LibraryMcpHandle {
 }
 
 export type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean }
-export type Run = (name: string, fn: () => Promise<unknown>) => Promise<ToolResult>
+/** `args` are only summarized for the log (ids, numbers, text lengths). */
+export type Run = (name: string, fn: () => Promise<unknown>, args?: unknown) => Promise<ToolResult>
 /** Registers a server's tools on a fresh McpServer; each tool's work goes through `run` (budget, data marking, errors). */
 export type DefineTools = (server: McpServer, run: Run) => void
 
@@ -65,7 +69,7 @@ function defineTools(server: McpServer, tools: LibraryTools, run: Run): void {
       description: 'Full-text search over the indexed text of the library papers (all words must appear). Returns passages with their paper key and page.',
       inputSchema: { query: z.string().min(1).describe('Words to search for'), paper_id: paperId.optional(), limit }
     },
-    (a) => run('search_text', () => tools.searchText(a.query, a.paper_id, a.limit))
+    (a) => run('search_text', () => tools.searchText(a.query, a.paper_id, a.limit), a)
   )
   server.registerTool(
     'search_similar',
@@ -73,7 +77,7 @@ function defineTools(server: McpServer, tools: LibraryTools, run: Run): void {
       description: 'Semantic search: library papers closest in meaning to a query, using the local embedding model. Fails when the model is not downloaded.',
       inputSchema: { query: z.string().min(1).describe('A sentence describing what to look for'), limit }
     },
-    (a) => run('search_similar', () => tools.searchSimilar(a.query, a.limit))
+    (a) => run('search_similar', () => tools.searchSimilar(a.query, a.limit), a)
   )
   server.registerTool(
     'find_in_paper',
@@ -81,7 +85,7 @@ function defineTools(server: McpServer, tools: LibraryTools, run: Run): void {
       description: 'Finds literal text inside one paper (not a regular expression; case and accents are ignored). Returns each occurrence as written, with its page and surrounding context.',
       inputSchema: { paper_id: paperId, text: z.string().min(2).max(200).describe('Exact words to look for'), limit }
     },
-    (a) => run('find_in_paper', () => tools.findInPaper(a.paper_id, a.text, a.limit))
+    (a) => run('find_in_paper', () => tools.findInPaper(a.paper_id, a.text, a.limit), a)
   )
   server.registerTool(
     'read_pages',
@@ -89,7 +93,7 @@ function defineTools(server: McpServer, tools: LibraryTools, run: Run): void {
       description: 'Text of pages from..to (at most 5) of one paper; for a web page without pages, its whole text.',
       inputSchema: { paper_id: paperId, from: z.number().int().min(1), to: z.number().int().min(1) }
     },
-    (a) => run('read_pages', () => tools.readPages(a.paper_id, a.from, a.to))
+    (a) => run('read_pages', () => tools.readPages(a.paper_id, a.from, a.to), a)
   )
   server.registerTool(
     'get_paper',
@@ -97,7 +101,7 @@ function defineTools(server: McpServer, tools: LibraryTools, run: Run): void {
       description: 'Metadata of one paper (title, authors, year, venue, abstract), its summary fields and facet values when it has them, and its number of pages.',
       inputSchema: { paper_id: paperId }
     },
-    (a) => run('get_paper', () => tools.getPaper(a.paper_id))
+    (a) => run('get_paper', () => tools.getPaper(a.paper_id), a)
   )
   server.registerTool(
     'get_citations',
@@ -105,7 +109,7 @@ function defineTools(server: McpServer, tools: LibraryTools, run: Run): void {
       description: 'Library papers that this paper cites and library papers that cite it (citations from OpenAlex).',
       inputSchema: { paper_id: paperId }
     },
-    (a) => run('get_citations', () => tools.getCitations(a.paper_id))
+    (a) => run('get_citations', () => tools.getCitations(a.paper_id), a)
   )
   server.registerTool(
     'get_neighbours',
@@ -113,7 +117,7 @@ function defineTools(server: McpServer, tools: LibraryTools, run: Run): void {
       description: 'The most similar library papers to this one, with a score and the reasons (shared references, co-citations, facets, content).',
       inputSchema: { paper_id: paperId }
     },
-    (a) => run('get_neighbours', () => tools.getNeighbours(a.paper_id))
+    (a) => run('get_neighbours', () => tools.getNeighbours(a.paper_id), a)
   )
   server.registerTool(
     'list_papers',
@@ -124,7 +128,7 @@ function defineTools(server: McpServer, tools: LibraryTools, run: Run): void {
         limit: z.number().int().min(1).max(50).optional().describe('Maximum number of papers')
       }
     },
-    (a) => run('list_papers', () => tools.listPapers(a.offset, a.limit))
+    (a) => run('list_papers', () => tools.listPapers(a.offset, a.limit), a)
   )
   server.registerTool(
     'get_summary',
@@ -132,7 +136,7 @@ function defineTools(server: McpServer, tools: LibraryTools, run: Run): void {
       description: "One paper's summary fields and facet values, each with its review status (generated, verified or edited), the values it proposed outside the form, and its relation to the thesis.",
       inputSchema: { paper_id: paperId }
     },
-    (a) => run('get_summary', () => tools.getSummary(a.paper_id))
+    (a) => run('get_summary', () => tools.getSummary(a.paper_id), a)
   )
   server.registerTool(
     'facet_overview',
@@ -140,8 +144,17 @@ function defineTools(server: McpServer, tools: LibraryTools, run: Run): void {
       description: 'How each facet of the extraction form is used across the library: the allowed values with how many papers have each, and the values papers proposed that are not in the form yet, with the papers that proposed them.',
       inputSchema: {}
     },
-    () => run('facet_overview', () => tools.facetOverview())
+    () => run('facet_overview', () => tools.facetOverview(), {})
   )
+}
+
+/** The log never changes what a tool call does. */
+function logCall(fn: () => void): void {
+  try {
+    fn()
+  } catch {
+    // Nothing to do.
+  }
 }
 
 function authorized(header: string | undefined, token: string): boolean {
@@ -170,18 +183,22 @@ export async function startMcpServer(name: string, define: DefineTools, opts: Li
   const maxChars = opts.maxChars ?? MAX_RESPONSE_CHARS
   const calls: ToolCallRecord[] = []
 
-  const run: Run = async (name, fn) => {
+  const run: Run = async (tool, fn, args) => {
     // Recorded (and counted) before anything is awaited: concurrent requests cannot both slip under the budget.
-    const record: ToolCallRecord = { name, ok: false }
+    const record: ToolCallRecord = { name: tool, ok: false }
     const overBudget = calls.length >= opts.maxToolCalls
     calls.push(record)
+    logCall(() => opts.log?.tool(name, tool, args, overBudget ? { refused: 'budget' } : {}))
     if (overBudget) return text(`Tool budget exhausted (${opts.maxToolCalls} calls in this run). Do not call more tools: answer now with the evidence you already have.`, true)
+    const started = Date.now()
     try {
       const value = await fn()
       record.ok = true
+      logCall(() => opts.log?.toolDone?.(tool, true, Date.now() - started))
       const body = truncate(typeof value === 'string' ? value : JSON.stringify(value), maxChars)
       return text(opts.markData ? markAsData(body) : body)
     } catch (error) {
+      logCall(() => opts.log?.toolDone?.(tool, false, Date.now() - started))
       // Only a ToolError's message reaches the model; anything else (a broken model, a file error) stays opaque.
       return text(error instanceof ToolError ? error.message : 'The tool failed.', true)
     }

@@ -104,6 +104,30 @@ describe('watchProject', () => {
     await waitFor(() => changes > before)
     stop()
   })
+
+  it('reports the mapping whose files change, also when mappings/ appears later', async () => {
+    const root = await tmpDir()
+    const changed: string[] = []
+    const stop = watchProject(root, { onPaper: () => undefined, onConfig: () => undefined, onMappings: (id) => changed.push(id) }, 50)
+    await new Promise((r) => setTimeout(r, 100))
+    await atomicWrite(join(root, 'mappings/20261012-090000-a1b2/protocol.yaml'), 'x')
+    await waitFor(() => changed.includes('20261012-090000-a1b2'))
+    await new Promise((r) => setTimeout(r, 150))
+    changed.length = 0
+    await atomicWrite(join(root, 'mappings/20261012-090000-a1b2/decisions.yaml'), 'y')
+    await writeFile(join(root, 'mappings/notes.txt'), 'not a mapping')
+    await waitFor(() => changed.length > 0)
+    await new Promise((r) => setTimeout(r, 150))
+    expect(changed).toEqual(['20261012-090000-a1b2'])
+    await atomicWrite(join(root, 'mappings/20261012-091500-c3d4/protocol.yaml'), 'z')
+    await waitFor(() => changed.includes('20261012-091500-c3d4'))
+    await rm(join(root, 'mappings/20261012-090000-a1b2'), { recursive: true })
+    await new Promise((r) => setTimeout(r, 150))
+    changed.length = 0
+    await rm(join(root, 'mappings/20261012-091500-c3d4'), { recursive: true })
+    await waitFor(() => changed.includes('20261012-091500-c3d4'))
+    stop()
+  })
 })
 
 describe('watchProject after files are replaced', () => {

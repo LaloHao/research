@@ -165,6 +165,15 @@ describe('typed relation arguments', () => {
     expect(() => arg(ipcArgs.closeDecision, 'sync', 'decision')).toThrow()
   })
 
+  it('accepts a renderer error report, cutting long texts', () => {
+    const report = arg(ipcArgs.rendererError, { kind: 'error', message: 'x'.repeat(3000), stack: null, source: 'app.js:1' }, 'report')
+    expect(report.message).toHaveLength(2000)
+    expect(report.source).toBe('app.js:1')
+    for (const bad of [null, { kind: 'warn', message: 'm', stack: null, source: null }, { kind: 'error', message: 'm', stack: null, source: null, extra: 1 }, { kind: 'error', message: 7, stack: null, source: null }]) {
+      expect(() => arg(ipcArgs.rendererError, bad, 'report')).toThrow()
+    }
+  })
+
   it('accepts the facet suggestion settings, ids and edits, nothing else', () => {
     expect(arg(ipcArgs.llmPatch, { auto_suggest_facets: true, auto_suggest_facets_after: 5, budget: { per_facet_suggestion_usd: 3 } }, 'patch')).toEqual({
       auto_suggest_facets: true,
@@ -256,5 +265,64 @@ describe('typed relation arguments', () => {
     expect(arg(ipcArgs.chatSend, send, 'request')).toEqual(send)
     expect(() => arg(ipcArgs.chatSend, { ...send, actions: 1 }, 'request')).toThrow()
     expect(() => arg(ipcArgs.chatSend, { ...send, sync: 'on' }, 'request')).toThrow()
+  })
+  it('checks the mapping arguments: ids, the protocol draft, searches, imports and decisions', () => {
+    expect(arg(ipcArgs.mappingId, '20261012-090000-a1b2', 'id')).toBe('20261012-090000-a1b2')
+    for (const bad of ['../x', '20261012-090000-A1B2', '', 3, null]) expect(() => arg(ipcArgs.mappingId, bad, 'id')).toThrow()
+    expect(arg(ipcArgs.recordId, 'r0123456789ab', 'record')).toBe('r0123456789ab')
+    expect(() => arg(ipcArgs.recordId, 'r1', 'record')).toThrow()
+    expect(arg(ipcArgs.mappingTitle, 'Log anonymization', 'title')).toBe('Log anonymization')
+    for (const bad of ['  ', 'x'.repeat(301), 3]) expect(() => arg(ipcArgs.mappingTitle, bad, 'title')).toThrow()
+    const draft = {
+      title: 'T',
+      objective: '',
+      research_questions: [],
+      inclusion: [{ id: null, text: 'x' }],
+      exclusion: [{ id: 'E1', text: 'y' }],
+      years: { from: 2015, to: null },
+      publication_types: ['article']
+    }
+    expect(arg(ipcArgs.protocolDraft, draft, 'draft')).toEqual(draft)
+    expect(() => arg(ipcArgs.protocolDraft, { ...draft, version: 3 }, 'draft')).toThrow()
+    expect(() => arg(ipcArgs.protocolDraft, { ...draft, title: ' ' }, 'draft')).toThrow()
+    // Nested objects are strict too: nothing but the editable fields reaches the service.
+    expect(() => arg(ipcArgs.protocolDraft, { ...draft, inclusion: [{ id: null, text: 'x', at: 'now' }] }, 'draft')).toThrow()
+    expect(() => arg(ipcArgs.protocolDraft, { ...draft, years: { from: null, to: null, extra: 1 } }, 'draft')).toThrow()
+    expect(arg(ipcArgs.protocolVersion, 2, 'version')).toBe(2)
+    for (const bad of [0, 1.5, '2', 10_001]) expect(() => arg(ipcArgs.protocolVersion, bad, 'version')).toThrow()
+    const search = { query: 'log AND anonymization', fromYear: 2015, toYear: null, types: ['article', 'book-chapter'], cap: 500 }
+    expect(arg(ipcArgs.openalexSearch, search, 'search')).toEqual(search)
+    for (const bad of [{ ...search, cap: 6000 }, { ...search, types: ['conference'] }, { ...search, query: '' }, { ...search, mailto: 'x' }]) {
+      expect(() => arg(ipcArgs.openalexSearch, bad, 'search')).toThrow()
+    }
+    expect(arg(ipcArgs.importSource, { database: 'Scopus', query: '' }, 'source')).toEqual({ database: 'Scopus', query: '' })
+    expect(() => arg(ipcArgs.importSource, { database: 'Scopus', query: '', path: '/etc/passwd' }, 'source')).toThrow()
+    // The file to import is named by the token the main process's dialog handed out, never by a path.
+    expect(arg(ipcArgs.importToken, '123e4567-e89b-42d3-a456-426614174000', 'file')).toBe('123e4567-e89b-42d3-a456-426614174000')
+    for (const bad of ['/etc/passwd', 'C:\\x.bib', '', 3, null]) expect(() => arg(ipcArgs.importToken, bad, 'file')).toThrow()
+    const decide = { recordId: 'r0123456789ab', phase: 'title_abstract', decision: 'exclude', criterion: 'E2', suggestionId: null }
+    expect(arg(ipcArgs.decideRequest, decide, 'request')).toEqual(decide)
+    for (const bad of [{ ...decide, decision: 'none' }, { ...decide, criterion: 'X1' }, { ...decide, by: 'suggestion' }]) expect(() => arg(ipcArgs.decideRequest, bad, 'request')).toThrow()
+    expect(arg(ipcArgs.decisionId, 'd0123456789ab', 'decision')).toBe('d0123456789ab')
+    expect(() => arg(ipcArgs.decisionId, 'g0123456789ab', 'decision')).toThrow()
+    expect(arg(ipcArgs.searchId, 's0123456789ab', 'search')).toBe('s0123456789ab')
+    expect(() => arg(ipcArgs.searchId, 's01', 'search')).toThrow()
+    expect(arg(ipcArgs.queueQuery, { phase: 'full_text', filter: 'not_retrieved' }, 'query')).toEqual({ phase: 'full_text', filter: 'not_retrieved' })
+    expect(() => arg(ipcArgs.queueQuery, { phase: 'quality', filter: 'all' }, 'query')).toThrow()
+    expect(() => arg(ipcArgs.phase, 'quality', 'phase')).toThrow()
+    expect(arg(ipcArgs.snowballDirection, 'both', 'direction')).toBe('both')
+    expect(() => arg(ipcArgs.snowballDirection, 'sideways', 'direction')).toThrow()
+    expect(() => arg(ipcArgs.discardReason, '   ', 'reason')).toThrow()
+    expect(() => arg(ipcArgs.mappingPaperIds, [], 'ids')).toThrow()
+    expect(arg(ipcArgs.mappingPaperIds, ['he2017drain'], 'ids')).toEqual(['he2017drain'])
+    expect(arg(ipcArgs.mappingRecordIds, ['r0000000000a1'], 'ids')).toEqual(['r0000000000a1'])
+    for (const bad of [undefined, [], ['r1']]) expect(() => arg(ipcArgs.mappingRecordIds, bad, 'ids')).toThrow()
+    expect(arg(ipcArgs.mappingRecordScope, undefined, 'ids')).toBeUndefined()
+    expect(() => arg(ipcArgs.mappingRecordScope, ['r1'], 'ids')).toThrow()
+  })
+
+  it('takes a costly mapping request only with the confirmation of the user\'s click', () => {
+    expect(arg(ipcArgs.confirmed, true, 'confirmed')).toBe(true)
+    for (const bad of [false, 'true', 1, null, undefined]) expect(() => arg(ipcArgs.confirmed, bad, 'confirmed')).toThrow()
   })
 })

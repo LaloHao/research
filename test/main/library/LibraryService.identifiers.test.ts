@@ -8,6 +8,13 @@ import { makePdf } from '../../helpers/pdf'
 import { samplePaper } from '../../helpers/papers'
 
 describe('LibraryService.ingestIdentifier', () => {
+  it('adds a paper from metadata it already has, deduplicated like any ingest', async () => {
+    const { library } = await setupLibrary()
+    const meta = { kind: 'article' as const, title: 'Masking secrets in system logs before sharing them', authors: [{ family: 'Chen', given: 'Wei' }], year: 2023, identifiers: { doi: '10.5555/mask.2023' }, complete: false }
+    expect(await library.ingestMetadata(meta)).toEqual({ status: 'added', paperId: 'chen2023masking' })
+    expect(await library.ingestMetadata(meta)).toEqual({ status: 'duplicate', paperId: 'chen2023masking' })
+  })
+
   it('adds a paper by DOI, indexes it and exports library.bib', async () => {
     const { root, store, library } = await setupLibrary({ resolver: { '10.1109/icws.2017.13': DRAIN } })
     let changes = 0

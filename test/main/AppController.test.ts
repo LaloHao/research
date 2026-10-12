@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AppController } from '../../src/main/AppController'
+import { appLog, MemorySink, redact, setLogSecrets } from '../../src/main/log/appLog'
 import { toYaml } from '../../src/main/project/yamlFile'
 import type { ResearchEvent } from '../../src/shared/ipc'
 import type { ChatStreamUpdate } from '../../src/shared/chat'
@@ -34,6 +35,40 @@ describe('AppController', () => {
     const second = await controller(settingsFile)
     expect(second.projectInfo()?.root).toBe(root)
     await second.shutdown()
+  })
+
+  it('logs opening and closing a project', async () => {
+    const sink = new MemorySink()
+    appLog.setSink(sink)
+    try {
+      const root = await tmpDir()
+      const c = await controller(join(await tmpDir(), 'settings.json'))
+      await c.createProject(root, 'Thesis')
+      await c.closeProject()
+      await c.openProject(root)
+      await c.shutdown()
+      expect(sink.lines.map((l) => l.split(' ').slice(1, 3).join(' '))).toEqual([
+        'INFO project_create',
+        'INFO project_close',
+        'INFO project_open',
+        'INFO app_shutdown'
+      ])
+      expect(sink.lines[2]).toContain(JSON.stringify({ root }))
+    } finally {
+      appLog.setSink(null)
+    }
+  })
+
+  it('has the log hide the API key and contact email of the settings, as they change', async () => {
+    try {
+      const c = await controller(join(await tmpDir(), 'settings.json'))
+      await c.setSettings({ openalexApiKey: 'Zq9plainkey', contactEmail: 'ana@uni.mx' })
+      expect(redact('key Zq9plainkey of ana@uni.mx')).toBe('key [secret] of [secret]')
+      await c.setSettings({ openalexApiKey: 'NewKey12345' })
+      expect(redact('Zq9plainkey NewKey12345')).toBe('Zq9plainkey [secret]')
+    } finally {
+      setLogSecrets([])
+    }
   })
 
   it('forgets a last project that no longer exists', async () => {

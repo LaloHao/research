@@ -3,6 +3,7 @@ import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { authorsLabel } from '../../shared/format'
 import type { JobState } from '../../shared/jobs'
+import type { MappingRecordRow, MappingSummary, PrismaCounts, ScreeningCounts } from '../../shared/mapping'
 import type { PaperRow, TextStatus } from '../../shared/library'
 import type { Citations, CitationsStatus, ExternalWork, SimilarityReason } from '../../shared/relations'
 import type { Paper } from '../../shared/schemas'
@@ -29,7 +30,8 @@ export interface JobRow {
 // 5: citations, external works, vectors, neighbours and facet values (stage 3a). 6: when citing works were fetched.
 // 7: typed relations, an index of relations.yaml (stage 3b). 8: the trash (.trash/), whose papers keep their text and vector.
 // 9: unfilled facets per paper (stage 3c); migrated in place from 8.
-const SCHEMA_VERSION = 9
+// 10: systematic mappings (stage 5a): their rows, counts and PRISMA; migrated in place from 8 and 9.
+const SCHEMA_VERSION = 10
 const TOKENIZER = "tokenize='unicode61 remove_diacritics 2'"
 const DDL = `
 CREATE TABLE papers (
@@ -87,6 +89,16 @@ CREATE TABLE trash (id TEXT PRIMARY KEY, title TEXT NOT NULL, authors_label TEXT
   trashed_at TEXT, device TEXT, problem TEXT, text_hash TEXT, text_status TEXT, text_chars INTEGER NOT NULL DEFAULT 0);
 `
 
+/** The mapping tables: part of a fresh cache, and added in place to a schema 8 or 9 cache. */
+const MAPPING_DDL = `
+CREATE TABLE IF NOT EXISTS mappings (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', updated_at TEXT, problem TEXT,
+  records INTEGER NOT NULL DEFAULT 0, pending INTEGER NOT NULL DEFAULT 0, included INTEGER NOT NULL DEFAULT 0, prisma TEXT, counts TEXT);
+CREATE TABLE IF NOT EXISTS mapping_files (mapping_id TEXT NOT NULL, name TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (mapping_id, name));
+CREATE TABLE IF NOT EXISTS mapping_records (mapping_id TEXT NOT NULL, record_id TEXT NOT NULL, position INTEGER NOT NULL, data TEXT NOT NULL,
+  PRIMARY KEY (mapping_id, record_id));
+CREATE INDEX IF NOT EXISTS mapping_records_position ON mapping_records (mapping_id, position);
+`
+
 /**
  * Keys that count as trashed: a trash entry whose key no library paper uses. A restore or merge that leaves a remnant
  * in .trash/<key>/ keeps a trash row next to the library paper; that paper is not in the trash.
@@ -123,6 +135,18 @@ export interface TrashRow {
   trashed_at: string | null
   device: string | null
   problem: string | null
+}
+
+/** One mapping as the index keeps it: rebuilt from its files whenever one of their hashes changes. */
+export interface MappingIndexEntry {
+  id: string
+  title: string
+  updatedAt: string | null
+  /** File name → sha256 of the files indexed. */
+  hashes: Record<string, string>
+  rows: MappingRecordRow[]
+  prisma: PrismaCounts
+  counts: ScreeningCounts
 }
 
 interface TextState {
@@ -618,6 +642,86 @@ export class IndexCache {
     return this.db.prepare('SELECT id, doi, arxiv, title FROM papers WHERE problem IS NULL ORDER BY id').all() as unknown as DedupeEntry[]
   }
 
+  replaceMapping(e: MappingIndexEntry): void {
+    this.tx(() => {
+      this.clearMapping(e.id)
+      this.db
+        .prepare('INSERT INTO mappings (id, title, updated_at, problem, records, pending, included, prisma, counts) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)')
+        .run(
+          e.id,
+          e.title,
+          e.updatedAt,
+          e.rows.filter((r) => r.active).length,
+          e.counts.title_abstract.pending,
+          e.prisma.included,
+          JSON.stringify(e.prisma),
+          JSON.stringify(e.counts)
+        )
+      this.insertMappingHashes(e.id, e.hashes)
+      const row = this.db.prepare('INSERT INTO mapping_records (mapping_id, record_id, position, data) VALUES (?, ?, ?, ?)')
+      e.rows.forEach((r, i) => row.run(e.id, r.id, i, JSON.stringify(r)))
+    })
+  }
+
+  /** A mapping with a file that does not read: listed with its problem, without rows, until its files change. */
+  setMappingProblem(id: string, p: { title: string | null; hashes: Record<string, string>; problem: string }): void {
+    this.tx(() => {
+      this.clearMapping(id)
+      this.db.prepare('INSERT INTO mappings (id, title, problem) VALUES (?, ?, ?)').run(id, p.title ?? '', p.problem)
+      this.insertMappingHashes(id, p.hashes)
+    })
+  }
+
+  removeMapping(id: string): void {
+    this.tx(() => this.clearMapping(id))
+  }
+
+  mappingIds(): string[] {
+    return (this.db.prepare('SELECT id FROM mappings ORDER BY id').all() as { id: string }[]).map((r) => r.id)
+  }
+
+  /** The hashes of the files last indexed; null when the mapping is not indexed. */
+  mappingFileHashes(id: string): Record<string, string> | null {
+    if (!this.db.prepare('SELECT 1 FROM mappings WHERE id = ?').get(id)) return null
+    const rows = this.db.prepare('SELECT name, hash FROM mapping_files WHERE mapping_id = ? ORDER BY name').all(id) as { name: string; hash: string }[]
+    return Object.fromEntries(rows.map((r) => [r.name, r.hash]))
+  }
+
+  /** Most recently updated first; mappings without a date (a file that does not read) last. */
+  mappingSummaries(): MappingSummary[] {
+    const rows = this.db
+      .prepare('SELECT id, title, records, pending, included, problem, updated_at FROM mappings ORDER BY updated_at IS NULL, updated_at DESC, id DESC')
+      .all() as Record<string, unknown>[]
+    return rows.map((r) => ({
+      id: r.id as string,
+      title: (r.title as string | null) ?? '',
+      records: Number(r.records ?? 0),
+      pending: Number(r.pending ?? 0),
+      included: Number(r.included ?? 0),
+      problem: (r.problem as string | null) ?? null,
+      updatedAt: (r.updated_at as string | null) ?? null
+    }))
+  }
+
+  mappingState(id: string): { prisma: PrismaCounts; counts: ScreeningCounts } | null {
+    const row = this.db.prepare('SELECT prisma, counts FROM mappings WHERE id = ? AND problem IS NULL').get(id) as
+      | { prisma: string | null; counts: string | null }
+      | undefined
+    if (!row?.prisma || !row.counts) return null
+    return { prisma: JSON.parse(row.prisma) as PrismaCounts, counts: JSON.parse(row.counts) as ScreeningCounts }
+  }
+
+  /** In record order. */
+  mappingRows(id: string): MappingRecordRow[] {
+    const rows = this.db.prepare('SELECT data FROM mapping_records WHERE mapping_id = ? ORDER BY position').all(id) as { data: string }[]
+    return rows.map((r) => JSON.parse(r.data) as MappingRecordRow)
+  }
+
+  mappingRow(id: string, recordId: string): MappingRecordRow | null {
+    const row = this.db.prepare('SELECT data FROM mapping_records WHERE mapping_id = ? AND record_id = ?').get(id, recordId) as { data: string } | undefined
+    return row ? (JSON.parse(row.data) as MappingRecordRow) : null
+  }
+
   insertJob(spec: string, now: string): number {
     const result = this.db.prepare("INSERT INTO jobs (spec, state, created_at, updated_at) VALUES (?, 'queued', ?, ?)").run(spec, now, now)
     return Number(result.lastInsertRowid)
@@ -686,6 +790,17 @@ export class IndexCache {
     if (!keepText) this.dropText(id)
   }
 
+  private clearMapping(id: string): void {
+    this.db.prepare('DELETE FROM mappings WHERE id = ?').run(id)
+    this.db.prepare('DELETE FROM mapping_files WHERE mapping_id = ?').run(id)
+    this.db.prepare('DELETE FROM mapping_records WHERE mapping_id = ?').run(id)
+  }
+
+  private insertMappingHashes(id: string, hashes: Record<string, string>): void {
+    const file = this.db.prepare('INSERT INTO mapping_files (mapping_id, name, hash) VALUES (?, ?, ?)')
+    for (const [name, hash] of Object.entries(hashes)) file.run(id, name, hash)
+  }
+
   private dropText(id: string): void {
     this.db.prepare('DELETE FROM chunks_fts WHERE paper_id = ?').run(id)
     this.db.prepare('DELETE FROM incoming_citations WHERE cited_paper_id = ?').run(id)
@@ -724,14 +839,18 @@ function connect(file: string): DatabaseSync {
   try {
     db.exec('PRAGMA journal_mode = WAL')
     const { user_version } = db.prepare('PRAGMA user_version').get() as { user_version: number }
-    if (user_version === 8) {
-      // 9 only adds a column: an 8 cache keeps its text, vectors and neighbours, and the next reindex fills the count.
-      // One transaction, so a crash never leaves the column added under version 8; the column check also tolerates a
-      // cache an interrupted earlier upgrade left that way.
+    if (user_version === 8 || user_version === 9) {
+      // 9 added a column (the next reindex fills the count), 10 adds the mapping tables: an older cache keeps its text,
+      // vectors and neighbours. One transaction with the version bump inside, so a crash never leaves a half-upgraded
+      // cache under the old version; the column check and IF NOT EXISTS also tolerate a cache an interrupted earlier
+      // upgrade left partly done.
       db.exec('BEGIN')
       try {
-        const columns = db.prepare('PRAGMA table_info(papers)').all() as { name: string }[]
-        if (!columns.some((c) => c.name === 'unfilled_facets')) db.exec('ALTER TABLE papers ADD COLUMN unfilled_facets INTEGER NOT NULL DEFAULT 0')
+        if (user_version === 8) {
+          const columns = db.prepare('PRAGMA table_info(papers)').all() as { name: string }[]
+          if (!columns.some((c) => c.name === 'unfilled_facets')) db.exec('ALTER TABLE papers ADD COLUMN unfilled_facets INTEGER NOT NULL DEFAULT 0')
+        }
+        db.exec(MAPPING_DDL)
         db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
         db.exec('COMMIT')
       } catch (error) {
@@ -741,6 +860,7 @@ function connect(file: string): DatabaseSync {
     } else if (user_version !== SCHEMA_VERSION) {
       if (user_version !== 0) throw new Error('Stale cache schema')
       db.exec(DDL)
+      db.exec(MAPPING_DDL)
       db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
     }
     return db

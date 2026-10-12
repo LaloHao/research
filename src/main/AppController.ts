@@ -7,6 +7,7 @@ import type { PdfPolicy } from '../shared/schemas'
 import { DEFAULT_SETTINGS, type AppSettings } from '../shared/settings'
 import { loadSettings, saveSettings } from './appSettings'
 import { ProjectSession, type SessionOptions } from './library/ProjectSession'
+import { appLog, setLogSecrets } from './log/appLog'
 import { ProjectError } from './project/errors'
 
 /** App-level state: settings plus the one open project. Electron-free so it can be tested. */
@@ -25,6 +26,7 @@ export class AppController {
 
   async init(): Promise<void> {
     this.settings = await loadSettings(this.settingsFile)
+    this.registerSecrets()
     // Idempotent: persists a freshly generated deviceId when the settings file didn't have one yet.
     await saveSettings(this.settingsFile, this.settings)
     const last = this.settings.lastProjectPath
@@ -35,6 +37,7 @@ export class AppController {
     }
     await this.openProject(last).catch(async (error) => {
       console.error('could not reopen project', last, error)
+      appLog.warn('project_reopen_failed', { root: last })
       await this.setSettings({ lastProjectPath: null })
     })
   }
@@ -46,6 +49,7 @@ export class AppController {
   async setSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
     const before = this.settings
     this.settings = { ...this.settings, ...patch }
+    this.registerSecrets()
     await saveSettings(this.settingsFile, this.settings)
     this.session?.http.setContactEmail(this.settings.contactEmail)
     this.session?.http.setOpenAlexApiKey(this.settings.openalexApiKey)
@@ -63,13 +67,20 @@ export class AppController {
   async createProject(root: string, name: string): Promise<ProjectInfo> {
     await this.closeProject()
     this.attach(await ProjectSession.create(root, name, this.sessionOptions()))
+    appLog.info('project_create', { root })
     await this.setSettings({ lastProjectPath: root })
     return this.projectInfo()!
   }
 
   async openProject(root: string): Promise<ProjectInfo> {
     await this.closeProject()
-    this.attach(await ProjectSession.open(root, this.sessionOptions()))
+    try {
+      this.attach(await ProjectSession.open(root, this.sessionOptions()))
+    } catch (error) {
+      appLog.warn('project_open_failed', { root, error })
+      throw error
+    }
+    appLog.info('project_open', { root })
     await this.setSettings({ lastProjectPath: root })
     return this.projectInfo()!
   }
@@ -78,6 +89,7 @@ export class AppController {
     if (!this.session) return
     const session = this.session
     this.session = null
+    appLog.info('project_close', { root: session.store.root })
     await session.close()
     this.emit('project-changed')
   }
@@ -128,8 +140,14 @@ export class AppController {
   async shutdown(): Promise<void> {
     const session = this.session
     this.session = null
+    appLog.info('app_shutdown', { project: session?.store.root ?? null })
     await session?.close()
     await this.sessionDefaults.embeddings?.dispose()
+  }
+
+  /** The app log replaces the secrets the settings hold wherever they appear, whatever their shape. */
+  private registerSecrets(): void {
+    setLogSecrets([this.settings.openalexApiKey, this.settings.contactEmail])
   }
 
   private sessionOptions(): SessionOptions {
@@ -154,6 +172,7 @@ export class AppController {
     session.on('sync', () => this.emit('sync-changed'))
     session.on('facets', () => this.emit('facets-changed'))
     session.on('chats', () => this.emit('chats-changed'))
+    session.on('mappings', () => this.emit('mappings-changed'))
     session.onChatStream((u) => this.emitChatStream(u))
     this.emit('project-changed')
     // The first automatic sync may already be running (it starts as the session opens, before these listeners).

@@ -36,6 +36,13 @@ describe('OpenAlexCitations', () => {
     expect(await openalex.findByTitle('Drain', 2017)).toBeNull()
   })
 
+  it('searches a title without the wildcard characters OpenAlex refuses in a stemmed search', async () => {
+    const { openalex, fetch } = client([{ url: /\/works\?search=/, body: fx('drain.search.openalex.json') }])
+    await openalex.findByTitle('Is logging useful? A *study*', null)
+    const sent = new URL(fetch.calls[0].url).searchParams.get('search')
+    expect(sent).toBe('Is logging useful A study')
+  })
+
   it('pages through the works citing a paper with the cursor', async () => {
     const { openalex } = client([
       { url: /filter=cites%3AW3049160591.*cursor=\*/, body: fx('loghub.cites-1.openalex.json') },

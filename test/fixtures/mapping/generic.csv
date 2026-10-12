@@ -1,0 +1,3 @@
+title,authors,year,venue,doi,abstract
+"Loghub: A Large Collection of System Log Datasets towards Automated Log Analytics","Shilin He; Jieming Zhu; Pinjia He; Michael R. Lyu",2020,arXiv,10.48550/arXiv.2008.06448,"A collection of system log datasets gathered for research on log analytics."
+"Drain: an online log parsing approach with fixed depth tree.","He, Pinjia; Zhu, Jieming",2017,ICWS,,

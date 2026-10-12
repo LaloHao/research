@@ -48,7 +48,7 @@ interface OpenAlexFullWork extends OpenAlexWork {
 
 const OPENALEX_FIELDS = 'id,doi,title,publication_year,type,authorships,primary_location,abstract_inverted_index,best_oa_location'
 
-const KIND_BY_OPENALEX: Record<string, PaperKind> = {
+export const KIND_BY_OPENALEX: Record<string, PaperKind> = {
   article: 'article',
   preprint: 'preprint',
   book: 'book',
@@ -166,8 +166,19 @@ function applyOpenAlex(meta: ResolvedMetadata, work: OpenAlexWork): void {
   if (pdf) meta.oa_pdf_url = pdf
 }
 
+/** Highest word position read from an abstract index: anything past it is malformed, not a real abstract. */
+const MAX_ABSTRACT_POSITION = 50_000
+
+/** OpenAlex's `abstract_inverted_index` back to text; malformed words or positions are skipped, never thrown on. */
 export function invertedIndexToText(index: Record<string, number[]>): string {
-  const words: string[] = []
-  for (const [word, positions] of Object.entries(index)) for (const p of positions) words[p] = word
-  return words.filter(Boolean).join(' ')
+  if (!index || typeof index !== 'object' || Array.isArray(index)) return ''
+  const words = new Map<number, string>()
+  for (const [word, positions] of Object.entries(index as Record<string, unknown>)) {
+    if (!word || !Array.isArray(positions)) continue
+    for (const p of positions) if (Number.isSafeInteger(p) && p >= 0 && p <= MAX_ABSTRACT_POSITION) words.set(p as number, word)
+  }
+  return [...words.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map((e) => e[1])
+    .join(' ')
 }

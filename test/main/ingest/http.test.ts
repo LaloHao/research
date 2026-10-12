@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { HttpClient, HttpError, type FetchFn } from '../../../src/main/ingest/http'
+import { toUserFacing } from '../../../src/main/library/UserFacingError'
+import { appLog, MemorySink } from '../../../src/main/log/appLog'
 import { routeFetch } from '../../helpers/fakeFetch'
 
 function sleeper(): { delays: number[]; sleep: (ms: number) => Promise<void> } {
@@ -99,6 +101,87 @@ describe('HttpClient', () => {
     const http = new HttpClient({ fetch: slowBody, timeoutMs: 50, downloadTimeoutMs: 1000, retries: 0 })
     expect(new TextDecoder().decode(await http.bytes('https://x.test/a.pdf', 'application/pdf'))).toBe('%PDF-1.7')
     await expect(http.text('https://x.test/a', 'text/plain')).rejects.toMatchObject({ name: 'TimeoutError' })
+  })
+
+  it('keeps the message of a JSON error answer, without retrying a 400', async () => {
+    const body = JSON.stringify({ error: 'Invalid query parameters error.', message: 'Wildcards (* or ?) require exact (no-stem) search.' })
+    const fetch = sequence(new Response(body, { status: 400, headers: { 'content-type': 'application/json' } }))
+    const http = new HttpClient({ fetch, sleep: sleeper().sleep, contactEmail: 'me@uni.test', openalexApiKey: 'secret' })
+    const error = (await http.json(http.politeUrl('https://api.openalex.org/works?search=a*')).catch((e: unknown) => e)) as HttpError
+    expect(error).toBeInstanceOf(HttpError)
+    expect(error.status).toBe(400)
+    expect(error.detail).toBe('Wildcards (* or ?) require exact (no-stem) search.')
+    expect(fetch.count()).toBe(1)
+    expect(error.url).not.toContain('secret')
+    expect(error.url).not.toContain('uni.test')
+  })
+
+  it('scrubs the app own API key and email, and credential shapes, from the detail before it is shown or logged', async () => {
+    const sink = new MemorySink()
+    appLog.setSink(sink)
+    try {
+      const message = 'API key Zq9plainkey for ana%40uni.mx (ana@uni.mx) rejected; Invalid API key: other123; {"accessToken":"t1"} sk-proj-AbCdEf0123456789xyz #access_token=f1 Password = "hunter 2"'
+      const fetch = sequence(new Response(JSON.stringify({ message }), { status: 400 }))
+      const http = new HttpClient({ fetch, sleep: sleeper().sleep, contactEmail: 'ana@uni.mx', openalexApiKey: 'Zq9plainkey' })
+      const error = (await http.json(http.politeUrl('https://api.openalex.org/works?search=x')).catch((e: unknown) => e)) as HttpError
+      const shown = toUserFacing(error).message
+      const logged = sink.lines.join('')
+      for (const text of [error.detail ?? '', shown, logged]) {
+        for (const leak of ['Zq9plainkey', 'uni.mx', 'other123', 't1"', 'AbCdEf0123456789', 'f1', 'hunter']) expect(text).not.toContain(leak)
+      }
+      expect(shown.startsWith('search_query_invalid: API key [secret] for [secret] ([secret]) rejected; Invalid API key: redacted;')).toBe(true)
+    } finally {
+      appLog.setSink(null)
+    }
+  })
+
+  it('reads no more than 64 KB of an error body', async () => {
+    const big = JSON.stringify({ message: 'm', pad: 'x'.repeat(70 * 1024) })
+    const http = new HttpClient({ fetch: sequence(new Response(big, { status: 400 })), sleep: sleeper().sleep })
+    expect(((await http.text('https://x.test', '*/*').catch((e: unknown) => e)) as HttpError).detail).toBeNull()
+    const declared = new HttpClient({ fetch: sequence(new Response('{"message":"m"}', { status: 400, headers: { 'content-length': String(1024 * 1024) } })), sleep: sleeper().sleep })
+    expect(((await declared.text('https://x.test', '*/*').catch((e: unknown) => e)) as HttpError).detail).toBeNull()
+  })
+
+  it('does not log an error answer whose request was cancelled meanwhile', async () => {
+    const sink = new MemorySink()
+    appLog.setSink(sink)
+    try {
+      const controller = new AbortController()
+      const fetch: FetchFn = async () => {
+        controller.abort()
+        return new Response('{"message":"m"}', { status: 400 })
+      }
+      await new HttpClient({ fetch, sleep: sleeper().sleep }).text('https://x.test', '*/*', controller.signal).catch(() => undefined)
+      expect(sink.lines).toEqual([])
+    } finally {
+      appLog.setSink(null)
+    }
+  })
+
+  it('keeps no detail from an answer that is not JSON with a message', async () => {
+    const http = new HttpClient({ fetch: sequence(new Response('<html>Forbidden</html>', { status: 403 })), sleep: sleeper().sleep })
+    expect(((await http.text('https://x.test', '*/*').catch((e: unknown) => e)) as HttpError).detail).toBeNull()
+    const long = new HttpClient({ fetch: sequence(new Response(JSON.stringify({ message: 'x'.repeat(5000) }), { status: 422 })), sleep: sleeper().sleep })
+    expect(((await long.text('https://x.test', '*/*').catch((e: unknown) => e)) as HttpError).detail).toHaveLength(500)
+  })
+
+  it('logs a failure with host, path, status and the server message, never the key, the email or the query', async () => {
+    const sink = new MemorySink()
+    appLog.setSink(sink)
+    try {
+      const body = JSON.stringify({ message: 'Wildcards (* or ?) require exact (no-stem) search.' })
+      const http = new HttpClient({ fetch: sequence(new Response(body, { status: 400 })), sleep: sleeper().sleep, contactEmail: 'me@uni.test', openalexApiKey: 'secret' })
+      await http.json(http.politeUrl('https://api.openalex.org/works?filter=title_and_abstract.search.exact:private')).catch(() => undefined)
+      const offline = new HttpClient({ fetch: sequence(Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } })), retries: 1, sleep: sleeper().sleep })
+      await offline.text('https://doi.org/10.1/x?mailto=me@uni.test', '*/*').catch(() => undefined)
+      const log = sink.lines.join('')
+      expect(log).toContain('WARN http_failed {"method":"GET","host":"api.openalex.org","path":"/works","status":400,"detail":"Wildcards (* or ?) require exact (no-stem) search.","attempts":1}')
+      expect(log).toContain('WARN http_network_failed {"method":"GET","host":"doi.org","path":"/10.1/x","error":"TypeError","message":"fetch failed","code":"ENOTFOUND","attempts":2}')
+      expect(log).not.toMatch(/secret|uni\.test|private/)
+    } finally {
+      appLog.setSink(null)
+    }
   })
 
   it('exposes HttpError with status and url', () => {

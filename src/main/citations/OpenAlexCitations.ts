@@ -51,7 +51,10 @@ export class OpenAlexCitations {
 
   /** The id of the one result whose normalized title equals `title` (and year, when known); null if none or several. */
   async findByTitle(title: string, year: number | null, signal?: AbortSignal): Promise<string | null> {
-    const params: Record<string, string> = { search: title, select: 'id,title,publication_year', 'per-page': '10' }
+    // `search` is stemmed: OpenAlex answers 400 to a `?` or `*` in it, which a title (a question) may well have.
+    const search = title.replace(/[?*]/g, ' ').replace(/\s+/g, ' ').trim()
+    if (!search) return null
+    const params: Record<string, string> = { search, select: 'id,title,publication_year', 'per-page': '10' }
     if (year) params.filter = `publication_year:${year}`
     const list = await this.list('/works', params, signal)
     const wanted = normalizeTitle(title)

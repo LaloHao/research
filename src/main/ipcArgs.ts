@@ -2,6 +2,26 @@ import { isAbsolute, win32 } from 'node:path'
 import { z } from 'zod'
 import { ACTION_ID, CHAT_ID, MAX_CHAT_MESSAGE, MAX_CHAT_TITLE, MAX_EXCERPT, PAPER_KEY } from '../shared/chat'
 import { SUGGESTION_ID } from '../shared/facetSuggestions'
+import {
+  CRITERION_ID,
+  DECISION_ID,
+  MAPPING_ID,
+  MAX_QUERY,
+  MAX_REASON,
+  OPENALEX_TYPES,
+  PHASES,
+  ProtocolDraftSchema,
+  QUEUE_FILTERS,
+  RECORD_ID,
+  SCREENING_SUGGESTION_ID,
+  SEARCH_CAP,
+  SEARCH_ID,
+  SNOWBALL_DIRECTIONS,
+  USER_DECISIONS,
+  YEAR_MAX,
+  YEAR_MIN
+} from '../shared/mapping'
+import { RENDERER_ERROR_KINDS } from '../shared/ipc'
 import { CANDIDATE_DIRECTIONS, OPENALEX_ID } from '../shared/relations'
 import { PDF_POLICIES } from '../shared/schemas'
 import { AUTO_SYNC_MINUTES, CLOSE_DECISIONS, CONFLICT_CHOICES, CONFLICT_ID, CONFLICT_VERSION, isRemoteUrl } from '../shared/sync'
@@ -17,6 +37,19 @@ const chatPaperSchema = z.string().max(200).regex(PAPER_KEY)
 /** An approval or an action of a conversation: six lowercase hex characters. */
 const actionIdSchema = z.string().length(6).regex(ACTION_ID)
 const llmModelSchema = z.enum(LLM_MODELS)
+const recordIdSchema = z.string().regex(RECORD_ID)
+/** The most records a confirmed plan sends back (a mapping of many searches at their cap). */
+const MAX_PLAN_RECORDS = 100_000
+const phaseSchema = z.enum(PHASES)
+const yearSchema = z.number().int().min(YEAR_MIN).max(YEAR_MAX).nullable()
+/** The protocol draft with every nested object strict as well: only the editable fields reach the service. */
+const draftItemSchema = ProtocolDraftSchema.shape.inclusion.element.strict()
+const protocolDraftSchema = ProtocolDraftSchema.extend({
+  research_questions: z.array(draftItemSchema).max(50),
+  inclusion: z.array(draftItemSchema).max(50),
+  exclusion: z.array(draftItemSchema).max(50),
+  years: ProtocolDraftSchema.shape.years.strict()
+}).strict()
 
 /** Validators for arguments arriving from the renderer: anything unexpected is rejected before it reaches the app. */
 export const ipcArgs = {
@@ -147,7 +180,53 @@ export const ipcArgs = {
   ),
   /** The remote the user typed for the first sync; null when only initializing the repository. */
   remoteUrl: z.string().trim().refine(isRemoteUrl).nullable(),
-  closeDecision: z.enum(CLOSE_DECISIONS)
+  closeDecision: z.enum(CLOSE_DECISIONS),
+  /** An uncaught error of the window; long texts are cut, not refused, so the log still gets them. */
+  rendererError: z.strictObject({
+    kind: z.enum(RENDERER_ERROR_KINDS),
+    message: z.string().max(100_000).transform((s) => s.slice(0, 2000)),
+    stack: z.string().max(100_000).transform((s) => s.slice(0, 8000)).nullable(),
+    source: z.string().max(10_000).transform((s) => s.slice(0, 500)).nullable()
+  }),
+  mappingId: z.string().regex(MAPPING_ID),
+  mappingTitle: z.string().trim().min(1).max(300),
+  recordId: recordIdSchema,
+  searchId: z.string().regex(SEARCH_ID),
+  decisionId: z.string().regex(DECISION_ID),
+  phase: phaseSchema,
+  /** «Guardar protocolo»: the editable fields only; ids are checked again by the service. */
+  protocolDraft: protocolDraftSchema,
+  /** The protocol version the draft was edited from. */
+  protocolVersion: z.number().int().positive().max(10_000),
+  openalexSearch: z.strictObject({
+    query: z.string().trim().min(1).max(MAX_QUERY),
+    fromYear: yearSchema,
+    toYear: yearSchema,
+    types: z.array(z.enum(OPENALEX_TYPES)).max(OPENALEX_TYPES.length),
+    cap: z.number().int().min(1).max(SEARCH_CAP.max)
+  }),
+  /** The database the export came from and the string used there; the file is named apart, by its dialog token. */
+  importSource: z.strictObject({ database: z.string().trim().min(1).max(200), query: z.string().max(MAX_QUERY) }),
+  /** The export file to import: the token the main process's dialog handed out for it, never a path from the window. */
+  importToken: z.uuid(),
+  mappingPaperIds: z.array(paperIdSchema).min(1).max(5000),
+  snowballDirection: z.enum(SNOWBALL_DIRECTIONS),
+  discardReason: z.string().trim().min(1).max(MAX_REASON),
+  queueQuery: z.strictObject({ phase: phaseSchema, filter: z.enum(QUEUE_FILTERS) }),
+  /** A user's decision: never `none` (only «Deshacer» writes it) and never who decided (the service sets it). */
+  decideRequest: z.strictObject({
+    recordId: recordIdSchema,
+    phase: phaseSchema,
+    decision: z.enum(USER_DECISIONS),
+    criterion: z.string().regex(CRITERION_ID).nullable(),
+    suggestionId: z.string().regex(SCREENING_SUGGESTION_ID).nullable()
+  }),
+  /** The records of a plan the user confirmed («Sugerir», «Agregar»): only these, and only those still eligible, run. */
+  mappingRecordIds: z.array(recordIdSchema).min(1).max(MAX_PLAN_RECORDS),
+  /** «Agregar a la biblioteca» for one record (its ids) or all (undefined). */
+  mappingRecordScope: z.array(recordIdSchema).min(1).max(MAX_PLAN_RECORDS).optional(),
+  /** A request that costs money or the OpenAlex budget: only `true`, what the window sends on the user's confirming click. */
+  confirmed: z.literal(true)
 }
 
 export class InvalidIpcArgument extends Error {

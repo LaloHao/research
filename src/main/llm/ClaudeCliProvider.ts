@@ -120,6 +120,7 @@ export interface CliOutput {
   result?: string
   structured_output?: unknown
   total_cost_usd?: number
+  num_turns?: number
   modelUsage?: Record<string, unknown>
 }
 
@@ -151,6 +152,12 @@ function checkOutcome(out: CliOutput, stderr: string, exitCode: number | null): 
   return cost
 }
 
+/** The run's turns as the CLI reported them, for the log. */
+function turnsOf(out: CliOutput): { turns?: number } {
+  const n = out.num_turns
+  return typeof n === 'number' && Number.isInteger(n) && n >= 0 ? { turns: n } : {}
+}
+
 export function parseCliOutput(stdout: string, stderr: string, exitCode: number | null, requestedModel?: string): CompleteResult {
   let out: CliOutput
   try {
@@ -160,7 +167,7 @@ export function parseCliOutput(stdout: string, stderr: string, exitCode: number 
   }
   const cost = checkOutcome(out, stderr, exitCode)
   if (out.structured_output === undefined || out.structured_output === null) throw new LlmError('llm_invalid_output', cost)
-  return { value: out.structured_output, costUsd: cost, model: mainModel(out.modelUsage, requestedModel) }
+  return { value: out.structured_output, costUsd: cost, model: mainModel(out.modelUsage, requestedModel), ...turnsOf(out) }
 }
 
 export type StreamItem =
@@ -308,7 +315,7 @@ export class ClaudeCliProvider implements LlmProvider {
             throw state.started ? new LlmError(kind, req.maxUsd, { estimated: true }) : new LlmError(kind, 0)
           }
           const cost = checkOutcome(out, stderr, code)
-          return { text: typeof out.result === 'string' ? out.result : '', costUsd: cost, model: mainModel(out.modelUsage, req.model) }
+          return { text: typeof out.result === 'string' ? out.result : '', costUsd: cost, model: mainModel(out.modelUsage, req.model), ...turnsOf(out) }
         },
         onStdout
       )

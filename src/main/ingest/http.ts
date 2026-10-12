@@ -1,3 +1,5 @@
+import { appLog, redact, scrubSecrets } from '../log/appLog'
+
 export type FetchFn = (url: string, init?: RequestInit) => Promise<Response>
 
 export class HttpError extends Error {
@@ -5,7 +7,9 @@ export class HttpError extends Error {
     readonly status: number,
     readonly url: string,
     /** Response headers, e.g. OpenAlex's x-ratelimit-* and Retry-After. */
-    readonly headers: Headers | null = null
+    readonly headers: Headers | null = null,
+    /** The server's own explanation (the `message` of a JSON error answer, e.g. OpenAlex's), at most 500 characters. */
+    readonly detail: string | null = null
   ) {
     super(`HTTP ${status} for ${url}`)
     this.name = 'HttpError'
@@ -72,15 +76,89 @@ export function isOpenAlexDailyLimit(error: HttpError): boolean {
   return !(Number.isFinite(retryAfter) && retryAfter > 0 && retryAfter * 1000 <= MAX_RETRY_AFTER_MS)
 }
 
-/** Errors are logged and shown: they must never carry the API key. */
+/** Errors are logged and shown: they must never carry the API key or the contact email. */
 function redactKey(url: string): string {
   try {
     const u = new URL(url)
-    if (!u.searchParams.has('api_key')) return url
-    u.searchParams.set('api_key', 'redacted')
+    const secret = ['api_key', 'mailto'].filter((name) => u.searchParams.has(name))
+    if (secret.length === 0) return url
+    for (const name of secret) u.searchParams.set(name, 'redacted')
     return u.toString()
   } catch {
     return url
+  }
+}
+
+export const MAX_ERROR_DETAIL = 500
+const MAX_ERROR_BODY = 64 * 1024
+
+/** Reads at most `max` bytes of a body; null (and the rest cancelled) when it is longer. */
+async function readBounded(res: Response, max: number): Promise<string | null> {
+  const declared = Number(res.headers.get('content-length'))
+  if (Number.isFinite(declared) && declared > max) {
+    await res.body?.cancel().catch(() => undefined)
+    return null
+  }
+  if (!res.body) return ''
+  const reader = res.body.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    size += value.byteLength
+    if (size > max) {
+      await reader.cancel().catch(() => undefined)
+      return null
+    }
+    chunks.push(value)
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks))
+}
+
+/**
+ * The `message` of a JSON error answer (OpenAlex, Crossref): what the server says was wrong; null for anything else.
+ * It is shown and logged, so the app's own secrets (`secrets`, e.g. the API key and contact email a server may echo)
+ * and anything shaped like a credential are removed first.
+ */
+async function errorDetail(res: Response, secrets: readonly string[]): Promise<string | null> {
+  try {
+    const body = await readBounded(res, MAX_ERROR_BODY)
+    if (body === null) return null
+    const parsed = JSON.parse(body) as unknown
+    const message = typeof parsed === 'object' && parsed !== null ? (parsed as { message?: unknown }).message : undefined
+    if (typeof message !== 'string') return null
+    const text = redact(scrubSecrets(message, secrets)).replace(/\s+/g, ' ').trim()
+    return text ? text.slice(0, MAX_ERROR_DETAIL) : null
+  } catch {
+    return null
+  }
+}
+
+/** The app log gets the method, host, path, status and the server's message; never the query (keys, email) or a body. */
+function logFailure(url: string, error: unknown, attempts: number): void {
+  let host = ''
+  let path = ''
+  try {
+    const u = new URL(url)
+    host = u.hostname
+    path = u.pathname
+  } catch {
+    // An unreadable URL is logged without host and path.
+  }
+  if (error instanceof HttpError) {
+    appLog.warn('http_failed', { method: 'GET', host, path, status: error.status, detail: error.detail, attempts })
+  } else {
+    const e = error as { name?: unknown; message?: unknown; cause?: { code?: unknown } } | null
+    appLog.warn('http_network_failed', {
+      method: 'GET',
+      host,
+      path,
+      error: typeof e?.name === 'string' ? e.name : 'Error',
+      message: typeof e?.message === 'string' ? e.message : String(error),
+      code: typeof e?.cause?.code === 'string' ? e.cause.code : null,
+      attempts
+    })
   }
 }
 
@@ -91,6 +169,11 @@ export class HttpClient {
   constructor(private readonly opts: HttpClientOptions = {}) {
     this.contactEmail = opts.contactEmail?.trim() ?? ''
     this.openalexApiKey = opts.openalexApiKey?.trim() ?? ''
+  }
+
+  /** The secrets this client holds, in the forms a server could echo them (as typed and URL-encoded). */
+  private secrets(): string[] {
+    return [this.openalexApiKey, this.contactEmail].filter(Boolean).flatMap((v) => [v, encodeURIComponent(v)])
   }
 
   setContactEmail(email: string): void {
@@ -152,16 +235,28 @@ export class HttpClient {
           expire(bodyTimeoutMs ?? headerTimeoutMs)
           return res
         }
+        if (!RETRYABLE.has(res.status)) {
+          // The body is only read for the answer that is given up on: it says why (e.g. OpenAlex's invalid query).
+          expire(headerTimeoutMs)
+          throw new HttpError(res.status, redactKey(url), res.headers, await errorDetail(res, this.secrets()))
+        }
         lastError = new HttpError(res.status, redactKey(url), res.headers)
-        if (!RETRYABLE.has(res.status) || openalexBudgetSpent(lastError as HttpError)) throw lastError
+        if (openalexBudgetSpent(lastError as HttpError)) throw lastError
         const retryAfter = Number(res.headers.get('retry-after'))
         if (Number.isFinite(retryAfter) && retryAfter > 0) retryAfterMs = Math.min(retryAfter * 1000, MAX_RETRY_AFTER_MS)
       } catch (error) {
-        if (error instanceof HttpError && (!RETRYABLE.has(error.status) || openalexBudgetSpent(error))) throw error
+        if (error instanceof HttpError && (!RETRYABLE.has(error.status) || openalexBudgetSpent(error))) {
+          // A cancellation while the error body was read is not a failure worth logging.
+          if (!signal?.aborted) logFailure(url, error, attempt + 1)
+          throw error
+        }
         if (signal?.aborted) throw error
         lastError = error
       }
-      if (attempt >= retries) throw lastError
+      if (attempt >= retries) {
+        logFailure(url, lastError, attempt + 1)
+        throw lastError
+      }
       await sleep(retryAfterMs ?? baseDelay * 2 ** attempt)
     }
   }

@@ -121,7 +121,7 @@ describe('LlmConfigSchema', () => {
       auto_suggest_facets_after: 10,
       budget: { per_facet_suggestion_usd: 2 }
     })
-    expect(COST_OPERATIONS).toEqual(['summarize', 'suggest_relations', 'suggest_facets', 'fill_facets', 'chat'])
+    expect(COST_OPERATIONS).toEqual(['summarize', 'suggest_relations', 'suggest_facets', 'fill_facets', 'chat', 'screening'])
   })
 
   it('reads the per-message chat cap, falling back on its own', () => {

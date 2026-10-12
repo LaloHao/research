@@ -1,0 +1,16 @@
+{
+  "meta": { "count": 3, "db_response_time_ms": 18, "page": null, "per_page": 100, "next_cursor": null, "groups_count": null },
+  "results": [
+    {
+      "id": "https://openalex.org/W3000000002",
+      "doi": "https://doi.org/10.5555/mask.2023",
+      "title": "Masking secrets in system logs before sharing them",
+      "display_name": "Masking secrets in system logs before sharing them",
+      "publication_year": 2023,
+      "type": "review",
+      "authorships": [{ "author": { "display_name": "Wei Chen" } }],
+      "primary_location": { "source": { "display_name": "Journal of Systems and Software" } },
+      "abstract_inverted_index": { "We": [0], "mask": [1], "secrets": [2], "in": [3], "logs.": [4] }
+    }
+  ]
+}

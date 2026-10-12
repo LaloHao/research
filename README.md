@@ -2,7 +2,7 @@
 
 *[Versión en español](./README.es.md)*
 
-A personal desktop app for thesis research: a paper library with BibTeX, full-text search, Claude-generated summaries, citations from OpenAlex, similar papers, a map of the field, typed relations and facet suggestions by Claude, chat with Claude over the library with verified citations and actions from the chat behind the app's confirmation rules, a versioned trash to remove and restore papers, git sync between machines from the app, and, in a later stage, systematic mapping.
+A personal desktop app for thesis research: a paper library with BibTeX, full-text search, Claude-generated summaries, citations from OpenAlex, similar papers, a map of the field, typed relations and facet suggestions by Claude, chat with Claude over the library with verified citations and actions from the chat behind the app's confirmation rules, a versioned trash to remove and restore papers, git sync between machines from the app, systematic mappings with a protocol, a search log, screening with Claude's suggestions and a PRISMA diagram, and, in a later stage, a second reviewer, quality assessment and mapping reports.
 
 ## Requirements
 
