@@ -67,6 +67,9 @@ export const USER_ERROR_CODES = [
   'trash_problem',
   'folder_busy',
   'not_in_trash',
+  'suggestion_outdated',
+  'facet_suggestions_conflict',
+  'summary_outdated',
   'unknown'
 ] as const
 export type UserErrorCode = (typeof USER_ERROR_CODES)[number]
@@ -89,7 +92,10 @@ export const JOB_OUTCOMES = [
   'embedded',
   'model_downloaded',
   'relations_suggested',
-  'relations_no_candidates'
+  'relations_no_candidates',
+  'facets_suggested',
+  'facets_filled',
+  'facets_nothing_to_fill'
 ] as const
 
 export interface PaperDetail {

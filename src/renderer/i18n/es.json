@@ -212,7 +212,10 @@
       "embedded": "listo",
       "model_downloaded": "modelo descargado",
       "relations_suggested": "relaciones sugeridas",
-      "relations_no_candidates": "sin candidatos para analizar"
+      "relations_no_candidates": "sin candidatos para analizar",
+      "facets_suggested": "sugerencias listas",
+      "facets_filled": "facetas llenadas",
+      "facets_nothing_to_fill": "nada que llenar"
     }
   },
   "errors": {
@@ -249,6 +252,9 @@
     "trash_problem": "No se pudo mover ese paper: su carpeta en la papelera está dañada (le falta paper.yaml) o ya existe. Revísala en la carpeta .trash del proyecto.",
     "folder_busy": "Otro programa tiene abierto un archivo de ese paper (por ejemplo, su PDF). Ciérralo y vuelve a intentarlo.",
     "not_in_trash": "Ese paper ya no está en la papelera (quizás ya se restauró).",
+    "suggestion_outdated": "El formulario cambió desde esta sugerencia; ya no se puede aplicar tal cual.",
+    "facet_suggestions_conflict": "facet-suggestions.yaml tiene un conflicto de git o un error; resuélvelo antes de seguir.",
+    "summary_outdated": "El resumen de este paper está desactualizado: regenéralo en vez de llenar facetas.",
     "unknown": "Ocurrió un error inesperado."
   },
   "paper": {
