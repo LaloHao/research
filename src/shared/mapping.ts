@@ -424,7 +424,7 @@ export interface MappingView {
   counts: ScreeningCounts
   duplicates: DuplicatePair[]
   conflicts: ScreeningConflict[]
-  /** Some decision exists: a change to the protocol creates a new version. */
+  /** Some decision or suggestion exists: a change to the protocol creates a new version. */
   screeningStarted: boolean
   /**
    * Live searches whose `count` is lower than the records still holding them as a source (only a hand-edited
