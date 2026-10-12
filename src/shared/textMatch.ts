@@ -130,6 +130,14 @@ function codePointLength(s: string, idx: number): number {
   return cp !== undefined && cp > 0xffff ? 2 : 1
 }
 
+/** The first `n` UTF-16 units of `s`, one fewer when they would end inside a surrogate pair (never a lone half). */
+export function sliceWhole(s: string, n: number): string {
+  if (n <= 0) return ''
+  if (n >= s.length) return s
+  const last = s.charCodeAt(n - 1)
+  return s.slice(0, last >= 0xd800 && last <= 0xdbff ? n - 1 : n)
+}
+
 /**
  * The end (exclusive) of the character starting at `idx` in `s`: the whole code point (both halves of a surrogate pair)
  * plus the combining marks that follow it, so a span never cuts a character in two.

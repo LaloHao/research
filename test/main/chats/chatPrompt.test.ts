@@ -4,6 +4,7 @@ import {
   chatInput,
   chatSystemPrompt,
   ACTIONS_DONE_LINE_CHARS,
+  ACTIONS_DONE_LINES,
   CHAT_MAX_TOOL_CALLS,
   DIGEST_CHARS,
   RECENT_CHARS,
@@ -134,10 +135,32 @@ describe('chatSystemPrompt with actions', () => {
     expect(p).toContain(`at most ${ACTION_MAX_TOOL_CALLS} times`)
     expect(p).toContain(`at most ${MAX_UNCONFIRMED_PER_MESSAGE} actions without asking`)
     expect(p).toContain('<actions_done>')
-    for (const what of ['spends money', 'removes or deletes', 'syncing with git', 'edits a summary field']) expect(p).toContain(what)
+    for (const what of ['spends money', 'removes or deletes', 'attaches a PDF', 'edits a summary field']) expect(p).toContain(what)
+    for (const tool of ['list_relations', 'list_facet_suggestions', 'list_trash']) expect(p).toContain(tool)
     expect(p).not.toContain('its git sync')
-    expect(chatSystemPrompt('library', { actions: false, sync: true })).toContain('its git sync')
-    expect(chatSystemPrompt('library', { actions: false, sync: true })).not.toContain('the library (papers')
+    expect(p).not.toContain('syncing with git')
+    expect(p).not.toContain('sync_conflicts')
+    expect(p).not.toContain('sync_status')
+  })
+
+  it('names only the sync tools and the sync approval when only the git sync is on', () => {
+    const s = chatSystemPrompt('library', { actions: false, sync: true })
+    expect(s).toContain('its git sync')
+    expect(s).toContain('syncing with git')
+    expect(s).toContain('sync_status')
+    expect(s).toContain('sync_conflicts')
+    expect(s).not.toContain('the library (papers')
+    for (const absent of ['list_relations', 'list_facet_suggestions', 'list_trash', 'spends money', 'removes or deletes', 'attaches a PDF', 'edits a summary field']) {
+      expect(s).not.toContain(absent)
+    }
+    const both = chatSystemPrompt('library', { actions: true, sync: true })
+    for (const tool of ['list_relations', 'list_trash', 'sync_conflicts', 'syncing with git', 'spends money']) expect(both).toContain(tool)
+  })
+
+  it('never repeats the actions run for this question, but earlier ones only unless the question asks again', () => {
+    const p = chatSystemPrompt('library', { actions: true, sync: false })
+    expect(p).toContain('between <actions_done> tags already ran for this very question: never run them again')
+    expect(p).toContain('do not repeat them unless the question between <question> tags explicitly asks for them again')
     // The rules sit between the tool rules and the language line.
     expect(p.indexOf('request_quote')).toBeGreaterThan(p.indexOf('<library_data>'))
     expect(p.indexOf('request_quote')).toBeLessThan(p.indexOf("Answer in the language"))
@@ -186,6 +209,31 @@ describe('chatInput', () => {
     // The ellipsis reads back as three dots once the line is folded like every other piece of data.
     expect(line).toHaveLength(ACTIONS_DONE_LINE_CHARS + 3)
     expect(line.endsWith('x...')).toBe(true)
+  })
+
+  it('keeps only the newest actions already run, counting the rest', () => {
+    const many = Array.from({ length: ACTIONS_DONE_LINES + 5 }, (_, i) => actionMessage({ id: `a${i}`, result: { n: i } }))
+    const input = chatInput({ thesis: EMPTY_THESIS, scope: 'library', paper: null, history: [], question: 'Q', excerpt: null, actionsDone: many })
+    const block = input.slice(input.indexOf('<actions_done>'), input.indexOf('\n</actions_done>')).split('\n').slice(1)
+    expect(block[0]).toBe('(5 earlier actions not shown)')
+    expect(block).toHaveLength(ACTIONS_DONE_LINES + 1)
+    expect(block[1]).toContain('{"n":5}')
+    expect(block[block.length - 1]).toContain(`{"n":${ACTIONS_DONE_LINES + 4}}`)
+  })
+
+  it('never cuts a character outside the BMP in two', () => {
+    const emoji = '\u{1F600}'
+    const input = chatInput({
+      thesis: EMPTY_THESIS,
+      scope: 'library',
+      paper: null,
+      history: [],
+      question: 'Q',
+      excerpt: null,
+      actionsDone: [actionMessage({ args: { text: emoji.repeat(5_000) } })]
+    })
+    expect(input).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/)
+    expect(input).toContain(`${emoji}...`)
   })
 
   it('shows earlier actions as their own turns and digest lines, with their data neutralized', () => {
