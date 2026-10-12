@@ -41,8 +41,16 @@ describe('parseCliOutput', () => {
     expect(parseCliOutput(stdout, '', 0)).toEqual({
       value: { method: 'Fine-tune BERT on 12k log lines' },
       costUsd: 0.002419,
-      model: 'claude-haiku-4-5-20251001'
+      model: 'claude-haiku-4-5-20251001',
+      turns: 2
     })
+  })
+
+  it('reads the turns the CLI reports, for the log', () => {
+    const out = (extra: object) => JSON.stringify({ subtype: 'success', structured_output: {}, total_cost_usd: 0.1, ...extra })
+    expect(parseCliOutput(out({ num_turns: 4 }), '', 0).turns).toBe(4)
+    expect(parseCliOutput(out({}), '', 0).turns).toBeUndefined()
+    expect(parseCliOutput(out({ num_turns: 'x' }), '', 0).turns).toBeUndefined()
   })
 
   it('names the model that did the work when several appear, and falls back to the requested one', () => {

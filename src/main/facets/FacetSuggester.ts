@@ -6,6 +6,7 @@ import type { BudgetGuard } from '../llm/BudgetGuard'
 import type { CostLedger } from '../llm/CostLedger'
 import { failedCallCost, LlmError, type CompleteResult, type LlmProvider } from '../llm/LlmProvider'
 import { UserFacingError } from '../library/UserFacingError'
+import { startAgentRun } from '../log/agentLog'
 import { MCP_SERVER_NAME, type LibraryMcpHandle, type LibraryMcpOptions } from '../mcp/LibraryMcpServer'
 import type { ProjectStore } from '../project/ProjectStore'
 import { AGENT_TIMEOUT_MS } from '../relations/RelationSuggester'
@@ -76,8 +77,15 @@ export class FacetSuggester {
     let spent = 0
     let estimated = false
     let model: string = req.model ?? llm.model
+    const log = startAgentRun({
+      kind: 'facets',
+      model,
+      capUsd: llm.budget.per_facet_suggestion_usd,
+      maxTurns: FACET_MAX_TURNS,
+      ids: { papers: rows.length, batch: req.batchId }
+    })
     try {
-      const tools = await this.deps.startTools({ maxToolCalls: FACET_MAX_TURNS }).catch((error: unknown) => {
+      const tools = await this.deps.startTools({ maxToolCalls: FACET_MAX_TURNS, log }).catch((error: unknown) => {
         throw new UserFacingError('agent_tools_unavailable', { cause: error })
       })
       let result: CompleteResult
@@ -140,7 +148,11 @@ export class FacetSuggester {
         evidenceFound += examples.filter((e) => e.found).length
         return toSuggestion(p, examples, origin, at)
       })
+      log.end({ costUsd: spent, turns: result.turns, extra: { suggestions: suggestions.length, dropped: parsed.dropped.length } })
       return { suggestions, dropped: parsed.dropped, costUsd: spent, model, toolCalls, evidenceFound, evidenceTotal }
+    } catch (error) {
+      log.fail(error, { costUsd: spent, estimated })
+      throw error
     } finally {
       reservation.settle(spent, { estimated })
     }

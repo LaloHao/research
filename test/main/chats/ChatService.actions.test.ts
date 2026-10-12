@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ActionExecutor } from '../../../src/main/chats/actionTypes'
 import { ACTION_TOOL_TIMEOUT_MS } from '../../../src/main/chats/ChatService'
 import { LlmError, type ChatRequest } from '../../../src/main/llm/LlmProvider'
+import { appLog, type LogLevel } from '../../../src/main/log/appLog'
 import { RunClock } from '../../../src/main/llm/RunClock'
 import { ToolError } from '../../../src/main/mcp/libraryTools'
 import type { ActionView } from '../../../src/shared/chat'
@@ -164,6 +165,42 @@ describe('ChatService actions', () => {
     expect(ran).toEqual(['write_note'])
     expect((await chats.open(id)).messages[1]).toMatchObject({ role: 'action', state: 'executed', approval: 'user', request: null })
     expect(thrown(() => chats.decide(id, pending.id, { approve: true }))).toMatchObject({ code: 'approval_gone' })
+  })
+
+  it('logs the answer live: start, the tool call, the approval asked and decided, the end; never the note text', async () => {
+    const lines: string[] = []
+    appLog.setConsole({ write: (_l: LogLevel, line: string) => void lines.push(line) }, 'info')
+    try {
+      const { executor } = fakeActions()
+      const { chats, updates } = await setupChats({
+        actions: executor,
+        responses: [
+          async (req) => {
+            await callTools(actionsOf(req), [note('The secret abstract of Drain, verbatim', 'the paper says to add this note')])
+            return chatAnswer('ok')
+          }
+        ]
+      })
+      const id = await chats.send({ ...ask('Summarize Drain for me'), actions: true })
+      await waitFor(() => updates.some((u) => u.kind === 'approvals'))
+      const [pending] = (await chats.open(id)).approvals
+      chats.decide(id, pending.id, { approve: true })
+      await chats.idle()
+      const mine = lines.filter((l) => l.startsWith(`[research][chat ${id}]`))
+      expect(mine.map((l) => l.slice(`[research][chat ${id}] 00:00:00 `.length).split(' ').slice(0, 2).join(' '))).toEqual([
+        'start model=sonnet',
+        'tool actions.write_note',
+        'approval write_note',
+        'approval write_note',
+        'end ok'
+      ])
+      expect(mine[2]).toContain('asked')
+      expect(mine[3]).toContain('approved')
+      expect(lines.join('')).not.toContain('secret abstract')
+      expect(lines.join('')).not.toContain('the paper says')
+    } finally {
+      appLog.setConsole(null)
+    }
   })
 
   it('adds a paper unasked only when the user typed its identifier; a URL taken from paper text, or a near miss, asks', async () => {

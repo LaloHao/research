@@ -4,6 +4,7 @@ import type { LlmModel } from '../../shared/summary'
 import { quoteFound } from '../../shared/textMatch'
 import type { IndexCache } from '../cache/IndexCache'
 import { UserFacingError } from '../library/UserFacingError'
+import { startAgentRun } from '../log/agentLog'
 import type { BudgetGuard } from '../llm/BudgetGuard'
 import type { CostLedger } from '../llm/CostLedger'
 import { failedCallCost, LlmError, type CompleteResult, type LlmProvider } from '../llm/LlmProvider'
@@ -74,6 +75,13 @@ export class ScreeningSuggester {
     let spent = 0
     let estimated = false
     let model: string = req.model ?? llm.model
+    const log = startAgentRun({
+      kind: 'screening',
+      subject: req.records.length === 1 ? req.records[0]!.id : `${req.records.length} records`,
+      model,
+      capUsd: llm.budget.per_operation_usd,
+      ids: { stage: 'title_abstract', batch: req.batchId }
+    })
     try {
       const base = {
         system: titleAbstractSystemPrompt(store.config.content_language),
@@ -112,7 +120,11 @@ export class ScreeningSuggester {
         const r = byId.get(s.record)!
         return { ...s, found: quoteVerified(s.quote, `${r.title}\n${r.abstract ?? ''}`) }
       })
+      log.end({ costUsd: spent, extra: { suggestions: suggestions.length, dropped: parsed.dropped } })
       return { suggestions, dropped: parsed.dropped, costUsd: spent, model }
+    } catch (error) {
+      log.fail(error, { costUsd: spent, estimated })
+      throw error
     } finally {
       reservation.settle(spent, { estimated })
     }
@@ -129,8 +141,16 @@ export class ScreeningSuggester {
     let spent = 0
     let estimated = false
     let model: string = req.model ?? llm.model
+    const log = startAgentRun({
+      kind: 'screening',
+      subject: req.record.id,
+      model,
+      capUsd: llm.budget.per_operation_usd,
+      maxTurns: FULL_TEXT_MAX_TURNS,
+      ids: { stage: 'full_text', paper: req.paperId, batch: req.batchId }
+    })
     try {
-      const tools = await this.deps.startTools({ maxToolCalls: FULL_TEXT_MAX_TURNS }).catch((error: unknown) => {
+      const tools = await this.deps.startTools({ maxToolCalls: FULL_TEXT_MAX_TURNS, log }).catch((error: unknown) => {
         throw new UserFacingError('agent_tools_unavailable', { cause: error })
       })
       let result: CompleteResult
@@ -166,7 +186,11 @@ export class ScreeningSuggester {
       if (!parsed.ok) throw new LlmError('llm_invalid_output', spent)
       const s = parsed.suggestion
       const located = s.quote ? locateQuote(s.quote, pagesFromChunks(cache.chunksFor(req.paperId)), s.page) : { page: s.page, found: false }
+      log.end({ costUsd: spent, turns: result.turns, extra: { decision: s.decision } })
       return { suggestion: { ...s, record: req.record.id, page: located.page, found: located.found }, costUsd: spent, model }
+    } catch (error) {
+      log.fail(error, { costUsd: spent, estimated })
+      throw error
     } finally {
       reservation.settle(spent, { estimated })
     }

@@ -44,6 +44,8 @@ export interface CompleteResult {
   value: unknown
   costUsd: number
   model: string
+  /** The CLI's turns, when it reported them (for the log). */
+  turns?: number
 }
 
 /** A streamable-HTTP MCP server the agent may use, reached with a bearer token. */
@@ -89,6 +91,8 @@ export interface ChatResult {
   text: string
   costUsd: number
   model: string
+  /** The CLI's turns, when it reported them (for the log). */
+  turns?: number
 }
 
 export interface LlmProvider {

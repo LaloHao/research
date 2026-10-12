@@ -35,6 +35,7 @@ import type { BudgetGuard, Reservation } from '../llm/BudgetGuard'
 import type { CostLedger } from '../llm/CostLedger'
 import { failedCallCost, type ChatResult, type LlmProvider } from '../llm/LlmProvider'
 import { RunClock } from '../llm/RunClock'
+import { startAgentRun, type AgentRunLog } from '../log/agentLog'
 import { ACTION_MAX_TOOL_CALLS, ACTIONS_SERVER_NAME, type ActionsMcpOptions } from '../mcp/ActionsMcpServer'
 import { MCP_SERVER_NAME, type LibraryMcpHandle, type LibraryMcpOptions } from '../mcp/LibraryMcpServer'
 import { foldQuery, ToolError } from '../mcp/libraryTools'
@@ -102,6 +103,8 @@ interface Run {
   calls: AbortController
   /** Calls to the actions server still running: their records are written before the answer. */
   actionCalls: Set<Promise<unknown>>
+  /** The answer's live log (null until its run starts). */
+  log: AgentRunLog | null
   /** The own text of the question being answered (the latest user message): the only text a request is quoted from. */
   latest: string | null
   /**
@@ -627,6 +630,7 @@ export class ChatService {
       clock: new RunClock(),
       calls: new AbortController(),
       actionCalls: new Set(),
+      log: null,
       latest: null,
       unconfirmed: Number.NaN
     }
@@ -697,18 +701,24 @@ export class ChatService {
       await this.record(id, { ...base, state: 'denied', approval: null, result: { reason } }).catch(logged)
       return { status: 'denied', reason, note: DENIED_NOTE }
     }
-    if (cancelled) return deny(cancelled)
+    if (cancelled) {
+      run.log?.approval(prepared.tool, prepared.risk, `denied:${cancelled}`)
+      return deny(cancelled)
+    }
+    if (!gate.ask) run.log?.approval(prepared.tool, prepared.risk, 'not_asked')
     let approval: 'request' | 'user' = 'request'
     let pdfPath: string | undefined
     // Run unasked, add_paper fetches the identifier as the user typed it; approved, the one the card showed.
     const identifier = !gate.ask ? gate.identifier : undefined
     if (gate.ask) {
+      run.log?.approval(prepared.tool, prepared.risk, 'asked')
       const answer = await this.approvals.ask(
         id,
         { tool: prepared.tool, args: prepared.args, preview: prepared.preview, request: gate.request, risk: prepared.risk, pickPdf: prepared.pickPdf, reason: gate.reason },
         run.calls.signal,
         run.clock
       )
+      run.log?.approval(prepared.tool, prepared.risk, answer.kind === 'denied' ? `denied:${answer.reason}` : 'approved')
       if (answer.kind === 'denied') return deny(answer.reason)
       approval = 'user'
       pdfPath = answer.pdfPath
@@ -805,15 +815,27 @@ export class ChatService {
       // Earlier attempts at this same question (a retry) count against the cap too.
       run.unconfirmed = messages.slice(asked + 1).filter((m) => m.role === 'action' && m.approval === 'request').length
       run.controller.signal.throwIfAborted()
-      const tools = await this.deps.startTools({ maxToolCalls: CHAT_MAX_TOOL_CALLS, markData: true }).catch((error: unknown) => {
+      const on = this.toolsOf(meta)
+      const withActions = on.actions || on.sync
+      // The servers enforce the tool budgets; the spare turns let a refused call still end in an answer.
+      const maxTurns = CHAT_MAX_TOOL_CALLS + (withActions ? ACTION_MAX_TOOL_CALLS : 0) + 3
+      const log = startAgentRun({
+        kind: 'chat',
+        subject: id,
+        model: meta.model,
+        capUsd: store.config.llm.budget.per_chat_message_usd,
+        maxTurns,
+        ids: { paper: paperId || null, actions: withActions ? enabledTools(on).length : null }
+      })
+      run.log = log
+      const tools = await this.deps.startTools({ maxToolCalls: CHAT_MAX_TOOL_CALLS, markData: true, log }).catch((error: unknown) => {
         throw new UserFacingError('agent_tools_unavailable', { cause: error })
       })
-      const on = this.toolsOf(meta)
       let actions: LibraryMcpHandle | null = null
       let result: ChatResult
       try {
-        if (on.actions || on.sync) {
-          actions = await this.deps.startActions!({ tools: enabledTools(on), maxToolCalls: ACTION_MAX_TOOL_CALLS, call: (tool, args) => this.callAction(id, run, tool, args) }).catch(
+        if (withActions) {
+          actions = await this.deps.startActions!({ tools: enabledTools(on), maxToolCalls: ACTION_MAX_TOOL_CALLS, call: (tool, args) => this.callAction(id, run, tool, args), log }).catch(
             (error: unknown) => {
               throw new UserFacingError('agent_tools_unavailable', { cause: error })
             }
@@ -830,8 +852,7 @@ export class ChatService {
               { name: MCP_SERVER_NAME, url: tools.url, token: tools.token },
               ...(actions ? [{ name: ACTIONS_SERVER_NAME, url: actions.url, token: actions.token }] : [])
             ],
-            // The servers enforce the tool budgets; the spare turns let a refused call still end in an answer.
-            maxTurns: CHAT_MAX_TOOL_CALLS + (actions ? ACTION_MAX_TOOL_CALLS : 0) + 3,
+            maxTurns,
             signal: run.controller.signal,
             timeoutMs: AGENT_TIMEOUT_MS,
             clock: run.clock,
@@ -868,6 +889,7 @@ export class ChatService {
         text: result.text.trim() || run.text.trim()
       }
       await this.update(id, (f) => ({ ...f, messages: [...f.messages, answer] }))
+      run.log?.end({ costUsd: result.costUsd, turns: result.turns })
       this.push(id, run, { kind: 'done' })
     } catch (error) {
       // A cut-off or stopped call is charged at its cap (estimated), so the monthly cap counts it; never twice.
@@ -878,6 +900,7 @@ export class ChatService {
         estimated = charge.estimated
         await ledger.append({ paperId, model, costUsd: charge.costUsd, operation: 'chat', estimated: charge.estimated }).catch(logged)
       }
+      run.log?.fail(run.controller.signal.aborted ? new DOMException('Stopped', 'AbortError') : error, { costUsd: spent, estimated })
       if (run.controller.signal.aborted) {
         const stopped: AssistantMessage = { role: 'assistant', at: this.now().toISOString(), model, costUsd: spent, stopped: true, text: run.text.trim() }
         await this.update(id, (f) => ({ ...f, messages: [...f.messages, stopped] })).catch(logged)

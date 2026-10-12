@@ -5,6 +5,7 @@ import type { BudgetGuard } from '../llm/BudgetGuard'
 import type { CostLedger } from '../llm/CostLedger'
 import { failedCallCost, LlmError, type CompleteResult, type LlmProvider } from '../llm/LlmProvider'
 import { UserFacingError } from '../library/UserFacingError'
+import { startAgentRun } from '../log/agentLog'
 import { MCP_SERVER_NAME, type LibraryMcpHandle, type LibraryMcpOptions } from '../mcp/LibraryMcpServer'
 import type { ProjectStore } from '../project/ProjectStore'
 import { pagesFromChunks, type PageText } from '../summary/paperText'
@@ -83,8 +84,16 @@ export class RelationSuggester {
     let spent = 0
     let estimated = false
     let model: string = req.model ?? llm.model
+    const log = startAgentRun({
+      kind: 'relations',
+      subject: id,
+      model,
+      capUsd: llm.budget.per_operation_usd,
+      maxTurns: MAX_TURNS,
+      ids: { candidates: candidates.length, batch: req.batchId }
+    })
     try {
-      const tools = await this.deps.startTools({ maxToolCalls: MAX_TURNS }).catch((error: unknown) => {
+      const tools = await this.deps.startTools({ maxToolCalls: MAX_TURNS, log }).catch((error: unknown) => {
         throw new UserFacingError('agent_tools_unavailable', { cause: error })
       })
       let result: CompleteResult
@@ -138,7 +147,11 @@ export class RelationSuggester {
         evidenceFound += evidence.filter((e) => e.found).length
         return toEntry({ ...s, evidence }, origin)
       })
+      log.end({ costUsd: spent, turns: result.turns, extra: { suggestions: relations.length, dropped: parsed.dropped.length } })
       return { relations, candidates, costUsd: spent, toolCalls, dropped: parsed.dropped, evidenceFound, evidenceTotal }
+    } catch (error) {
+      log.fail(error, { costUsd: spent, estimated })
+      throw error
     } finally {
       reservation.settle(spent, { estimated })
     }
