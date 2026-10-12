@@ -8,6 +8,8 @@ import type { DeletePlanResult, RestoreOutcome, TrashOutcome } from '../shared/t
 import {
   IPC,
   type ActionResult,
+  type ChatOpenResult,
+  type ChatSendResult,
   type FacetDecisionResult,
   type LlmInfo,
   type ProjectInfo,
@@ -15,7 +17,8 @@ import {
   type RelationDecisionResult,
   type ResolveConflictResult,
   type RunBatchResult,
-  type SaveResult
+  type SaveResult,
+  type TextResult
 } from '../shared/ipc'
 import type { AppController } from './AppController'
 import { arg, ipcArgs } from './ipcArgs'
@@ -380,6 +383,75 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     try {
       const { batchId, count } = app.requireSession().summaries.requestFill(ids)
       return { ok: true, batchId, count }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).code }
+    }
+  })
+
+  // Chat over the library (read-only tools; answers stream on CHAT_STREAM_CHANNEL). Every call is tracked so closing
+  // the project waits for it before the cache closes.
+  const chats = <T>(work: (session: ReturnType<AppController['requireSession']>) => Promise<T>): Promise<T> => {
+    const session = app.requireSession()
+    return session.track(work(session))
+  }
+  ipcMain.handle(IPC.chatsList, (_e, raw: unknown) => app.requireSession().chats.list(arg(ipcArgs.chatListQuery, raw, 'query')))
+  ipcMain.handle(IPC.chatsOpen, async (_e, rawId: unknown): Promise<ChatOpenResult> => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    try {
+      return { ok: true, chat: await chats((s) => s.chats.open(id)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).code }
+    }
+  })
+  ipcMain.handle(IPC.chatsSend, async (_e, raw: unknown): Promise<ChatSendResult> => {
+    const req = arg(ipcArgs.chatSend, raw, 'request')
+    try {
+      return { ok: true, chatId: await chats((s) => s.chats.send(req)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).code }
+    }
+  })
+  ipcMain.handle(IPC.chatsRetry, (_e, rawId: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    return actionResult(() => chats((s) => s.chats.retry(id)))
+  })
+  ipcMain.handle(IPC.chatsStop, (_e, rawId: unknown): void => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    app.requireSession().chats.stop(id)
+  })
+  ipcMain.handle(IPC.chatsRename, (_e, rawId: unknown, rawTitle: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    const title = arg(ipcArgs.chatTitle, rawTitle, 'title')
+    return actionResult(() => chats((s) => s.chats.rename(id, title)))
+  })
+  ipcMain.handle(IPC.chatsArchive, (_e, rawId: unknown, rawArchived: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    const archived = arg(ipcArgs.flag, rawArchived, 'archived')
+    return actionResult(() => chats((s) => s.chats.setArchived(id, archived)))
+  })
+  ipcMain.handle(IPC.chatsSetModel, (_e, rawId: unknown, rawModel: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    const model = arg(ipcArgs.chatModel, rawModel, 'model')
+    return actionResult(() => chats((s) => s.chats.setModel(id, model)))
+  })
+  // «Borrar»: `confirmed` is what the renderer's confirmation answered; the service deletes only when it is true.
+  ipcMain.handle(IPC.chatsRemove, (_e, rawId: unknown, rawConfirmed: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    const confirmed = arg(ipcArgs.flag, rawConfirmed, 'confirmed')
+    return actionResult(() => chats((s) => s.chats.remove(id, confirmed)))
+  })
+  ipcMain.handle(IPC.chatsSaveToNotes, (_e, rawId: unknown, rawIndex: unknown, rawPaper: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    const index = arg(ipcArgs.messageIndex, rawIndex, 'index')
+    // Only a paper the user picked; otherwise the service uses a paper chat's own paper.
+    const picked = arg(ipcArgs.notesPaper, rawPaper, 'paper')
+    return actionResult(() => chats((s) => s.chats.saveToNotes(id, index, picked ?? undefined)))
+  })
+  ipcMain.handle(IPC.chatsBibtex, async (_e, rawId: unknown, rawIndex: unknown): Promise<TextResult> => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    const index = arg(ipcArgs.messageIndex, rawIndex, 'index')
+    try {
+      return { ok: true, text: await chats((s) => s.chats.citationsBibtex(id, index)) }
     } catch (error) {
       return { ok: false, error: toUserFacing(error).code }
     }

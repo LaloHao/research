@@ -196,4 +196,5 @@ export type ChatStreamEvent =
 /** Pushed on CHAT_STREAM_CHANNEL; `seq` grows across every answer of the session. */
 export type ChatStreamUpdate = ChatStreamEvent & { chatId: string; seq: number }
 
-export const CHAT_STREAM_CHANNEL = 'chat:stream'
+/** Defined in ipc.ts, which has no runtime imports, so the sandboxed preload can use it without bundling zod. */
+export { CHAT_STREAM_CHANNEL } from './ipc'

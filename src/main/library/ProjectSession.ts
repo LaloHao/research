@@ -1,9 +1,12 @@
+import { hostname } from 'node:os'
 import { join } from 'node:path'
+import type { ChatStreamUpdate } from '../../shared/chat'
 import type { JobSpec } from '../../shared/jobs'
 import type { PaperDetail } from '../../shared/library'
 import type { ReviewItem } from '../../shared/summary'
 import type { DeletePlan, RestoreOutcome, TrashEntry, TrashOutcome, TrashTarget } from '../../shared/trash'
 import { IndexCache } from '../cache/IndexCache'
+import { ChatService } from '../chats/ChatService'
 import { CitationService } from '../citations/CitationService'
 import { OpenAlexCitations } from '../citations/OpenAlexCitations'
 import type { EmbeddingRuntime } from '../embeddings/EmbeddingRuntime'
@@ -30,6 +33,7 @@ import { FacetFiller } from '../summary/FacetFiller'
 import { Summarizer } from '../summary/Summarizer'
 import { SummaryService } from '../summary/SummaryService'
 import { SyncScheduler } from '../sync/SyncScheduler'
+import { machineName } from '../sync/messages'
 import { SyncService } from '../sync/SyncService'
 import { DEFAULT_DEVICE_ID, LibraryService } from './LibraryService'
 
@@ -65,14 +69,15 @@ export interface SessionOptions {
   now?: () => Date
 }
 
-type SessionEvent = 'library' | 'jobs' | 'project' | 'sync' | 'facets'
+type SessionEvent = 'library' | 'jobs' | 'project' | 'sync' | 'facets' | 'chats'
 
 /** Files whose external change alters the bibliography (paper.yaml, or the paper folder appearing or going away). */
 const BIB_FILES = new Set(['paper.yaml', PAPER_FOLDER])
 
 /** Everything that lives while one project is open. */
 export class ProjectSession {
-  private readonly listeners: Record<SessionEvent, Set<() => void>> = { library: new Set(), jobs: new Set(), project: new Set(), sync: new Set(), facets: new Set() }
+  private readonly listeners: Record<SessionEvent, Set<() => void>> = { library: new Set(), jobs: new Set(), project: new Set(), sync: new Set(), facets: new Set(), chats: new Set() }
+  private readonly streamListeners = new Set<(u: ChatStreamUpdate) => void>()
   private stopWatching: (() => void) | null = null
   private readonly inFlight = new Set<Promise<unknown>>()
   private scheduler: SyncScheduler | null = null
@@ -91,7 +96,8 @@ export class ProjectSession {
     readonly map: MapService,
     readonly relations: RelationService,
     readonly sync: SyncService,
-    readonly facets: FacetSuggestionService
+    readonly facets: FacetSuggestionService,
+    readonly chats: ChatService
   ) {}
 
   static async create(root: string, name: string, opts: SessionOptions): Promise<ProjectSession> {
@@ -130,7 +136,7 @@ export class ProjectSession {
       () => limitsFromConfig(store.config.llm),
       () => ledger.monthTotal(),
       0.05,
-      { suggest_relations: 0.25, suggest_facets: 0.5 }
+      { suggest_relations: 0.25, suggest_facets: 0.5, chat: 0.1 }
     )
     const llm = opts.llm ?? new ClaudeCliProvider()
     const summarizer = new Summarizer({ store, cache, provider: llm, budget, ledger })
@@ -223,10 +229,24 @@ export class ProjectSession {
       formChanged: () => session.emit('project'),
       now: opts.now
     })
-    const session: ProjectSession = new ProjectSession(store, cache, http, library, queue, summaries, citations, similarity, map, relations, sync, facets)
+    const chats = new ChatService({
+      store,
+      cache,
+      provider: llm,
+      budget,
+      ledger,
+      // A fresh read-only MCP server per answer, closed when the answer ends.
+      startTools: (o) => startLibraryMcpServer(libraryTools({ store, cache, map, embeddings: opts.embeddings ?? null }), o),
+      machine: machineName(opts.machineName ?? hostname()),
+      emit: () => session.emit('chats'),
+      stream: (u) => session.emitStream(u),
+      now: opts.now
+    })
+    const session: ProjectSession = new ProjectSession(store, cache, http, library, queue, summaries, citations, similarity, map, relations, sync, facets, chats)
     await library.reindexAll()
     await relations.reindex()
     await facets.reindex()
+    await chats.reindex()
     library.onChange(() => session.emit('library'))
     queue.onChange(() => session.emit('jobs'))
     queue.start()
@@ -280,6 +300,16 @@ export class ProjectSession {
             )
             .catch((error) => console.error('facet-suggestions.yaml', error))
         },
+        onChats: () => {
+          // Our own writes come through the watcher too and are already indexed: only a real external change counts.
+          void session
+            .track(
+              chats.reindexIfChanged().then((changed) => {
+                if (changed) session.emit('chats')
+              })
+            )
+            .catch((error) => console.error('chats', error))
+        },
         onTrash: () => {
           void session
             .track(library.syncTrash().then(() => session.emit('library')))
@@ -304,6 +334,12 @@ export class ProjectSession {
   on(event: SessionEvent, listener: () => void): () => void {
     this.listeners[event].add(listener)
     return () => this.listeners[event].delete(listener)
+  }
+
+  /** An answer's progress (the window shows it as it arrives). */
+  onChatStream(listener: (u: ChatStreamUpdate) => void): () => void {
+    this.streamListeners.add(listener)
+    return () => this.streamListeners.delete(listener)
   }
 
   /** Registers work outside the job queue that uses the cache, so `close()` waits for it. */
@@ -397,7 +433,8 @@ export class ProjectSession {
     // in a process group of its own that would outlive the app, so a fetch or push is cut short; a local step, which may
     // hold the store's write gate, is let finish) and the queue (running jobs abort and stay queued for next time).
     // Awaiting the scheduler on its own first would wait for that fetch or push to end by itself.
-    await Promise.all([this.scheduler?.stop(), this.sync.close(), this.queue.stop()])
+    // Running answers stop too, saved as stopped (sends in progress finish first), before the cache closes.
+    await Promise.all([this.scheduler?.stop(), this.sync.close(), this.queue.stop(), this.chats.close()])
     while (this.inFlight.size > 0) await Promise.allSettled([...this.inFlight])
     this.cache.close()
   }
@@ -413,6 +450,17 @@ export class ProjectSession {
 
   private emit(event: SessionEvent): void {
     for (const listener of this.listeners[event]) listener()
+  }
+
+  /** A listener that throws (a window going away) never breaks the answer or the other listeners. */
+  private emitStream(u: ChatStreamUpdate): void {
+    for (const listener of this.streamListeners) {
+      try {
+        listener(u)
+      } catch (error) {
+        console.error('chat stream', error)
+      }
+    }
   }
 }
 

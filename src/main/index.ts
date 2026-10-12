@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, session, shell, type IpcMainEvent } from 'electron'
 import { join } from 'node:path'
+import { CHAT_STREAM_CHANNEL } from '../shared/chat'
 import { eventChannel, IPC } from '../shared/ipc'
 import type { CloseDecision } from '../shared/sync'
 import { AppController } from './AppController'
@@ -19,7 +20,11 @@ const controller = new AppController(
   (event) => {
     mainWindow?.webContents.send(eventChannel(event))
   },
-  { embeddings }
+  { embeddings },
+  (update) => {
+    // An answer may still be stopping while the window goes away.
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(CHAT_STREAM_CHANNEL, update)
+  }
 )
 
 /** Lets the renderer save pending edits (e.g. notes still in their autosave delay) before its window goes away. */
