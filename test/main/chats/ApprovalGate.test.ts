@@ -139,6 +139,46 @@ describe('ApprovalGate', () => {
     gate.denyAll('stopped')
   })
 
+  it('never issues an id twice, even after the first approval settled', async () => {
+    const ids = ['aaaaaa', 'aaaaaa', 'aaaaaa', 'bbbbbb']
+    const gate = new ApprovalGate({ timeoutMs: 60_000, changed: () => undefined, randomId: () => ids.shift()! })
+    const first = gate.ask('c1', request, new AbortController().signal)
+    const id = gate.pending('c1')[0].id
+    gate.decide('c1', id, { approve: false })
+    await first
+    void gate.ask('c1', request, new AbortController().signal)
+    expect(gate.pending('c1')[0].id).toBe('bbbbbb')
+    expect(gate.decide('c1', id, { approve: true })).toBe(false)
+    gate.denyAll('stopped')
+  })
+
+  it('rejects, without holding anything, a request it cannot copy', async () => {
+    vi.useFakeTimers()
+    const gate = new ApprovalGate({ timeoutMs: 60_000, changed: () => undefined })
+    const clock = new RunClock()
+    const hold = vi.spyOn(clock, 'hold')
+    const bad = { ...request, preview: { ...request.preview, extra: () => 1 } }
+    await expect(gate.ask('c1', bad, new AbortController().signal, clock)).rejects.toThrow()
+    expect(hold).not.toHaveBeenCalled()
+    expect(gate.pending('c1')).toEqual([])
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('denies an approval whose test throws, and goes on with the rest', async () => {
+    const gate = new ApprovalGate({ timeoutMs: 60_000, changed: () => undefined })
+    const a = gate.ask('c1', request, new AbortController().signal)
+    const b = gate.ask('c1', request, new AbortController().signal)
+    gate.denyWhere(
+      'c1',
+      () => {
+        throw new Error('test')
+      },
+      'disabled'
+    )
+    expect(await a).toEqual({ kind: 'denied', reason: 'disabled' })
+    expect(await b).toEqual({ kind: 'denied', reason: 'disabled' })
+  })
+
   it('gives every waiting approval its own id', () => {
     const gate = new ApprovalGate({ timeoutMs: 60_000, changed: () => undefined })
     for (let i = 0; i < 200; i++) void gate.ask(i % 2 ? 'c1' : 'c2', request, new AbortController().signal)

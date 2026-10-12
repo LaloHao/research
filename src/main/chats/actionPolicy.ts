@@ -1,9 +1,17 @@
 import type { ChatMessage } from '../../shared/chat'
 import { ACTION_READ_TOOLS, ACTION_TOOLS, MAX_REQUEST_QUOTE, SYNC_TOOLS, TOOL_RISK, type ActionReadTool, type ActionRisk, type ActionTool, type ChatTools } from '../../shared/chatActions'
+import { clusterEnd } from '../../shared/textMatch'
 import { foldQuery, foldWithMap } from '../mcp/libraryTools'
 
 /** Fewer folded letters and digits than this is too little to tell a request apart (a «sí» asks instead). */
 export const MIN_REQUEST_QUOTE = 8
+
+/**
+ * At most this many actions run without asking for one user message; the next ones ask. The quote only proves that
+ * the words are in the message, not that the message asked for this call, so text the model read (a paper, a tool
+ * answer) could otherwise steer it into any number of free actions.
+ */
+export const MAX_UNCONFIRMED_PER_MESSAGE = 3
 
 /**
  * The own text of the conversation's last user message: the only text a request may be quoted from. Never its excerpt
@@ -23,6 +31,8 @@ const INVISIBLE = /\p{Cf}/gu
 const WRAPPING = /^[\s«»"“”„'‘’‚`]+|[\s«»"“”„'‘’‚`.…]+$/gu
 const WORD = /[\p{L}\p{N}]/u
 const WORD_G = /[\p{L}\p{N}]/gu
+/** A lone half of a surrogate pair: a span that holds one was cut in the middle of a character. */
+const BROKEN = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/
 
 /** Folded like the library's literal search (case, accents, typographic quotes and dashes, whitespace), after NFKC and without format characters. */
 const fold = (s: string): string => foldQuery(s.normalize('NFKC').replace(INVISIBLE, ''))
@@ -43,29 +53,42 @@ export function quotedRequest(quote: unknown, latest: string | null): string | n
   for (let at = folded.text.indexOf(q); at >= 0; at = folded.text.indexOf(q, at + 1)) {
     const end = at + q.length
     // Whole words: a quote that starts or ends with a letter or digit may not cut a word of the message.
-    if (WORD.test(q[0]) && at > 0 && WORD.test(folded.text[at - 1])) continue
-    if (WORD.test(q[q.length - 1]) && end < folded.text.length && WORD.test(folded.text[end])) continue
-    let stop = folded.map[end - 1] + 1
-    // The span ends after the last folded unit's original character, with the combining marks that belong to it.
-    while (stop < own.length && /\p{M}/u.test(own[stop])) stop++
-    return own.slice(folded.map[at], stop)
+    // Whole words: the match may not start right after, nor end right before, a letter or digit of the message,
+    // whatever the quote's own first and last characters are.
+    if (at > 0 && WORD.test(folded.text[at - 1])) continue
+    if (end < folded.text.length && WORD.test(folded.text[end])) continue
+    const start = folded.map[at]
+    const last = folded.map[end - 1]
+    if (start === undefined || last === undefined) return null
+    // The span ends after the last character's whole code point and the combining marks that belong to it.
+    const span = own.slice(start, clusterEnd(own, last))
+    return span.trim() !== '' && !BROKEN.test(span) ? span : null
   }
   return null
 }
 
-export type GateDecision = { ask: false; request: string } | { ask: true; request: string | null }
+/**
+ * Why a call asks: its tool has a risk (or is unknown), the latest message did not ask for it in those words, or that
+ * message already ran MAX_UNCONFIRMED_PER_MESSAGE actions without asking.
+ */
+export type GateReason = 'risk' | 'not_requested' | 'limit'
+export type GateDecision = { ask: false; request: string } | { ask: true; request: string | null; reason: GateReason }
 
 /**
  * The app's confirmation rule: a reversible free action runs on its own only when the latest user message asked for it
- * in the quoted words; everything else asks the user in the conversation. A tool whose catalogue risk is not null
- * (spends, removes, syncs, picks a file) or that is not in the catalogue always asks, whatever risk it is given.
+ * in the quoted words, and only while that message has run fewer than MAX_UNCONFIRMED_PER_MESSAGE actions without
+ * asking (`unconfirmed`: how many it has; anything but a whole number from 0 counts as the limit reached). Everything
+ * else asks the user in the conversation. A tool whose catalogue risk is not null (spends, removes, syncs, picks a
+ * file, rewrites reviewed data) or that is not in the catalogue always asks, whatever risk it is given.
  */
-export function gateAction(a: { tool: ActionTool; risk: ActionRisk | null; quote?: unknown; latest: string | null }): GateDecision {
+export function gateAction(a: { tool: ActionTool; risk: ActionRisk | null; quote?: unknown; latest: string | null; unconfirmed: number }): GateDecision {
   const request = quotedRequest(a.quote, a.latest)
   const known = typeof a.tool === 'string' && Object.hasOwn(TOOL_RISK, a.tool)
-  const free = known && TOOL_RISK[a.tool] === null && a.risk === null
-  if (free && request !== null) return { ask: false, request }
-  return { ask: true, request }
+  if (!known || TOOL_RISK[a.tool] !== null || a.risk !== null) return { ask: true, request, reason: 'risk' }
+  if (request === null || request === '') return { ask: true, request: null, reason: 'not_requested' }
+  const n = a.unconfirmed
+  if (!Number.isInteger(n) || n < 0 || n >= MAX_UNCONFIRMED_PER_MESSAGE) return { ask: true, request, reason: 'limit' }
+  return { ask: false, request }
 }
 
 const ALL: readonly string[] = [...ACTION_TOOLS, ...ACTION_READ_TOOLS]

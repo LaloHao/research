@@ -1,4 +1,4 @@
-import { normalizeWithMap } from '../../shared/textMatch'
+import { clusterEnd, normalizeWithMap } from '../../shared/textMatch'
 
 /**
  * A reflowed piece of a PDF page: a section heading, a paragraph, or a "margin" line (a running
@@ -152,12 +152,6 @@ export function repeatedLines(pages: string[]): Set<string> {
 }
 
 /** End (exclusive) of the code point at `idx` in `s` plus any combining marks right after it. */
-function clusterEnd(s: string, idx: number): number {
-  const codePointAt = (i: number): string => String.fromCodePoint(s.codePointAt(i) ?? 0)
-  let end = idx + codePointAt(idx).length
-  while (end < s.length && /\p{M}/u.test(codePointAt(end))) end += codePointAt(end).length
-  return end
-}
 
 /**
  * {@link normalizeWithMap} plus diacritic folding ("ó" → "o"), with `map[i]` the offset in `s`
@@ -168,12 +162,12 @@ function foldWithMap(s: string): { text: string; map: number[] } {
   let text = ''
   const map: number[] = []
   let unit = 0
-  // normalizeWithMap's map has one entry per code point of its text.
+  // normalizeWithMap's map has one entry per UTF-16 unit of its text.
   for (const cp of normalized.text) {
     const folded = cp.normalize('NFD').replace(/\p{M}/gu, '')
     text += folded
     for (let k = 0; k < folded.length; k++) map.push(normalized.map[unit])
-    unit++
+    unit += cp.length
   }
   return { text, map }
 }

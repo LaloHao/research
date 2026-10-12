@@ -29,8 +29,11 @@ export type ActionReadTool = (typeof ACTION_READ_TOOLS)[number]
 /** The tools behind a conversation's «Sincronizar con git» switch; every other one is behind «Acciones». */
 export const SYNC_TOOLS: readonly string[] = ['sync_status', 'sync_conflicts', 'sync_now', 'resolve_sync_conflicts']
 
-/** Why an action always asks: it spends money, removes or deletes papers, syncs with git, or uses a file of the computer. */
-export const ACTION_RISKS = ['spends', 'removes', 'sync', 'file'] as const
+/**
+ * Why an action always asks: it spends money, removes or deletes papers, syncs with git, uses a file of the computer,
+ * or rewrites reviewed data (a summary field, a proposed facet value).
+ */
+export const ACTION_RISKS = ['spends', 'removes', 'sync', 'file', 'edits'] as const
 export type ActionRisk = (typeof ACTION_RISKS)[number]
 
 /**
@@ -42,8 +45,8 @@ export const TOOL_RISK: Record<ActionTool, ActionRisk | null> = {
   write_note: null,
   decide_relation: null,
   review_summary: null,
-  edit_summary: null,
-  resolve_proposed_value: null,
+  edit_summary: 'edits',
+  resolve_proposed_value: 'edits',
   decide_facet_suggestion: null,
   restore_papers: null,
   attach_pdf: 'file',

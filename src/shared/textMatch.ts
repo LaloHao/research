@@ -131,6 +131,20 @@ function codePointLength(s: string, idx: number): number {
 }
 
 /**
+ * The end (exclusive) of the character starting at `idx` in `s`: the whole code point (both halves of a surrogate pair)
+ * plus the combining marks that follow it, so a span never cuts a character in two.
+ */
+export function clusterEnd(s: string, idx: number): number {
+  let end = idx + codePointLength(s, idx)
+  while (end < s.length) {
+    const len = codePointLength(s, end)
+    if (!COMBINING_MARK.test(s.slice(end, end + len))) break
+    end += len
+  }
+  return end
+}
+
+/**
  * Same normalization pipeline as {@link normalizeForMatch}, applied unit-by-unit so every
  * character of the result can be traced back to the original string. Mirrors each step:
  * NFKC (per grapheme cluster — a base code point plus any combining marks that follow it, which
@@ -218,7 +232,10 @@ export function normalizeWithMap(s: string): { text: string; map: number[] } {
     for (const lc of u.ch.toLowerCase()) lowered.push({ ch: lc, orig: u.orig })
   }
 
-  return { text: lowered.map((u) => u.ch).join(''), map: lowered.map((u) => u.orig) }
+  // One map entry per UTF-16 unit of the text (a unit outside the BMP is two), so `map[i]` lines up with `text[i]`.
+  const map: number[] = []
+  for (const u of lowered) for (let k = 0; k < u.ch.length; k++) map.push(u.orig)
+  return { text: lowered.map((u) => u.ch).join(''), map }
 }
 
 /**
@@ -252,6 +269,8 @@ export function locateInOriginal(quote: string, original: string): { start: numb
   const { text, map } = normalizeWithMap(original)
   const match = findInNormalized(normalizeForMatch(quote), text)
   if (!match || match.end <= match.start) return null
+  const start = map[match.start]
   const lastIdx = map[match.end - 1]
-  return { start: map[match.start], end: lastIdx + codePointLength(original, lastIdx) }
+  if (start === undefined || lastIdx === undefined) return null
+  return { start, end: clusterEnd(original, lastIdx) }
 }

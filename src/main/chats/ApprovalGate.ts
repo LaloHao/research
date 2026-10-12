@@ -29,15 +29,32 @@ function deepFreeze<T>(value: T): T {
  */
 export class ApprovalGate {
   private readonly waiting = new Map<string, Waiting>()
+  /** Every id this gate gave out: a stale «Aprobar» can never reach a newer approval that drew the same id. */
+  private readonly issued = new Set<string>()
 
-  constructor(private readonly opts: { timeoutMs: number; changed: (chatId: string) => void; now?: () => Date }) {}
+  constructor(
+    private readonly opts: {
+      timeoutMs: number
+      changed: (chatId: string) => void
+      now?: () => Date
+      /** Six hex characters; tests replace it. */
+      randomId?: () => string
+    }
+  ) {}
 
+  /** Waits for the user's decision; rejects (holding nothing) only when the request cannot be copied. */
   ask(chatId: string, request: Omit<PendingApproval, 'id' | 'expiresAt'>, signal: AbortSignal, clock?: RunClock): Promise<ApprovalOutcome> {
     if (signal.aborted) return Promise.resolve({ kind: 'denied', reason: 'stopped' })
+    let copy: Omit<PendingApproval, 'id' | 'expiresAt'>
+    try {
+      copy = structuredClone(request)
+    } catch (error) {
+      return Promise.reject(error)
+    }
     const id = this.newId()
     const now = (this.opts.now ?? (() => new Date()))()
     const approval: PendingApproval = deepFreeze({
-      ...structuredClone(request),
+      ...copy,
       pickPdf: request.pickPdf === true,
       id,
       expiresAt: new Date(now.getTime() + this.opts.timeoutMs).toISOString()
@@ -89,9 +106,18 @@ export class ApprovalGate {
     return true
   }
 
-  /** Denies what waits in a conversation and matches `test` (a switch turned off, the answer stopped). */
+  /** Denies what waits in a conversation and matches `test` (a switch turned off, the answer stopped); a test that throws denies. */
   denyWhere(chatId: string, test: (a: PendingApproval) => boolean, reason: DenialReason): void {
-    for (const w of [...this.waiting.values()]) if (w.chatId === chatId && test(w.approval)) w.settle({ kind: 'denied', reason })
+    for (const w of [...this.waiting.values()]) {
+      if (w.chatId !== chatId) continue
+      let match = true
+      try {
+        match = test(w.approval)
+      } catch {
+        // Denying is the safe side.
+      }
+      if (match) w.settle({ kind: 'denied', reason })
+    }
   }
 
   /** Denies everything that waits, in every conversation (the project closing). */
@@ -109,9 +135,13 @@ export class ApprovalGate {
   }
 
   private newId(): string {
+    const random = this.opts.randomId ?? (() => randomBytes(3).toString('hex'))
     for (;;) {
-      const id = randomBytes(3).toString('hex')
-      if (!this.waiting.has(id)) return id
+      const id = random()
+      if (!this.issued.has(id)) {
+        this.issued.add(id)
+        return id
+      }
     }
   }
 }

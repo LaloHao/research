@@ -10,7 +10,11 @@ export interface ExecutedAction {
   undo: (() => Promise<void>) | null
 }
 
-/** An action checked and described, ready to run once the rule (or the user) allows it. */
+/**
+ * An action checked and described, ready to run once the rule (or the user) allows it. The caller runs this same
+ * object's `execute` after the approval: what runs is what the card showed (the gate keeps a frozen copy for the card,
+ * so neither side may build a second PreparedAction in between).
+ */
 export interface PreparedAction {
   tool: ActionTool
   /** The validated arguments, without the request quote, as the record keeps them. */
