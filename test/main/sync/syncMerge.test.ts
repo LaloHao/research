@@ -2,11 +2,14 @@ import { rename } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
+import { sha256 } from '../../../src/main/project/atomicWrite'
+import { renderChat } from '../../../src/main/project/chatFile'
 import { toYaml } from '../../../src/main/project/yamlFile'
 import { ProjectRepo } from '../../../src/main/sync/ProjectRepo'
 import { editedKeys, planMerge, trashedKeys, type MergePlan } from '../../../src/main/sync/syncMerge'
 import type { ConflictChoice } from '../../../src/shared/sync'
 import type { TypedRelation } from '../../../src/shared/typedRelations'
+import { assistantMessage, CHAT_ID_A, chatFile, userMessage } from '../../helpers/chats'
 import { applyFiles, commitAll, trashOnDisk, twoMachines, type Machines } from '../../helpers/git'
 import { typedRelation } from '../../helpers/relations'
 
@@ -46,6 +49,55 @@ const trashed = (at: string): string => `schema_version: 1\ntrashed_at: '${at}'\
 const PAPER = 'schema_version: 1\nid: k\ntitle: Kernel paper\n'
 
 describe('planMerge', () => {
+  it('keeps a conversation continued differently on both machines twice, and one deleted here but continued there', async () => {
+    const base = renderChat(chatFile())
+    const other = '20261011-110000-c3d4'
+    const otherBase = renderChat(chatFile(undefined, { id: other }))
+    const onA = renderChat(chatFile([...chatFile().messages, userMessage({ at: '2026-10-11T13:00:00.000Z', text: 'From A' })], { updated_on: 'machine-a' }))
+    const onB = renderChat(chatFile([...chatFile().messages, userMessage({ at: '2026-10-11T13:30:00.000Z', text: 'From B' })]))
+    const continued = renderChat(chatFile([...chatFile().messages, userMessage(), assistantMessage()], { id: other }))
+    const { plan, file, repo } = await diverged(
+      { [`chats/${CHAT_ID_A}.md`]: base, [`chats/${other}.md`]: otherBase },
+      (p) => applyFiles(p, { [`chats/${CHAT_ID_A}.md`]: onA, [`chats/${other}.md`]: continued }),
+      (p) => applyFiles(p, { [`chats/${CHAT_ID_A}.md`]: onB, [`chats/${other}.md`]: null })
+    )
+    const tree = clean(await plan())
+    expect(await file(tree, `chats/${CHAT_ID_A}.md`)).toBe(onB)
+    expect(await file(tree, `chats/${other}.md`)).toBe(continued)
+    const copies = (await repo.lsTree(tree, [`${repo.prefix}chats/`])).map((e) => e.path.slice(repo.prefix.length)).filter((p) => p.startsWith(`chats/${CHAT_ID_A}-`))
+    expect(copies).toHaveLength(1)
+    expect(await file(tree, copies[0])).toContain('From A')
+    expect(await file(tree, copies[0])).toContain('machine: machine-a')
+  })
+
+  it('never overwrites another file at the path a copy would take', async () => {
+    const onA = renderChat(chatFile([...chatFile().messages, userMessage({ at: '2026-10-11T13:00:00.000Z', text: 'From A' })], { updated_on: 'machine-a' }))
+    const onB = renderChat(chatFile([...chatFile().messages, userMessage({ at: '2026-10-11T13:30:00.000Z', text: 'From B' })]))
+    const taken = `chats/${CHAT_ID_A}-${sha256(onA).slice(0, 6)}.md`
+    const { plan, file } = await diverged(
+      { [`chats/${CHAT_ID_A}.md`]: renderChat(chatFile()), [taken]: 'something else\n' },
+      (p) => applyFiles(p, { [`chats/${CHAT_ID_A}.md`]: onA }),
+      (p) => applyFiles(p, { [`chats/${CHAT_ID_A}.md`]: onB })
+    )
+    const pending = await plan()
+    expect(pending.kind === 'decisions' && pending.conflicts.map((c) => c.id)).toEqual([`file:chats/${CHAT_ID_A}.md`])
+    expect(await file(clean(await plan({ [`file:chats/${CHAT_ID_A}.md`]: 'theirs' })), taken)).toBe('something else\n')
+  })
+
+  it('merges a conversation only one machine continued, and leaves one it cannot read to the user', async () => {
+    const broken = '20261011-110000-c3d4'
+    const longer = renderChat(chatFile([...chatFile().messages, userMessage({ at: '2026-10-11T13:00:00.000Z', text: 'More' })]))
+    const { plan, file } = await diverged(
+      { [`chats/${CHAT_ID_A}.md`]: renderChat(chatFile()), [`chats/${broken}.md`]: renderChat(chatFile(undefined, { id: broken })) },
+      (p) => applyFiles(p, { [`chats/${CHAT_ID_A}.md`]: longer, [`chats/${broken}.md`]: 'not a conversation\n' }),
+      (p) => applyFiles(p, { [`chats/${CHAT_ID_A}.md`]: renderChat(chatFile(undefined, { title: 'Renamed' })), [`chats/${broken}.md`]: renderChat(chatFile(undefined, { id: broken, archived: true })) })
+    )
+    const pending = await plan()
+    expect(pending.kind === 'decisions' && pending.conflicts.map((c) => c.id)).toEqual([`file:chats/${broken}.md`])
+    const tree = clean(await plan({ [`file:chats/${broken}.md`]: 'ours' }))
+    expect(await file(tree, `chats/${CHAT_ID_A}.md`)).toBe(renderChat(chatFile([...chatFile().messages, userMessage({ at: '2026-10-11T13:00:00.000Z', text: 'More' })], { title: 'Renamed' })))
+  })
+
   it('merges changes to different files with no decision', async () => {
     const { plan, file } = await diverged(
       { 'a.md': 'a\n', 'b.md': 'b\n' },
