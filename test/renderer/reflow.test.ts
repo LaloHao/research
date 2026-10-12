@@ -186,6 +186,12 @@ describe('findMatches', () => {
     ])
   })
 
+  it('maps back offsets after emoji and over math alphanumerics', () => {
+    const text = '\u{1F44D}\u{1F44D} la educación \u{1D403}\u{1D42B}\u{1D41A}\u{1D422}\u{1D427} hoy'
+    const [m] = findMatches([text], 'educacion drain')
+    expect(text.slice(m.start, m.end)).toBe('educación \u{1D403}\u{1D42B}\u{1D41A}\u{1D422}\u{1D427}')
+  })
+
   it('ignores diacritics on either side and maps back to the original offsets', () => {
     const text = 'La educación pública'
     const [m] = findMatches([text], 'educacion')
