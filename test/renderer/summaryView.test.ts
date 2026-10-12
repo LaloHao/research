@@ -3,7 +3,7 @@ import type { JobRecord } from '../../src/shared/jobs'
 import type { PaperDetail } from '../../src/shared/library'
 import type { ExtractionFile, ExtractionForm, FacetDef, FacetEntry, SummaryFile, ThesisContext } from '../../src/shared/summary'
 import { SUMMARY_FIELD_KEYS } from '../../src/shared/summary'
-import { cardStatus, facetCards, facetValueText, summarizeAvailability, summaryCards, thesisCard } from '../../src/renderer/lib/summaryView'
+import { cardStatus, facetCards, facetValueText, summarizeAvailability, summaryCards, thesisCard, unfilledFacetKeys } from '../../src/renderer/lib/summaryView'
 
 const ev = (found: boolean) => ({ quote: 'q', page: 1, found })
 const text = (value: string) => ({ value, status: 'generated' as const, evidence: [] })
@@ -167,5 +167,16 @@ describe('thesisCard', () => {
   it('has no relation when the extraction lacks one', () => {
     expect(thesisCard(extraction, thesis)).toEqual({ status: 'ok', relation: null, questions: thesis.research_questions })
     expect(thesisCard(null, thesis)).toEqual({ status: 'ok', relation: null, questions: thesis.research_questions })
+  })
+})
+
+describe('unfilledFacetKeys', () => {
+  it('lists the form facets an up-to-date classification has no entry for', () => {
+    const partial: ExtractionFile = { schema_version: 1, form_hash: 'h', facets: { domain: entry({ values: ['web'] }) } }
+    expect(unfilledFacetKeys(form, partial, 'generated')).toEqual(['venue_type', 'notes', 'rigor'])
+    expect(unfilledFacetKeys(form, partial, 'reviewed')).toEqual(['venue_type', 'notes', 'rigor'])
+    expect(unfilledFacetKeys(form, partial, 'stale')).toEqual([])
+    expect(unfilledFacetKeys(null, partial, 'generated')).toEqual([])
+    expect(unfilledFacetKeys(form, null, 'generated')).toEqual([])
   })
 })
