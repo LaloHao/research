@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { findInNormalized, locateInOriginal, normalizeForMatch, normalizeWithMap, quoteFound } from '../../src/shared/textMatch'
+import { findInNormalized, locateInOriginal, normalizeForMatch, normalizeWithMap, quoteFound, sliceWhole } from '../../src/shared/textMatch'
 
 describe('normalizeForMatch', () => {
   it('folds ligatures, typographic quotes and dashes, whitespace and case', () => {
@@ -192,5 +192,16 @@ describe('locateInOriginal', () => {
     const r = locateInOriginal('detección de señales', original)
     expect(r).not.toBeNull()
     expect(original.slice(r!.start, r!.end)).toBe('detección de señales')
+  })
+})
+
+describe('sliceWhole', () => {
+  it('keeps the first n UTF-16 units, backing off one when they would end inside a surrogate pair', () => {
+    expect(sliceWhole('abcdef', 3)).toBe('abc')
+    expect(sliceWhole('ab', 5)).toBe('ab')
+    expect(sliceWhole('ab\u{1F600}cd', 3)).toBe('ab')
+    expect(sliceWhole('ab\u{1F600}cd', 4)).toBe('ab\u{1F600}')
+    expect(sliceWhole('\u{1F600}', 1)).toBe('')
+    expect(sliceWhole('abc', 0)).toBe('')
   })
 })
