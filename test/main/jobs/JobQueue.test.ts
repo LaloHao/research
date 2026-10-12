@@ -170,6 +170,25 @@ describe('JobQueue', () => {
     await queue.whenIdle()
     expect(state(other)).toBe('done')
   })
+
+  it('whenDone gives the finished job, or null while it still runs after the wait', async () => {
+    const gate = deferred()
+    const handler: JobHandler = async (s) => {
+      if ((s as { input: string }).input === 'slow') await gate.promise
+      return { paperId: 'p1', message: 'added' }
+    }
+    const queue = new JobQueue(await cache(), handler, 2)
+    queue.start()
+    const fast = queue.enqueue(spec('fast'))
+    expect(await queue.whenDone(fast, 1000)).toMatchObject({ id: fast, state: 'done', paperId: 'p1', message: 'added' })
+    expect(await queue.whenDone(fast, 0)).toMatchObject({ state: 'done' })
+    const slow = queue.enqueue(spec('slow'))
+    expect(await queue.whenDone(slow, 30)).toBeNull()
+    const waiting = queue.whenDone(slow, 1000)
+    gate.resolve()
+    expect(await waiting).toMatchObject({ state: 'done' })
+    expect(await queue.whenDone(9999, 10)).toBeNull()
+  })
 })
 
 describe('JobQueue limits by type', () => {

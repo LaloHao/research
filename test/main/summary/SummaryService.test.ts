@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { LlmError } from '../../../src/main/llm/LlmProvider'
 import { ProjectSession } from '../../../src/main/library/ProjectSession'
-import { DEFAULT_EXTRACTION_FORM } from '../../../src/main/summary/extractionForm'
+import { DEFAULT_EXTRACTION_FORM, loadForm } from '../../../src/main/summary/extractionForm'
 import { toYaml } from '../../../src/main/project/yamlFile'
 import { thesisHash } from '../../../src/main/summary/thesis'
 import { FakeLlmProvider, fillOutputFor, llmOutputFor, PAPER_TEXT } from '../../helpers/llm'
@@ -484,6 +484,71 @@ describe('SummaryService', () => {
     const e = await s.store.readExtraction('he2017drain')
     expect(e?.ok && e.value.thesis_relation?.status).toBe('verified')
     expect((await s.summaries.reviewQueue()).some((i) => i.section === 'thesis')).toBe(false)
+    await s.close()
+  })
+
+  it('undoes an edit, a verification and «Verificar todo» exactly, once, and only while the paper is as they left it', async () => {
+    const s = await session()
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    const tldr = async () => {
+      const r = await s.store.readSummary('he2017drain')
+      return r?.ok ? r.value.fields.tldr : null
+    }
+    const files = async () => Promise.all(['summary.md', 'extraction.yaml'].map((f) => readFile(join(s.store.paperDir('he2017drain'), f), 'utf8')))
+    const original = await tldr()
+    const originalFiles = await files()
+    const edited = await s.summaries.edit('he2017drain', 'fields', 'tldr', 'my own words')
+    expect(await tldr()).toMatchObject({ value: 'my own words', status: 'edited' })
+    await s.summaries.revert(edited)
+    expect(await tldr()).toEqual(original)
+    expect(await files()).toEqual(originalFiles)
+    await expect(s.summaries.revert(edited)).rejects.toMatchObject({ name: 'InvalidEdit' })
+
+    const verified = await s.summaries.setStatus('he2017drain', 'facets', 'rigor', 'verified')
+    await s.summaries.edit('he2017drain', 'fields', 'tldr', 'changed after')
+    const changedFiles = await files()
+    await expect(s.summaries.revert(verified)).rejects.toMatchObject({ name: 'InvalidEdit' })
+    expect(await files()).toEqual(changedFiles)
+    await expect(s.summaries.revert(verified)).rejects.toMatchObject({ name: 'InvalidEdit' })
+
+    const pending = (await s.summaries.reviewQueue()).length
+    const all = await s.summaries.verifyAll('he2017drain')
+    expect(await s.summaries.reviewQueue()).toEqual([])
+    await s.summaries.revert(all)
+    expect(await s.summaries.reviewQueue()).toHaveLength(pending)
+    await s.close()
+  })
+
+  it('undoes mapping or accepting a proposed value in every paper and the form, and refuses once a paper changed', async () => {
+    const out = llmOutputFor(DEFAULT_EXTRACTION_FORM)
+    out.facets.sanitization_technique = { values: [], proposed: ['tokenization'], evidence: [] }
+    const s = await session([{ value: out, costUsd: 0.01, model: 'm' }], ['a2020x', 'b2020x'])
+    await s.summaries.requestBatch()
+    await s.queue.whenIdle()
+    const extractions = async () => Promise.all(['a2020x', 'b2020x'].map((id) => readFile(join(s.store.paperDir(id), 'extraction.yaml'), 'utf8')))
+    const before = await extractions()
+    const formBefore = loadForm(s.store.config.extraction_form)
+    const mapped = await s.summaries.mapProposed('sanitization_technique', 'tokenization', 'pseudonymization')
+    expect(await extractions()).not.toEqual(before)
+    await s.summaries.revert(mapped)
+    expect(await extractions()).toEqual(before)
+    expect(loadForm(s.store.config.extraction_form)).toEqual(formBefore)
+
+    const accepted = await s.summaries.acceptProposed('sanitization_technique', 'tokenization')
+    await s.summaries.edit('a2020x', 'facets', 'sanitization_technique', { values: ['ner'] })
+    const b = await readFile(join(s.store.paperDir('b2020x'), 'extraction.yaml'), 'utf8')
+    const formAfter = loadForm(s.store.config.extraction_form)
+    await expect(s.summaries.revert(accepted)).rejects.toMatchObject({ name: 'InvalidEdit' })
+    expect(await readFile(join(s.store.paperDir('b2020x'), 'extraction.yaml'), 'utf8')).toBe(b)
+    expect(loadForm(s.store.config.extraction_form)).toEqual(formAfter)
+    await s.close()
+  })
+
+  it('plans a batch over some papers', async () => {
+    const s = await session(undefined, ['a2020x', 'b2020x'])
+    expect(await s.summaries.plan(['a2020x'])).toMatchObject({ count: 1, estimateUsd: 0.05 })
+    expect(await s.summaries.plan()).toMatchObject({ count: 2 })
     await s.close()
   })
 })

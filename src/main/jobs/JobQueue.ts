@@ -85,6 +85,32 @@ export class JobQueue {
     return new Promise((resolve) => this.idleWaiters.push(resolve))
   }
 
+  /**
+   * The job's record once it finished (done, failed or cancelled); null when it is still queued or running after
+   * `timeoutMs` (or the id is unknown), so a caller can say it goes on in Actividad.
+   */
+  whenDone(id: number, timeoutMs: number): Promise<JobRecord | null> {
+    const finished = (): JobRecord | null => {
+      const row = this.cache.getJob(id)
+      return row && (row.state === 'done' || row.state === 'failed' || row.state === 'cancelled') ? toRecord(row, null) : null
+    }
+    const now = finished()
+    if (now || timeoutMs <= 0) return Promise.resolve(now)
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        off()
+        resolve(finished())
+      }, timeoutMs)
+      const off = this.onChange(() => {
+        const record = finished()
+        if (!record) return
+        clearTimeout(timer)
+        off()
+        resolve(record)
+      })
+    })
+  }
+
   private pump(): void {
     if (!this.started) return
     while (this.running.size < this.limits.total) {
