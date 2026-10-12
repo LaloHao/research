@@ -156,7 +156,7 @@ export class ChatActions implements ActionExecutor {
         // With automatic summaries on, adding queues a summary: it spends, so it asks with that summary's estimate.
         const spends = store.config.llm.auto_summarize
         const cost = spends ? await this.cost(1, 'summarize', this.deps.estimate('summarize'), false) : null
-        return make({ papers: [], cost }, () => this.addPaper(identifier), { risk: spends ? 'spends' : null })
+        return make({ papers: [], cost }, (opts) => this.addPaper(opts.identifier ?? identifier), { risk: spends ? 'spends' : null })
       }
       case 'write_note': {
         const { paper_id, text } = input('write_note', raw)

@@ -24,7 +24,11 @@ export interface PreparedAction {
   risk: ActionRisk | null
   /** Approving opens the file picker (attach_pdf). */
   pickPdf: boolean
-  execute(opts: { pdfPath?: string }): Promise<ExecutedAction>
+  /**
+   * `pdfPath`: the file the user picked (attach_pdf). `identifier`: add_paper run without asking fetches the identifier
+   * as the user typed it instead of the model's.
+   */
+  execute(opts: { pdfPath?: string; identifier?: string }): Promise<ExecutedAction>
 }
 
 /** The library's side of the actions: reads, and preparing a call (a ToolError when it cannot be done). */

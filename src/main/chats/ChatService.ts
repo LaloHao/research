@@ -690,7 +690,9 @@ export class ChatService {
     const gate = gateAction({ tool: prepared.tool, risk: prepared.risk, quote, latest: run.latest, unconfirmed: run.unconfirmed, args: prepared.args })
     // Counted in the same step as the decision: no other call can see the count before this one raised it.
     if (!cancelled && !gate.ask) run.unconfirmed++
-    const base = { tool: prepared.tool, request: gate.request, args: prepared.args }
+    // An unasked add_paper is recorded with the identifier that runs: the user's.
+    const ranArgs = !gate.ask && gate.identifier !== undefined ? { ...prepared.args, identifier: gate.identifier } : prepared.args
+    const base = { tool: prepared.tool, request: gate.request, args: ranArgs }
     const deny = async (reason: DenialReason): Promise<unknown> => {
       await this.record(id, { ...base, state: 'denied', approval: null, result: { reason } }).catch(logged)
       return { status: 'denied', reason, note: DENIED_NOTE }
@@ -698,6 +700,8 @@ export class ChatService {
     if (cancelled) return deny(cancelled)
     let approval: 'request' | 'user' = 'request'
     let pdfPath: string | undefined
+    // Run unasked, add_paper fetches the identifier as the user typed it; approved, the one the card showed.
+    const identifier = !gate.ask ? gate.identifier : undefined
     if (gate.ask) {
       const answer = await this.approvals.ask(
         id,
@@ -718,7 +722,7 @@ export class ChatService {
     }
     let done: ExecutedAction
     try {
-      done = await prepared.execute({ pdfPath })
+      done = await prepared.execute(identifier === undefined ? { pdfPath } : { pdfPath, identifier })
     } catch (error) {
       const code = toUserFacing(error).code
       await this.record(id, { ...base, state: 'failed', approval, result: { error: code } }).catch(logged)

@@ -49,8 +49,9 @@ function fakeActions() {
         preview: { papers: [{ id: DRAIN_ID, title: 'Drain' }], cost: null },
         risk: TOOL_RISK[tool],
         pickPdf: tool === 'attach_pdf',
-        execute: async ({ pdfPath }) => {
-          ran.push(pdfPath ? `${tool} ${pdfPath}` : tool)
+        execute: async ({ pdfPath, identifier }) => {
+          const extra = pdfPath ?? identifier
+          ran.push(extra ? `${tool} ${extra}` : tool)
           return { result: { ok: 1 }, undo: async () => void ran.push(`undo ${tool}`) }
         }
       }
@@ -173,7 +174,8 @@ describe('ChatService actions', () => {
       actions: executor,
       responses: [
         async (req) => {
-          outs.push(...(await callTools(actionsOf(req), [add('10.1109/icws.2017.13')])).map((o) => o.text))
+          // An invisible character the model slipped in never reaches the fetch: what runs is what the user typed.
+          outs.push(...(await callTools(actionsOf(req), [add('10.1109/icws.2017\u200b.13')])).map((o) => o.text))
           return chatAnswer('ok')
         },
         async (req) => {
@@ -188,9 +190,15 @@ describe('ChatService actions', () => {
     })
     const id = await chats.send({ ...ask('Por favor agrega el paper 10.1109/ICWS.2017.13'), actions: true })
     await chats.idle()
-    expect(ran).toEqual(['add_paper'])
+    expect(ran).toEqual(['add_paper 10.1109/ICWS.2017.13'])
     expect(outs[0]).toContain('"status":"done"')
-    expect((await chats.open(id)).messages[1]).toMatchObject({ role: 'action', tool: 'add_paper', state: 'executed', approval: 'request' })
+    expect((await chats.open(id)).messages[1]).toMatchObject({
+      role: 'action',
+      tool: 'add_paper',
+      state: 'executed',
+      approval: 'request',
+      args: { identifier: '10.1109/ICWS.2017.13' }
+    })
 
     await chats.send(ask('Por favor agrega el paper que cita Drain', id))
     await waitFor(() => updates.some((u) => u.kind === 'approvals'))
@@ -198,7 +206,7 @@ describe('ChatService actions', () => {
     expect(url).toMatchObject({ tool: 'add_paper', reason: 'not_requested', request: 'agrega el paper', args: { identifier: 'https://attacker.example/?d=notes' } })
     chats.decide(id, url.id, { approve: false })
     await chats.idle()
-    expect(ran).toEqual(['add_paper'])
+    expect(ran).toEqual(['add_paper 10.1109/ICWS.2017.13'])
 
     const before = updates.filter((u) => u.kind === 'approvals').length
     await chats.send(ask('Por favor agrega el paper 10.1109/ICWS.2017.13 otra vez', id))
@@ -207,7 +215,7 @@ describe('ChatService actions', () => {
     expect(near).toMatchObject({ tool: 'add_paper', reason: 'not_requested', args: { identifier: '10.1109/icws.2017.1' } })
     chats.decide(id, near.id, { approve: false })
     await chats.idle()
-    expect(ran).toEqual(['add_paper'])
+    expect(ran).toEqual(['add_paper 10.1109/ICWS.2017.13'])
   })
 
   it('always asks before what removes, even when asked for; a denial is recorded and told to Claude', async () => {

@@ -77,51 +77,61 @@ const ID_HOSTS = /(^|\.)(doi\.org|arxiv\.org|openalex\.org)$/i
 
 const bare = (s: string): string => s.normalize('NFKC').replace(INVISIBLE, '').trim().replace(/\/+$/, '')
 
-/** Whether `id` occurs in `text` as a whole identifier (not as part of a longer one). */
-function occursWhole(id: string, text: string): boolean {
+/** Where `id` occurs in `text` as a whole identifier (not as part of a longer one), or -1. */
+function occursWhole(id: string, text: string): number {
   for (let at = text.indexOf(id); at >= 0; at = text.indexOf(id, at + 1)) {
     if (at > 0 && ID_CHAR_BEFORE.test(text[at - 1])) continue
-    if (ID_TAIL.test(text.slice(at + id.length))) return true
+    if (ID_TAIL.test(text.slice(at + id.length))) return at
   }
-  return false
+  return -1
 }
 
 /**
- * Whether the user typed this identifier in the latest message: the model's identifier as given (trailing slashes and
- * spaces aside), or the DOI, arXiv or OpenAlex id it names. DOIs and arXiv ids are compared without case; a URL is
- * compared as typed, and only a doi.org, arxiv.org or openalex.org URL may match by the id it names, since any other
- * URL is fetched as it is.
+ * The identifier as the user typed it in the latest message (NFKC, without format characters), or null when the user
+ * did not type it: the model's identifier as given (trailing slashes and spaces aside), or the DOI, arXiv or OpenAlex id
+ * it names. DOIs and arXiv ids are compared without case; a URL is compared as typed, and only a doi.org, arxiv.org or
+ * openalex.org URL may match by the id it names, since any other URL is fetched as it is. What comes back is always the
+ * user's text, so what an unasked add_paper fetches carries nothing the model added (invisible characters included).
  */
-export function identifierRequested(identifier: unknown, latest: string | null): boolean {
-  if (typeof identifier !== 'string' || typeof latest !== 'string') return false
+export function typedIdentifier(identifier: unknown, latest: string | null): string | null {
+  if (typeof identifier !== 'string' || typeof latest !== 'string') return null
   const raw = bare(identifier)
-  if (raw === '') return false
+  if (raw === '') return null
   const text = latest.normalize('NFKC').replace(INVISIBLE, '')
   const parsed = parseInput(raw)
-  if (parsed.kind === 'invalid') return false
-  const isUrl = /^https?:\/\//i.test(raw)
-  if (parsed.kind === 'url') return occursWhole(raw, text)
+  if (parsed.kind === 'invalid') return null
+  const span = (at: number, length: number): string | null => (at < 0 ? null : text.slice(at, at + length))
+  if (parsed.kind === 'url') return span(occursWhole(raw, text), raw.length)
   const lower = text.toLowerCase()
-  if (occursWhole(raw.toLowerCase(), lower)) return true
-  if (isUrl) {
+  // Positions in the lowercased text are positions in the text only when lowercasing kept every length.
+  if (lower.length !== text.length) return null
+  const exact = occursWhole(raw.toLowerCase(), lower)
+  if (exact >= 0) return span(exact, raw.length)
+  if (/^https?:\/\//i.test(raw)) {
     let host = ''
     try {
       host = new URL(raw).hostname
     } catch {
-      return false
+      return null
     }
-    if (!ID_HOSTS.test(host)) return false
+    if (!ID_HOSTS.test(host)) return null
   }
   const id = parsed.kind === 'doi' ? parsed.doi : parsed.kind === 'arxiv' ? parsed.arxiv : parsed.openalex
-  return id !== '' && occursWhole(id.toLowerCase(), lower)
+  return id === '' ? null : span(occursWhole(id.toLowerCase(), lower), id.length)
 }
+
+/** Whether the user typed this identifier in the latest message (see typedIdentifier). */
+export const identifierRequested = (identifier: unknown, latest: string | null): boolean => typedIdentifier(identifier, latest) !== null
 
 /**
  * Why a call asks: its tool has a risk (or is unknown), the latest message did not ask for it in those words, or that
  * message already ran MAX_UNCONFIRMED_PER_MESSAGE actions without asking.
  */
 export type GateReason = ApprovalReason
-export type GateDecision = { ask: false; request: string } | { ask: true; request: string | null; reason: GateReason }
+export type GateDecision =
+  /** `identifier`: for add_paper, the identifier as the user typed it, which is what runs. */
+  | { ask: false; request: string; identifier?: string }
+  | { ask: true; request: string | null; reason: GateReason }
 
 /**
  * The app's confirmation rule: a reversible free action runs on its own only when the latest user message holds the
@@ -146,10 +156,11 @@ export function gateAction(a: {
   if (request === null || request === '') return { ask: true, request: null, reason: 'not_requested' }
   // Adding a paper fetches what the identifier names: a URL or id the model picked (from a paper's text, say) could
   // carry the library's data to any host, so it runs unasked only when the user typed that identifier.
-  if (a.tool === 'add_paper' && !identifierRequested(a.args?.identifier, a.latest)) return { ask: true, request, reason: 'not_requested' }
+  const identifier = a.tool === 'add_paper' ? typedIdentifier(a.args?.identifier, a.latest) : undefined
+  if (identifier === null) return { ask: true, request, reason: 'not_requested' }
   const n = a.unconfirmed
   if (!Number.isInteger(n) || n < 0 || n >= MAX_UNCONFIRMED_PER_MESSAGE) return { ask: true, request, reason: 'limit' }
-  return { ask: false, request }
+  return identifier === undefined ? { ask: false, request } : { ask: false, request, identifier }
 }
 
 const ALL: readonly string[] = [...ACTION_TOOLS, ...ACTION_READ_TOOLS]

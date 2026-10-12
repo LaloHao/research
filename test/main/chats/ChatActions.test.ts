@@ -173,6 +173,13 @@ describe('ChatActions', () => {
     await s.close()
   })
 
+  it('adds the identifier it is given at execution (the one the user typed) instead of the prepared one', async () => {
+    const { s, actions } = await setup({ fetch: routeFetch(DRAIN_ROUTES), seed: false })
+    const p = await actions.prepare('add_paper', { identifier: '10.1109/icws.2017.99' })
+    expect((await p.execute({ identifier: '10.1109/ICWS.2017.13' })).result).toEqual({ paper: DRAIN_ID, outcome: 'added' })
+    await s.close()
+  })
+
   it('attaches only the PDF the user picked, and syncs only a project set up for it', async () => {
     const { s, actions } = await setup()
     const p = await actions.prepare('attach_pdf', { paper_id: DRAIN_ID })

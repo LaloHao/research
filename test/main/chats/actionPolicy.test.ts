@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { enabledTools, gateAction, identifierRequested, isReadTool, latestUserText, MAX_UNCONFIRMED_PER_MESSAGE, MIN_REQUEST_QUOTE, quotedRequest, toolEnabled } from '../../../src/main/chats/actionPolicy'
+import { enabledTools, gateAction, identifierRequested, isReadTool, typedIdentifier, latestUserText, MAX_UNCONFIRMED_PER_MESSAGE, MIN_REQUEST_QUOTE, quotedRequest, toolEnabled } from '../../../src/main/chats/actionPolicy'
 import { ACTION_TOOLS, MAX_REQUEST_QUOTE, TOOL_RISK } from '../../../src/shared/chatActions'
 import { assistantMessage, userMessage } from '../../helpers/chats'
 
@@ -178,13 +178,24 @@ describe('identifierRequested', () => {
   })
 })
 
+describe('typedIdentifier', () => {
+  it("gives the identifier as the user typed it, never the model's string", () => {
+    expect(typedIdentifier('10.1109/icws.2017.13', 'Agrega 10.1109/ICWS.2017.13, por favor')).toBe('10.1109/ICWS.2017.13')
+    expect(typedIdentifier('https://doi.org/10.1109/icws.2017.13', 'Agrega doi:10.1109/ICWS.2017.13')).toBe('10.1109/ICWS.2017.13')
+    expect(typedIdentifier('https://example.org/pa\u200bpers/drain/', 'Agrega https://example.org/papers/drain.')).toBe('https://example.org/papers/drain')
+    expect(typedIdentifier('https://example.org/papers/drain', 'Agrega https://example.org/pa\u00adpers/drain')).toBe('https://example.org/papers/drain')
+    expect(typedIdentifier('https://example.org/papers/drain?x=1', 'Agrega https://example.org/papers/drain')).toBeNull()
+  })
+})
+
 describe('add_paper without asking', () => {
   const quote = 'agrega el paper'
   it('runs only when its identifier is in the latest message; otherwise it asks as not requested', () => {
     const typed = 'Por favor agrega el paper 10.1109/ICWS.2017.13'
     expect(gateAction({ tool: 'add_paper', risk: null, quote, latest: typed, unconfirmed: 0, args: { identifier: '10.1109/icws.2017.13' } })).toEqual({
       ask: false,
-      request: 'agrega el paper'
+      request: 'agrega el paper',
+      identifier: '10.1109/ICWS.2017.13'
     })
     expect(gateAction({ tool: 'add_paper', risk: null, quote, latest: typed, unconfirmed: 0, args: { identifier: '10.1109/icws.2017.1' } })).toEqual({
       ask: true,
