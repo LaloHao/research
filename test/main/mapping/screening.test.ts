@@ -53,7 +53,8 @@ describe('decision heads and phase views', () => {
       [b.id, 'machine-b']
     ])
     const same = d(3, { decision: 'exclude', criterion: 'E1', replaces: [first.id], machine: 'machine-b' })
-    expect(phaseView(headsOf(decisionHeads([first, a, same]), R1, 'title_abstract'), 1)).toMatchObject({ state: 'exclude', decisionId: same.id })
+    // Agreeing heads share their state, but there is no single decision for «Deshacer» to take back.
+    expect(phaseView(headsOf(decisionHeads([first, a, same]), R1, 'title_abstract'), 1)).toMatchObject({ state: 'exclude', criterion: 'E1', decisionId: null })
   })
 
   it('clears a conflict once a decision replaces both heads, and keeps reviewers apart', () => {
@@ -68,6 +69,28 @@ describe('decision heads and phase views', () => {
     const both = decisionHeads([first, second])
     expect(headsOf(both, R1, 'title_abstract').map((h) => h.id)).toEqual([first.id])
     expect(headsOf(both, R1, 'title_abstract', 'second').map((h) => h.id)).toEqual([second.id])
+  })
+
+  it('counts a replacement only within its own record, phase and reviewer', () => {
+    const r1 = d(1)
+    const r2 = d(2, { record: R2, decision: 'exclude', criterion: 'E1', replaces: [r1.id] })
+    const otherPhase = d(3, { phase: 'full_text', replaces: [r1.id] })
+    const second = d(4, { reviewer: 'second', replaces: [r1.id], decision: 'exclude', criterion: 'E2' })
+    const heads = decisionHeads([r1, r2, otherPhase, second])
+    expect(phaseView(headsOf(heads, R1, 'title_abstract'), 1)).toMatchObject({ state: 'include', decisionId: r1.id })
+    expect(phaseView(headsOf(heads, R2, 'title_abstract'), 1)).toMatchObject({ state: 'exclude', decisionId: r2.id })
+    const self = d(5, { replaces: [hexId('d', 5)] })
+    expect(headsOf(decisionHeads([self]), R1, 'title_abstract').map((h) => h.id)).toEqual([self.id])
+  })
+
+  it('reads a repeated decision id once', () => {
+    const first = d(1)
+    expect(phaseView(headsOf(decisionHeads([first, { ...first }]), R1, 'title_abstract'), 1)).toMatchObject({ state: 'include', decisionId: first.id })
+  })
+
+  it('reads «not_retrieved» on title and abstract as pending', () => {
+    expect(phaseView([d(1, { decision: 'not_retrieved' })], 1).state).toBe('pending')
+    expect(phaseView([d(1, { phase: 'full_text', decision: 'not_retrieved' })], 1).state).toBe('not_retrieved')
   })
 
   it('reads «none» as pending and marks a decision made with an earlier protocol', () => {
@@ -131,7 +154,8 @@ describe('queues and lists', () => {
 
   it('counts states per phase, and lists the waiting duplicates', () => {
     const counts = screeningCounts(rows)
-    expect(counts.title_abstract).toMatchObject({ pending: 1, include: 1, exclude: 1 })
+    // The waiting duplicate is in no queue but «all», so it is not counted as pending either.
+    expect(counts.title_abstract).toMatchObject({ pending: 0, include: 1, exclude: 1 })
     expect(counts.full_text).toMatchObject({ pending: 1, include: 0 })
     expect(duplicatePairs(rows)).toEqual([
       {
@@ -146,6 +170,18 @@ describe('queues and lists', () => {
     const first = d(1)
     const conflicted = recordRows(content({ decisions: [first, d(2, { decision: 'exclude', criterion: 'E1', replaces: [first.id] }), d(3, { replaces: [first.id], decision: 'uncertain' })] }))
     expect(conflictsOf(conflicted)).toEqual([{ record: expect.objectContaining({ id: R1 }), phase: 'title_abstract', options: [expect.objectContaining({ decisionId: hexId('d', 2) }), expect.objectContaining({ decisionId: hexId('d', 3) })] }])
+  })
+})
+
+describe('conflictsOf on full text', () => {
+  it('leaves out a full-text conflict once the record is no longer included on title and abstract', () => {
+    const ta = d(1)
+    const ft = d(2, { phase: 'full_text' })
+    const a = d(3, { phase: 'full_text', replaces: [ft.id], decision: 'exclude', criterion: 'E1' })
+    const b = d(4, { phase: 'full_text', replaces: [ft.id], decision: 'uncertain' })
+    expect(conflictsOf(recordRows(content({ decisions: [ta, ft, a, b] }))).map((c) => c.phase)).toEqual(['full_text'])
+    const excluded = d(5, { replaces: [ta.id], decision: 'exclude', criterion: 'E1' })
+    expect(conflictsOf(recordRows(content({ decisions: [ta, ft, a, b, excluded] })))).toEqual([])
   })
 })
 
@@ -168,5 +204,25 @@ describe('undoDecision', () => {
     const b = d(3, { replaces: [first.id], decision: 'uncertain' })
     const resolved = d(4, { replaces: [a.id, b.id], decision: 'uncertain' })
     expect(undoDecision([first, a, b, resolved], resolved.id, ctx)).toBeNull()
+  })
+
+  it('undoes a decision made over two agreeing heads by restoring the newest of them', () => {
+    const first = d(1)
+    const a = d(2, { replaces: [first.id], decision: 'exclude', criterion: 'E1', machine: 'machine-a' })
+    const b = d(3, { replaces: [first.id], decision: 'exclude', criterion: 'E1', machine: 'machine-b' })
+    expect(undoDecision([first, a, b], b.id, ctx)).toBeNull()
+    const next = d(4, { replaces: [a.id, b.id], decision: 'include' })
+    expect(undoDecision([first, a, b, next], next.id, ctx)).toMatchObject({ decision: 'exclude', criterion: 'E1', replaces: [next.id], undoes: next.id, machine: 'machine-a' })
+  })
+
+  it('refuses when the replaced decision belongs to another record, phase or reviewer, or is missing', () => {
+    const other = d(1, { record: R2 })
+    const target = d(2, { replaces: [other.id], decision: 'exclude', criterion: 'E1' })
+    expect(undoDecision([other, target], target.id, ctx)).toBeNull()
+    const otherPhase = d(3, { phase: 'full_text' })
+    const target2 = d(4, { replaces: [otherPhase.id] })
+    expect(undoDecision([otherPhase, target2], target2.id, ctx)).toBeNull()
+    const orphan = d(5, { replaces: [hexId('d', 77)] })
+    expect(undoDecision([orphan], orphan.id, ctx)).toBeNull()
   })
 })

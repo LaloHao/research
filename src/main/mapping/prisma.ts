@@ -19,9 +19,10 @@ const byCriterion = (a: string, b: string): number => (a[0] === b[0] ? Number(a.
 
 /**
  * PRISMA 2020 flow from the live searches and the current decisions. Database searches (OpenAlex, imports) are grouped
- * by database; snowballing and library searches by kind, in the «other methods» column. A record belongs to the first
- * column when any live source of it is a database search. Duplicates = records read by the column's searches − the
- * column's active records.
+ * by database (case-insensitively, under the first spelling); snowballing and library searches by kind, in the «other
+ * methods» column. A record belongs to the first column when any live source of it is a database search.
+ * Duplicates = records read by the column's searches − the column's active records, floored at 0: reads are never
+ * fewer than the records they brought unless `searches.yaml` was edited by hand.
  */
 export function prismaCounts(rows: MappingRecordRow[], searches: Search[]): PrismaCounts {
   const columns = { databases: emptyColumn(), other: emptyColumn() }
@@ -30,7 +31,7 @@ export function prismaCounts(rows: MappingRecordRow[], searches: Search[]): Pris
     const isDatabase = DATABASE_KINDS.has(s.kind)
     const column = isDatabase ? columns.databases : columns.other
     const database = isDatabase ? s.database : s.kind
-    const source = column.identified.find((x) => x.database === database)
+    const source = column.identified.find((x) => x.database.toLowerCase() === database.toLowerCase())
     if (source) source.count += s.count
     else column.identified.push({ kind: s.kind, database, count: s.count })
   }

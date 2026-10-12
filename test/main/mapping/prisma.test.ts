@@ -166,6 +166,11 @@ describe('prismaCounts invariants', () => {
     expect([p.databases.screened, p.databases.duplicates, p.other.screened, p.other.duplicates]).toEqual([1, 0, 0, 1])
   })
 
+  it('groups identified records by database name regardless of case', () => {
+    const searches = [search({ id: S.scopus, database: 'Scopus', count: 2 }), search({ id: S.ieee, database: 'scopus', count: 1 })]
+    expect(prismaCounts([], searches).databases.identified).toEqual([{ kind: 'import', database: 'Scopus', count: 3 }])
+  })
+
   it('counts a record in conflict as still to decide in its phase', () => {
     const searches = [search({ count: 1 })]
     const first = decision({ id: hexId('d', 101) })

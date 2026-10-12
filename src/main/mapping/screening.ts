@@ -36,14 +36,31 @@ const groupKey = (record: string, phase: Phase, reviewer: string): string => `${
 const byTime = <T extends { at: string; id: string }>(a: T, b: T): number => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
 const sameOutcome = (a: Decision, b: Decision): boolean => a.decision === b.decision && a.criterion === b.criterion
 
+const groupOf = (d: Decision): string => groupKey(d.record, d.phase, d.reviewer)
+
+/** Decisions by id; a repeated id (which the sync's union by id should never leave) keeps its first occurrence. */
+function uniqueById(decisions: Decision[]): Map<string, Decision> {
+  const byId = new Map<string, Decision>()
+  for (const d of decisions) if (!byId.has(d.id)) byId.set(d.id, d)
+  return byId
+}
+
 /**
  * For each record, phase and reviewer: the decisions no other decision replaced, oldest first. One head is the usual
- * case; several only arise when two machines decided before syncing.
+ * case; several only arise when two machines decided before syncing. A `replaces` only counts inside its own record,
+ * phase and reviewer, so a hand-edited or badly merged file never erases another record's decision. A cycle of
+ * replacements (corrupt input) leaves its members out, so the record reads as pending.
  */
 export function decisionHeads(decisions: Decision[]): Map<string, Decision[]> {
-  const replaced = new Set(decisions.flatMap((d) => d.replaces))
+  const byId = uniqueById(decisions)
+  const replaced = new Set<string>()
+  for (const d of byId.values())
+    for (const r of d.replaces) {
+      const target = byId.get(r)
+      if (target && target.id !== d.id && groupOf(target) === groupOf(d)) replaced.add(r)
+    }
   const heads = new Map<string, Decision[]>()
-  for (const d of [...decisions].sort(byTime)) {
+  for (const d of [...byId.values()].sort(byTime)) {
     if (replaced.has(d.id)) continue
     const key = groupKey(d.record, d.phase, d.reviewer)
     heads.set(key, [...(heads.get(key) ?? []), d])
@@ -57,16 +74,20 @@ export function headsOf(heads: ReadonlyMap<string, Decision[]>, record: string, 
 
 const option = (d: Decision): ConflictOption => ({ decisionId: d.id, decision: d.decision, criterion: d.criterion, by: d.by, at: d.at, machine: d.machine })
 
-/** A record's state in one phase: pending, the agreed current decision, or a conflict between disagreeing heads. */
+/**
+ * A record's state in one phase: pending, the agreed current decision, or a conflict between disagreeing heads.
+ * Several agreeing heads give their shared state with no `decisionId`: «Deshacer» needs a single current decision.
+ * A value that does not belong to the phase (`not_retrieved` on title and abstract) reads as pending.
+ */
 export function phaseView(heads: Decision[], protocolVersion: number): PhaseView {
   if (heads.length === 0) return EMPTY_PHASE_VIEW
   if (heads.some((h) => !sameOutcome(h, heads[0]))) return { ...EMPTY_PHASE_VIEW, state: 'conflict', options: heads.map(option) }
   const h = heads[heads.length - 1]
-  if (h.decision === 'none') return EMPTY_PHASE_VIEW
+  if (h.decision === 'none' || (h.decision === 'not_retrieved' && h.phase !== 'full_text')) return EMPTY_PHASE_VIEW
   return {
     state: h.decision,
     criterion: h.criterion,
-    decisionId: h.id,
+    decisionId: heads.length === 1 ? h.id : null,
     by: h.by,
     at: h.at,
     protocolVersion: h.protocol_version,
@@ -152,11 +173,14 @@ export function matchesFilter(row: MappingRecordRow, phase: Phase, filter: Queue
 
 const zeroCounts = (): Record<PhaseState, number> => Object.fromEntries(PHASE_STATES.map((s) => [s, 0])) as Record<PhaseState, number>
 
-/** Active records per phase and state; full text counts only the records included on title and abstract. */
+/**
+ * Active records per phase and state, as the queues show them: full text counts only the records included on title
+ * and abstract, and a record waiting for a duplicate decision is left out (it is in no queue but «all»).
+ */
 export function screeningCounts(rows: MappingRecordRow[]): ScreeningCounts {
   const counts = Object.fromEntries(PHASES.map((p) => [p, zeroCounts()])) as ScreeningCounts
   for (const row of rows) {
-    if (!row.active) continue
+    if (!row.active || row.duplicate) continue
     counts.title_abstract[row.title_abstract.state]++
     if (row.title_abstract.state === 'include') counts.full_text[row.full_text.state]++
   }
@@ -176,25 +200,37 @@ export function duplicatePairs(rows: MappingRecordRow[]): DuplicatePair[] {
   })
 }
 
-/** Records two machines decided differently, per phase. */
+/** Records two machines decided differently, per phase; full text only while the record is included on title and abstract. */
 export function conflictsOf(rows: MappingRecordRow[]): ScreeningConflict[] {
   return rows.flatMap((row) =>
-    row.active ? PHASES.filter((p) => row[p].state === 'conflict').map((phase) => ({ record: brief(row), phase, options: row[phase].options })) : []
+    row.active
+      ? PHASES.filter((p) => row[p].state === 'conflict' && (p === 'title_abstract' || row.title_abstract.state === 'include')).map((phase) => ({
+          record: brief(row),
+          phase,
+          options: row[phase].options
+        }))
+      : []
   )
 }
 
 /**
  * The decision «Deshacer» appends for decision `id`: a copy of the decision it replaced (or `none` when it replaced
- * nothing). Null when `id` is unknown, is no longer the only current decision of its record and phase, or resolved a
- * conflict (undoing that would need two heads back).
+ * nothing). When it replaced several agreeing decisions (two machines decided alike), a copy of the newest. Null when
+ * `id` is unknown, is no longer the only current decision of its record and phase, resolved a conflict (undoing that
+ * would need two heads back), or names a replaced decision that is missing or belongs to another record, phase or
+ * reviewer. Undoing an undo restores the undone decision.
  */
 export function undoDecision(decisions: Decision[], id: string, ctx: { id: string; at: string; machine: string }): Decision | null {
-  const target = decisions.find((d) => d.id === id)
-  if (!target || target.replaces.length > 1) return null
+  const byId = uniqueById(decisions)
+  const target = byId.get(id)
+  if (!target) return null
   const heads = headsOf(decisionHeads(decisions), target.record, target.phase, target.reviewer)
   if (heads.length !== 1 || heads[0].id !== id) return null
-  const previous = target.replaces.length === 1 ? decisions.find((d) => d.id === target.replaces[0]) : null
-  if (previous === undefined) return null
+  const replaced = target.replaces.map((r) => byId.get(r))
+  if (replaced.some((p) => p === undefined || p.id === target.id || groupOf(p) !== groupOf(target))) return null
+  const previousList = (replaced as Decision[]).sort(byTime)
+  if (previousList.some((p) => !sameOutcome(p, previousList[0]))) return null
+  const previous = previousList.length > 0 ? previousList[previousList.length - 1] : null
   return {
     id: ctx.id,
     record: target.record,
