@@ -1,6 +1,7 @@
 import type { ConflictChoice } from '../../shared/sync'
 import type { ConflictPaths, NameStatus, TreeEntry } from './gitOutput'
 import { siblingName } from '../project/trashPaths'
+import { chatIdOfPath, mergeChatText } from './chatMerge'
 import { mergerFor } from './mergers'
 import type { MergeResult, ProjectRepo, TreeEdit } from './ProjectRepo'
 
@@ -54,6 +55,12 @@ class TreeState {
   async has(path: string): Promise<boolean> {
     const change = this.changes.get(path)
     return change !== undefined ? change !== null : (await this.repo.oidAt(this.tree, path)) !== null
+  }
+
+  /** The blob at `path` in the final tree so far; null when there is none. */
+  async oid(path: string): Promise<string | null> {
+    const change = this.changes.get(path)
+    return change !== undefined ? (change?.oid ?? null) : await this.repo.oidAt(this.tree, path)
   }
 
   /** The first free `<dir>/<name>.conflict[-n]` beside `path` (a `~<commit>` suffix git added taken off first). */
@@ -170,6 +177,40 @@ async function autoMerged(repo: ProjectRepo, x: ConflictPaths): Promise<TreeEntr
 }
 
 /**
+ * chats/<id>.md, which never waits for a decision when both sides can be read: changed on both machines it merges (or
+ * splits into two conversations, see mergeChatText); deleted on one and changed on the other, the changed one stays.
+ */
+async function chatEdits(repo: ProjectRepo, x: ConflictPaths, state: TreeState): Promise<boolean> {
+  const id = chatIdOfPath(x.path.slice(repo.prefix.length))
+  if (id === null) return false
+  if (!x.ours || !x.theirs) {
+    const kept = x.ours ?? x.theirs
+    if (!kept) return false
+    state.set(x.path, kept)
+    return true
+  }
+  const merged = mergeChatText(
+    {
+      base: x.base ? await repo.readText(x.base.oid) : null,
+      ours: await repo.readText(x.ours.oid),
+      theirs: await repo.readText(x.theirs.oid)
+    },
+    id
+  )
+  if (!merged) return false
+  if (merged.copy) {
+    const copyPath = `${repo.prefix}${merged.copy.relPath}`
+    // The same two versions always give the same copy; anything else already there is never overwritten.
+    const existing = await state.oid(copyPath)
+    const oid = await repo.writeBlob(merged.copy.text)
+    if (existing !== null && existing !== oid) return false
+    state.set(copyPath, { mode: x.ours.mode, oid })
+  }
+  state.set(x.path, { mode: x.ours.mode, oid: await repo.writeBlob(merged.text) })
+  return true
+}
+
+/**
  * Turns `git merge-tree` into a finished tree, or the decisions still missing. A conflict outside the project folder
  * stops everything; the files the app knows how to merge are merged; the rest waits for (or applies) the user's choice.
  */
@@ -203,6 +244,7 @@ export async function planMerge(repo: ProjectRepo, c: MergeCommits): Promise<Mer
       await state.place(x.path, x.ours ?? x.theirs)
       continue
     }
+    if (await chatEdits(repo, x, state)) continue
     const auto = await autoMerged(repo, x)
     if (auto) {
       state.set(x.path, auto)
