@@ -163,6 +163,54 @@ describe('facet-suggestions.yaml', () => {
     expect(mergedSuggestions(mergeFacetSuggestionsText({ base: null, ours: suggestionsText([]), theirs: later })).last_run?.at).toBe('2026-10-11T00:00:00.000Z')
   })
 
+  describe('a decision against a fresh run on the other machine', () => {
+    const FRESH = { model: 'claude-sonnet-5', at: '2026-10-11T11:00:00.000Z', prompt_version: 1 }
+    const reSuggested = { ...FACET, rationale: 'Proposed again by a new run.', origin: FRESH, updated_at: '2026-10-11T11:00:00.000Z' }
+
+    it.each(['accepted', 'rejected'] as const)('keeps a suggestion %s on one machine over a newer re-proposal from the other', (status) => {
+      const base = suggestionsText([FACET])
+      const decided = suggestionsText([{ ...FACET, status, updated_at: '2026-10-11T10:00:00.000Z' }])
+      const fresh = suggestionsText([reSuggested])
+      for (const [ours, theirs] of [
+        [decided, fresh],
+        [fresh, decided]
+      ]) {
+        expect(mergedSuggestions(mergeFacetSuggestionsText({ base, ours, theirs })).suggestions.map((s) => s.status)).toEqual([status])
+      }
+    })
+
+    it('keeps the decision when both machines added the suggestion without a common version', () => {
+      const decided = suggestionsText([{ ...FACET, status: 'rejected', updated_at: '2026-10-11T10:00:00.000Z' }])
+      const out = mergedSuggestions(mergeFacetSuggestionsText({ base: null, ours: decided, theirs: suggestionsText([reSuggested]) }))
+      expect(out.suggestions.map((s) => s.status)).toEqual(['rejected'])
+    })
+
+    it('lets a restored suggestion (same run as the base) follow the newest change', () => {
+      const base = suggestionsText([{ ...FACET, status: 'rejected' }])
+      const restored = suggestionsText([{ ...FACET, status: 'suggested', updated_at: '2026-10-11T12:00:00.000Z' }])
+      const accepted = suggestionsText([{ ...FACET, status: 'accepted', updated_at: '2026-10-11T10:00:00.000Z' }])
+      expect(mergedSuggestions(mergeFacetSuggestionsText({ base, ours: accepted, theirs: restored })).suggestions.map((s) => s.status)).toEqual(['suggested'])
+    })
+  })
+
+  it('keeps a suggestion one machine removed and the other edited', () => {
+    const base = suggestionsText([FACET])
+    const edited = suggestionsText([{ ...FACET, status: 'rejected', updated_at: '2026-10-11T10:00:00.000Z' }])
+    const out = mergedSuggestions(mergeFacetSuggestionsText({ base, ours: suggestionsText([]), theirs: edited }))
+    expect(out.suggestions.map((s) => [s.id, s.status])).toEqual([[FACET.id, 'rejected']])
+  })
+
+  it('joins two files added on both machines, the newest version of a shared id winning and an unreadable time losing', () => {
+    const older = suggestionsText([{ ...VALUE, rationale: 'older', updated_at: '2026-10-11T10:00:00.000Z' }, { ...ALIAS, rationale: 'dated' }])
+    const newer = suggestionsText([FACET, { ...VALUE, rationale: 'newer', updated_at: '2026-10-11T11:00:00.000Z' }, { ...ALIAS, rationale: 'undated', updated_at: 'yesterday' }])
+    const out = mergedSuggestions(mergeFacetSuggestionsText({ base: null, ours: older, theirs: newer }))
+    expect(out.suggestions.map((s) => [s.id, s.rationale])).toEqual([
+      [ALIAS.id, 'dated'],
+      [FACET.id, FACET.rationale],
+      [VALUE.id, 'newer']
+    ])
+  })
+
   it('leaves the file to the user when a side cannot be read or has another schema version', () => {
     const ok = suggestionsText([FACET])
     expect(mergeFacetSuggestionsText({ base: null, ours: ok, theirs: 'schema_version: 1\nsuggestions: [{ id: broken }]\n' })).toBeNull()

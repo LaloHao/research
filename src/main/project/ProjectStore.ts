@@ -25,7 +25,7 @@ import { gitattributesLines, gitignoreLines, withManagedBlock } from './gitFiles
 import { RELATIONS_FILE, resolveConflictText, sortRelations } from './relationsFile'
 import { siblingName, TRASH_DIR, TRASHED_FILE } from './trashPaths'
 import { WriteGate } from './writeGate'
-import { parseFrontmatterFile, parseYamlFile, toFrontmatter, toYaml } from './yamlFile'
+import { hasConflictMarkers, parseFrontmatterFile, parseYamlFile, toFrontmatter, toYaml } from './yamlFile'
 
 export const PROJECT_FILE = 'project.yaml'
 
@@ -303,10 +303,13 @@ export class ProjectStore {
     return text === null ? null : parseYamlFile(text, FacetSuggestionsFileSchema)
   }
 
-  /** Suggestions are always written sorted by id, so the sync merges two machines' changes entry by entry. */
+  /**
+   * Suggestions are always written sorted by id, so the sync merges two machines' changes entry by entry. A file with
+   * conflict markers is never overwritten, even with its hash: one machine's decisions would be lost.
+   */
   async writeFacetSuggestions(file: FacetSuggestionsFile, expectedHash: string | null): Promise<string> {
     const valid = FacetSuggestionsFileSchema.parse({ ...file, suggestions: sortSuggestions(file.suggestions) })
-    return this.writeChecked(join(this.root, FACET_SUGGESTIONS_FILE), toYaml(valid), expectedHash)
+    return this.writeChecked(join(this.root, FACET_SUGGESTIONS_FILE), toYaml(valid), expectedHash, { refuseConflictMarkers: true })
   }
 
   trashDir(id: string): string {
@@ -533,10 +536,11 @@ export class ProjectStore {
     }
   }
 
-  private async writeChecked(path: string, text: string, expectedHash: string | null): Promise<string> {
+  private async writeChecked(path: string, text: string, expectedHash: string | null, opts: { refuseConflictMarkers?: boolean } = {}): Promise<string> {
     const current = await readOptional(path)
     const currentHash = current === null ? null : sha256(current)
     if (currentHash !== expectedHash) throw new ConflictError(path)
+    if (opts.refuseConflictMarkers && current !== null && hasConflictMarkers(current)) throw new ConflictError(path)
     await atomicWrite(path, text)
     return sha256(text)
   }

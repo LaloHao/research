@@ -26,6 +26,13 @@ describe('ProjectStore facet suggestions', () => {
     expect(await store.readFacetSuggestions()).toMatchObject({ ok: false, problem: { kind: 'conflict_markers' } })
   })
 
+  it('never writes over a file with conflict markers, even with its hash', async () => {
+    const store = await ProjectStore.create(await tmpDir(), 'Thesis')
+    await writeFile(join(store.root, FACET_SUGGESTIONS_FILE), 'schema_version: 1\n<<<<<<< HEAD\nsuggestions: []\n=======\nsuggestions: []\n>>>>>>> other\n')
+    const read = await store.readFacetSuggestions()
+    await expect(store.writeFacetSuggestions({ schema_version: 1, suggestions: [] }, read?.hash ?? null)).rejects.toBeInstanceOf(ConflictError)
+  })
+
   it('holds the write while the sync has the folder', async () => {
     const store = await ProjectStore.create(await tmpDir(), 'Thesis')
     let release!: () => void

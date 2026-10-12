@@ -5,6 +5,11 @@ import type { ReadResult } from './errors'
 
 const CONFLICT_MARKER = /^(<{7} |={7}$|>{7} )/m
 
+/** Whether the text still has git conflict markers (a merge the user has not decided yet). */
+export function hasConflictMarkers(text: string): boolean {
+  return CONFLICT_MARKER.test(text)
+}
+
 export function parseYamlFile<T>(text: string, schema: z.ZodType<T>): ReadResult<T> {
   const hash = sha256(text)
   if (CONFLICT_MARKER.test(text)) {

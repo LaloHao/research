@@ -165,11 +165,27 @@ function mergeLastRun(base: LastRun | undefined, ours: LastRun | undefined, thei
   return instant(theirs.at) > instant(ours.at) ? theirs : ours
 }
 
+/** A side re-proposed by a suggestion run: still `suggested`, from another run than the merge base's (or no base). */
+const freshRun = (s: FacetSuggestion, base: FacetSuggestion | undefined): boolean => s.status === 'suggested' && !isDeepStrictEqual(s.origin, base?.origin)
+
+/**
+ * Both machines have the suggestion and both changed it. A decision (accepted or rejected) beats a re-proposal from a
+ * run on the other machine, whatever the clocks say: that run never saw the decision, and decided suggestions are
+ * never replaced by a run. Otherwise (e.g. a «Restaurar», which keeps the base's origin) the newest `updated_at` wins,
+ * and a tie keeps ours.
+ */
+function pickSuggestion(base: FacetSuggestion | undefined, ours: FacetSuggestion, theirs: FacetSuggestion): FacetSuggestion {
+  if (ours.status !== 'suggested' && freshRun(theirs, base)) return ours
+  if (theirs.status !== 'suggested' && freshRun(ours, base)) return theirs
+  return instant(theirs.updated_at) > instant(ours.updated_at) ? theirs : ours
+}
+
 const suggestionsById = (list: FacetSuggestion[]): Map<string, FacetSuggestion> => new Map(list.map((s) => [s.id, s]))
 
 /**
  * facet-suggestions.yaml: union by id against the merge base. A suggestion changed on one machine only takes that
- * machine's version (whatever the clocks say); changed on both, the newest `updated_at` wins (a tie keeps ours); removed
+ * machine's version (whatever the clocks say); changed on both, a decision beats
+ * a fresh run's re-proposal and otherwise the newest `updated_at` wins (a tie keeps ours); removed
  * on one side and untouched on the other, it stays removed. Never merged when a side has an invalid entry or another
  * schema version (it would be dropped silently): that becomes a decision.
  */
@@ -186,7 +202,8 @@ export function mergeFacetSuggestionsText({ base, ours, theirs }: MergeInput): s
   const merged = new Map(oMap)
   for (const [id, s] of tMap) {
     const current = merged.get(id)
-    if (!current || instant(s.updated_at) > instant(current.updated_at)) merged.set(id, s)
+    if (!current) merged.set(id, s)
+    else merged.set(id, pickSuggestion(bMap?.get(id), current, s))
   }
   const { last_run: _ours, ...oRest } = o
   const { last_run: _theirs, ...tRest } = t
