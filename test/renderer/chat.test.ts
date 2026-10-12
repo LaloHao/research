@@ -19,7 +19,7 @@ import {
   withCitationLinks,
   type LiveAnswer
 } from '../../src/renderer/lib/chat'
-import type { ChatStreamUpdate, ChatSummary } from '../../src/shared/chat'
+import { normalizeExcerpt, type ChatStreamUpdate, type ChatSummary } from '../../src/shared/chat'
 
 const t = ((key: string, options?: Record<string, unknown>) => (options ? `${key} ${JSON.stringify(options)}` : key)) as unknown as TFunction
 
@@ -93,6 +93,13 @@ describe('composer and selections', () => {
     expect(excerptFromSelection('  Drain parses\nlog   messages ', 'he2017drain', 3)).toEqual({ paper: 'he2017drain', page: 3, quote: 'Drain parses log messages' })
     expect(excerptFromSelection(' a ', 'he2017drain', 3)).toBeNull()
     expect(excerptFromSelection('x'.repeat(1500), 'he2017drain', null)!.quote).toHaveLength(1000)
+  })
+
+  it('keeps an excerpt in the form its citation marker reads back, within the quote limit', () => {
+    expect(excerptFromSelection('a "]] b [[c', 'he2017drain', 2)).toEqual({ paper: 'he2017drain', page: 2, quote: 'a " ]] b [ [c' })
+    const long = excerptFromSelection('"]]'.repeat(500), 'he2017drain', 2)!
+    expect(long.quote.length).toBeLessThanOrEqual(1000)
+    expect(normalizeExcerpt(long)).toEqual(long)
   })
 })
 

@@ -320,3 +320,6 @@ button.danger { color: var(--error); border-color: var(--error); }
 .chat-composer textarea { width: 100%; resize: vertical; }
 .chat-evidence { width: 45%; flex-shrink: 0; border-left: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; overflow: auto; }
 .chat-evidence-head { padding: 8px 12px; justify-content: space-between; }
+.paper-chat { display: grid; grid-template-columns: 240px minmax(0, 1fr); height: 100%; }
+.pdf-viewer, .content-view-wrap { position: relative; }
+.selection-ask { position: absolute; z-index: 5; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2); }

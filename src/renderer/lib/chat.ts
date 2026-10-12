@@ -1,5 +1,5 @@
 import type { TFunction } from 'i18next'
-import { MAX_EXCERPT, type ChatCitation, type ChatExcerpt, type ChatPartial, type ChatStreamUpdate, type ChatSummary } from '../../shared/chat'
+import { MAX_EXCERPT, normalizeExcerpt, type ChatCitation, type ChatExcerpt, type ChatPartial, type ChatStreamUpdate, type ChatSummary } from '../../shared/chat'
 import { citationLabel, parseCitations } from '../../shared/chatCitations'
 
 /** Links to a citation chip: `#cite-<index of the marker in the answer>`. */
@@ -122,11 +122,16 @@ export function composerAction(e: { key: string; shiftKey: boolean; isComposing:
   return e.key === 'Enter' && !e.shiftKey && !e.isComposing ? 'send' : null
 }
 
-/** «Preguntar a Claude» on a selection: whitespace collapsed, at least 3 characters, cut at MAX_EXCERPT. */
+/**
+ * «Preguntar a Claude» on a selection: whitespace collapsed, at least 3 characters, in the form its citation marker
+ * reads back (`"]]` and `[[` broken up, as the conversation file stores it), cut at MAX_EXCERPT; null when it cannot
+ * be quoted.
+ */
 export function excerptFromSelection(selected: string, paper: string, page: number | null): ChatExcerpt | null {
-  const quote = selected.replace(/\s+/g, ' ').trim()
-  if (quote.length < 3) return null
-  return { paper, page, quote: quote.slice(0, MAX_EXCERPT).trimEnd() }
+  const collapsed = selected.replace(/\s+/g, ' ').trim()
+  if (collapsed.length < 3) return null
+  const quote = collapsed.replace(/"\]\]/g, '" ]]').replace(/\[\[/g, '[ [').slice(0, MAX_EXCERPT).trimEnd()
+  return normalizeExcerpt({ paper, page, quote })
 }
 
 /** A conversation's title; a copy the sync split off says which machine it came from. */
