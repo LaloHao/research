@@ -69,7 +69,7 @@ export interface ChatRequest {
   model: string
   maxUsd: number
   servers: McpEndpoint[]
-  /** Tool budget plus one turn for the answer; enforced by the servers' call budget, and by the CLI when it supports --max-turns. */
+  /** Tool budget plus spare turns, so a refused call still ends in an answer; the servers enforce the call budget, and the CLI the turns when it supports --max-turns. */
   maxTurns: number
   signal?: AbortSignal
   timeoutMs?: number

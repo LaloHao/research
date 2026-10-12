@@ -58,7 +58,7 @@ export async function waitFor(check: () => boolean, ms = 3000): Promise<void> {
 }
 
 /** Drain and Loghub in the library, a chat service with a fixed clock, and the fake provider answering DRAIN_ANSWER. */
-export async function setupChats(opts: { responses?: ChatResponse[] } = {}) {
+export async function setupChats(opts: { responses?: ChatResponse[]; stream?: (u: ChatStreamUpdate) => void } = {}) {
   const store = await ProjectStore.create(await tmpDir(), 'Thesis')
   const cache = IndexCache.open(join(store.cacheDir, 'index.sqlite'))
   await seedPair(store, cache)
@@ -78,7 +78,10 @@ export async function setupChats(opts: { responses?: ChatResponse[] } = {}) {
     machine: 'laptop',
     startTools: (o) => startLibraryMcpServer(libraryTools({ store, cache, map: new MapService({ store, cache }), embeddings: null }), o),
     emit: () => counter.events++,
-    stream: (u) => updates.push(u),
+    stream: (u) => {
+      updates.push(u)
+      opts.stream?.(u)
+    },
     now: () => new Date(CHAT_AT),
     randomHex: () => hex[n++ % hex.length]
   })

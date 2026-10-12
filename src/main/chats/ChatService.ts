@@ -496,7 +496,12 @@ export class ChatService {
 
   private push(id: string, run: Run, event: ChatStreamEvent): void {
     run.seq = ++streamSeq
-    this.deps.stream({ ...event, chatId: id, seq: run.seq })
+    // The window may be gone; the answer goes on and is written either way.
+    try {
+      this.deps.stream({ ...event, chatId: id, seq: run.seq })
+    } catch (error) {
+      logged(error)
+    }
   }
 
   /**
@@ -541,7 +546,8 @@ export class ChatService {
             model: meta.model,
             maxUsd: store.config.llm.budget.per_chat_message_usd,
             servers: [{ name: MCP_SERVER_NAME, url: tools.url, token: tools.token }],
-            maxTurns: CHAT_MAX_TOOL_CALLS + 1,
+            // The server enforces the tool budget; the spare turns let a refused call still end in an answer.
+            maxTurns: CHAT_MAX_TOOL_CALLS + 3,
             signal: run.controller.signal,
             timeoutMs: AGENT_TIMEOUT_MS
           },
@@ -595,8 +601,9 @@ export class ChatService {
   /** The paper of a paper chat, while it is in the library: metadata and its summary's main fields. */
   private async paperContext(scope: ChatScope): Promise<PaperContext | null> {
     if (scope === 'library' || !this.deps.store.paperExists(scope.paper)) return null
-    const read = await this.deps.store.readPaper(scope.paper)
-    if (!read.ok) return null
+    // Trashed meanwhile or unreadable: the answer goes on without it.
+    const read = await this.deps.store.readPaper(scope.paper).catch(() => null)
+    if (!read?.ok) return null
     const p = read.value
     const summary = await this.deps.store.readSummary(p.id).catch(() => null)
     return {

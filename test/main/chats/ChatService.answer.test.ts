@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { LlmError } from '../../../src/main/llm/LlmProvider'
-import { CHAT_AT, CHAT_ID_A, DEVICE, DRAIN_ANSWER, setupChats, waitFor } from '../../helpers/chats'
+import { CHAT_AT, CHAT_ID_A, DEVICE, DRAIN_ANSWER, setupChats, userMessage, waitFor } from '../../helpers/chats'
 import { chatAnswer } from '../../helpers/llm'
 import { callTools } from '../../helpers/mcp'
 import { DRAIN_ID } from '../../helpers/pair'
@@ -40,7 +40,7 @@ describe('ChatService answers', () => {
         ]
       }
     })
-    expect(provider.chatCalls[0]).toMatchObject({ model: 'haiku', maxUsd: 0.5, maxTurns: 13, timeoutMs: 600000, servers: [{ name: 'library' }] })
+    expect(provider.chatCalls[0]).toMatchObject({ model: 'haiku', maxUsd: 0.5, maxTurns: 15, timeoutMs: 600000, servers: [{ name: 'library' }] })
     expect(provider.chatCalls[0].input.endsWith('<question>\nWhat does Drain do?\n</question>')).toBe(true)
     expect(await store.readCosts()).toEqual([expect.objectContaining({ paper_id: '', operation: 'chat', cost_usd: 0.03, model: 'claude-sonnet-5' })])
     expect((await chats.open(id)).messages[1]).toMatchObject({ unverified: 0 })
@@ -169,12 +169,70 @@ describe('ChatService answers', () => {
   })
 
   it('waits for a send in progress when closing, stops its answer, and starts nothing after', async () => {
-    const { chats, provider } = await setupChats({ responses: [() => new Promise(() => {})] })
+    // The answer hangs until it is aborted, wherever the close catches it.
+    const hang = (req: { signal?: AbortSignal }): Promise<never> =>
+      new Promise((_resolve, reject) => {
+        const stop = (): void => reject(new DOMException('aborted', 'AbortError'))
+        if (req.signal!.aborted) stop()
+        else req.signal!.addEventListener('abort', stop)
+      })
+    const { chats, provider } = await setupChats({ responses: [hang] })
     const sending = chats.send(ask('Q'))
     await chats.close()
     const id = await sending
     expect((await chats.open(id)).messages[1]).toMatchObject({ role: 'assistant', stopped: true })
     await expect(chats.send(ask('Again', id))).rejects.toMatchObject({ code: 'chat_busy' })
     expect(provider.chatCalls.length).toBeLessThanOrEqual(1)
+  })
+
+  it('writes the answer even when the cost ledger cannot be written', async () => {
+    const { chats, ledger, updates } = await setupChats()
+    const append = vi.spyOn(ledger, 'append').mockRejectedValue(new Error('disk full'))
+    const id = await chats.send(ask('Q'))
+    await chats.idle()
+    expect(append).toHaveBeenCalledOnce()
+    expect(updates.at(-1)).toMatchObject({ kind: 'done' })
+    expect((await chats.open(id)).messages[1]).toMatchObject({ role: 'assistant', text: DRAIN_ANSWER })
+  })
+
+  it('appends the answer after a message written by someone else while it was running', async () => {
+    const { store, chats } = await setupChats({
+      responses: [
+        async () => {
+          const read = await store.readChat(CHAT_ID_A)
+          if (!read?.ok) throw new Error('unreadable')
+          await store.writeChat({ ...read.value, messages: [...read.value.messages, userMessage({ text: 'Meanwhile' })] }, read.hash)
+          return chatAnswer('Answer.')
+        }
+      ]
+    })
+    const id = await chats.send(ask('Q'))
+    await chats.idle()
+    expect((await chats.open(id)).messages.map((m) => [m.role, m.text])).toEqual([
+      ['user', 'Q'],
+      ['user', 'Meanwhile'],
+      ['assistant', 'Answer.']
+    ])
+  })
+
+  it('a failing stream sink never fails the answer', async () => {
+    const { chats } = await setupChats({
+      stream: () => {
+        throw new Error('window gone')
+      }
+    })
+    // A rejected answer would surface as an unhandled rejection and fail the run.
+    const id = await chats.send(ask('Q'))
+    await chats.idle()
+    expect((await chats.open(id)).messages[1]).toMatchObject({ role: 'assistant', text: DRAIN_ANSWER })
+  })
+
+  it('answers without the paper when reading it fails', async () => {
+    const { store, chats, provider } = await setupChats()
+    vi.spyOn(store, 'readPaper').mockRejectedValue(new Error('invalid paper.yaml'))
+    const id = await chats.send({ ...ask('Q'), scope: { paper: DRAIN_ID } })
+    await chats.idle()
+    expect(provider.chatCalls[0].input).toContain('its text is not available')
+    expect((await chats.open(id)).messages[1]).toMatchObject({ role: 'assistant', text: DRAIN_ANSWER })
   })
 })
