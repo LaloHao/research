@@ -270,6 +270,10 @@
     "suggestion_outdated": "El formulario cambió desde esta sugerencia; ya no se puede aplicar tal cual.",
     "facet_suggestions_conflict": "facet-suggestions.yaml tiene un conflicto de git o un error; resuélvelo antes de seguir.",
     "summary_outdated": "El resumen de este paper está desactualizado: regenéralo en vez de llenar facetas.",
+    "chat_busy": "Claude todavía está respondiendo en esta conversación. Espera o pulsa «Detener».",
+    "chat_not_found": "Esta conversación ya no existe (quizás se borró en otro equipo).",
+    "chat_invalid": "El archivo de esta conversación en chats/ tiene un error o un conflicto de git; corrígelo o bórralo a mano.",
+    "paper_not_in_library": "Ese paper ya no está en la biblioteca.",
     "unknown": "Ocurrió un error inesperado."
   },
   "paper": {
