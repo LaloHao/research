@@ -58,6 +58,7 @@ export function search(over: Partial<Search> = {}): Search {
     database: 'Scopus',
     query: 'TITLE-ABS-KEY(log AND anonymization)',
     filters: {},
+    field: null,
     request: null,
     file: 'scopus.csv',
     format: 'csv_scopus',

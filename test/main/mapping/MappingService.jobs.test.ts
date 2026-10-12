@@ -11,8 +11,8 @@ import { samplePaper } from '../../helpers/papers'
 
 const fx = (name: string): string => readFileSync(new URL(`../../fixtures/http/${name}`, import.meta.url), 'utf8')
 const SEARCH_ROUTES = [
-  { url: /\/works\?search=.*cursor=\*/, body: fx('mapping.search-1.openalex.json') },
-  { url: /\/works\?search=.*cursor=IlsxMDAu/, body: fx('mapping.search-2.openalex.json') },
+  { url: /\/works\?filter=title_and_abstract\.search\.exact.*cursor=\*/, body: fx('mapping.search-1.openalex.json') },
+  { url: /\/works\?filter=title_and_abstract\.search\.exact.*cursor=IlsxMDAu/, body: fx('mapping.search-2.openalex.json') },
   { url: /filter=ids\.openalex/, body: fx('mapping.works.openalex.json') }
 ]
 const signal = new AbortController().signal
@@ -48,13 +48,25 @@ describe('OpenAlex searches', () => {
       kind: 'openalex',
       database: 'OpenAlex',
       query: 'log anonymization',
+      field: 'title_and_abstract',
       filters: { publication_year: '>2014', type: 'article' },
-      request: 'https://api.openalex.org/works?search=log+anonymization&filter=publication_year%3A%3E2014%2Ctype%3Aarticle',
+      request: 'https://api.openalex.org/works?filter=title_and_abstract.search.exact%3Alog+anonymization%2Cpublication_year%3A%3E2014%2Ctype%3Aarticle',
       count: 3,
       total: 3,
       capped: false
     })
     expect(view.prisma.databases.screened).toBe(3)
+  })
+
+  it('fail with OpenAlex own reason when it refuses the search, logging nothing', async () => {
+    const message = 'Wildcards (* or ?) require exact (no-stem) search.'
+    const { service, queued } = await setupMappings({
+      routes: [{ url: /\/works\?filter=/, status: 400, body: JSON.stringify({ error: 'Invalid query parameters error.', message }) }]
+    })
+    const id = await service.create('Logs')
+    service.requestSearch(id, { query: 'anonymi*', fromYear: null, toYear: null, types: [], cap: 10 })
+    await expect(service.runSearch(as(queued[0], 'mapping_search'), signal)).rejects.toThrow(`search_query_invalid: ${message}`)
+    expect((await service.open(id)).searches).toEqual([])
   })
 
   it('stop at the cap and say there were more', async () => {
@@ -65,6 +77,7 @@ describe('OpenAlex searches', () => {
     expect((await service.open(id)).searches[0]).toMatchObject({ count: 2, total: 3, capped: true, filters: {} })
     expect(fetch.calls).toHaveLength(1)
     expect(() => service.requestSearch(id, { query: ' ', fromYear: null, toYear: null, types: [], cap: 10 })).toThrow('invalid_edit')
+    expect(() => service.requestSearch(id, { query: 'logs, traces', fromYear: null, toYear: null, types: [], cap: 10 })).toThrow('search_query_separator')
     expect(() => service.requestSearch('20261012-100000-ffff', { query: 'x', fromYear: null, toYear: null, types: [], cap: 10 })).toThrow('mapping_not_found')
   })
 })
@@ -314,7 +327,7 @@ describe('fix round 1', () => {
     expect(fetch.calls[0].url).toContain('api_key=secret-key')
     expect(fetch.calls[0].url).toContain('mailto=me%40example.org')
     const request = (await service.open(id)).searches[0].request ?? ''
-    expect(request).toBe('https://api.openalex.org/works?search=logs')
+    expect(request).toBe('https://api.openalex.org/works?filter=title_and_abstract.search.exact%3Alogs')
   })
 
   it('refuses a year range that ends before it starts', async () => {

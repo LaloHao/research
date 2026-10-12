@@ -5,7 +5,9 @@ export class HttpError extends Error {
     readonly status: number,
     readonly url: string,
     /** Response headers, e.g. OpenAlex's x-ratelimit-* and Retry-After. */
-    readonly headers: Headers | null = null
+    readonly headers: Headers | null = null,
+    /** The server's own explanation (the `message` of a JSON error answer, e.g. OpenAlex's), at most 500 characters. */
+    readonly detail: string | null = null
   ) {
     super(`HTTP ${status} for ${url}`)
     this.name = 'HttpError'
@@ -72,15 +74,34 @@ export function isOpenAlexDailyLimit(error: HttpError): boolean {
   return !(Number.isFinite(retryAfter) && retryAfter > 0 && retryAfter * 1000 <= MAX_RETRY_AFTER_MS)
 }
 
-/** Errors are logged and shown: they must never carry the API key. */
+/** Errors are logged and shown: they must never carry the API key or the contact email. */
 function redactKey(url: string): string {
   try {
     const u = new URL(url)
-    if (!u.searchParams.has('api_key')) return url
-    u.searchParams.set('api_key', 'redacted')
+    const secret = ['api_key', 'mailto'].filter((name) => u.searchParams.has(name))
+    if (secret.length === 0) return url
+    for (const name of secret) u.searchParams.set(name, 'redacted')
     return u.toString()
   } catch {
     return url
+  }
+}
+
+export const MAX_ERROR_DETAIL = 500
+const MAX_ERROR_BODY = 64 * 1024
+
+/** The `message` of a JSON error answer (OpenAlex, Crossref): what the server says was wrong; null for anything else. */
+async function errorDetail(res: Response): Promise<string | null> {
+  try {
+    const body = await res.text()
+    if (body.length > MAX_ERROR_BODY) return null
+    const parsed = JSON.parse(body) as unknown
+    const message = typeof parsed === 'object' && parsed !== null ? (parsed as { message?: unknown }).message : undefined
+    if (typeof message !== 'string') return null
+    const text = message.replace(/\s+/g, ' ').trim()
+    return text ? text.slice(0, MAX_ERROR_DETAIL) : null
+  } catch {
+    return null
   }
 }
 
@@ -152,8 +173,13 @@ export class HttpClient {
           expire(bodyTimeoutMs ?? headerTimeoutMs)
           return res
         }
+        if (!RETRYABLE.has(res.status)) {
+          // The body is only read for the answer that is given up on: it says why (e.g. OpenAlex's invalid query).
+          expire(headerTimeoutMs)
+          throw new HttpError(res.status, redactKey(url), res.headers, await errorDetail(res))
+        }
         lastError = new HttpError(res.status, redactKey(url), res.headers)
-        if (!RETRYABLE.has(res.status) || openalexBudgetSpent(lastError as HttpError)) throw lastError
+        if (openalexBudgetSpent(lastError as HttpError)) throw lastError
         const retryAfter = Number(res.headers.get('retry-after'))
         if (Number.isFinite(retryAfter) && retryAfter > 0) retryAfterMs = Math.min(retryAfter * 1000, MAX_RETRY_AFTER_MS)
       } catch (error) {

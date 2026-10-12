@@ -5,7 +5,9 @@ import { isDeepStrictEqual } from 'node:util'
 import type { JobSpec } from '../../shared/jobs'
 import {
   MAIN_REVIEWER,
+  hasFilterSeparator,
   MAPPING_ID,
+  OPENALEX_SEARCH_FIELD,
   ProtocolDraftSchema,
   SEARCH_CAP,
   SearchSchema,
@@ -608,6 +610,7 @@ export class MappingService {
     if (!this.deps.store.mappingExists(id)) throw new UserFacingError('mapping_not_found')
     const query = req.query.trim()
     if (!query) throw new UserFacingError('invalid_edit')
+    if (hasFilterSeparator(query)) throw new UserFacingError('search_query_separator')
     if (req.fromYear !== null && req.toYear !== null && req.fromYear > req.toYear) throw new UserFacingError('invalid_edit')
     const cap = Number.isFinite(req.cap) ? Math.round(req.cap) : SEARCH_CAP.default
     return this.deps.enqueue({
@@ -636,6 +639,7 @@ export class MappingService {
           kind: 'openalex',
           database: 'OpenAlex',
           query: spec.query,
+          field: OPENALEX_SEARCH_FIELD,
           filters: filtersOf(filter),
           request: openalex.requestUrl(spec.query, filter),
           total: found.total,

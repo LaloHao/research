@@ -1,6 +1,7 @@
 import type { TFunction } from 'i18next'
 import {
   criterionText,
+  hasFilterSeparator,
   QUEUE_FILTERS,
   SEARCH_CAP,
   SNOWBALL_CAP,
@@ -181,6 +182,11 @@ export function searchFilters(s: Search): string {
     .join(' · ')
 }
 
+/** «En: título y resumen» for an OpenAlex search that recorded the fields it looked in; null otherwise. */
+export function searchField(t: TFunction, s: Search): string | null {
+  return s.field ? t('mappings.searches.field', { field: t(`mappings.searches.fields.${s.field}`, { defaultValue: s.field }) }) : null
+}
+
 /** The OpenAlex form as typed. */
 export interface OpenAlexForm {
   query: string
@@ -196,9 +202,10 @@ const validYear = (n: number | null): boolean => n === null || (Number.isInteger
  * The request «Buscar» asks to confirm, or why it cannot run yet: no search string, or a year out of range (or the
  * first after the last). The cap is kept within 1 and the maximum; an unreadable cap is the default.
  */
-export function openAlexRequest(form: OpenAlexForm): { ok: true; req: OpenAlexSearchRequest } | { ok: false; problem: 'query' | 'years' } {
+export function openAlexRequest(form: OpenAlexForm): { ok: true; req: OpenAlexSearchRequest } | { ok: false; problem: 'query' | 'separator' | 'years' } {
   const query = form.query.trim()
   if (!query) return { ok: false, problem: 'query' }
+  if (hasFilterSeparator(query)) return { ok: false, problem: 'separator' }
   const fromYear = yearValue(form.fromYear)
   const toYear = yearValue(form.toYear)
   if (!validYear(fromYear) || !validYear(toYear) || (fromYear !== null && toYear !== null && fromYear > toYear)) return { ok: false, problem: 'years' }
@@ -215,6 +222,7 @@ export function openAlexPlanLines(t: TFunction, req: OpenAlexSearchRequest): str
   const { fromYear: from, toYear: to } = req
   return [
     t('mappings.searches.confirm_openalex', { cap: req.cap, pages: Math.ceil(req.cap / OPENALEX_PAGE) }),
+    t('mappings.searches.confirm_field'),
     from !== null && to !== null
       ? t('mappings.searches.confirm_years_range', { from, to })
       : from !== null

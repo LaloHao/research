@@ -101,6 +101,26 @@ describe('HttpClient', () => {
     await expect(http.text('https://x.test/a', 'text/plain')).rejects.toMatchObject({ name: 'TimeoutError' })
   })
 
+  it('keeps the message of a JSON error answer, without retrying a 400', async () => {
+    const body = JSON.stringify({ error: 'Invalid query parameters error.', message: 'Wildcards (* or ?) require exact (no-stem) search.' })
+    const fetch = sequence(new Response(body, { status: 400, headers: { 'content-type': 'application/json' } }))
+    const http = new HttpClient({ fetch, sleep: sleeper().sleep, contactEmail: 'me@uni.test', openalexApiKey: 'secret' })
+    const error = (await http.json(http.politeUrl('https://api.openalex.org/works?search=a*')).catch((e: unknown) => e)) as HttpError
+    expect(error).toBeInstanceOf(HttpError)
+    expect(error.status).toBe(400)
+    expect(error.detail).toBe('Wildcards (* or ?) require exact (no-stem) search.')
+    expect(fetch.count()).toBe(1)
+    expect(error.url).not.toContain('secret')
+    expect(error.url).not.toContain('uni.test')
+  })
+
+  it('keeps no detail from an answer that is not JSON with a message', async () => {
+    const http = new HttpClient({ fetch: sequence(new Response('<html>Forbidden</html>', { status: 403 })), sleep: sleeper().sleep })
+    expect(((await http.text('https://x.test', '*/*').catch((e: unknown) => e)) as HttpError).detail).toBeNull()
+    const long = new HttpClient({ fetch: sequence(new Response(JSON.stringify({ message: 'x'.repeat(5000) }), { status: 422 })), sleep: sleeper().sleep })
+    expect(((await long.text('https://x.test', '*/*').catch((e: unknown) => e)) as HttpError).detail).toHaveLength(500)
+  })
+
   it('exposes HttpError with status and url', () => {
     const e = new HttpError(500, 'https://x.test')
     expect(e.message).toBe('HTTP 500 for https://x.test')

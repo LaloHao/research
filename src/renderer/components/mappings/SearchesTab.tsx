@@ -18,7 +18,7 @@ import {
 } from '../../../shared/mapping'
 import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
-import { nextSnowballIteration, openAlexPlanLines, openAlexRequest, openAlexTypesFor, searchFilters, searchSource, snowballPlanLines } from '../../lib/mappings'
+import { nextSnowballIteration, openAlexPlanLines, openAlexRequest, openAlexTypesFor, searchField, searchFilters, searchSource, snowballPlanLines } from '../../lib/mappings'
 
 type Notice = { error: boolean; text: string } | null
 
@@ -136,6 +136,7 @@ function OpenAlexForm({ view }: { view: MappingView }): React.JSX.Element {
           {t('mappings.searches.cap')} <input type="number" min={1} max={SEARCH_CAP.max} value={cap} onChange={(e) => edit(setCap)(e.target.value)} />
         </label>
       </div>
+      {!checked.ok && checked.problem === 'separator' && <p className="warning-text small">{t('mappings.searches.query_separator')}</p>}
       {yearsInvalid && <p className="warning-text small">{t('mappings.searches.years_invalid')}</p>}
       <fieldset className="checks small">
         <legend>{t('mappings.searches.types')}</legend>
@@ -481,7 +482,10 @@ function SearchLog({ view }: { view: MappingView }): React.JSX.Element {
                   {searchSource(t, s)}
                   {s.file && <div className="muted">{t('mappings.searches.file', { file: s.file })}</div>}
                 </td>
-                <td className="search-query">{s.query ?? '—'}</td>
+                <td className="search-query">
+                  {s.query ?? '—'}
+                  {s.field && <div className="muted">{searchField(t, s)}</div>}
+                </td>
                 <td>{searchFilters(s)}</td>
                 <td>
                   {s.total !== null && s.total !== s.count ? t('mappings.searches.count_of_total', { count: s.count, total: s.total }) : s.count}

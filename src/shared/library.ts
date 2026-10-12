@@ -85,9 +85,34 @@ export const USER_ERROR_CODES = [
   'criterion_required',
   'not_eligible',
   'nothing_to_snowball',
+  'search_query_invalid',
+  'search_query_separator',
+  'request_rejected',
+  'access_denied',
+  'rate_limited',
+  'server_error',
   'unknown'
 ] as const
 export type UserErrorCode = (typeof USER_ERROR_CODES)[number]
+
+const KNOWN_CODES: ReadonlySet<string> = new Set(USER_ERROR_CODES)
+
+/**
+ * A code with what the failure itself said (e.g. OpenAlex's reason for refusing a search), as one string that travels
+ * in a job's message and an `{ ok: false, error }`: `<code>: <detail>`. Without a detail it is just the code.
+ */
+export function userErrorMessage(code: UserErrorCode, detail?: string | null): string {
+  const text = detail?.replace(/\s+/g, ' ').trim()
+  return text ? `${code}: ${text}` : code
+}
+
+/** The code and detail of a `userErrorMessage`; null when the text is not one (a raw message). */
+export function parseUserError(message: string): { code: UserErrorCode; detail: string | null } | null {
+  if (KNOWN_CODES.has(message)) return { code: message as UserErrorCode, detail: null }
+  const at = message.indexOf(': ')
+  if (at <= 0 || !KNOWN_CODES.has(message.slice(0, at))) return null
+  return { code: message.slice(0, at) as UserErrorCode, detail: message.slice(at + 2) }
+}
 
 /** Why a paper.yaml cannot be read; each has a translation under `paper.problem_kinds.<kind>`. */
 export const FILE_PROBLEM_KINDS = ['conflict_markers', 'invalid_yaml', 'invalid_schema'] as const

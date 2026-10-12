@@ -1,9 +1,10 @@
-import { SEARCH_CAP, type WorkCandidate } from '../../shared/mapping'
+import { hasFilterSeparator, OPENALEX_SEARCH_FIELD, SEARCH_CAP, type WorkCandidate } from '../../shared/mapping'
 import type { Author, PaperKind } from '../../shared/schemas'
 import type { HttpClient } from '../ingest/http'
 import { normalizeDoi } from '../ingest/identifiers'
 import { invertedIndexToText, KIND_BY_OPENALEX } from '../ingest/MetadataResolver'
 import { authorFromDisplayName, bareOpenAlexId } from '../ingest/openalex'
+import { UserFacingError } from '../library/UserFacingError'
 
 const API = 'https://api.openalex.org'
 /** Results per page, and ids per lookup: OpenAlex's maximum. */
@@ -36,6 +37,19 @@ export function openAlexFilter(f: SearchFilter): string | null {
   else if (f.toYear !== null) parts.push(`publication_year:<${f.toYear + 1}`)
   if (f.types.length > 0) parts.push(`type:${f.types.join('|')}`)
   return parts.length > 0 ? parts.join(',') : null
+}
+
+/**
+ * The search string goes to OpenAlex's exact (no-stem) title-and-abstract search, the fields a systematic search
+ * screens on. It reads AND / OR / NOT, parentheses, quoted phrases and wildcards (* and ?); the stemmed `search`
+ * parameter (full text) and `title_and_abstract.search` refuse wildcards with an HTTP 400.
+ */
+export function searchFilter(search: string, filter: string | null): string {
+  // Inside `filter`, a comma separates filters and a pipe ORs values: OpenAlex would split the string there (an
+  // unescaped comma is refused outright), so the logged string would not be the one searched. Refused before any request.
+  if (hasFilterSeparator(search)) throw new UserFacingError('search_query_separator')
+  const own = `${OPENALEX_SEARCH_FIELD}.search.exact:${search}`
+  return filter ? `${own},${filter}` : own
 }
 
 const query = (p: Record<string, string | null>): string =>
@@ -82,14 +96,14 @@ function toCandidate(raw: unknown): WorkCandidate[] {
 export class OpenAlexSearch {
   constructor(private readonly http: HttpClient) {}
 
-  /** The request as the search log keeps it: no contact email, no API key. */
+  /** The request as the search log keeps it (without paging, the fields read, the contact email or the API key). */
   requestUrl(search: string, filter: string | null): string {
-    return `${API}/works?${query({ search, filter })}`
+    return `${API}/works?${query({ filter: searchFilter(search, filter) })}`
   }
 
   /** One page of results; start with cursor '*', stop when `next` is null. */
   async page(search: string, filter: string | null, cursor: string, signal?: AbortSignal, perPage = PAGE_SIZE): Promise<SearchPage> {
-    return (await this.readPage(search, filter, cursor, perPage, signal)).page
+    return (await this.readPage(searchFilter(search, filter), cursor, perPage, signal)).page
   }
 
   /**
@@ -97,6 +111,7 @@ export class OpenAlexSearch {
    * Stops on the last page, an empty page or a cursor OpenAlex already gave, so a bad answer never loops.
    */
   async search(search: string, filter: string | null, cap: number, signal?: AbortSignal): Promise<SearchPage & { capped: boolean }> {
+    const own = searchFilter(search, filter)
     const limit = Math.min(SEARCH_CAP.max, Math.max(1, Math.floor(Number.isFinite(cap) ? cap : SEARCH_CAP.default)))
     const works: WorkCandidate[] = []
     const seen = new Set<string>()
@@ -106,7 +121,7 @@ export class OpenAlexSearch {
     while (cursor !== null && read < limit) {
       signal?.throwIfAborted()
       seen.add(cursor)
-      const { page, results } = await this.readPage(search, filter, cursor, Math.min(PAGE_SIZE, limit - read), signal)
+      const { page, results } = await this.readPage(own, cursor, Math.min(PAGE_SIZE, limit - read), signal)
       total = page.total
       read += results
       works.push(...page.works)
@@ -127,8 +142,8 @@ export class OpenAlexSearch {
     return out
   }
 
-  private async readPage(search: string, filter: string | null, cursor: string, perPage: number, signal?: AbortSignal): Promise<{ page: SearchPage; results: number }> {
-    const raw = await this.list({ search, filter, select: FIELDS, 'per-page': String(perPage), cursor }, signal)
+  private async readPage(filter: string, cursor: string, perPage: number, signal?: AbortSignal): Promise<{ page: SearchPage; results: number }> {
+    const raw = await this.list({ filter, select: FIELDS, 'per-page': String(perPage), cursor }, signal)
     // A server that ignores `per-page` must not push a search past its cap.
     const results = Array.isArray(raw.results) ? raw.results.slice(0, perPage) : []
     const meta = isObject(raw.meta) ? raw.meta : {}

@@ -53,6 +53,12 @@ export const SEARCH_CAP = { default: 500, max: 5000 } as const
 export const SNOWBALL_CAP = 2000
 export const MAX_REASON = 500
 export const MAX_QUERY = 4000
+
+/** The fields an OpenAlex search of a mapping looks in (OpenAlex's own name), as the search log records it. */
+export const OPENALEX_SEARCH_FIELD = 'title_and_abstract'
+
+/** A comma or a pipe: OpenAlex reads them as filter separators, so a search string cannot carry them. */
+export const hasFilterSeparator = (query: string): boolean => /[,|]/.test(query)
 export const MAX_TEXT = 2000
 
 /**
@@ -133,6 +139,8 @@ export const SearchSchema = z.looseObject({
   /** The exact search string, as typed in the app or as used in the database. */
   query: z.string().max(MAX_QUERY).nullable().default(null),
   filters: z.record(z.string(), z.string()).default({}),
+  /** OpenAlex: the fields searched (`title_and_abstract`); null for other searches and for older entries. */
+  field: z.string().max(100).nullable().default(null),
   /** OpenAlex: the request URL, without the contact email or the API key. */
   request: z.string().nullable().default(null),
   file: z.string().max(260).nullable().default(null),

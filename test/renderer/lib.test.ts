@@ -68,6 +68,7 @@ describe('jobDetail', () => {
     expect(jobDetail(t, job({ state: 'done', message: 'added' }))).toBe('jobs.outcome.added {"defaultValue":"added"}')
     expect(jobDetail(t, job({ state: 'done', message: 'summarized' }))).toBe('jobs.outcome.summarized {"defaultValue":"summarized"}')
     expect(jobDetail(t, job({ state: 'failed', message: 'not_found' }))).toBe('errors.not_found {"defaultValue":"not_found"}')
+    expect(jobDetail(t, job({ state: 'failed', message: 'search_query_invalid: bad' }))).toBe('errors.search_query_invalid {"detail":"bad","defaultValue":"search_query_invalid"}')
     expect(jobDetail(t, job({ state: 'running' }))).toBeNull()
   })
 })
@@ -75,6 +76,11 @@ describe('jobDetail', () => {
 describe('errorText', () => {
   it('falls back to the raw message for unknown codes', () => {
     expect(errorText(t, 'network')).toBe('errors.network {"defaultValue":"network"}')
+    expect(errorText(t, 'ENOENT: no such file')).toBe('errors.ENOENT: no such file {"defaultValue":"ENOENT: no such file"}')
+  })
+
+  it('passes the detail of a known code to its translation', () => {
+    expect(errorText(t, 'search_query_invalid: Wildcards: need exact')).toBe('errors.search_query_invalid {"detail":"Wildcards: need exact","defaultValue":"search_query_invalid"}')
   })
 })
 

@@ -153,9 +153,10 @@ export class CitationService {
           cache.upsertExternalWorks([...fetched, ...gone], this.now())
         })
       } catch (error) {
-        metadataError = toUserFacing(error).code
+        const failure = toUserFacing(error)
+        metadataError = failure.message
         // The daily limit also stops the queued citation jobs, as when a job hits it.
-        if (metadataError === 'openalex_limit' && !signal?.aborted) this.deps.cancelQueued(['citations', 'cited_by'])
+        if (failure.code === 'openalex_limit' && !signal?.aborted) this.deps.cancelQueued(['citations', 'cited_by'])
       }
     }
     // With the metadata, a candidate's DOI may reveal it is already in the library.

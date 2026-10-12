@@ -40,7 +40,7 @@ async function actionResult(action: () => Promise<unknown>): Promise<ActionResul
     await action()
     return { ok: true }
   } catch (error) {
-    return { ok: false, error: toUserFacing(error).code }
+    return { ok: false, error: toUserFacing(error).message }
   }
 }
 
@@ -145,7 +145,7 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     try {
       return { ok: true, data: await app.requireSession().readPdf(id) }
     } catch (error) {
-      return { ok: false, error: toUserFacing(error).code }
+      return { ok: false, error: toUserFacing(error).message }
     }
   })
   ipcMain.handle(IPC.libraryReadNotes, (_e, id: unknown) => app.requireSession().library.readNotes(arg(ipcArgs.paperId, id, 'id')))
@@ -170,7 +170,7 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     try {
       return { ok: true, plan: await app.requireSession().deletePlan(target) }
     } catch (error) {
-      return { ok: false, error: toUserFacing(error).code }
+      return { ok: false, error: toUserFacing(error).message }
     }
   })
   ipcMain.handle(IPC.trashDeleteForever, async (_e, rawIds: unknown): Promise<CountResult> => {
@@ -178,7 +178,7 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     try {
       return { ok: true, count: await app.requireSession().deleteForever(ids) }
     } catch (error) {
-      return { ok: false, error: toUserFacing(error).code }
+      return { ok: false, error: toUserFacing(error).message }
     }
   })
 
@@ -207,7 +207,7 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
       const { batchId, count } = await app.requireSession().summaries.requestBatch(opts)
       return { ok: true, batchId, count }
     } catch (error) {
-      return { ok: false, error: toUserFacing(error).code }
+      return { ok: false, error: toUserFacing(error).message }
     }
   })
   ipcMain.handle(IPC.summarySetStatus, (_e, rawId: unknown, rawSection: unknown, rawKey: unknown, rawStatus: unknown): Promise<ActionResult> => {
@@ -300,7 +300,7 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     try {
       return { ok: true, count: action() }
     } catch (error) {
-      return { ok: false, error: toUserFacing(error).code }
+      return { ok: false, error: toUserFacing(error).message }
     }
   }
   ipcMain.handle(IPC.citationsUpdate, (_e, rawIds: unknown): CountResult => {
@@ -339,7 +339,7 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     try {
       return { ok: true, undoToken: await action() }
     } catch (error) {
-      return { ok: false, error: toUserFacing(error).code }
+      return { ok: false, error: toUserFacing(error).message }
     }
   }
   ipcMain.handle(IPC.relationsForPaper, (_e, rawId: unknown) => app.requireSession().relations.forPaper(arg(ipcArgs.paperId, rawId, 'id')))
@@ -354,7 +354,7 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
       const { batchId, count } = await app.requireSession().relations.requestBatch({ ids })
       return { ok: true, batchId, count }
     } catch (error) {
-      return { ok: false, error: toUserFacing(error).code }
+      return { ok: false, error: toUserFacing(error).message }
     }
   })
   ipcMain.handle(IPC.relationsSetStatus, (_e, rawId: unknown, rawStatus: unknown): Promise<RelationDecisionResult> => {
@@ -386,7 +386,7 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
       const { dropped } = await app.requireSession().relations.resolveConflict()
       return { ok: true, dropped }
     } catch (error) {
-      return { ok: false, error: toUserFacing(error).code }
+      return { ok: false, error: toUserFacing(error).message }
     }
   })
   ipcMain.handle(IPC.relationsShowFile, () => {
@@ -426,7 +426,7 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
       const { batchId, count } = app.requireSession().summaries.requestFill(ids)
       return { ok: true, batchId, count }
     } catch (error) {
-      return { ok: false, error: toUserFacing(error).code }
+      return { ok: false, error: toUserFacing(error).message }
     }
   })
 
@@ -437,7 +437,7 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     const session = app.requireSession()
     return session.track(work(session.mappings))
   }
-  const failed = (error: unknown): { ok: false; error: string } => ({ ok: false, error: toUserFacing(error).code })
+  const failed = (error: unknown): { ok: false; error: string } => ({ ok: false, error: toUserFacing(error).message })
   const imports = new ImportChoices()
   ipcMain.handle(IPC.mappingsList, () => app.requireSession().mappings.list())
   ipcMain.handle(IPC.mappingsCreate, async (_e, rawTitle: unknown): Promise<MappingCreateResult> => {
@@ -584,7 +584,7 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     try {
       return { ok: true, chat: await chats((s) => s.chats.open(id)) }
     } catch (error) {
-      return { ok: false, error: toUserFacing(error).code }
+      return { ok: false, error: toUserFacing(error).message }
     }
   })
   ipcMain.handle(IPC.chatsSend, async (_e, raw: unknown): Promise<ChatSendResult> => {
@@ -592,7 +592,7 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     try {
       return { ok: true, chatId: await chats((s) => s.chats.send(req)) }
     } catch (error) {
-      return { ok: false, error: toUserFacing(error).code }
+      return { ok: false, error: toUserFacing(error).message }
     }
   })
   ipcMain.handle(IPC.chatsRetry, (_e, rawId: unknown): Promise<ActionResult> => {
@@ -637,7 +637,7 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     try {
       return { ok: true, text: await chats((s) => s.chats.citationsBibtex(id, index)) }
     } catch (error) {
-      return { ok: false, error: toUserFacing(error).code }
+      return { ok: false, error: toUserFacing(error).message }
     }
   })
 
@@ -677,7 +677,7 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
       await writeFile(result.filePath, data)
       return { ok: true, path: result.filePath }
     } catch (error) {
-      return { ok: false, error: toUserFacing(error).code }
+      return { ok: false, error: toUserFacing(error).message }
     }
   })
 }

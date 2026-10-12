@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { HttpClient } from '../../../src/main/ingest/http'
 import { invertedIndexToText } from '../../../src/main/ingest/MetadataResolver'
-import { openAlexFilter, OpenAlexSearch } from '../../../src/main/mapping/OpenAlexSearch'
+import { openAlexFilter, OpenAlexSearch, searchFilter } from '../../../src/main/mapping/OpenAlexSearch'
 import { routeFetch } from '../../helpers/fakeFetch'
 
 const fx = (name: string): string => readFileSync(new URL(`../../fixtures/http/${name}`, import.meta.url), 'utf8')
@@ -20,9 +20,26 @@ describe('openAlexFilter', () => {
   })
 })
 
+describe('searchFilter', () => {
+  it('searches title and abstract with the exact (no-stem) search, before the year and type filters', () => {
+    expect(searchFilter('log anonymization', 'publication_year:2015-2026')).toBe('title_and_abstract.search.exact:log anonymization,publication_year:2015-2026')
+    expect(searchFilter('logs', null)).toBe('title_and_abstract.search.exact:logs')
+  })
+
+  it('keeps boolean operators, quotes and wildcards as typed', () => {
+    const q = '(log OR logs OR "log data") AND (anonymi* OR sanitiz* OR "de-identif*" OR PII)'
+    expect(searchFilter(q, null)).toBe(`title_and_abstract.search.exact:${q}`)
+  })
+
+  it('refuses a comma or a pipe, which OpenAlex reads as filter separators', () => {
+    expect(() => searchFilter('logs, traces', null)).toThrow('search_query_separator')
+    expect(() => searchFilter('logs|traces', null)).toThrow('search_query_separator')
+  })
+})
+
 describe('OpenAlexSearch', () => {
   it('reads a page of results as candidates, with abstracts, DOIs, kinds and the cursor of the next page', async () => {
-    const { search, fetch } = client([{ url: /\/works\?search=log\+anonymization&filter=publication_year%3A2015-2026&select=.*cursor=\*/, body: fx('mapping.search-1.openalex.json') }])
+    const { search, fetch } = client([{ url: /\/works\?filter=title_and_abstract\.search\.exact%3Alog\+anonymization%2Cpublication_year%3A2015-2026&select=.*cursor=\*/, body: fx('mapping.search-1.openalex.json') }])
     const page = await search.page('log anonymization', 'publication_year:2015-2026', '*')
     expect(page.total).toBe(3)
     expect(page.next).toBe('IlsxMDAuMCwgJ1czMDAwMDAwMDAxJ10i')
@@ -55,8 +72,10 @@ describe('OpenAlexSearch', () => {
 
   it('logs the request without the contact email or the API key', () => {
     const { search } = client([])
-    expect(search.requestUrl('log anonymization', 'publication_year:2015-2026')).toBe('https://api.openalex.org/works?search=log+anonymization&filter=publication_year%3A2015-2026')
-    expect(search.requestUrl('logs', null)).toBe('https://api.openalex.org/works?search=logs')
+    expect(search.requestUrl('log anonymization', 'publication_year:2015-2026')).toBe(
+      'https://api.openalex.org/works?filter=title_and_abstract.search.exact%3Alog+anonymization%2Cpublication_year%3A2015-2026'
+    )
+    expect(search.requestUrl('logs', null)).toBe('https://api.openalex.org/works?filter=title_and_abstract.search.exact%3Alogs')
   })
 
   it('reads the last page and a review as an article', async () => {
@@ -84,6 +103,19 @@ describe('OpenAlexSearch', () => {
     expect(logged).not.toContain('me%40uni.test')
     expect(logged).not.toContain('api_key')
     expect(logged).not.toContain('secret')
+  })
+
+  it('never sends the search string as `search` (full text, stemmed: OpenAlex refuses wildcards there)', async () => {
+    const { search, fetch } = client([{ url: /cursor=/, body: fx('mapping.search-2.openalex.json') }])
+    await search.page('anonymi*', null, '*')
+    expect(fetch.calls[0].url).not.toMatch(/[?&]search=/)
+    expect(decodeURIComponent(fetch.calls[0].url.replace(/\+/g, ' '))).toContain('filter=title_and_abstract.search.exact:anonymi*&')
+  })
+
+  it('makes no request for a query with a filter separator', async () => {
+    const { search, fetch } = client([])
+    await expect(search.search('logs, traces', null, 10)).rejects.toThrow('search_query_separator')
+    expect(fetch.calls).toHaveLength(0)
   })
 
   it('makes no request for an empty id list', async () => {

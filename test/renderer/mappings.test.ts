@@ -19,6 +19,7 @@ import {
   sameDraft,
   screeningCommand,
   snowballPlanLines,
+  searchField,
   searchFilters,
   searchSource,
   withThesisQuestions,
@@ -125,6 +126,10 @@ describe('labels', () => {
       'mappings.searches.snowball_label {"iteration":2,"direction":"mappings.searches.directions.forward"}'
     )
     expect(searchFilters(search({ filters: { publication_year: '2015-2026', type: 'article' } }))).toBe('publication_year: 2015-2026 · type: article')
+    expect(searchField(t, search({ field: 'title_and_abstract' }))).toBe(
+      'mappings.searches.field {"field":"mappings.searches.fields.title_and_abstract {\\"defaultValue\\":\\"title_and_abstract\\"}"}'
+    )
+    expect(searchField(t, search())).toBeNull()
   })
 
   it('shows a criterion with the wording of the protocol version the decision was made with', () => {
@@ -174,6 +179,8 @@ describe('search confirmations', () => {
   it('builds the OpenAlex request the confirmation shows, or says why it cannot run', () => {
     expect(openAlexRequest(form)).toEqual({ ok: true, req: { query: 'log anonymization', fromYear: 2015, toYear: null, types: ['article'], cap: 500 } })
     expect(openAlexRequest({ ...form, query: '   ' })).toEqual({ ok: false, problem: 'query' })
+    expect(openAlexRequest({ ...form, query: 'logs, traces' })).toEqual({ ok: false, problem: 'separator' })
+    expect(openAlexRequest({ ...form, query: 'logs | traces' })).toEqual({ ok: false, problem: 'separator' })
     expect(openAlexRequest({ ...form, fromYear: '20' })).toEqual({ ok: false, problem: 'years' })
     expect(openAlexRequest({ ...form, fromYear: '2015.5' })).toEqual({ ok: false, problem: 'years' })
     expect(openAlexRequest({ ...form, fromYear: '2024', toYear: '2015' })).toEqual({ ok: false, problem: 'years' })
@@ -193,18 +200,20 @@ describe('search confirmations', () => {
     }
     expect(lines({})).toEqual([
       'mappings.searches.confirm_openalex {"cap":500,"pages":5}',
+      'mappings.searches.confirm_field',
       'mappings.searches.confirm_years_from {"from":2015}',
       'mappings.searches.confirm_types {"types":"mappings.openalex_types.article"}',
       'mappings.searches.confirm_free'
     ])
     expect(lines({ fromYear: '', toYear: '', types: [], cap: '150' })).toEqual([
       'mappings.searches.confirm_openalex {"cap":150,"pages":2}',
+      'mappings.searches.confirm_field',
       'mappings.searches.confirm_years_any',
       'mappings.searches.confirm_types_any',
       'mappings.searches.confirm_free'
     ])
-    expect(lines({ fromYear: '2015', toYear: '2026' })[1]).toBe('mappings.searches.confirm_years_range {"from":2015,"to":2026}')
-    expect(lines({ fromYear: '', toYear: '2026' })[1]).toBe('mappings.searches.confirm_years_to {"to":2026}')
+    expect(lines({ fromYear: '2015', toYear: '2026' })[2]).toBe('mappings.searches.confirm_years_range {"from":2015,"to":2026}')
+    expect(lines({ fromYear: '', toYear: '2026' })[2]).toBe('mappings.searches.confirm_years_to {"to":2026}')
   })
 
   it('numbers the next snowballing iteration and says what it will fetch', () => {

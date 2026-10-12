@@ -13,8 +13,8 @@ describe('ProjectSession mappings', () => {
     const opts = {
       contactEmail: '',
       fetch: routeFetch([
-        { url: /\/works\?search=.*cursor=\*/, body: fx('mapping.search-1.openalex.json') },
-        { url: /\/works\?search=.*cursor=IlsxMDAu/, body: fx('mapping.search-2.openalex.json') }
+        { url: /\/works\?filter=title_and_abstract\.search\.exact.*cursor=\*/, body: fx('mapping.search-1.openalex.json') },
+        { url: /\/works\?filter=title_and_abstract\.search\.exact.*cursor=IlsxMDAu/, body: fx('mapping.search-2.openalex.json') }
       ]),
       watch: false,
       citationPauseMs: 0,
