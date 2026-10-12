@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
 import { sha256 } from '../../../src/main/project/atomicWrite'
-import { renderChat } from '../../../src/main/project/chatFile'
+import { parseChat, renderChat } from '../../../src/main/project/chatFile'
 import { toYaml } from '../../../src/main/project/yamlFile'
 import { ProjectRepo } from '../../../src/main/sync/ProjectRepo'
 import { editedKeys, planMerge, trashedKeys, type MergePlan } from '../../../src/main/sync/syncMerge'
@@ -96,6 +96,38 @@ describe('planMerge', () => {
     expect(pending.kind === 'decisions' && pending.conflicts.map((c) => c.id)).toEqual([`file:chats/${broken}.md`])
     const tree = clean(await plan({ [`file:chats/${broken}.md`]: 'ours' }))
     expect(await file(tree, `chats/${CHAT_ID_A}.md`)).toBe(renderChat(chatFile([...chatFile().messages, userMessage({ at: '2026-10-11T13:00:00.000Z', text: 'More' })], { title: 'Renamed' })))
+  })
+
+  it('merges an answer added on one machine with a rename on the other, field by field, recomputing the cost', async () => {
+    const answered = [...chatFile().messages, userMessage({ at: '2026-10-11T13:00:00.000Z', text: 'And then?' }), assistantMessage({ at: '2026-10-11T13:00:05.000Z', costUsd: 0.05, text: 'Then it clusters.' })]
+    const { plan, file } = await diverged(
+      { [`chats/${CHAT_ID_A}.md`]: renderChat(chatFile()) },
+      (p) => applyFiles(p, { [`chats/${CHAT_ID_A}.md`]: renderChat(chatFile(answered, { updated_at: '2026-10-11T13:00:05.000Z', updated_on: 'machine-a' })) }),
+      (p) => applyFiles(p, { [`chats/${CHAT_ID_A}.md`]: renderChat(chatFile(undefined, { title: 'Renamed', updated_at: '2026-10-11T12:30:00.000Z' })) })
+    )
+    const merged = parseChat((await file(clean(await plan()), `chats/${CHAT_ID_A}.md`))!)
+    expect(merged.ok).toBe(true)
+    if (!merged.ok) return
+    expect(merged.value.messages).toEqual(answered)
+    expect(merged.value.meta).toMatchObject({ title: 'Renamed', updated_at: '2026-10-11T13:00:05.000Z', updated_on: 'machine-a', cost_usd: 0.07 })
+  })
+
+  it('splits a conversation continued differently on both machines in a project inside a subfolder', async () => {
+    const onA = renderChat(chatFile([...chatFile().messages, userMessage({ at: '2026-10-11T13:00:00.000Z', text: 'From A' })], { updated_on: 'machine-a' }))
+    const onB = renderChat(chatFile([...chatFile().messages, userMessage({ at: '2026-10-11T13:30:00.000Z', text: 'From B' })]))
+    const { plan, file, repo } = await diverged(
+      { [`chats/${CHAT_ID_A}.md`]: renderChat(chatFile()) },
+      (p) => applyFiles(p, { [`chats/${CHAT_ID_A}.md`]: onA }),
+      (p) => applyFiles(p, { [`chats/${CHAT_ID_A}.md`]: onB }),
+      { sub: 'research' }
+    )
+    expect(repo.prefix).toBe('research/')
+    const tree = clean(await plan())
+    expect(await file(tree, `chats/${CHAT_ID_A}.md`)).toBe(onB)
+    const copy = `chats/${CHAT_ID_A}-${sha256(onA).slice(0, 6)}.md`
+    expect(await file(tree, copy)).toContain('From A')
+    expect(await file(tree, copy)).toContain('machine: machine-a')
+    expect(await repo.readFileAt(tree, copy)).toBeNull()
   })
 
   it('merges changes to different files with no decision', async () => {
