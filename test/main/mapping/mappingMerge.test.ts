@@ -100,6 +100,52 @@ describe('records.yaml', () => {
     })
   })
 
+  it('keeps «Son distintos» from one machine when the other later added a source', () => {
+    const r1 = hexId('r', 1)
+    const base = record({ id: hexId('r', 2), duplicate_of: { record: r1, reason: 'similar_title' } })
+    const resolved = { ...base, duplicate_of: null, distinct_from: [r1], updated_at: '2026-10-12T10:00:00.000Z' }
+    const refound = { ...base, sources: [...base.sources, hexId('s', 2)], updated_at: '2026-10-12T11:00:00.000Z' }
+    const merged = read<{ records: MappingRecord[] }>(mergeRecordsText({ base: recordsText([base]), ours: recordsText([resolved]), theirs: recordsText([refound]) }))
+    expect(merged.records[0]).toMatchObject({ duplicate_of: null, distinct_from: [r1], sources: [hexId('s', 1), hexId('s', 2)], updated_at: '2026-10-12T11:00:00.000Z' })
+  })
+
+  it('keeps the fields «Es el mismo» filled in on one machine when the other later added a source', () => {
+    const base = record({ abstract: null })
+    const filled = { ...base, abstract: 'Taken from the duplicate.', marker: 'older side', updated_at: '2026-10-12T10:00:00.000Z' }
+    const refound = { ...base, sources: [...base.sources, hexId('s', 2)], updated_at: '2026-10-12T11:00:00.000Z' }
+    const merged = read<{ records: Record<string, unknown>[] }>(mergeRecordsText({ base: recordsText([base]), ours: recordsText([filled]), theirs: recordsText([refound]) }))
+    expect(merged.records[0]).toMatchObject({ abstract: 'Taken from the duplicate.', marker: 'older side', sources: [hexId('s', 1), hexId('s', 2)] })
+  })
+
+  it('clears a pending duplicate once the merged record was merged into another', () => {
+    const base = record({ id: hexId('r', 2), duplicate_of: { record: hexId('r', 1), reason: 'same_title' } })
+    const merged = read<{ records: MappingRecord[] }>(
+      mergeRecordsText({
+        base: recordsText([base]),
+        ours: recordsText([{ ...base, merged_into: hexId('r', 1), updated_at: '2026-10-12T10:00:00.000Z' }]),
+        theirs: recordsText([{ ...base, duplicate_of: { record: hexId('r', 1), reason: 'similar_title' }, updated_at: '2026-10-12T11:00:00.000Z' }])
+      })
+    )
+    expect(merged.records[0]).toMatchObject({ merged_into: hexId('r', 1), duplicate_of: null })
+  })
+
+  it('gives the same file whichever machine merges, even with equal clocks', () => {
+    const base = record()
+    const a = { ...base, abstract: 'A.', extra_a: 1, updated_at: LATE }
+    const b = { ...base, abstract: 'B.', extra_b: 2, updated_at: LATE }
+    for (const baseText of [recordsText([base]), null]) {
+      const ab = mergeRecordsText({ base: baseText, ours: recordsText([a]), theirs: recordsText([b]) })
+      expect(ab).not.toBeNull()
+      expect(mergeRecordsText({ base: baseText, ours: recordsText([b]), theirs: recordsText([a]) })).toBe(ab)
+    }
+    const s1 = search()
+    const da = { ...s1, discarded: { at: AT, reason: 'A.', machine: 'a' }, note_a: 1 }
+    const db = { ...s1, discarded: { at: AT, reason: 'B.', machine: 'b' }, note_b: 2 }
+    expect(mergeSearchesText({ base: null, ours: searchesText([da], { x: 1 }), theirs: searchesText([db], { y: 2 }) })).toBe(
+      mergeSearchesText({ base: null, ours: searchesText([db], { y: 2 }), theirs: searchesText([da], { x: 1 }) })
+    )
+  })
+
   it('leaves a file it cannot read to the user', () => {
     expect(mergeRecordsText({ base: null, ours: recordsText([record()]), theirs: 'records: [' })).toBeNull()
     expect(mergeRecordsText({ base: null, ours: recordsText([record()]), theirs: toYaml({ schema_version: 2, records: [] }) })).toBeNull()
@@ -183,6 +229,17 @@ describe('protocol.yaml', () => {
         final
       )
     expect(mergeProtocolText({ base: text(base), ours: text(side('Ours.')), theirs: text(side('Theirs.')) })).toBeNull()
+  })
+
+  it('merges unknown keys of one earlier version recorded on both machines, against the base', () => {
+    const base = protocolFile({ version: 2, history: [{ version: 1, replaced_at: AT, protocol: protocolBody(), note: 'base' }] })
+    const side = (over: Record<string, unknown>, when: string): ProtocolFile =>
+      protocolFile({ version: 2, updated_at: when, history: [{ version: 1, replaced_at: AT, protocol: protocolBody(), note: 'base', ...over }] })
+    const ours = side({ note: 'changed here' }, '2026-10-12T10:00:00.000Z')
+    const theirs = side({ tag: 'added there' }, '2026-10-12T11:00:00.000Z')
+    const merged = read<ProtocolFile>(mergeProtocolText({ base: text(base), ours: text(ours), theirs: text(theirs) }))
+    expect(merged.history[0]).toMatchObject({ note: 'changed here', tag: 'added there' })
+    expect(mergeProtocolText({ base: text(base), ours: text(theirs), theirs: text(ours) })).toBe(mergeProtocolText({ base: text(base), ours: text(ours), theirs: text(theirs) }))
   })
 
   it('leaves an unreadable side to the user', () => {

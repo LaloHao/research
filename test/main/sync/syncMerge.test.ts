@@ -71,6 +71,22 @@ describe('planMerge', () => {
     ])
   })
 
+  it('merges a mapping’s decisions in a project inside a subfolder', async () => {
+    const path = 'mappings/20261012-090000-a1b2/decisions.yaml'
+    const d1 = decision()
+    const onA = decision({ id: hexId('d', 2), at: '2026-10-12T10:05:00.000Z' })
+    const onB = decision({ id: hexId('d', 3), at: '2026-10-12T10:06:00.000Z' })
+    const yaml = (list: unknown[]): string => toYaml({ schema_version: 1, decisions: list })
+    const { plan, file } = await diverged(
+      { [path]: yaml([d1]) },
+      (p) => applyFiles(p, { [path]: yaml([d1, onA]) }),
+      (p) => applyFiles(p, { [path]: yaml([d1, onB]) }),
+      { sub: 'research' }
+    )
+    const tree = clean(await plan())
+    expect((parse((await file(tree, path))!) as { decisions: { id: string }[] }).decisions.map((d) => d.id)).toEqual([d1.id, onA.id, onB.id])
+  })
+
   it('makes a protocol both machines changed differently the user’s decision', async () => {
     const path = 'mappings/20261012-090000-a1b2/protocol.yaml'
     const edited = (objective: string): string => toYaml(protocolFile({ updated_at: '2026-10-12T11:00:00.000Z' }, protocolBody({ objective })))

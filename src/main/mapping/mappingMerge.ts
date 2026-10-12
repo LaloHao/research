@@ -50,6 +50,24 @@ function instant(at: string): number {
   return Number.isNaN(t) ? -Infinity : t
 }
 
+/** A stable order of any two values, so swapping the machines never changes the merged bytes. */
+function compareValues(a: unknown, b: unknown): number {
+  const [x, y] = [JSON.stringify(a) ?? '', JSON.stringify(b) ?? '']
+  return x < y ? -1 : x > y ? 1 : 0
+}
+
+/** The later of two timestamps; equal instants fall back to a stable order of the whole values. */
+function later<T>(a: T, b: T, at: (x: T) => string): T {
+  const d = instant(at(a)) - instant(at(b))
+  if (d !== 0 && !Number.isNaN(d)) return d > 0 ? a : b
+  return compareValues(a, b) >= 0 ? a : b
+}
+
+/** The earlier of two timestamps; equal instants fall back to a stable order of the whole values. */
+function earlier<T>(a: T, b: T, at: (x: T) => string): T {
+  return later(a, b, at) === a && !isDeepStrictEqual(a, b) ? b : a
+}
+
 const CLASH = Symbol('clash')
 
 /**
@@ -59,7 +77,7 @@ const CLASH = Symbol('clash')
 function mergeKeys(base: Loose | undefined, ours: Loose, theirs: Loose, skip: readonly string[] = []): Loose | typeof CLASH {
   const before = base ?? {}
   const out: Loose = {}
-  for (const key of new Set([...Object.keys(ours), ...Object.keys(theirs)])) {
+  for (const key of [...new Set([...Object.keys(ours), ...Object.keys(theirs)])].sort()) {
     if (skip.includes(key)) continue
     const [b, o, t] = [before[key], ours[key], theirs[key]]
     let value: unknown
@@ -113,7 +131,7 @@ function pickSearch(b: Search | undefined, o: Search, t: Search): Search | typeo
   const rest = mergeKeys(b, o, t, ['discarded'])
   if (rest === CLASH) return CLASH
   const discards = [o.discarded, t.discarded].filter((d) => d !== null)
-  const discarded = discards.length === 0 ? null : discards.reduce((x, y) => (instant(y.at) < instant(x.at) ? y : x))
+  const discarded = discards.length === 0 ? null : discards.reduce((x, y) => earlier(x, y, (d) => d.at))
   return { ...rest, discarded } as Search
 }
 
@@ -143,23 +161,36 @@ export function mergeSuggestionsText(input: MergeInput): string | null {
 
 const union = (a: string[], c: string[]): string[] => [...new Set([...a, ...c])].sort()
 
+/** Keys of a record merged by their own rule rather than plain three-way. */
+const RECORD_LISTS = ['sources', 'distinct_from'] as const
+const RECORD_LINKS = ['paper_id', 'merged_into'] as const
+
 /**
- * A record both machines have: the side that changed it against the base wins whatever the clocks say; changed on
- * both, the newer `updated_at` wins (keys only the older has are kept), with `sources` and `distinct_from` joined and a
- * library link or merge kept from either side, so no search loses a record and no decision about duplicates is lost.
+ * A record both machines have, merged field by field against the base (none when both created it): a field one side
+ * changed takes that side's value whatever the clocks say; a field both changed differently takes the newer record's
+ * (the newer `updated_at`, then a stable order). `sources` and `distinct_from` are joined, a library link or merge is
+ * kept from either side, and `updated_at` is the latest. A pending duplicate that the merged record already resolved
+ * («Son distintos» or «Es el mismo» on either machine) is cleared.
  */
 function pickRecord(base: MappingRecord | undefined, o: MappingRecord, t: MappingRecord): MappingRecord {
-  if (base && isDeepStrictEqual(o, base)) return t
-  if (base && isDeepStrictEqual(t, base)) return o
-  const [newer, older] = instant(t.updated_at) > instant(o.updated_at) ? [t, o] : [o, t]
-  return {
-    ...older,
-    ...newer,
-    sources: union(o.sources, t.sources),
-    distinct_from: union(o.distinct_from, t.distinct_from),
-    paper_id: newer.paper_id ?? older.paper_id,
-    merged_into: newer.merged_into ?? older.merged_into
+  const newer = later(o, t, (r) => r.updated_at)
+  const before: Loose = base ?? {}
+  const [ol, tl]: Loose[] = [o, t]
+  const out: Loose = {}
+  for (const key of [...new Set([...Object.keys(o), ...Object.keys(t)])].sort()) {
+    const [b, x, y] = [before[key], ol[key], tl[key]]
+    let value: unknown
+    if ((RECORD_LISTS as readonly string[]).includes(key)) value = union((x as string[] | undefined) ?? [], (y as string[] | undefined) ?? [])
+    else if (key === 'updated_at') value = newer.updated_at
+    else if (isDeepStrictEqual(x, y) || (base && isDeepStrictEqual(y, b))) value = x
+    else if (base && isDeepStrictEqual(x, b)) value = y
+    else if ((RECORD_LINKS as readonly string[]).includes(key) && (x === null || y === null)) value = x ?? y
+    else value = newer === o ? x : y
+    if (value !== undefined) out[key] = value
   }
+  const merged = out as MappingRecord
+  if (merged.duplicate_of && (merged.merged_into !== null || merged.distinct_from.includes(merged.duplicate_of.record))) merged.duplicate_of = null
+  return merged
 }
 
 /** records.yaml: joined by id against the merge base (records are never removed). */
@@ -194,7 +225,8 @@ function versions(p: ProtocolFile): { protocol: ProtocolBody; version: number; h
 }
 
 /** Both histories, one entry per version (the earliest replacement date; unknown keys of both kept); null on a clash. */
-function joinHistory(a: HistoryEntry[], c: HistoryEntry[]): HistoryEntry[] | null {
+function joinHistory(base: HistoryEntry[], a: HistoryEntry[], c: HistoryEntry[]): HistoryEntry[] | null {
+  const before = new Map(base.map((h) => [h.version, h]))
   const out = new Map<number, HistoryEntry>()
   for (const h of [...a, ...c]) {
     const known = out.get(h.version)
@@ -203,9 +235,9 @@ function joinHistory(a: HistoryEntry[], c: HistoryEntry[]): HistoryEntry[] | nul
       continue
     }
     if (!isDeepStrictEqual(known.protocol, h.protocol)) return null
-    const keys = mergeKeys(undefined, known, h, ['replaced_at'])
+    const keys = mergeKeys(before.get(h.version), known, h, ['replaced_at'])
     if (keys === CLASH) return null
-    out.set(h.version, { ...keys, replaced_at: instant(h.replaced_at) < instant(known.replaced_at) ? h.replaced_at : known.replaced_at } as HistoryEntry)
+    out.set(h.version, { ...keys, replaced_at: earlier(known, h, (x) => x.replaced_at).replaced_at } as HistoryEntry)
   }
   return [...out.values()]
 }
@@ -229,14 +261,17 @@ export function mergeProtocolText(input: MergeInput): string | null {
   if (isDeepStrictEqual(vo, vt) || (vb && isDeepStrictEqual(vt, vb))) source = o
   else if (vb && isDeepStrictEqual(vo, vb)) source = t
   else return null
-  const history = joinHistory(o.history, t.history)
+  const history = joinHistory(b?.history ?? [], o.history, t.history)
   if (!history) return null
   const rest = mergeKeys(b ?? undefined, o, t, ['protocol', 'version', 'history', 'last_ids', 'created_at', 'updated_at'])
   if (rest === CLASH) return null
-  const lastIds: Loose = { ...t.last_ids, ...o.last_ids }
-  for (const [key, value] of Object.entries(t.last_ids)) {
-    const mine = o.last_ids[key]
-    if (typeof value === 'number' && typeof mine === 'number') lastIds[key] = Math.max(value, mine)
+  const lastIds: Loose = {}
+  for (const key of [...new Set([...Object.keys(o.last_ids), ...Object.keys(t.last_ids)])].sort()) {
+    const [x, y] = [o.last_ids[key], t.last_ids[key]]
+    if (typeof x === 'number' && typeof y === 'number') lastIds[key] = Math.max(x, y)
+    else if (x === undefined || isDeepStrictEqual(x, y)) lastIds[key] = y
+    else if (y === undefined) lastIds[key] = x
+    else return null
   }
   const merged = ProtocolFileSchema.safeParse({
     ...rest,
@@ -244,8 +279,8 @@ export function mergeProtocolText(input: MergeInput): string | null {
     version: source.version,
     history,
     last_ids: lastIds,
-    created_at: instant(t.created_at) < instant(o.created_at) ? t.created_at : o.created_at,
-    updated_at: instant(t.updated_at) > instant(o.updated_at) ? t.updated_at : o.updated_at
+    created_at: earlier(o, t, (p) => p.created_at).created_at,
+    updated_at: later(o, t, (p) => p.updated_at).updated_at
   })
   return merged.success ? toYaml(sortedMappingFile('protocol', merged.data)) : null
 }
