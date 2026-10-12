@@ -113,7 +113,7 @@ describe('ChatService answers', () => {
     })
     const id = await chats.send(ask('Q'))
     await waitFor(() => updates.some((u) => u.kind === 'delta'))
-    expect((await chats.open(id)).partial).toMatchObject({ text: 'Partial answer', tools: 0, seq: 3 })
+    expect((await chats.open(id)).partial).toMatchObject({ text: 'Partial answer', tools: 0, seq: updates.at(-1)?.seq })
     chats.stop(id)
     await chats.idle()
     expect(updates.at(-1)).toMatchObject({ kind: 'stopped' })

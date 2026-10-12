@@ -138,6 +138,9 @@ function appendBlock(text: string, block: string): string {
 }
 
 /** The conversations of one project: chats/, their index, edits, notes, BibTeX, and (Task 8) the answers. */
+/** Orders stream updates across every session of the app run, so a reopened project's first updates are never taken for stale ones. */
+let streamSeq = 0
+
 export class ChatService {
   private readonly entries = new Map<string, Entry>()
   private readonly runs = new Map<string, Run>()
@@ -146,8 +149,6 @@ export class ChatService {
   /** Sends and retries in progress (admission and the user's message), so close() can wait for them. */
   private readonly preparing = new Set<Promise<unknown>>()
   private closed = false
-  /** Orders the stream updates of every answer of the session. */
-  private seq = 0
   /** Counts the app's own writes and deletions; `changedAt` holds the count at each conversation's last one. */
   private writes = 0
   private readonly changedAt = new Map<string, number>()
@@ -488,13 +489,13 @@ export class ChatService {
   }
 
   private start(id: string, reservation: Reservation): void {
-    const run: Run = { controller: new AbortController(), text: '', tools: 0, seq: this.seq, done: Promise.resolve() }
+    const run: Run = { controller: new AbortController(), text: '', tools: 0, seq: streamSeq, done: Promise.resolve() }
     this.runs.set(id, run)
     run.done = this.answer(id, run, reservation).finally(() => this.runs.delete(id))
   }
 
   private push(id: string, run: Run, event: ChatStreamEvent): void {
-    run.seq = ++this.seq
+    run.seq = ++streamSeq
     this.deps.stream({ ...event, chatId: id, seq: run.seq })
   }
 
