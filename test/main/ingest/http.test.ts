@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { HttpClient, HttpError, type FetchFn } from '../../../src/main/ingest/http'
+import { appLog, MemorySink } from '../../../src/main/log/appLog'
 import { routeFetch } from '../../helpers/fakeFetch'
 
 function sleeper(): { delays: number[]; sleep: (ms: number) => Promise<void> } {
@@ -119,6 +120,24 @@ describe('HttpClient', () => {
     expect(((await http.text('https://x.test', '*/*').catch((e: unknown) => e)) as HttpError).detail).toBeNull()
     const long = new HttpClient({ fetch: sequence(new Response(JSON.stringify({ message: 'x'.repeat(5000) }), { status: 422 })), sleep: sleeper().sleep })
     expect(((await long.text('https://x.test', '*/*').catch((e: unknown) => e)) as HttpError).detail).toHaveLength(500)
+  })
+
+  it('logs a failure with host, path, status and the server message, never the key, the email or the query', async () => {
+    const sink = new MemorySink()
+    appLog.setSink(sink)
+    try {
+      const body = JSON.stringify({ message: 'Wildcards (* or ?) require exact (no-stem) search.' })
+      const http = new HttpClient({ fetch: sequence(new Response(body, { status: 400 })), sleep: sleeper().sleep, contactEmail: 'me@uni.test', openalexApiKey: 'secret' })
+      await http.json(http.politeUrl('https://api.openalex.org/works?filter=title_and_abstract.search.exact:private')).catch(() => undefined)
+      const offline = new HttpClient({ fetch: sequence(Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } })), retries: 1, sleep: sleeper().sleep })
+      await offline.text('https://doi.org/10.1/x?mailto=me@uni.test', '*/*').catch(() => undefined)
+      const log = sink.lines.join('')
+      expect(log).toContain('WARN http_failed {"method":"GET","host":"api.openalex.org","path":"/works","status":400,"detail":"Wildcards (* or ?) require exact (no-stem) search.","attempts":1}')
+      expect(log).toContain('WARN http_network_failed {"method":"GET","host":"doi.org","path":"/10.1/x","error":"TypeError","message":"fetch failed","code":"ENOTFOUND","attempts":2}')
+      expect(log).not.toMatch(/secret|uni\.test|private/)
+    } finally {
+      appLog.setSink(null)
+    }
   })
 
   it('exposes HttpError with status and url', () => {

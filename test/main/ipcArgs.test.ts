@@ -165,6 +165,15 @@ describe('typed relation arguments', () => {
     expect(() => arg(ipcArgs.closeDecision, 'sync', 'decision')).toThrow()
   })
 
+  it('accepts a renderer error report, cutting long texts', () => {
+    const report = arg(ipcArgs.rendererError, { kind: 'error', message: 'x'.repeat(3000), stack: null, source: 'app.js:1' }, 'report')
+    expect(report.message).toHaveLength(2000)
+    expect(report.source).toBe('app.js:1')
+    for (const bad of [null, { kind: 'warn', message: 'm', stack: null, source: null }, { kind: 'error', message: 'm', stack: null, source: null, extra: 1 }, { kind: 'error', message: 7, stack: null, source: null }]) {
+      expect(() => arg(ipcArgs.rendererError, bad, 'report')).toThrow()
+    }
+  })
+
   it('accepts the facet suggestion settings, ids and edits, nothing else', () => {
     expect(arg(ipcArgs.llmPatch, { auto_suggest_facets: true, auto_suggest_facets_after: 5, budget: { per_facet_suggestion_usd: 3 } }, 'patch')).toEqual({
       auto_suggest_facets: true,

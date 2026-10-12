@@ -21,6 +21,7 @@ import {
   YEAR_MAX,
   YEAR_MIN
 } from '../shared/mapping'
+import { RENDERER_ERROR_KINDS } from '../shared/ipc'
 import { CANDIDATE_DIRECTIONS, OPENALEX_ID } from '../shared/relations'
 import { PDF_POLICIES } from '../shared/schemas'
 import { AUTO_SYNC_MINUTES, CLOSE_DECISIONS, CONFLICT_CHOICES, CONFLICT_ID, CONFLICT_VERSION, isRemoteUrl } from '../shared/sync'
@@ -180,6 +181,13 @@ export const ipcArgs = {
   /** The remote the user typed for the first sync; null when only initializing the repository. */
   remoteUrl: z.string().trim().refine(isRemoteUrl).nullable(),
   closeDecision: z.enum(CLOSE_DECISIONS),
+  /** An uncaught error of the window; long texts are cut, not refused, so the log still gets them. */
+  rendererError: z.strictObject({
+    kind: z.enum(RENDERER_ERROR_KINDS),
+    message: z.string().max(100_000).transform((s) => s.slice(0, 2000)),
+    stack: z.string().max(100_000).transform((s) => s.slice(0, 8000)).nullable(),
+    source: z.string().max(10_000).transform((s) => s.slice(0, 500)).nullable()
+  }),
   mappingId: z.string().regex(MAPPING_ID),
   mappingTitle: z.string().trim().min(1).max(300),
   recordId: recordIdSchema,

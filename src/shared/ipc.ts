@@ -158,8 +158,21 @@ export const IPC = {
   syncAbort: 'sync:abort',
   syncInit: 'sync:init',
   closeDecision: 'window:close-decision',
-  flushDone: 'window:flush-done'
+  flushDone: 'window:flush-done',
+  appOpenLogs: 'app:open-logs',
+  logRendererError: 'log:renderer-error'
 } as const
+
+export const RENDERER_ERROR_KINDS = ['error', 'unhandledrejection', 'render'] as const
+
+/** An error the window could not handle, for the app log (bounded and redacted by the main process). */
+export interface RendererErrorReport {
+  kind: (typeof RENDERER_ERROR_KINDS)[number]
+  message: string
+  stack: string | null
+  /** The script and line, for an `error` event. */
+  source: string | null
+}
 
 /**
  * `sync-changed`: the git sync's state changed. `facets-changed`: the facet suggestions changed (a run, a decision,
@@ -441,6 +454,14 @@ export interface ResearchApi {
     abort(): Promise<void>
     /** «Inicializar repositorio» (when there is none) and/or adds `url` as origin, then the first sync. */
     init(url: string | null): Promise<SyncResult>
+  }
+  app: {
+    /** «Abrir carpeta de registros»: the folder of main.log, in the system's file manager. */
+    openLogs(): Promise<ActionResult>
+  }
+  log: {
+    /** Sends an uncaught error of the window to the app log; fire and forget. */
+    rendererError(report: RendererErrorReport): void
   }
   on(event: ResearchEvent, callback: () => void): () => void
   /** Acknowledges a 'flush-request' once pending saves have finished. */

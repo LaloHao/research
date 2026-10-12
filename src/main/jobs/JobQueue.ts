@@ -1,5 +1,7 @@
 import type { JobRecord, JobSpec, JobType } from '../../shared/jobs'
+import { parseUserError } from '../../shared/library'
 import type { IndexCache, JobRow } from '../cache/IndexCache'
+import { appLog, jobFields } from '../log/appLog'
 
 export type JobHandler = (spec: JobSpec, signal: AbortSignal, report: (progress: number) => void) => Promise<{ paperId?: string; message?: string }>
 
@@ -196,19 +198,27 @@ export class JobQueue {
       this.progress.set(job.id, next)
       this.emit()
     }
+    const spec = JSON.parse(job.spec) as JobSpec
+    const fields = { id: job.id, ...jobFields(spec) }
+    const started = Date.now()
+    appLog.info('job_start', fields)
     try {
-      const result = await this.handler(JSON.parse(job.spec) as JobSpec, controller.signal, report)
-      this.cache.updateJob(
-        job.id,
-        { state: controller.signal.aborted ? interrupted() : 'done', message: result.message ?? null, paper_id: result.paperId ?? null },
-        this.now()
-      )
+      const result = await this.handler(spec, controller.signal, report)
+      const state = controller.signal.aborted ? interrupted() : 'done'
+      this.cache.updateJob(job.id, { state, message: result.message ?? null, paper_id: result.paperId ?? null }, this.now())
+      appLog.info(state === 'done' ? 'job_done' : 'job_stopped', { ...fields, state, outcome: result.message ?? null, ms: Date.now() - started })
     } catch (error) {
-      this.cache.updateJob(
-        job.id,
-        { state: controller.signal.aborted ? interrupted() : 'failed', message: controller.signal.aborted ? null : error instanceof Error ? error.message : String(error) },
-        this.now()
-      )
+      const message = error instanceof Error ? error.message : String(error)
+      if (controller.signal.aborted) {
+        this.cache.updateJob(job.id, { state: interrupted(), message: null }, this.now())
+        appLog.info('job_stopped', { ...fields, state: interrupted(), ms: Date.now() - started })
+      } else {
+        this.cache.updateJob(job.id, { state: 'failed', message }, this.now())
+        const known = parseUserError(message)
+        // A known code is an expected failure (offline, OpenAlex refused…); anything else is a bug worth its stack.
+        if (known && known.code !== 'unknown') appLog.warn('job_failed', { ...fields, ms: Date.now() - started, code: known.code, detail: known.detail })
+        else appLog.error('job_failed', { ...fields, ms: Date.now() - started, code: 'unknown', error: error instanceof Error ? (error.cause instanceof Error ? error.cause : error) : message })
+      }
     } finally {
       this.progress.delete(job.id)
       this.running.delete(job.id)

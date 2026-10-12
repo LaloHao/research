@@ -165,6 +165,12 @@ const api: ResearchApi = {
     abort: () => ipcRenderer.invoke(IPC.syncAbort),
     init: (url) => ipcRenderer.invoke(IPC.syncInit, url)
   },
+  app: {
+    openLogs: () => ipcRenderer.invoke(IPC.appOpenLogs)
+  },
+  log: {
+    rendererError: (report) => ipcRenderer.send(IPC.logRendererError, report)
+  },
   on: (event, callback) => {
     const channel = eventChannel(event)
     const handler = (): void => callback()

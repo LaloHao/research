@@ -1,3 +1,5 @@
+import { appLog } from '../log/appLog'
+
 export type FetchFn = (url: string, init?: RequestInit) => Promise<Response>
 
 export class HttpError extends Error {
@@ -105,6 +107,33 @@ async function errorDetail(res: Response): Promise<string | null> {
   }
 }
 
+/** The app log gets the method, host, path, status and the server's message; never the query (keys, email) or a body. */
+function logFailure(url: string, error: unknown, attempts: number): void {
+  let host = ''
+  let path = ''
+  try {
+    const u = new URL(url)
+    host = u.hostname
+    path = u.pathname
+  } catch {
+    // An unreadable URL is logged without host and path.
+  }
+  if (error instanceof HttpError) {
+    appLog.warn('http_failed', { method: 'GET', host, path, status: error.status, detail: error.detail, attempts })
+  } else {
+    const e = error as { name?: unknown; message?: unknown; cause?: { code?: unknown } } | null
+    appLog.warn('http_network_failed', {
+      method: 'GET',
+      host,
+      path,
+      error: typeof e?.name === 'string' ? e.name : 'Error',
+      message: typeof e?.message === 'string' ? e.message : String(error),
+      code: typeof e?.cause?.code === 'string' ? e.cause.code : null,
+      attempts
+    })
+  }
+}
+
 export class HttpClient {
   private contactEmail: string
   private openalexApiKey: string
@@ -183,11 +212,17 @@ export class HttpClient {
         const retryAfter = Number(res.headers.get('retry-after'))
         if (Number.isFinite(retryAfter) && retryAfter > 0) retryAfterMs = Math.min(retryAfter * 1000, MAX_RETRY_AFTER_MS)
       } catch (error) {
-        if (error instanceof HttpError && (!RETRYABLE.has(error.status) || openalexBudgetSpent(error))) throw error
+        if (error instanceof HttpError && (!RETRYABLE.has(error.status) || openalexBudgetSpent(error))) {
+          logFailure(url, error, attempt + 1)
+          throw error
+        }
         if (signal?.aborted) throw error
         lastError = error
       }
-      if (attempt >= retries) throw lastError
+      if (attempt >= retries) {
+        logFailure(url, lastError, attempt + 1)
+        throw lastError
+      }
       await sleep(retryAfterMs ?? baseDelay * 2 ** attempt)
     }
   }

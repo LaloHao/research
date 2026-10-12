@@ -1,7 +1,7 @@
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import type { CountResult } from '../shared/relations'
 import type { FormImpact } from '../shared/summary'
@@ -30,6 +30,7 @@ import type { AppController } from './AppController'
 import { WindowDecisions } from './chats/windowDecisions'
 import { arg, ipcArgs } from './ipcArgs'
 import { toUserFacing, UserFacingError } from './library/UserFacingError'
+import { appLog, RendererErrorGate } from './log/appLog'
 import type { MappingService } from './mapping/MappingService'
 import { RELATIONS_FILE } from './project/relationsFile'
 import type { SyncService } from './sync/SyncService'
@@ -99,6 +100,31 @@ async function projectResult(action: () => Promise<ProjectInfo | null>): Promise
 }
 
 export function registerIpc(app: AppController, getWindow: () => BrowserWindow | null): void {
+  ipcMain.handle(
+    IPC.appOpenLogs,
+    (): Promise<ActionResult> =>
+      actionResult(async () => {
+        const dir = appLog.directory()
+        if (!dir) throw new Error('The app log has no folder')
+        await mkdir(dir, { recursive: true })
+        const problem = await shell.openPath(dir)
+        if (problem) throw new Error(`Could not open the log folder: ${problem}`)
+      })
+  )
+  const rendererErrors = new RendererErrorGate()
+  ipcMain.on(IPC.logRendererError, (event, raw: unknown) => {
+    if (event.sender !== getWindow()?.webContents) return
+    let report
+    try {
+      report = arg(ipcArgs.rendererError, raw, 'report')
+    } catch {
+      return
+    }
+    if (!rendererErrors.allow()) return
+    const dropped = rendererErrors.takeDropped()
+    appLog.error('renderer_error', dropped > 0 ? { ...report, droppedBefore: dropped } : report)
+  })
+
   ipcMain.handle(IPC.settingsGet, () => app.getSettings())
   ipcMain.handle(IPC.settingsSet, (_e, patch: unknown) => app.setSettings(arg(ipcArgs.settingsPatch, patch, 'patch')))
 

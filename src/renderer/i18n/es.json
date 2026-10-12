@@ -50,6 +50,9 @@
       "cancel": "Cancelar"
     },
     "close_project": "Cerrar proyecto",
+    "logs": "Registros de la app",
+    "open_logs": "Abrir carpeta de registros",
+    "logs_help": "La app anota ahí lo que pasa (inicio, proyectos, tareas, fallos de red y de OpenAlex, errores) en main.log. No guarda claves, correos ni el texto de tus papers. Adjúntalo si reportas un problema.",
     "model": "Modelo",
     "models": { "sonnet": "Sonnet (recomendado)", "haiku": "Haiku (más rápido, menor calidad)", "opus": "Opus (máxima calidad, consume más cuota)" },
     "auto_summarize": "Resumir automáticamente al agregar papers",

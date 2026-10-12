@@ -9,6 +9,17 @@ import { UtilityEmbeddingRuntime } from './embeddings/UtilityEmbeddingRuntime'
 import { waitForFlush } from './flush'
 import { registerIpc } from './ipc'
 import { arg, ipcArgs } from './ipcArgs'
+import { appLog, RotatingFileSink } from './log/appLog'
+
+// The app log lives with the app's data (never in a project folder): <userData>/logs/main.log.
+appLog.setSink(new RotatingFileSink(join(app.getPath('userData'), 'logs')))
+appLog.info('app_start', { version: app.getVersion(), electron: process.versions.electron, platform: process.platform, arch: process.arch })
+// Observes without changing what Electron does with an uncaught exception.
+process.on('uncaughtExceptionMonitor', (error, origin) => appLog.error('uncaught_exception', { origin, error }))
+process.on('unhandledRejection', (reason) => {
+  appLog.error('unhandled_rejection', { error: reason })
+  console.error('Unhandled rejection', reason)
+})
 
 let mainWindow: BrowserWindow | null = null
 
@@ -163,6 +174,7 @@ function start(): void {
       await controller.init()
     } catch (error) {
       console.error('startup', error)
+      appLog.error('startup_failed', { error })
     } finally {
       mainWindow = createWindow()
     }

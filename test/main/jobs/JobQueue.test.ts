@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { join } from 'node:path'
 import { IndexCache, type TrashRow } from '../../../src/main/cache/IndexCache'
 import { JobQueue, type JobHandler } from '../../../src/main/jobs/JobQueue'
+import { UserFacingError } from '../../../src/main/library/UserFacingError'
+import { appLog, MemorySink } from '../../../src/main/log/appLog'
 import type { JobSpec } from '../../../src/shared/jobs'
 import { tmpDir } from '../../helpers/tmp'
 
@@ -18,6 +20,32 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 describe('JobQueue', () => {
+  it('logs every job start, end and failure with its type, ids and error code and detail', async () => {
+    const sink = new MemorySink()
+    appLog.setSink(sink)
+    try {
+      const handler: JobHandler = async (s) => {
+        if (s.type === 'mapping_search') throw new UserFacingError('search_query_invalid', { detail: 'Wildcards (* or ?) require exact search.' })
+        if (s.type === 'summarize') throw new Error('boom')
+        return { message: 'added' }
+      }
+      const queue = new JobQueue(await cache(), handler, 1)
+      queue.start()
+      queue.enqueue(spec('10.1/x'))
+      queue.enqueue({ type: 'mapping_search', mappingId: 'm1', query: 'anonymi* private topic', fromYear: null, toYear: null, types: [], cap: 10 })
+      queue.enqueue({ type: 'summarize', paperId: 'he2017drain' })
+      await queue.whenIdle()
+      const log = sink.lines.join('')
+      expect(log).toMatch(/INFO job_start \{"id":1,"type":"ingest_identifier"/)
+      expect(log).toMatch(/INFO job_done \{"id":1,"type":"ingest_identifier".*"outcome":"added"/)
+      expect(log).toMatch(/WARN job_failed \{"id":2,"type":"mapping_search","mappingId":"m1","queryChars":22,"cap":10,.*"code":"search_query_invalid","detail":"Wildcards \(\* or \?\) require exact search\."/)
+      expect(log).toMatch(/ERROR job_failed \{"id":3,"type":"summarize","paperId":"he2017drain",.*"code":"unknown","error":\{"error":"Error: boom"/)
+      expect(log).not.toContain('private topic')
+    } finally {
+      appLog.setSink(null)
+    }
+  })
+
   it('runs jobs with bounded concurrency and records results', async () => {
     const gates = new Map<string, ReturnType<typeof deferred>>()
     let running = 0
