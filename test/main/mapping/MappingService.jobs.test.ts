@@ -30,6 +30,11 @@ const as = <T extends JobSpec['type']>(spec: JobSpec, type: T): Extract<JobSpec,
   return spec as Extract<JobSpec, { type: T }>
 }
 
+type Service = Awaited<ReturnType<typeof setupMappings>>['service']
+/** The record ids the plan showed, as the window sends them back after «Sugerir». */
+const planned = async (service: Service, id: string, phase: 'title_abstract' | 'full_text' = 'title_abstract'): Promise<string[]> => (await service.suggestPlan(id, phase)).recordIds
+
+
 describe('OpenAlex searches', () => {
   it('fetch every page up to the cap and log the exact string, filters, request and counts', async () => {
     const { service, queued } = await setupMappings({ routes: SEARCH_ROUTES })
@@ -99,10 +104,10 @@ describe('adding included records to the library', () => {
     for (const row of service.queue(id, { phase: 'title_abstract', filter: 'pending' })) {
       await service.decide(id, { recordId: row.id, phase: 'title_abstract', decision: 'include', criterion: null, suggestionId: null })
     }
-    expect(service.ingestPlan(id)).toEqual({ count: 2, autoSummarize: false, estimateUsd: 0 })
+    expect(service.ingestPlan(id)).toEqual({ count: 2, recordIds: expect.any(Array), autoSummarize: false, estimateUsd: 0 })
     await store.updateConfig({ llm: { ...store.config.llm, auto_summarize: true } })
-    expect(service.ingestPlan(id)).toEqual({ count: 2, autoSummarize: true, estimateUsd: 0.1 })
-    expect(service.requestIngest(id)).toBe(2)
+    expect(service.ingestPlan(id)).toEqual({ count: 2, recordIds: expect.any(Array), autoSummarize: true, estimateUsd: 0.1 })
+    expect(service.requestIngest(id, service.ingestPlan(id).recordIds)).toBe(2)
     const specs = queued.map((s) => as(s, 'ingest_record'))
     expect(new Set(specs.map((s) => s.batchId)).size).toBe(1)
     const outcomes = []
@@ -142,9 +147,10 @@ describe("Claude's suggestions", () => {
       batchCapUsd: 10,
       monthSpentUsd: 0,
       monthCapUsd: null,
-      withoutText: 0
+      withoutText: 0,
+      recordIds: service.queue(id, { phase: 'title_abstract', filter: 'pending' }).map((r) => r.id)
     })
-    const { count, batchId } = service.requestSuggestions(id, 'title_abstract')
+    const { count, batchId } = service.requestSuggestions(id, 'title_abstract', await planned(service, id))
     expect(count).toBe(45)
     const specs = queued.map((s) => as(s, 'screen_suggest'))
     expect(specs.map((s) => s.recordIds.length)).toEqual([20, 20, 5])
@@ -161,7 +167,7 @@ describe("Claude's suggestions", () => {
       candidate(),
       candidate({ title: 'Masking secrets in system logs before sharing them', year: 2023, identifiers: { doi: '10.5555/mask.2023' } })
     ])
-    service.requestSuggestions(id, 'title_abstract')
+    service.requestSuggestions(id, 'title_abstract', await planned(service, id))
     const [first, second] = service.queue(id, { phase: 'title_abstract', filter: 'pending' })
     await service.decide(id, { recordId: first.id, phase: 'title_abstract', decision: 'include', criterion: null, suggestionId: null })
     expect(await service.runSuggestions(as(queued[0], 'screen_suggest'), signal)).toEqual({ message: 'screening_suggested' })
@@ -181,6 +187,49 @@ describe("Claude's suggestions", () => {
     const [row] = service.queue(id, { phase: 'title_abstract', filter: 'pending' })
     await service.decide(id, { recordId: row.id, phase: 'title_abstract', decision: 'include', criterion: null, suggestionId: null })
     expect(await service.suggestPlan(id, 'full_text')).toMatchObject({ count: 0, calls: 0, withoutText: 1 })
+  })
+})
+
+describe('the plan the user confirmed', () => {
+  const studies = (from: number, n: number) =>
+    Array.from({ length: n }, (_, i) => candidate({ title: `Study number ${from + i} on the anonymization of logs`, identifiers: { doi: `10.5555/study.${from + i}` } }))
+
+  it('«Sugerir» asks only about the records of the plan, never the ones added after it', async () => {
+    const { service, queued } = await setupMappings()
+    const id = await service.create('Logs')
+    await service.saveProtocol(id, draft, 1)
+    await service.addSearch(id, { kind: 'openalex', database: 'OpenAlex', query: 'q' }, studies(0, 3))
+    const plan = await service.suggestPlan(id, 'title_abstract')
+    expect(plan).toMatchObject({ count: 3, calls: 1 })
+    // A search ends while the confirmation is open.
+    await service.addSearch(id, { kind: 'openalex', database: 'OpenAlex', query: 'more' }, studies(10, 30))
+    // A record of the plan is decided meanwhile: it is not asked about either.
+    await service.decide(id, { recordId: plan.recordIds[0], phase: 'title_abstract', decision: 'include', criterion: null, suggestionId: null })
+    expect(service.requestSuggestions(id, 'title_abstract', [...plan.recordIds, 'r0000000000ff'])).toMatchObject({ count: 2 })
+    const specs = queued.map((s) => as(s, 'screen_suggest'))
+    expect(specs.flatMap((s) => s.recordIds).sort()).toEqual(plan.recordIds.slice(1).sort())
+  })
+
+  it('«Agregar» adds only the records of the plan, and the estimate is for those', async () => {
+    const { service, queued, store } = await setupMappings()
+    await store.updateConfig({ llm: { ...store.config.llm, auto_summarize: true } })
+    const id = await service.create('Logs')
+    await service.saveProtocol(id, draft, 1)
+    await service.addSearch(id, { kind: 'openalex', database: 'OpenAlex', query: 'q' }, studies(0, 3))
+    const include = async () => {
+      for (const row of service.queue(id, { phase: 'title_abstract', filter: 'pending' }))
+        await service.decide(id, { recordId: row.id, phase: 'title_abstract', decision: 'include', criterion: null, suggestionId: null })
+    }
+    await include()
+    const all = service.ingestPlan(id)
+    expect(all).toMatchObject({ count: 3, autoSummarize: true, estimateUsd: expect.closeTo(0.15, 6) })
+    const one = service.ingestPlan(id, [all.recordIds[1], 'r0000000000ff'])
+    expect(one).toEqual({ count: 1, recordIds: [all.recordIds[1]], autoSummarize: true, estimateUsd: expect.closeTo(0.05, 6) })
+    await service.addSearch(id, { kind: 'openalex', database: 'OpenAlex', query: 'more' }, studies(10, 5))
+    await include()
+    expect(service.ingestPlan(id).count).toBe(8)
+    expect(service.requestIngest(id, all.recordIds)).toBe(3)
+    expect(queued.map((s) => as(s, 'ingest_record').recordId).sort()).toEqual([...all.recordIds].sort())
   })
 })
 
@@ -208,7 +257,7 @@ describe('job guards', () => {
     await library.indexPaper('he2017drain')
     const rows = service.queue(id, { phase: 'title_abstract', filter: 'pending' })
     for (const row of rows) await service.decide(id, { recordId: row.id, phase: 'title_abstract', decision: 'include', criterion: null, suggestionId: null })
-    service.requestIngest(id)
+    service.requestIngest(id, service.ingestPlan(id).recordIds)
     const specs = queued.map((s) => as(s, 'ingest_record'))
     const drain = specs.find((s) => s.recordId === rows.find((r) => r.title.startsWith('Drain'))!.id)!
     const mask = specs.find((s) => s !== drain)!
@@ -309,7 +358,7 @@ describe('fix round 1', () => {
       }
     ])
     const { service, queued, ledger, id } = await twoRecords(llm)
-    service.requestSuggestions(id, 'title_abstract')
+    service.requestSuggestions(id, 'title_abstract', await planned(service, id))
     await expect(service.runSuggestions(as(queued[0], 'screen_suggest'), controller.signal)).rejects.toThrow()
     expect(await ledger.monthTotal()).toBeCloseTo(0.02, 6)
     expect(service.queue(id, { phase: 'title_abstract', filter: 'all' }).every((r) => r.suggestions.title_abstract === null)).toBe(true)
@@ -322,7 +371,7 @@ describe('fix round 1', () => {
     await service.decide(id, { recordId: first.id, phase: 'title_abstract', decision: 'include', criterion: null, suggestionId: null })
     await service.saveProtocol(id, { ...draft, objective: 'Map log anonymization.' }, 1)
     expect((await service.open(id)).protocol.version).toBe(2)
-    service.requestSuggestions(id, 'title_abstract')
+    service.requestSuggestions(id, 'title_abstract', await planned(service, id))
     await service.runSuggestions(as(queued[0], 'screen_suggest'), signal)
     const row = service.queue(id, { phase: 'title_abstract', filter: 'all' }).find((r) => r.id === second.id)!
     expect(row.suggestions.title_abstract).toMatchObject({ protocolVersion: 2, outdated: false })
@@ -332,13 +381,13 @@ describe('fix round 1', () => {
     for (const code of ['budget_exceeded', 'llm_quota'] as const) {
       const llm = new FakeLlmProvider([new LlmError(code)])
       const { service, queued, cancelledBatches, id } = await twoRecords(llm)
-      const { batchId } = service.requestSuggestions(id, 'title_abstract')
+      const { batchId } = service.requestSuggestions(id, 'title_abstract', await planned(service, id))
       await expect(service.runSuggestions(as(queued[0], 'screen_suggest'), signal)).rejects.toThrow(code)
       expect(cancelledBatches).toEqual([batchId])
     }
     const llm = new FakeLlmProvider([new LlmError('llm_invalid_output')])
     const { service, queued, cancelledBatches, id } = await twoRecords(llm)
-    service.requestSuggestions(id, 'title_abstract')
+    service.requestSuggestions(id, 'title_abstract', await planned(service, id))
     await expect(service.runSuggestions(as(queued[0], 'screen_suggest'), signal)).rejects.toThrow('llm_invalid_output')
     expect(cancelledBatches).toEqual([])
   })
@@ -348,7 +397,7 @@ describe('fix round 1', () => {
     for (const row of service.queue(id, { phase: 'title_abstract', filter: 'pending' })) {
       await service.decide(id, { recordId: row.id, phase: 'title_abstract', decision: 'include', criterion: null, suggestionId: null })
     }
-    service.requestIngest(id)
+    service.requestIngest(id, service.ingestPlan(id).recordIds)
     const spec = as(queued[0], 'ingest_record')
     const controller = new AbortController()
     const library = (service as unknown as { deps: { library: { ingestMetadata: (...a: unknown[]) => Promise<unknown> } } }).deps.library

@@ -542,19 +542,26 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     return mappings((m) => m.suggestPlan(id, phase))
   })
   // «Sugerir» in the cost confirmation: the user's click after seeing the plan.
-  ipcMain.handle(IPC.mappingsSuggest, (_e, rawId: unknown, rawPhase: unknown, rawConfirmed: unknown): RunBatchResult => {
+  // It sends the records the plan showed: main never asks about more than those.
+  ipcMain.handle(IPC.mappingsSuggest, (_e, rawId: unknown, rawPhase: unknown, rawIds: unknown, rawConfirmed: unknown): RunBatchResult => {
     const id = arg(ipcArgs.mappingId, rawId, 'id')
     const phase = arg(ipcArgs.phase, rawPhase, 'phase')
+    const ids = arg(ipcArgs.mappingRecordIds, rawIds, 'ids')
     arg(ipcArgs.confirmed, rawConfirmed, 'confirmed')
     try {
-      const { batchId, count } = app.requireSession().mappings.requestSuggestions(id, phase)
+      const { batchId, count } = app.requireSession().mappings.requestSuggestions(id, phase, ids)
       return { ok: true, batchId, count }
     } catch (error) {
       return failed(error)
     }
   })
-  ipcMain.handle(IPC.mappingsIngestPlan, (_e, rawId: unknown) => app.requireSession().mappings.ingestPlan(arg(ipcArgs.mappingId, rawId, 'id')))
-  // «Agregar a la biblioteca» in its confirmation (how many, and the summaries' estimate when they are automatic).
+  ipcMain.handle(IPC.mappingsIngestPlan, (_e, rawId: unknown, rawIds: unknown) => {
+    const id = arg(ipcArgs.mappingId, rawId, 'id')
+    const ids = arg(ipcArgs.mappingRecordScope, rawIds, 'ids')
+    return app.requireSession().mappings.ingestPlan(id, ids)
+  })
+  // «Agregar a la biblioteca» in its confirmation (how many, and the summaries' estimate when they are automatic): the
+  // records the plan showed, never more.
   ipcMain.handle(IPC.mappingsIngest, (_e, rawId: unknown, rawIds: unknown, rawConfirmed: unknown): CountResult => {
     const id = arg(ipcArgs.mappingId, rawId, 'id')
     const ids = arg(ipcArgs.mappingRecordIds, rawIds, 'ids')

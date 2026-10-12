@@ -139,7 +139,7 @@ describe('labels', () => {
   })
 
   it('writes the cost lines of a suggestion plan', () => {
-    const plan = { phase: 'title_abstract' as const, count: 45, calls: 3, estimateUsd: 0.3, perCallUsd: 0.5, batchCapUsd: 10, monthSpentUsd: 1.234, monthCapUsd: null, withoutText: 0 }
+    const plan = { phase: 'title_abstract' as const, count: 45, calls: 3, estimateUsd: 0.3, perCallUsd: 0.5, batchCapUsd: 10, monthSpentUsd: 1.234, monthCapUsd: null, withoutText: 0, recordIds: [] }
     expect(planLines(t, plan)).toEqual([
       'mappings.screening.suggest_confirm {"count":45,"calls":3,"cost":"0.30"}',
       'mappings.screening.suggest_caps {"call":"0.50","batch":"10.00"}',

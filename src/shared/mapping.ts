@@ -475,10 +475,14 @@ export interface ScreeningPlan {
   monthCapUsd: number | null
   /** Full text: included records whose paper has no text yet (skipped). */
   withoutText: number
+  /** The records counted: «Sugerir» sends them back, and nothing else is asked about. */
+  recordIds: string[]
 }
 
 export interface IngestPlan {
   count: number
+  /** The records counted: «Agregar» sends them back, and nothing else is added. */
+  recordIds: string[]
   /** «Resumir automáticamente al agregar» is on: each new paper is also summarized. */
   autoSummarize: boolean
   estimateUsd: number

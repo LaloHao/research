@@ -834,6 +834,7 @@
       "ingest_run": "Agregar",
       "ingest_queued_one": "{{count}} registro en cola para agregarse (Actividad).",
       "ingest_queued_other": "{{count}} registros en cola para agregarse (Actividad).",
+      "ingest_none": "Ya no queda ningún registro incluido por agregar a la biblioteca.",
       "not_in_library": "Este registro todavía no está en la biblioteca: agrégalo para leer su texto completo.",
       "add_one": "Agregar a la biblioteca",
       "duplicates": "Posibles duplicados ({{count}})",

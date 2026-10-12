@@ -35,6 +35,8 @@ const chatPaperSchema = z.string().max(200).regex(PAPER_KEY)
 const actionIdSchema = z.string().length(6).regex(ACTION_ID)
 const llmModelSchema = z.enum(LLM_MODELS)
 const recordIdSchema = z.string().regex(RECORD_ID)
+/** The most records a confirmed plan sends back (a mapping of many searches at their cap). */
+const MAX_PLAN_RECORDS = 100_000
 const phaseSchema = z.enum(PHASES)
 const yearSchema = z.number().int().min(1800).max(2200).nullable()
 /** The protocol draft with every nested object strict as well: only the editable fields reach the service. */
@@ -209,7 +211,10 @@ export const ipcArgs = {
     criterion: z.string().regex(CRITERION_ID).nullable(),
     suggestionId: z.string().regex(SCREENING_SUGGESTION_ID).nullable()
   }),
-  mappingRecordIds: z.array(recordIdSchema).max(10_000).optional(),
+  /** The records of a plan the user confirmed («Sugerir», «Agregar»): only these, and only those still eligible, run. */
+  mappingRecordIds: z.array(recordIdSchema).min(1).max(MAX_PLAN_RECORDS),
+  /** «Agregar a la biblioteca» for one record (its ids) or all (undefined). */
+  mappingRecordScope: z.array(recordIdSchema).min(1).max(MAX_PLAN_RECORDS).optional(),
   /** A request that costs money or the OpenAlex budget: only `true`, what the window sends on the user's confirming click. */
   confirmed: z.literal(true)
 }

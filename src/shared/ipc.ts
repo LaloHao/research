@@ -414,11 +414,12 @@ export interface ResearchApi {
     resolveDuplicate(id: string, recordId: string, same: boolean): Promise<ActionResult>
     /** What «Sugerir cribado» would cost, before asking. */
     suggestPlan(id: string, phase: Phase): Promise<ScreeningPlan>
-    /** «Sugerir» in the cost confirmation: `confirmed` is that click. */
-    suggest(id: string, phase: Phase, confirmed: true): Promise<RunBatchResult>
-    ingestPlan(id: string): Promise<IngestPlan>
-    /** After the confirmation: adds the records included on title and abstract that are not library papers yet (these, or all). */
-    ingest(id: string, recordIds: string[] | undefined, confirmed: true): Promise<CountResult>
+    /** «Sugerir» in the cost confirmation: `confirmed` is that click, `recordIds` the plan's (nothing else is asked about). */
+    suggest(id: string, phase: Phase, recordIds: string[], confirmed: true): Promise<RunBatchResult>
+    /** What «Agregar a la biblioteca» would add (these records, or all) and its estimate. */
+    ingestPlan(id: string, recordIds?: string[]): Promise<IngestPlan>
+    /** After the confirmation: adds the plan's records that are still included and not library papers yet. */
+    ingest(id: string, recordIds: string[], confirmed: true): Promise<CountResult>
   }
   exports: {
     /** Asks where to save, then writes the file there. */

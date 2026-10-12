@@ -20,8 +20,8 @@ import { PaperDetail } from '../paper/PaperDetail'
 const EDITABLE = new Set(['INPUT', 'TEXTAREA', 'SELECT'])
 const ARROWS = new Set(['ArrowLeft', 'ArrowRight'])
 
-/** The ingest confirmation: the whole plan, or the estimate for the records of «Agregar a la biblioteca». */
-type IngestConfirm = IngestPlan & { recordIds?: string[] }
+/** The ingest confirmation: the plan main made for what was asked (one record, or all: `scope` undefined). */
+type IngestConfirm = { plan: IngestPlan; scope?: string[] }
 
 function Abstract({ text, quote }: { text: string | null; quote: string | null }): React.JSX.Element {
   const { t } = useTranslation()
@@ -77,6 +77,8 @@ export function ScreeningTab({ view }: { view: MappingView }): React.JSX.Element
   const root = useRef<HTMLDivElement>(null)
   const request = useRef(0)
   const ingestRequest = useRef(0)
+  /** The open confirmation's refresh; bumped when it closes or its button is pressed, so a late answer is ignored. */
+  const planRequest = useRef(0)
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const place = useRef<{ ids: string[]; index: number }>({ ids: [], index: 0 })
   place.current = { ids: rows?.map((r) => r.id) ?? [], index }
@@ -121,6 +123,47 @@ export function ScreeningTab({ view }: { view: MappingView }): React.JSX.Element
   }, [view.id, phase])
   useEffect(loadIngest, [loadIngest])
   useEvent('mappings-changed', loadIngest)
+
+  const closePlan = (): void => {
+    planRequest.current++
+    setPlan(null)
+  }
+  const closeIngest = (): void => {
+    planRequest.current++
+    setIngest(null)
+  }
+  /**
+   * An open confirmation follows the mapping (a search, an import or a sync may add records meanwhile): its figures and
+   * the ids «Sugerir» or «Agregar» send are always the ones on screen, and it closes when nothing is left.
+   */
+  const refreshConfirmation = (): void => {
+    if (busy || (!plan && !ingest)) return
+    const token = ++planRequest.current
+    const stale = (): boolean => token !== planRequest.current
+    const failed = (): void => {
+      if (stale()) return
+      setPlan(null)
+      setIngest(null)
+      setError(errorText(t, 'unknown'))
+    }
+    if (plan) {
+      window.research.mappings.suggestPlan(view.id, plan.phase).then((p) => {
+        if (stale()) return
+        if (p.count > 0) return setPlan(p)
+        setPlan(null)
+        setNotice(t('mappings.screening.suggest_none'))
+      }, failed)
+    } else if (ingest) {
+      const scope = ingest.scope
+      window.research.mappings.ingestPlan(view.id, scope).then((p) => {
+        if (stale()) return
+        if (p.count > 0) return setIngest({ plan: p, scope })
+        setIngest(null)
+        setNotice(t('mappings.screening.ingest_none'))
+      }, failed)
+    }
+  }
+  useEvent('mappings-changed', refreshConfirmation)
 
   useEffect(
     () => () => {
@@ -282,7 +325,8 @@ export function ScreeningTab({ view }: { view: MappingView }): React.JSX.Element
   const runSuggest = (): void => {
     if (!plan || busy) return
     setBusy(true)
-    window.research.mappings.suggest(view.id, plan.phase, true).then(
+    planRequest.current++
+    window.research.mappings.suggest(view.id, plan.phase, plan.recordIds, true).then(
       (r) => {
         setPlan(null)
         if (!r.ok) return fail(r.error)
@@ -301,12 +345,11 @@ export function ScreeningTab({ view }: { view: MappingView }): React.JSX.Element
     setBusy(true)
     setError(null)
     setNotice(null)
-    window.research.mappings.ingestPlan(view.id).then(
+    window.research.mappings.ingestPlan(view.id, recordIds).then(
       (p) => {
         setBusy(false)
-        if (!recordIds) return setIngest(p)
-        const each = p.count > 0 ? p.estimateUsd / p.count : 0
-        setIngest({ count: recordIds.length, autoSummarize: p.autoSummarize, estimateUsd: each * recordIds.length, recordIds })
+        if (p.count === 0) setNotice(t('mappings.screening.ingest_none'))
+        else setIngest({ plan: p, scope: recordIds })
       },
       () => fail('unknown')
     )
@@ -316,7 +359,8 @@ export function ScreeningTab({ view }: { view: MappingView }): React.JSX.Element
   const runIngest = (): void => {
     if (!ingest || busy) return
     setBusy(true)
-    window.research.mappings.ingest(view.id, ingest.recordIds, true).then(
+    planRequest.current++
+    window.research.mappings.ingest(view.id, ingest.plan.recordIds, true).then(
       (r) => {
         setIngest(null)
         if (!r.ok) return fail(r.error)
@@ -582,14 +626,14 @@ export function ScreeningTab({ view }: { view: MappingView }): React.JSX.Element
 
       {plan && (
         <div className="modal-backdrop">
-          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="suggest-title" onKeyDown={dialogKeys(() => setPlan(null))}>
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="suggest-title" onKeyDown={dialogKeys(closePlan)}>
             <h3 id="suggest-title">{t('mappings.screening.suggest_title')}</h3>
             {planLines(t, plan).map((line) => (
               <p key={line}>{line}</p>
             ))}
             <p className="muted small">{t('mappings.screening.suggest_note')}</p>
             <div className="row">
-              <button autoFocus onClick={() => setPlan(null)}>
+              <button autoFocus onClick={closePlan}>
                 {t('mappings.screening.cancel')}
               </button>
               <button disabled={busy} onClick={runSuggest}>
@@ -602,14 +646,14 @@ export function ScreeningTab({ view }: { view: MappingView }): React.JSX.Element
 
       {ingest && (
         <div className="modal-backdrop">
-          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="ingest-title" onKeyDown={dialogKeys(() => setIngest(null))}>
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="ingest-title" onKeyDown={dialogKeys(closeIngest)}>
             <p id="ingest-title">
-              <strong>{t('mappings.screening.ingest_confirm', { count: ingest.count })}</strong>
+              <strong>{t('mappings.screening.ingest_confirm', { count: ingest.plan.count })}</strong>
             </p>
             <p className="muted small">{t('mappings.screening.ingest_help')}</p>
-            {ingest.autoSummarize && <p className="warning-text">{t('mappings.screening.ingest_auto', { cost: approxUsd(ingest.estimateUsd) })}</p>}
+            {ingest.plan.autoSummarize && <p className="warning-text">{t('mappings.screening.ingest_auto', { cost: approxUsd(ingest.plan.estimateUsd) })}</p>}
             <div className="row">
-              <button autoFocus onClick={() => setIngest(null)}>
+              <button autoFocus onClick={closeIngest}>
                 {t('mappings.screening.cancel')}
               </button>
               <button disabled={busy} onClick={runIngest}>

@@ -712,15 +712,21 @@ export class MappingService {
     }
   }
 
-  /** What «Agregar a la biblioteca» would do: how many records, and the summaries it starts when automatic summaries are on. */
-  ingestPlan(id: string): IngestPlan {
-    const count = this.toIngest(id).length
+  /**
+   * What «Agregar a la biblioteca» would do (for these records, or all): which records, and the summaries it starts
+   * when automatic summaries are on. The window sends the plan's ids back with the confirmation.
+   */
+  ingestPlan(id: string, recordIds?: string[]): IngestPlan {
+    const ids = this.toIngest(id, recordIds).map((r) => r.id)
     const autoSummarize = this.deps.store.config.llm.auto_summarize
-    return { count, autoSummarize, estimateUsd: autoSummarize ? count * this.deps.costs.estimate('summarize') : 0 }
+    return { count: ids.length, recordIds: ids, autoSummarize, estimateUsd: autoSummarize ? ids.length * this.deps.costs.estimate('summarize') : 0 }
   }
 
-  /** After the confirmation: one ingest job per record included on title and abstract that is not a library paper yet (these, or all); one batch. */
-  requestIngest(id: string, recordIds?: string[]): number {
+  /**
+   * After the confirmation: one ingest job per record of the confirmed plan that is still included on title and
+   * abstract and not a library paper yet (never a record the plan did not show); one batch.
+   */
+  requestIngest(id: string, recordIds: string[]): number {
     if (!this.deps.store.mappingExists(id)) throw new UserFacingError('mapping_not_found')
     const rows = this.toIngest(id, recordIds)
     const batchId = randomUUID()
@@ -784,14 +790,20 @@ export class MappingService {
       batchCapUsd: limits.perBatchUsd,
       monthSpentUsd: await this.deps.costs.monthSpent(),
       monthCapUsd: limits.perMonthUsd,
-      withoutText
+      withoutText,
+      recordIds: ready.map((r) => r.id)
     }
   }
 
-  /** After the confirmation («Sugerir»): one job per 20 records (title and abstract) or per record (full text), all in one batch. */
-  requestSuggestions(id: string, phase: Phase, model?: LlmModel): { batchId: string; count: number } {
+  /**
+   * After the confirmation («Sugerir»): one job per 20 records (title and abstract) or per record (full text), all in
+   * one batch, for the records of the confirmed plan that still need a suggestion. Records that arrived after the plan
+   * was shown are never asked about: the user confirmed that number and that cost.
+   */
+  requestSuggestions(id: string, phase: Phase, recordIds: string[], model?: LlmModel): { batchId: string; count: number } {
     if (!this.deps.store.mappingExists(id)) throw new UserFacingError('mapping_not_found')
-    const { ready } = this.toSuggest(id, phase)
+    const confirmed = new Set(recordIds)
+    const ready = this.toSuggest(id, phase).ready.filter((r) => confirmed.has(r.id))
     const batchId = randomUUID()
     const size = phase === 'title_abstract' ? MAX_RECORDS_PER_CALL : 1
     for (let i = 0; i < ready.length; i += size) {

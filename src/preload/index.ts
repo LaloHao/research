@@ -149,8 +149,8 @@ const api: ResearchApi = {
     resolveConflict: (id, recordId, phase, keepDecisionId) => ipcRenderer.invoke(IPC.mappingsResolveConflict, id, recordId, phase, keepDecisionId),
     resolveDuplicate: (id, recordId, same) => ipcRenderer.invoke(IPC.mappingsResolveDuplicate, id, recordId, same),
     suggestPlan: (id, phase) => ipcRenderer.invoke(IPC.mappingsSuggestPlan, id, phase),
-    suggest: (id, phase, confirmed) => ipcRenderer.invoke(IPC.mappingsSuggest, id, phase, confirmed),
-    ingestPlan: (id) => ipcRenderer.invoke(IPC.mappingsIngestPlan, id),
+    suggest: (id, phase, recordIds, confirmed) => ipcRenderer.invoke(IPC.mappingsSuggest, id, phase, recordIds, confirmed),
+    ingestPlan: (id, recordIds) => ipcRenderer.invoke(IPC.mappingsIngestPlan, id, recordIds),
     ingest: (id, recordIds, confirmed) => ipcRenderer.invoke(IPC.mappingsIngest, id, recordIds, confirmed)
   },
   exports: {

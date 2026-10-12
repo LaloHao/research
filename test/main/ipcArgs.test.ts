@@ -306,8 +306,10 @@ describe('typed relation arguments', () => {
     expect(() => arg(ipcArgs.discardReason, '   ', 'reason')).toThrow()
     expect(() => arg(ipcArgs.mappingPaperIds, [], 'ids')).toThrow()
     expect(arg(ipcArgs.mappingPaperIds, ['he2017drain'], 'ids')).toEqual(['he2017drain'])
-    expect(arg(ipcArgs.mappingRecordIds, undefined, 'ids')).toBeUndefined()
-    expect(() => arg(ipcArgs.mappingRecordIds, ['r1'], 'ids')).toThrow()
+    expect(arg(ipcArgs.mappingRecordIds, ['r0000000000a1'], 'ids')).toEqual(['r0000000000a1'])
+    for (const bad of [undefined, [], ['r1']]) expect(() => arg(ipcArgs.mappingRecordIds, bad, 'ids')).toThrow()
+    expect(arg(ipcArgs.mappingRecordScope, undefined, 'ids')).toBeUndefined()
+    expect(() => arg(ipcArgs.mappingRecordScope, ['r1'], 'ids')).toThrow()
   })
 
   it('takes a costly mapping request only with the confirmation of the user\'s click', () => {
