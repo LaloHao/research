@@ -10,9 +10,9 @@ import {
   RECENT_MESSAGES,
   CHAT_PROMPT_VERSION,
   trimHistory,
-  UNCONFIRMED_ACTIONS_PER_MESSAGE,
   type PaperContext
 } from '../../../src/main/chats/chatPrompt'
+import { MAX_UNCONFIRMED_PER_MESSAGE } from '../../../src/main/chats/actionPolicy'
 import { ACTION_MAX_TOOL_CALLS } from '../../../src/main/mcp/ActionsMcpServer'
 import { PROMPT_TAG_NAMES } from '../../../src/main/llm/promptTags'
 import type { ChatMessage } from '../../../src/shared/chat'
@@ -132,8 +132,7 @@ describe('chatSystemPrompt with actions', () => {
     expect(p).toContain('do not try it again')
     expect(p).toContain('list_relations')
     expect(p).toContain(`at most ${ACTION_MAX_TOOL_CALLS} times`)
-    expect(UNCONFIRMED_ACTIONS_PER_MESSAGE).toBe(3)
-    expect(p).toContain(`at most ${UNCONFIRMED_ACTIONS_PER_MESSAGE} actions without asking`)
+    expect(p).toContain(`at most ${MAX_UNCONFIRMED_PER_MESSAGE} actions without asking`)
     expect(p).toContain('<actions_done>')
     for (const what of ['spends money', 'removes or deletes', 'syncing with git', 'edits a summary field']) expect(p).toContain(what)
     expect(p).not.toContain('its git sync')
