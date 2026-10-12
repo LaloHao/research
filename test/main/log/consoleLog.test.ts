@@ -162,12 +162,16 @@ describe('StreamConsole', () => {
     expect(err.written).toEqual(['c\n', 'd\n'])
   })
 
-  it('a write that throws EPIPE turns it off, without throwing', () => {
+  it('a write that throws EPIPE turns that stream off, without throwing; the other one goes on', () => {
     const out = new FakeStream('throw')
-    const c = new StreamConsole(out, new FakeStream('ok'))
+    const err = new FakeStream('ok')
+    const c = new StreamConsole(out, err)
     expect(() => c.write('info', 'a\n')).not.toThrow()
-    expect(c.closed).toBe(true)
+    expect(c.closed('info')).toBe(true)
+    expect(c.closed('warn')).toBe(false)
     expect(() => c.write('info', 'b\n')).not.toThrow()
+    c.write('warn', 'w\n')
+    expect(err.written).toEqual(['w\n'])
   })
 
   it('an EPIPE error event is handled (never an uncaught error) and turns it off', async () => {
@@ -175,7 +179,7 @@ describe('StreamConsole', () => {
     const c = new StreamConsole(out, new FakeStream('ok'))
     c.write('info', 'a\n')
     await new Promise((r) => setImmediate(r))
-    expect(c.closed).toBe(true)
+    expect(c.closed('info')).toBe(true)
     c.write('info', 'b\n')
     expect(out.written).toEqual(['a\n'])
   })
@@ -184,7 +188,11 @@ describe('StreamConsole', () => {
     const out = new FakeStream('ok')
     out.destroyed = true
     const c = new StreamConsole(out, new FakeStream('ok'))
+    const err = new FakeStream('ok')
+    const c2 = new StreamConsole(out, err)
     c.write('info', 'a\n')
+    c2.write('error', 'e\n')
     expect(out.written).toEqual([])
+    expect(err.written).toEqual(['e\n'])
   })
 })

@@ -243,40 +243,43 @@ export interface ConsoleStream {
  * pipe) it stops writing for good. An error event of either stream is handled here, so it is never an uncaught one.
  */
 export class StreamConsole implements ConsoleOut {
-  private broken = false
+  /** Each stream is turned off on its own: a closed stdout still lets warnings reach stderr. */
+  private readonly broken = new Set<ConsoleStream>()
 
   constructor(
     private readonly out: ConsoleStream,
     private readonly err: ConsoleStream
   ) {
-    const stop = (): void => {
-      this.broken = true
-    }
     for (const s of new Set([out, err])) {
       try {
-        s.on?.('error', stop)
+        s.on?.('error', () => this.broken.add(s))
       } catch {
-        stop()
+        this.broken.add(s)
       }
     }
   }
 
-  get closed(): boolean {
-    return this.broken
+  /** Whether the stream of `level` (stdout for info and debug, stderr for warn and error) was turned off. */
+  closed(level: LogLevel): boolean {
+    return this.broken.has(this.streamOf(level))
   }
 
   write(level: LogLevel, line: string): void {
-    if (this.broken) return
-    const stream = level === 'warn' || level === 'error' ? this.err : this.out
+    const stream = this.streamOf(level)
+    if (this.broken.has(stream)) return
     if (stream.destroyed || stream.writable === false) {
-      this.broken = true
+      this.broken.add(stream)
       return
     }
     try {
       stream.write(line)
     } catch {
-      this.broken = true
+      this.broken.add(stream)
     }
+  }
+
+  private streamOf(level: LogLevel): ConsoleStream {
+    return level === 'warn' || level === 'error' ? this.err : this.out
   }
 }
 

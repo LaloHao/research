@@ -1,3 +1,8 @@
+import { CHAT_ID, PAPER_KEY } from '../../shared/chat'
+import { SUGGESTION_ID } from '../../shared/facetSuggestions'
+import { MAPPING_ID, RECORD_ID } from '../../shared/mapping'
+import { FACET_KEY_PATTERN, SUMMARY_FIELD_KEYS } from '../../shared/summary'
+import { RELATION_ID } from '../../shared/typedRelations'
 import { appLog, type LogFields } from './appLog'
 
 /**
@@ -36,32 +41,44 @@ export interface AgentToolLog {
   toolDone?(name: string, ok: boolean, ms: number): void
 }
 
-/** Arguments whose (short, id-shaped) values may be shown: keys, ids and enum values, never free text. */
-const ID_KEYS = new Set([
-  'paper_id',
-  'paper_ids',
-  'relation_id',
-  'suggestion_id',
-  'record_id',
-  'record_ids',
-  'mapping_id',
-  'decision',
-  'type',
-  'section',
-  'status',
-  'key',
-  'facet',
-  'direction',
-  'choice'
-])
-const ID_VALUE = /^[\p{L}\p{N}_.:/-]{1,80}$/u
+/** A facet or field key as the forms use it, short enough to be a name and not a sentence in snake_case. */
+const MAX_FACET_KEY = 32
+const MAX_FACET_KEY_WORDS = 4
+const SUMMARY_KEYS = new Set<string>(SUMMARY_FIELD_KEYS)
+const facetKey = (v: string): boolean => SUMMARY_KEYS.has(v) || (FACET_KEY_PATTERN.test(v) && v.length <= MAX_FACET_KEY && v.split('_').length <= MAX_FACET_KEY_WORDS)
+const short = (pattern: RegExp, max: number) => (v: string): boolean => v.length <= max && pattern.test(v)
+/** An enum value of a tool (decision, status, section, type…). */
+const enumValue = short(/^[a-z][a-z_]*$/, 24)
+
+/**
+ * Arguments whose values may be shown, each with the exact pattern its ids follow in the app; any other value (or one
+ * that does not match) is shown only by its length.
+ */
+const ID_ARGS: Record<string, (v: string) => boolean> = {
+  paper_id: short(PAPER_KEY, 40),
+  paper_ids: short(PAPER_KEY, 40),
+  relation_id: short(RELATION_ID, 120),
+  suggestion_id: (v) => v.length <= 120 && SUGGESTION_ID.test(v) && v.split('__').slice(1).every(facetKey),
+  record_id: short(RECORD_ID, 13),
+  record_ids: short(RECORD_ID, 13),
+  mapping_id: short(MAPPING_ID, 20),
+  chat_id: short(CHAT_ID, 80),
+  key: facetKey,
+  facet: facetKey,
+  decision: enumValue,
+  type: enumValue,
+  section: enumValue,
+  status: enumValue,
+  direction: enumValue,
+  choice: enumValue
+}
 const ARG_KEY = /^[A-Za-z_][A-Za-z0-9_]{0,40}$/
 const MAX_ARGS = 12
 const MAX_LISTED = 5
 
 /**
  * A tool call's arguments as the log may show them: numbers and booleans as they are; an id or enum value (by its key
- * and shape) as it is; lists of ids by their first few; any other string by its length (`queryChars`), any other list
+ * and its exact id pattern) as it is; lists of ids by their first few; any other string by its length (`queryChars`), any other list
  * or object by its size. Bounded whatever the model sends.
  */
 export function toolArgsSummary(args: unknown): Record<string, string | number | boolean> {
@@ -76,14 +93,14 @@ export function toolArgsSummary(args: unknown): Record<string, string | number |
       continue
     }
     kept++
-    const idKey = ID_KEYS.has(key)
+    const isId = Object.hasOwn(ID_ARGS, key) ? ID_ARGS[key]! : null
     if (typeof value === 'number') out[key] = Number.isFinite(value) ? value : String(value)
     else if (typeof value === 'boolean') out[key] = value
     else if (typeof value === 'string') {
-      if (idKey && ID_VALUE.test(value)) out[key] = value
+      if (isId?.(value)) out[key] = value
       else out[`${key}Chars`] = value.length
     } else if (Array.isArray(value)) {
-      if (idKey && value.length > 0 && value.every((v) => typeof v === 'string' && ID_VALUE.test(v))) {
+      if (isId && value.length > 0 && value.every((v) => typeof v === 'string' && isId(v))) {
         const shown = value.slice(0, MAX_LISTED).join(',')
         out[key] = value.length > MAX_LISTED ? `${shown} +${value.length - MAX_LISTED}` : shown
       } else out[`${key}Count`] = value.length

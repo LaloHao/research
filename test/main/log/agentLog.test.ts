@@ -51,6 +51,31 @@ describe('toolArgsSummary', () => {
     expect(out).toEqual({ paper_idChars: ABSTRACT.length, textChars: ABSTRACT.length, request_quoteChars: 10, identifierChars: 22 + TOKEN.length, otherArgs: 1 })
   })
 
+  it('shows a key or facet only when it is a real field or facet key, never smuggled text', () => {
+    // The reviewer's repro: text in snake_case under `key`.
+    const smuggled = 'the_secret_abstract_says_drain_parses_logs_with_a_fixed_depth_tree'
+    expect(toolArgsSummary({ paper_id: 'he2017drain', key: smuggled, status: 'verified' })).toEqual({ paper_id: 'he2017drain', keyChars: smuggled.length, status: 'verified' })
+    expect(toolArgsSummary({ facet: 'drain_parses_logs_with_trees', value: 'x' })).toEqual({ facetChars: 28, valueChars: 1 })
+    expect(toolArgsSummary({ key: 'Drain parses logs' })).toEqual({ keyChars: 17 })
+    expect(toolArgsSummary({ key: 'future_work', facet: 'evaluation_setting' })).toEqual({ key: 'future_work', facet: 'evaluation_setting' })
+    expect(toolArgsSummary({ suggestion_id: `new_facet__${smuggled}` })).toEqual({ suggestion_idChars: 11 + smuggled.length })
+    expect(toolArgsSummary({ suggestion_id: 'new_value__dataset__loghub' })).toEqual({ suggestion_id: 'new_value__dataset__loghub' })
+  })
+
+  it('checks each id by its own pattern', () => {
+    expect(toolArgsSummary({ paper_id: 'He2017-Drain', record_id: 'r0123456789ab', mapping_id: '20261012-120310-ab12' })).toEqual({
+      paper_idChars: 12,
+      record_id: 'r0123456789ab',
+      mapping_id: '20261012-120310-ab12'
+    })
+    expect(toolArgsSummary({ record_id: 'he2017drain', relation_id: 'a2020x__b2021y__extends', decision: 'a long decision' })).toEqual({
+      record_idChars: 11,
+      relation_id: 'a2020x__b2021y__extends',
+      decisionChars: 15
+    })
+    expect(toolArgsSummary({ paper_ids: ['he2017drain', 'Not A Key'] })).toEqual({ paper_idsCount: 2 })
+  })
+
   it('is bounded for anything the model sends', () => {
     expect(toolArgsSummary(null)).toEqual({})
     expect(toolArgsSummary('text')).toEqual({})
