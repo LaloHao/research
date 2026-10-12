@@ -24,6 +24,7 @@ import { interleaveReview } from '../relations/relationMerge'
 import { RelationService } from '../relations/RelationService'
 import { RelationSuggester } from '../relations/RelationSuggester'
 import { SimilarityService } from '../relations/SimilarityService'
+import { FacetFiller } from '../summary/FacetFiller'
 import { Summarizer } from '../summary/Summarizer'
 import { SummaryService } from '../summary/SummaryService'
 import { SyncScheduler } from '../sync/SyncScheduler'
@@ -128,16 +129,18 @@ export class ProjectSession {
     )
     const llm = opts.llm ?? new ClaudeCliProvider()
     const summarizer = new Summarizer({ store, cache, provider: llm, budget, ledger })
+    const filler = new FacetFiller({ store, cache, provider: llm, budget, ledger })
     // The handler reads the services when a job runs: the queue has to exist before them.
     // One analysis at a time: skipping pairs already analyzed from the other paper relies on runs being sequential.
     const queue = new JobQueue(cache, (spec, signal, report) => runJob(session.services(), spec, signal, report), {
       total: 4,
-      byType: { summarize: 1, citations: 1, cited_by: 1, embed: 1, model_download: 1, suggest_relations: 1 }
+      byType: { summarize: 1, citations: 1, cited_by: 1, embed: 1, model_download: 1, suggest_relations: 1, fill_facets: 1 }
     })
     const summaries = new SummaryService({
       store,
       cache,
       summarizer,
+      filler,
       budget,
       ledger,
       reindex: (id) => library.indexPaper(id),
@@ -431,6 +434,12 @@ export async function runJob(
       return s.similarity.downloadModel(signal, report)
     case 'suggest_relations':
       return s.relations.run(spec.paperId, { force: spec.force, batchId: spec.batchId, model: spec.model, signal })
+    case 'fill_facets': {
+      const result = await s.summaries.runFill(spec.paperId, { batchId: spec.batchId, signal })
+      // New facet values feed the neighbours, like a summary's.
+      await s.similarity.paperChanged(spec.paperId).catch(logged('neighbours'))
+      return result
+    }
     case 'attach_pdf': {
       // Only the PDF and its text change: summaries, citations and embeddings stay as they are.
       const outcome = await s.library.attachPdf(spec.paperId, spec.path, { replace: spec.replace }, signal)

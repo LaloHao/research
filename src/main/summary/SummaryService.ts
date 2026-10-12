@@ -46,11 +46,13 @@ import {
   type FacetPatch
 } from './merge'
 import { pagesFromChunks } from './paperText'
+import type { FacetFiller } from './FacetFiller'
 import type { Summarizer } from './Summarizer'
 import { editThesisRelation, hasThesisContext, thesisHash, type ThesisPatch } from './thesis'
 
 const BATCH_STOPPERS = new Set(['llm_quota', 'budget_exceeded'])
 const ELIGIBLE = new Set(['none', 'stale', 'failed'])
+const UP_TO_DATE = new Set(['generated', 'reviewed'])
 
 /** Brings the summary columns of one cache row up to date (status, pending count, unfilled facets, searchable text). */
 export async function indexSummary(store: ProjectStore, cache: IndexCache, id: string): Promise<void> {
@@ -97,6 +99,8 @@ export interface SummaryServiceDeps {
   store: ProjectStore
   cache: IndexCache
   summarizer: Summarizer
+  /** Fills facets added to the form after a paper was summarized. */
+  filler: FacetFiller
   budget: BudgetGuard
   ledger: CostLedger
   reindex: (id: string) => Promise<void>
@@ -191,6 +195,56 @@ export class SummaryService {
     return { batchId, count: ids.length }
   }
 
+  /** Papers whose up-to-date summary lacks facets of the current form (among `ids` when given), none being filled or summarized now. */
+  private fillableIds(ids?: string[]): string[] {
+    const { cache } = this.deps
+    const rows = ids ? ids.flatMap((id) => cache.getPaper(id) ?? []) : cache.listPapers()
+    return rows
+      .filter(
+        (r) =>
+          !r.problem &&
+          r.unfilled_facets > 0 &&
+          UP_TO_DATE.has(r.summary_status) &&
+          r.text_status === 'ok' &&
+          !cache.hasActiveJob('fill_facets', r.id) &&
+          !cache.hasActiveJob('summarize', r.id)
+      )
+      .map((r) => r.id)
+  }
+
+  /** «Llenar facetas nuevas» / «Llenar en N papers»: how many papers and the estimated cost. */
+  fillPlan(ids?: string[]): SummaryPlan {
+    const count = this.fillableIds(ids).length
+    return { count, estimateUsd: count * this.deps.budget.currentEstimate('fill_facets'), batchLimitUsd: this.deps.store.config.llm.budget.per_batch_usd }
+  }
+
+  /** One fill_facets job per fillable paper, in one batch (so the batch cap applies). */
+  requestFill(ids?: string[]): { batchId: string; count: number } {
+    if (loadForm(this.deps.store.config.extraction_form).status !== 'ok') throw new UserFacingError('invalid_form')
+    const batchId = randomUUID()
+    const fillable = this.fillableIds(ids)
+    for (const paperId of fillable) this.deps.enqueue({ type: 'fill_facets', paperId, batchId })
+    return { batchId, count: fillable.length }
+  }
+
+  async runFill(paperId: string, opts: { batchId?: string; signal?: AbortSignal }): Promise<{ paperId: string; message: 'facets_filled' | 'facets_nothing_to_fill' }> {
+    try {
+      const { filled } = await this.deps.filler.fill({ paperId, batchId: opts.batchId, signal: opts.signal })
+      return { paperId, message: filled.length > 0 ? 'facets_filled' : 'facets_nothing_to_fill' }
+    } catch (error) {
+      if (opts.signal?.aborted) throw error
+      const facing = toUserFacing(error)
+      if (opts.batchId && BATCH_STOPPERS.has(facing.code)) this.deps.cancelBatch(opts.batchId)
+      throw facing
+    } finally {
+      if (!opts.signal?.aborted) {
+        // A failing reindex must not replace the fill's own outcome.
+        await this.deps.reindex(paperId).catch((error: unknown) => console.error('reindex', paperId, error))
+        this.deps.emit()
+      }
+    }
+  }
+
   async autoAfterIngest(paperId: string): Promise<void> {
     if (!this.deps.store.config.llm.auto_summarize) return
     const row = this.deps.cache.getPaper(paperId)
@@ -231,7 +285,8 @@ export class SummaryService {
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new InvalidEdit(`Invalid value for ${key}`)
       const form = await this.ensureForm()
       const files = await this.read(paperId)
-      await this.save(paperId, files, { extraction: editFacet(requireExtraction(files), form, key, value as FacetPatch) })
+      const extraction = requireExtraction(files)
+      await this.save(paperId, files, { extraction: keepUpToDate(form, extraction, editFacet(extraction, form, key, value as FacetPatch)) })
     }
     await this.changed([paperId])
   }
@@ -498,6 +553,15 @@ export class SummaryService {
     for (const id of ids) await this.deps.reindex(id)
     this.deps.emit()
   }
+}
+
+/**
+ * Filling an unfilled facet by hand moves the paper's form hash forward over it, like filling it with Claude, so the
+ * paper stays up to date; a stale paper keeps its old hash.
+ */
+function keepUpToDate(form: ExtractionForm, before: ExtractionFile, after: ExtractionFile): ExtractionFile {
+  if (formHashFor(form, Object.keys(before.facets)) !== before.form_hash) return after
+  return { ...after, form_hash: formHashFor(form, Object.keys(after.facets)) }
 }
 
 function fieldKey(key: string): SummaryFieldKey {

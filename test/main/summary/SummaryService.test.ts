@@ -6,7 +6,7 @@ import { ProjectSession } from '../../../src/main/library/ProjectSession'
 import { DEFAULT_EXTRACTION_FORM } from '../../../src/main/summary/extractionForm'
 import { toYaml } from '../../../src/main/project/yamlFile'
 import { thesisHash } from '../../../src/main/summary/thesis'
-import { FakeLlmProvider, llmOutputFor, PAPER_TEXT } from '../../helpers/llm'
+import { FakeLlmProvider, fillOutputFor, llmOutputFor, PAPER_TEXT } from '../../helpers/llm'
 import { samplePaper } from '../../helpers/papers'
 import { tmpDir } from '../../helpers/tmp'
 import { sampleThesis } from '../../helpers/summaries'
@@ -598,6 +598,37 @@ describe('SummaryService: config changes refresh every summary state', () => {
     expect(s.library.list()[0].summary_status).toBe('too_long')
     await s.summaries.updateLlm({ max_input_chars: 400000 })
     expect(s.library.list()[0].summary_status).toBe('none')
+    await s.close()
+  })
+
+  it('fills new facets through the queue without regenerating the summary', async () => {
+    const fill = { value: fillOutputFor([DATA_SOURCE]), costUsd: 0.01, model: 'claude-haiku-5' }
+    const s = await session([ok(), fill])
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    const before = await s.store.readSummary('he2017drain')
+    await s.summaries.updateForm({ ...DEFAULT_EXTRACTION_FORM, facets: [...DEFAULT_EXTRACTION_FORM.facets, DATA_SOURCE] })
+    expect(s.summaries.fillPlan()).toMatchObject({ count: 1, batchLimitUsd: 10 })
+    expect(s.summaries.requestFill()).toMatchObject({ count: 1 })
+    await s.queue.whenIdle()
+    expect(s.queue.list()[0]).toMatchObject({ spec: { type: 'fill_facets', paperId: 'he2017drain' }, state: 'done', message: 'facets_filled' })
+    expect(s.library.list()[0]).toMatchObject({ summary_status: 'generated', unfilled_facets: 0 })
+    expect(s.summaries.fillPlan().count).toBe(0)
+    expect(s.queue.list().filter((j) => j.spec.type === 'summarize')).toHaveLength(1)
+    const after = await s.store.readSummary('he2017drain')
+    expect(after?.ok && after.value.generated).toEqual(before?.ok && before.value.generated)
+    await s.close()
+  })
+
+  it('filling a new facet by hand keeps the summary up to date', async () => {
+    const s = await session([ok()])
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    await s.summaries.updateForm({ ...DEFAULT_EXTRACTION_FORM, facets: [...DEFAULT_EXTRACTION_FORM.facets, DATA_SOURCE] })
+    expect(s.library.list()[0]).toMatchObject({ summary_status: 'generated', unfilled_facets: 1 })
+    await s.summaries.edit('he2017drain', 'facets', 'data_source', { values: ['public_dataset'] })
+    expect(s.library.list()[0]).toMatchObject({ summary_status: 'generated', unfilled_facets: 0 })
+    expect(s.summaries.fillPlan().count).toBe(0)
     await s.close()
   })
 })
