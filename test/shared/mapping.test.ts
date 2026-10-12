@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  completedBy,
   completionRequest,
   criterionFits,
   criterionText,
@@ -12,6 +13,7 @@ import {
   SearchesFileSchema,
   SearchSchema
 } from '../../src/shared/mapping'
+import { outcomeMessage, parseOutcome } from '../../src/shared/library'
 import type { MappingRecord, ProtocolBody, Search } from '../../src/shared/mapping'
 import { AT, decision, hexId, protocolBody, protocolFile, record, search } from '../helpers/mappings'
 
@@ -202,13 +204,37 @@ describe('completionRequest', () => {
     expect(completionRequest(capped({ filters: { type: 'journal-article' } }))).toBeNull()
     expect(completionRequest(capped({ filters: { publication_year: '2015' } }))).toBeNull()
     expect(completionRequest(capped({ filters: { language: 'en' } }))).toBeNull()
+    // A string today's checks refuse.
+    expect(completionRequest(capped({ query: 'logs AND "log file*"' }))).toBeNull()
+    expect(completionRequest(capped({ query: 'logs, traces' }))).toBeNull()
     // Written in another order than the app writes it: the request would not be the logged one.
     expect(completionRequest(capped({ filters: { type: 'article', publication_year: '>2014' } }))).toBeNull()
+  })
+
+  it('finds a later live search that got everything with the same string, field and filters', () => {
+    const old = capped({ filters: { publication_year: '>2014' } })
+    const fresh = capped({ id: hexId('s', 2), at: '2026-10-12T11:00:00.000Z', capped: false, filters: { publication_year: '>2014' } })
+    expect(completedBy(old, [old, fresh])?.id).toBe(fresh.id)
+    expect(completedBy(old, [old, { ...fresh, capped: true }])).toBeNull()
+    expect(completedBy(old, [old, { ...fresh, discarded: { at: AT, reason: 'x', machine: '' } }])).toBeNull()
+    expect(completedBy(old, [old, { ...fresh, filters: {} }])).toBeNull()
+    expect(completedBy(old, [old, { ...fresh, query: 'traces' }])).toBeNull()
+    expect(completedBy(old, [old, { ...fresh, at: '2026-10-11T00:00:00.000Z' }])).toBeNull()
   })
 
   it('keeps the search that replaced a discarded one', () => {
     const discarded = { at: AT, reason: 'completed', machine: 'm', replaced_by: hexId('s', 2) }
     expect(SearchSchema.parse(capped({ discarded })).discarded).toEqual(discarded)
     expect(() => SearchSchema.parse(capped({ discarded: { ...discarded, replaced_by: 'x' } }))).toThrow()
+  })
+})
+
+describe('job outcomes with numbers', () => {
+  it('travel as one message and read back', () => {
+    expect(outcomeMessage('mapping_search_partial', { count: 3, decided: 0 })).toBe('mapping_search_partial: count=3,decided=0')
+    expect(outcomeMessage('mapping_searched')).toBe('mapping_searched')
+    expect(parseOutcome('mapping_search_partial: count=3,decided=0')).toEqual({ outcome: 'mapping_search_partial', params: { count: 3, decided: 0 } })
+    expect(parseOutcome('added')).toEqual({ outcome: 'added', params: {} })
+    expect(parseOutcome('something: else')).toEqual({ outcome: 'something: else', params: {} })
   })
 })

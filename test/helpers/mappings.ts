@@ -191,7 +191,11 @@ export async function setupMappings(
       startTools: async () => ({ url: 'http://127.0.0.1:1/mcp', token: 't', calls: () => [], close: async () => undefined })
     }),
     costs: { estimate: (op) => budget.currentEstimate(op), limits: () => limitsFromConfig(lib.store.config.llm), monthSpent: () => ledger.monthTotal() },
-    enqueue: (spec) => queued.push(spec),
+    // Queued in the index too (nothing runs them), so the service sees what is pending.
+    enqueue: (spec) => {
+      queued.push(spec)
+      return lib.cache.insertJob(JSON.stringify(spec), '2026-10-12T10:00:00.000Z')
+    },
     cancelBatch: (batchId) => {
       cancelledBatches.push(batchId)
       return 0

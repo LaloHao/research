@@ -484,6 +484,12 @@ export interface ImportOutcome {
   added: number
   /** Already records of the mapping (they only gain this search as a source). */
   merged: number
+  /**
+   * «Completar búsqueda»: records only the replaced search brought that this one did not bring back (`orphanedDecided`
+   * of them with a screening decision); when there are any, the replaced search stays live.
+   */
+  orphaned?: number
+  orphanedDecided?: number
   /** New records that are library papers. */
   linked: number
   doubtful: number
@@ -554,6 +560,8 @@ export function openAlexFilter(f: SearchFilter): string | null {
  */
 export function completionRequest(s: Search): Omit<OpenAlexSearchRequest, 'cap'> | null {
   if (s.kind !== 'openalex' || s.discarded || !s.capped || !s.query || s.field !== OPENALEX_SEARCH_FIELD) return null
+  // A string today's checks refuse could not run again as it is.
+  if (hasFilterSeparator(s.query) || quotedWildcard(s.query)) return null
   const { publication_year: years, type, ...other } = s.filters
   if (Object.keys(other).length > 0) return null
   let fromYear: number | null = null
@@ -568,4 +576,25 @@ export function completionRequest(s: Search): Omit<OpenAlexSearchRequest, 'cap'>
   const req = { query: s.query, fromYear, toYear, types }
   const logged = Object.entries(s.filters).map(([k, v]) => `${k}:${v}`).join(',')
   return (openAlexFilter(req) ?? '') === logged ? req : null
+}
+
+/**
+ * A later live OpenAlex search with the same string, field and filters that got everything (not capped): a completion
+ * that kept this search live because some of its records did not come back. Null when there is none.
+ */
+export function completedBy(s: Search, searches: readonly Search[]): Search | null {
+  const filters = JSON.stringify(Object.entries(s.filters))
+  return (
+    searches.find(
+      (x) =>
+        x.id !== s.id &&
+        x.kind === 'openalex' &&
+        !x.discarded &&
+        !x.capped &&
+        x.at >= s.at &&
+        x.query === s.query &&
+        x.field === s.field &&
+        JSON.stringify(Object.entries(x.filters)) === filters
+    ) ?? null
+  )
 }

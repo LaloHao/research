@@ -37,6 +37,9 @@ import { RELATIONS_FILE } from './project/relationsFile'
 import type { SyncService } from './sync/SyncService'
 
 /** Writes travel back as `{ ok }`; failures carry the code the UI translates. */
+/** How long «Buscar» waits for OpenAlex's count before showing the confirmation without it. */
+const COUNT_TIMEOUT_MS = 20_000
+
 async function actionResult(action: () => Promise<unknown>): Promise<ActionResult> {
   try {
     await action()
@@ -499,7 +502,8 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     const id = arg(ipcArgs.mappingId, rawId, 'id')
     const req = arg(ipcArgs.openalexCount, rawReq, 'search')
     try {
-      return { ok: true, total: await mappings((m) => m.countSearch(id, req)) }
+      // Not tracked: closing the project never waits on a count, which gives up after a while anyway.
+      return { ok: true, total: await app.requireSession().mappings.countSearch(id, req, AbortSignal.timeout(COUNT_TIMEOUT_MS)) }
     } catch (error) {
       return failed(error)
     }

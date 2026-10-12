@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ImportChoice } from '../../../shared/ipc'
+import type { JobRecord } from '../../../shared/jobs'
 import type { PaperRow } from '../../../shared/library'
 import type { PaperKind } from '../../../shared/schemas'
 import {
@@ -9,6 +10,7 @@ import {
   OPENALEX_TYPES,
   SEARCH_CAP,
   SNOWBALL_DIRECTIONS,
+  completedBy,
   completionRequest,
   type MappingView,
   type OpenAlexCount,
@@ -21,9 +23,11 @@ import {
 } from '../../../shared/mapping'
 import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
+import { LatestRequest } from '../../lib/latestRequest'
 import {
   discardedText,
   nextSnowballIteration,
+  pendingCompletions,
   openAlexPlanLines,
   openAlexRequest,
   openAlexTypesFor,
@@ -97,15 +101,15 @@ function OpenAlexForm({ view }: { view: MappingView }): React.JSX.Element {
   const [touched, setTouched] = useState(false)
   /** The request to confirm, with OpenAlex's count of its results (or why the count failed). */
   const [pending, setPending] = useState<{ req: OpenAlexSearchRequest; count: OpenAlexCount } | null>(null)
-  /** Asking OpenAlex for the count; an edit meanwhile makes its answer stale (`countRun` moves on). */
+  /** Asking OpenAlex for the count; an edit or «Cancelar» meanwhile makes its answer stale. */
   const [counting, setCounting] = useState(false)
-  const countRun = useRef(0)
+  const [countRequest] = useState(() => new LatestRequest())
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<Notice>(null)
 
   /** Drops the confirmation and any count still on its way: both were for the previous values. */
   const drop = (): void => {
-    countRun.current++
+    countRequest.drop()
     setCounting(false)
     setPending(null)
   }
@@ -117,10 +121,10 @@ function OpenAlexForm({ view }: { view: MappingView }): React.JSX.Element {
     setFromYear(p.years.from?.toString() ?? '')
     setToYear(p.years.to?.toString() ?? '')
     setTypes(openAlexTypesFor(kinds ? (kinds.split(',') as PaperKind[]) : []))
-    countRun.current++
+    countRequest.drop()
     setCounting(false)
     setPending(null)
-  }, [p.years.from, p.years.to, kinds, touched])
+  }, [p.years.from, p.years.to, kinds, touched, countRequest])
 
   const form = { query, fromYear, toYear, types, cap }
   const checked = openAlexRequest(form)
@@ -140,10 +144,10 @@ function OpenAlexForm({ view }: { view: MappingView }): React.JSX.Element {
     if (busy || counting || !checked.ok) return
     setNotice(null)
     const req = checked.req
-    const run = ++countRun.current
+    const current = countRequest.start()
     setCounting(true)
     const show = (count: OpenAlexCount): void => {
-      if (run !== countRun.current) return
+      if (!current()) return
       setCounting(false)
       setPending({ req, count })
     }
@@ -227,9 +231,18 @@ function OpenAlexForm({ view }: { view: MappingView }): React.JSX.Element {
             )
           }
         />
+      ) : counting ? (
+        <div className="row">
+          <button type="button" disabled aria-busy>
+            {t('mappings.searches.counting')}
+          </button>
+          <button type="button" onClick={drop}>
+            {t('mappings.searches.cancel')}
+          </button>
+        </div>
       ) : (
-        <button type="button" disabled={busy || counting || !checked.ok} aria-busy={counting} onClick={ask}>
-          {counting ? t('mappings.searches.counting') : t('mappings.searches.run')}
+        <button type="button" disabled={busy || !checked.ok} onClick={ask}>
+          {t('mappings.searches.run')}
         </button>
       )}
       <NoticeBanner notice={notice} />
@@ -509,6 +522,14 @@ function SearchLog({ view }: { view: MappingView }): React.JSX.Element {
   const [notice, setNotice] = useState<Notice>(null)
   const reasonRef = useRef<HTMLInputElement>(null)
   const inconsistent = useMemo(() => new Set(view.inconsistentSearches), [view.inconsistentSearches])
+  /** Searches whose «Completar búsqueda» is queued or running: the button waits for it. */
+  const [jobs, setJobs] = useState<JobRecord[]>([])
+  const loadJobs = useCallback(() => {
+    window.research.jobs.list().then(setJobs, () => undefined)
+  }, [])
+  useEffect(loadJobs, [loadJobs])
+  useEvent('jobs-changed', loadJobs)
+  const pendingIds = useMemo(() => pendingCompletions(jobs), [jobs])
   useEffect(() => {
     if (discarding) reasonRef.current?.focus()
   }, [discarding])
@@ -528,6 +549,14 @@ function SearchLog({ view }: { view: MappingView }): React.JSX.Element {
         setNotice({ error: true, text: errorText(t, 'unknown') })
       }
     )
+  }
+
+  /** A capped search a live search already completed (keeping it live) is not offered again. */
+  const keptBy = (s: Search): Search | null => (completionRequest(s) !== null ? completedBy(s, view.searches) : null)
+  const completable = (s: Search): boolean => completionRequest(s) !== null && !keptBy(s)
+  const kept = (s: Search): React.JSX.Element | null => {
+    const by = keptBy(s)
+    return by && <div className="muted">{t('mappings.searches.complete_kept', { date: new Date(by.at).toLocaleString() })}</div>
   }
 
   const complete = (searchId: string): void => {
@@ -638,11 +667,11 @@ function SearchLog({ view }: { view: MappingView }): React.JSX.Element {
                   ) : (
                     <>
                       <div className="row">
-                        {completionRequest(s) !== null && (
+                        {completable(s) && (
                           <button
                             type="button"
                             className="small"
-                            disabled={busy || tooLarge(s)}
+                            disabled={busy || tooLarge(s) || pendingIds.has(s.id)}
                             title={tooLarge(s) ? t('mappings.searches.complete_too_large', { max: SEARCH_CAP.max }) : undefined}
                             onClick={() => {
                               setCompleting(s.id)
@@ -667,7 +696,9 @@ function SearchLog({ view }: { view: MappingView }): React.JSX.Element {
                           {t('mappings.searches.discard')}
                         </button>
                       </div>
-                      {completionRequest(s) !== null && tooLarge(s) && <div className="muted">{t('mappings.searches.complete_too_large', { max: SEARCH_CAP.max })}</div>}
+                      {completable(s) && tooLarge(s) && <div className="muted">{t('mappings.searches.complete_too_large', { max: SEARCH_CAP.max })}</div>}
+                      {completable(s) && pendingIds.has(s.id) && <div className="muted">{t('mappings.searches.complete_pending')}</div>}
+                      {kept(s)}
                     </>
                   )}
                 </td>

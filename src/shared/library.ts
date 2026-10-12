@@ -90,6 +90,7 @@ export const USER_ERROR_CODES = [
   'search_query_quoted_wildcard',
   'search_not_completable',
   'search_too_large',
+  'search_completion_pending',
   'request_rejected',
   'access_denied',
   'rate_limited',
@@ -117,6 +118,24 @@ export function parseUserError(message: string): { code: UserErrorCode; detail: 
   return { code: message.slice(0, at) as UserErrorCode, detail: message.slice(at + 2) }
 }
 
+/**
+ * A job outcome with numbers for its wording, as one string a job's `message` can hold: `<outcome>: key=1,key=2`.
+ * Without numbers it is just the outcome.
+ */
+export function outcomeMessage(outcome: (typeof JOB_OUTCOMES)[number], params: Record<string, number> = {}): string {
+  const detail = Object.entries(params)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(',')
+  return detail ? `${outcome}: ${detail}` : outcome
+}
+
+/** The outcome and numbers of an `outcomeMessage`; a plain message is an outcome without numbers. */
+export function parseOutcome(message: string): { outcome: string; params: Record<string, number> } {
+  const m = /^([a-z_]+): ((?:[a-z_]+=-?\d+)(?:,[a-z_]+=-?\d+)*)$/.exec(message)
+  if (!m) return { outcome: message, params: {} }
+  return { outcome: m[1], params: Object.fromEntries(m[2].split(',').map((kv) => [kv.split('=')[0], Number(kv.split('=')[1])])) }
+}
+
 /** Why a paper.yaml cannot be read; each has a translation under `paper.problem_kinds.<kind>`. */
 export const FILE_PROBLEM_KINDS = ['conflict_markers', 'invalid_yaml', 'invalid_schema'] as const
 export type FileProblemKind = (typeof FILE_PROBLEM_KINDS)[number]
@@ -140,6 +159,7 @@ export const JOB_OUTCOMES = [
   'facets_filled',
   'facets_nothing_to_fill',
   'mapping_searched',
+  'mapping_search_partial',
   'snowballed',
   'screening_suggested'
 ] as const

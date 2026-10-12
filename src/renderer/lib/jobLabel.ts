@@ -1,5 +1,6 @@
 import type { TFunction } from 'i18next'
 import type { JobRecord } from '../../shared/jobs'
+import { parseOutcome } from '../../shared/library'
 import { errorText } from './errorText'
 
 export function jobLabel(t: TFunction, job: JobRecord): string {
@@ -40,7 +41,10 @@ export function jobLabel(t: TFunction, job: JobRecord): string {
 }
 
 export function jobDetail(t: TFunction, job: JobRecord): string | null {
-  if (job.state === 'done' && job.message) return t(`jobs.outcome.${job.message}`, { defaultValue: job.message })
+  if (job.state === 'done' && job.message) {
+    const { outcome, params } = parseOutcome(job.message)
+    return t(`jobs.outcome.${outcome}`, { ...params, defaultValue: job.message })
+  }
   if (job.state === 'failed' && job.message) return errorText(t, job.message)
   return null
 }

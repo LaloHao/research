@@ -20,6 +20,7 @@ import {
   YEAR_MAX,
   YEAR_MIN
 } from '../../shared/mapping'
+import type { JobRecord } from '../../shared/jobs'
 import type { PaperKind } from '../../shared/schemas'
 import type { ThesisContext } from '../../shared/summary'
 import { locateInOriginal } from '../../shared/textMatch'
@@ -213,6 +214,13 @@ export function discardedText(t: TFunction, s: Search, searches: readonly Search
     return t('mappings.searches.completed_by', { date: new Date(by?.at ?? d.at).toLocaleString() })
   }
   return t('mappings.searches.discarded', { date: new Date(d.at).toLocaleDateString(), reason: d.reason })
+}
+
+/** The searches a queued or running «Completar búsqueda» will replace (its job's `replaces`). */
+export function pendingCompletions(jobs: readonly JobRecord[]): Set<string> {
+  const out = new Set<string>()
+  for (const job of jobs) if ((job.state === 'queued' || job.state === 'running') && job.spec.type === 'mapping_search' && job.spec.replaces) out.add(job.spec.replaces)
+  return out
 }
 
 /** The OpenAlex form as typed. */

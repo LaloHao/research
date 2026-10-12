@@ -125,10 +125,12 @@ describe('«Completar búsqueda»', () => {
     await service.decide(id, { recordId: first.id, phase: 'title_abstract', decision: 'include', criterion: null, suggestionId: null })
 
     await service.requestComplete(id, old.id)
-    await service.requestComplete(id, old.id)
+    // While that completion is queued or running, another one is refused.
+    await expect(service.requestComplete(id, old.id)).rejects.toThrow('search_completion_pending')
+    expect(queued).toHaveLength(2)
     const spec = as(queued[1], 'mapping_search')
     expect(spec).toEqual({ type: 'mapping_search', mappingId: id, query: 'logs', fromYear: 2015, toYear: 2026, types: ['article'], cap: 5000, replaces: old.id })
-    await service.runSearch(spec, signal)
+    expect(await service.runSearch(spec, signal)).toEqual({ message: 'mapping_searched' })
 
     const view = await service.open(id)
     const [fresh, replaced] = view.searches
@@ -143,12 +145,39 @@ describe('«Completar búsqueda»', () => {
     const rows = service.queue(id, { phase: 'title_abstract', filter: 'all' })
     expect(rows.every((r) => r.active)).toBe(true)
     await service.decide(id, { recordId: first.id, phase: 'title_abstract', decision: 'exclude', criterion: 'E1', suggestionId: null })
-    // The same completion queued twice runs once: the second fails before any request and logs nothing.
-    await expect(service.runSearch(as(queued[2], 'mapping_search'), signal)).rejects.toThrow('search_not_completable')
+    // A completion run again (a job resumed after its search was already replaced) fails before any request and logs nothing.
+    await expect(service.runSearch(spec, signal)).rejects.toThrow('search_not_completable')
     expect((await service.open(id)).searches).toHaveLength(2)
     // A search that is no longer capped, or already replaced, has nothing to complete.
     await expect(service.requestComplete(id, old.id)).rejects.toThrow('search_not_completable')
     await expect(service.requestComplete(id, fresh.id)).rejects.toThrow('search_not_completable')
+  })
+
+  it('keeps the capped search live when some of its records do not come back, and says how many were decided', async () => {
+    const routes: Route[] = [...SEARCH_ROUTES]
+    const { service, queued } = await setupMappings({ routes })
+    const id = await service.create('Logs')
+    await service.saveProtocol(id, draft, 1)
+    service.requestSearch(id, { query: 'logs', fromYear: null, toYear: null, types: [], cap: 2 })
+    await service.runSearch(as(queued[0], 'mapping_search'), signal)
+    const old = (await service.open(id)).searches[0]
+    const drain = service.queue(id, { phase: 'title_abstract', filter: 'pending' }).find((r) => r.openalex === 'W2754665629')!
+    await service.decide(id, { recordId: drain.id, phase: 'title_abstract', decision: 'include', criterion: null, suggestionId: null })
+    // OpenAlex no longer returns Drain for this string.
+    const page1 = JSON.parse(fx('mapping.search-1.openalex.json')) as { results: unknown[] }
+    const page2 = JSON.parse(fx('mapping.search-2.openalex.json')) as { results: unknown[] }
+    const body = JSON.stringify({ meta: { count: 2, next_cursor: null }, results: [page1.results[1], ...page2.results] })
+    routes.splice(0, routes.length, { url: /\/works\?filter=.*cursor=\*/, body })
+    await service.requestComplete(id, old.id)
+    expect(await service.runSearch(as(queued[1], 'mapping_search'), signal)).toEqual({ message: 'mapping_search_partial: count=1,decided=1' })
+
+    const view = await service.open(id)
+    const [fresh, kept] = view.searches
+    expect(fresh).toMatchObject({ count: 2, capped: false, discarded: null })
+    expect(kept).toMatchObject({ id: old.id, discarded: null })
+    expect(service.queue(id, { phase: 'title_abstract', filter: 'include' }).map((r) => [r.id, r.active])).toEqual([[drain.id, true]])
+    // A live search already completed it: it is not offered again.
+    await expect(service.requestComplete(id, old.id)).rejects.toThrow('search_not_completable')
   })
 
   it('leaves the capped search as it was when the new search fails', async () => {
@@ -169,12 +198,16 @@ describe('«Completar búsqueda»', () => {
   it('refuses a search OpenAlex says is bigger than any search, and one it cannot repeat', async () => {
     const { service, queued } = await setupMappings()
     const id = await service.create('Logs')
-    const openalex = { kind: 'openalex' as const, database: 'OpenAlex', query: 'logs', field: 'title_and_abstract', capped: true }
+    const request = new OpenAlexSearch(null as never).requestUrl('logs', null)
+    const openalex = { kind: 'openalex' as const, database: 'OpenAlex', query: 'logs', field: 'title_and_abstract', capped: true, request }
+    await service.addSearch(id, { ...openalex, request: `${request}+traces`, total: 900, count: 500 }, [candidate()])
     await service.addSearch(id, { ...openalex, total: 9000, count: 5000 }, [candidate()])
     await service.addSearch(id, { ...openalex, filters: { language: 'en' }, total: 900, count: 500 }, [candidate()])
     await service.addSearch(id, { kind: 'import', database: 'Scopus', capped: true }, [candidate()])
-    const [imported, filtered, big] = (await service.open(id)).searches
+    const [imported, filtered, big, otherRequest] = (await service.open(id)).searches
     await expect(service.requestComplete(id, big.id)).rejects.toThrow('search_too_large')
+    // The logged request is not the one the rebuilt search would send.
+    await expect(service.requestComplete(id, otherRequest.id)).rejects.toThrow('search_not_completable')
     await expect(service.requestComplete(id, filtered.id)).rejects.toThrow('search_not_completable')
     await expect(service.requestComplete(id, imported.id)).rejects.toThrow('search_not_completable')
     await expect(service.requestComplete(id, 's00000000ffff')).rejects.toThrow('mapping_not_found')

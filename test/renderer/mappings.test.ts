@@ -12,6 +12,7 @@ import {
   keepPosition,
   nextSnowballIteration,
   openAlexPlanLines,
+  pendingCompletions,
   openAlexRequest,
   openAlexTypesFor,
   phaseLabel,
@@ -294,5 +295,13 @@ describe('the search log', () => {
     const own = search({ discarded: { at: AT, reason: 'Cadena amplia.', machine: 'm' } })
     expect(discardedText(t, own, [own])).toBe(`mappings.searches.discarded {"date":"${new Date(AT).toLocaleDateString()}","reason":"Cadena amplia."}`)
     expect(discardedText(t, search(), [])).toBeNull()
+  })
+})
+
+describe('pendingCompletions', () => {
+  it('names the searches a queued or running completion will replace', () => {
+    const spec = (replaces?: string) => ({ type: 'mapping_search' as const, mappingId: 'm', query: 'q', fromYear: null, toYear: null, types: [], cap: 5000, ...(replaces ? { replaces } : {}) })
+    const job = (state: 'queued' | 'running' | 'done' | 'failed', replaces?: string) => ({ id: 1, spec: spec(replaces), state, message: null, progress: null, paperId: null, createdAt: AT, updatedAt: AT })
+    expect([...pendingCompletions([job('queued', 'sa'), job('running', 'sb'), job('done', 'sc'), job('failed', 'sd'), job('queued')])]).toEqual(['sa', 'sb'])
   })
 })

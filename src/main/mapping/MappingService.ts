@@ -3,13 +3,16 @@ import { readFile, stat } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import type { JobSpec } from '../../shared/jobs'
+import { outcomeMessage } from '../../shared/library'
 import {
   COMPLETED_REASON,
+  completedBy,
   completionRequest,
   MAIN_REVIEWER,
   MAPPING_ID,
   OPENALEX_SEARCH_FIELD,
   openAlexFilter,
+  PHASES,
   ProtocolDraftSchema,
   SEARCH_CAP,
   SearchSchema,
@@ -393,7 +396,9 @@ export class MappingService {
    * possible duplicate when it looks like another record. Records are written before the search, so an interruption
    * never leaves a logged search without its records. The search's `count` is never below the candidates it read.
    * `replaces` («Completar búsqueda»): a live search this one takes the place of, discarded in the same write and
-   * linked to it (`replaced_by`); a search already discarded keeps its own discard.
+   * linked to it (`replaced_by`); a search already discarded keeps its own discard. When some records only that search
+   * brought did not come back (OpenAlex's index changed), discarding it would take them out of the screening: it stays
+   * live, and the outcome counts them (`orphaned`, `orphanedDecided`).
    */
   async addSearch(id: string, search: NewSearch, candidates: WorkCandidate[], replaces?: string): Promise<ImportOutcome> {
     const searchId = this.newId('s')
@@ -435,10 +440,24 @@ export class MappingService {
       const searches = files.searches.value.searches
       const writes: Write[] = [{ kind: 'records', file: { ...files.records.value, records: [...records.values()] } }]
       const logged = searches.some((s) => s.id === searchId)
-      const replaced = replaces !== undefined && searches.some((s) => s.id === replaces && !s.discarded)
-      if (!logged || replaced) {
+      let replace = replaces !== undefined && searches.some((s) => s.id === replaces && !s.discarded)
+      if (replace) {
+        const live = activeSearchIds(searches)
+        const orphans = [...records.values()].filter(
+          (r) => r.merged_into === null && r.sources.includes(replaces!) && !r.sources.includes(searchId) && r.sources.every((s) => s === replaces || !live.has(s))
+        )
+        if (orphans.length > 0) {
+          replace = false
+          const heads = decisionHeads(files.decisions.value.decisions)
+          const version = files.protocol.value.version
+          const decided = orphans.filter((r) => PHASES.some((phase) => phaseView(headsOf(heads, r.id, phase), version).state !== 'pending'))
+          outcome.orphaned = orphans.length
+          outcome.orphanedDecided = decided.length
+        }
+      }
+      if (!logged || replace) {
         const discarded = { at, reason: COMPLETED_REASON, machine: this.deps.machine, replaced_by: searchId }
-        const next = searches.map((s) => (replaced && s.id === replaces ? { ...s, discarded } : s))
+        const next = searches.map((s) => (replace && s.id === replaces ? { ...s, discarded } : s))
         writes.push({ kind: 'searches', file: { ...files.searches.value, searches: logged ? next : [...next, entry] } })
       }
       return { writes, result: outcome }
@@ -646,14 +665,14 @@ export class MappingService {
    * Before «Buscar» asks to confirm: OpenAlex's own count of the search's results, with the same string and filters
    * (one request of one result; no money). Checked as `requestSearch` checks it.
    */
-  async countSearch(id: string, req: Omit<OpenAlexSearchRequest, 'cap'>): Promise<number> {
+  async countSearch(id: string, req: Omit<OpenAlexSearchRequest, 'cap'>, signal?: AbortSignal): Promise<number> {
     if (!this.deps.store.mappingExists(id)) throw new UserFacingError('mapping_not_found')
     const query = req.query.trim()
     if (!query) throw new UserFacingError('invalid_edit')
     checkSearchString(query)
     if (req.fromYear !== null && req.toYear !== null && req.fromYear > req.toYear) throw new UserFacingError('invalid_edit')
     try {
-      return await this.deps.openalex.count(query, openAlexFilter({ fromYear: req.fromYear, toYear: req.toYear, types: [...new Set(req.types)] }))
+      return await this.deps.openalex.count(query, openAlexFilter({ fromYear: req.fromYear, toYear: req.toYear, types: [...new Set(req.types)] }), signal)
     } catch (error) {
       throw toUserFacing(error)
     }
@@ -662,20 +681,26 @@ export class MappingService {
   /**
    * «Completar búsqueda»: a live OpenAlex search that hit its cap runs again with the same string, filters and fields
    * at the maximum cap. When that search is logged it discards this one and links to it (`replaced_by`); when it fails,
-   * this one stays as it is. A search OpenAlex says has more results than the maximum is refused (`search_too_large`).
+   * this one stays as it is. A search OpenAlex says has more results than the maximum is refused (`search_too_large`),
+   * and so is one whose rebuilt request is not the logged one, one a live search already completed (keeping it live), or
+   * one whose completion is still queued or running (`search_completion_pending`).
    */
   async requestComplete(id: string, searchId: string): Promise<number> {
     const files = this.required(await this.load(id))
-    const search = files.searches.value.searches.find((s) => s.id === searchId)
+    const searches = files.searches.value.searches
+    const search = searches.find((s) => s.id === searchId)
     if (!search) throw new UserFacingError('mapping_not_found')
     const req = completionRequest(search)
-    if (!req) throw new UserFacingError('search_not_completable')
+    if (!req || completedBy(search, searches)) throw new UserFacingError('search_not_completable')
+    checkSearchString(req.query)
+    if (search.request !== this.deps.openalex.requestUrl(req.query, openAlexFilter(req))) throw new UserFacingError('search_not_completable')
     if (search.total !== null && search.total > SEARCH_CAP.max) throw new UserFacingError('search_too_large')
+    if (this.deps.cache.hasPendingCompletion(search.id)) throw new UserFacingError('search_completion_pending')
     return this.deps.enqueue({ type: 'mapping_search', mappingId: id, ...req, cap: SEARCH_CAP.max, replaces: search.id })
   }
 
   /** Every page of results up to the cap, then one log entry with the exact string, filters, request and counts. */
-  async runSearch(spec: Spec<'mapping_search'>, signal: AbortSignal): Promise<{ message: 'mapping_searched' }> {
+  async runSearch(spec: Spec<'mapping_search'>, signal: AbortSignal): Promise<{ message: string }> {
     try {
       const { openalex } = this.deps
       const filter = openAlexFilter(spec)
@@ -688,7 +713,7 @@ export class MappingService {
       signal.throwIfAborted()
       const found = await openalex.search(spec.query, filter, spec.cap, signal)
       signal.throwIfAborted()
-      await this.addSearch(
+      const outcome = await this.addSearch(
         spec.mappingId,
         {
           kind: 'openalex',
@@ -703,6 +728,7 @@ export class MappingService {
         found.works,
         spec.replaces
       )
+      if (outcome.orphaned) return { message: outcomeMessage('mapping_search_partial', { count: outcome.orphaned, decided: outcome.orphanedDecided ?? 0 }) }
       return { message: 'mapping_searched' }
     } catch (error) {
       throw signal.aborted ? error : toUserFacing(error)

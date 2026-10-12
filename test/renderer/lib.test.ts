@@ -71,6 +71,12 @@ describe('jobDetail', () => {
     expect(jobDetail(t, job({ state: 'failed', message: 'search_query_invalid: bad' }))).toBe('errors.search_query_invalid {"detail":"bad","defaultValue":"search_query_invalid"}')
     expect(jobDetail(t, job({ state: 'running' }))).toBeNull()
   })
+
+  it('passes the numbers of an outcome to its wording', () => {
+    expect(jobDetail(t, job({ state: 'done', message: 'mapping_search_partial: count=3,decided=1' }))).toBe(
+      'jobs.outcome.mapping_search_partial {"count":3,"decided":1,"defaultValue":"mapping_search_partial: count=3,decided=1"}'
+    )
+  })
 })
 
 describe('errorText', () => {
@@ -81,6 +87,10 @@ describe('errorText', () => {
 
   it('passes the detail of a known code to its translation', () => {
     expect(errorText(t, 'search_query_invalid: Wildcards: need exact')).toBe('errors.search_query_invalid {"detail":"Wildcards: need exact","defaultValue":"search_query_invalid"}')
+  })
+
+  it("gives a limit's wording the app's own value", () => {
+    expect(errorText(t, 'search_too_large')).toBe('errors.search_too_large {"max":5000,"defaultValue":"search_too_large"}')
   })
 })
 

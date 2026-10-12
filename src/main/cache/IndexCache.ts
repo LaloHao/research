@@ -531,6 +531,15 @@ export class IndexCache {
     )
   }
 
+  /** A queued or running «Completar búsqueda» of that search (a `mapping_search` whose `replaces` names it). */
+  hasPendingCompletion(searchId: string): boolean {
+    return Boolean(
+      this.db
+        .prepare("SELECT 1 FROM jobs WHERE state IN ('queued', 'running') AND json_extract(spec, '$.type') = 'mapping_search' AND json_extract(spec, '$.replaces') = ? LIMIT 1")
+        .get(searchId)
+    )
+  }
+
   hasActiveJobOfType(type: string): boolean {
     return Boolean(this.db.prepare("SELECT 1 FROM jobs WHERE state IN ('queued', 'running') AND json_extract(spec, '$.type') = ? LIMIT 1").get(type))
   }
