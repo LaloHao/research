@@ -76,6 +76,7 @@ export const USER_ERROR_CODES = [
   'chat_not_found',
   'chat_invalid',
   'paper_not_in_library',
+  'chat_message_budget',
   'unknown'
 ] as const
 export type UserErrorCode = (typeof USER_ERROR_CODES)[number]

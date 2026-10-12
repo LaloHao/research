@@ -583,7 +583,9 @@ export class ChatService {
         await this.update(id, (f) => ({ ...f, messages: [...f.messages, stopped] })).catch(logged)
         this.push(id, run, { kind: 'stopped' })
       } else {
-        this.push(id, run, { kind: 'error', error: toUserFacing(error).code })
+        const code = toUserFacing(error).code
+        // The CLI's cap here is the per-message one, which has its own setting.
+        this.push(id, run, { kind: 'error', error: code === 'operation_budget' ? 'chat_message_budget' : code })
       }
     } finally {
       reservation.settle(spent, { estimated })

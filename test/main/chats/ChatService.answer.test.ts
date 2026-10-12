@@ -100,6 +100,15 @@ describe('ChatService answers', () => {
     await expect(chats.retry(id)).rejects.toMatchObject({ code: 'invalid_edit' })
   })
 
+  it('an answer stopped at its per-message cap says so, naming the chat cap rather than the per-paper one', async () => {
+    const { store, chats, updates } = await setupChats({ responses: [new LlmError('operation_budget', 0.5)] })
+    const id = await chats.send(ask('Q'))
+    await chats.idle()
+    expect(updates.at(-1)).toMatchObject({ kind: 'error', error: 'chat_message_budget' })
+    expect(await chats.open(id)).toMatchObject({ canRetry: true, messages: [{ role: 'user' }] })
+    expect(await store.readCosts()).toEqual([expect.objectContaining({ operation: 'chat', cost_usd: 0.5 })])
+  })
+
   it('«Detener» keeps what arrived as a stopped answer, charged at its cap as an estimate', async () => {
     const { store, chats, updates } = await setupChats({
       responses: [

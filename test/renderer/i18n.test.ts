@@ -251,3 +251,10 @@ describe('es.json covers every code the UI can receive', () => {
     expect(typeof lookup(path)).toBe('string')
   })
 })
+
+describe('cap errors name the setting that lifts them', () => {
+  it('a chat answer at its cap points to the per-message cap, not the per-paper one', () => {
+    expect(lookup('errors.chat_message_budget')).toContain(`«${lookup('settings.budget_chat') as string}»`)
+    expect(lookup('errors.operation_budget')).toContain(`«${lookup('settings.budget_operation') as string}»`)
+  })
+})
