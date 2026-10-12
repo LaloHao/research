@@ -23,6 +23,7 @@ import { computeFacetOverview, libraryExtractions, type FacetOverview } from './
 import { acceptance, replaceUnreviewed, suggestionValidity, withEdit } from './facetSuggestionMerge'
 import type { FacetSuggester } from './FacetSuggester'
 
+const EMPTY_OVERVIEW: FacetOverview = { papers: 0, facets: [] }
 const UP_TO_DATE = new Set(['generated', 'reviewed'])
 const MAX_UNDO = 50
 
@@ -89,11 +90,14 @@ export class FacetSuggestionService {
   async list(): Promise<FacetSuggestionList> {
     const load = loadForm(this.deps.store.config.extraction_form)
     const form = load.status === 'ok' ? load.form : null
-    const overview = form ? await this.overview(form) : null
+    // Only an alias still to review needs the papers' proposals; reading every classification on each list (it is
+    // reloaded on every job change) is skipped otherwise. A decided alias's validity is never shown.
+    const needsOverview = this.current.suggestions.some((s) => s.kind === 'alias' && s.status === 'suggested')
+    const overview = form && needsOverview ? await this.overview(form) : EMPTY_OVERVIEW
     const suggestions = this.current.suggestions.map((suggestion) => ({
       suggestion,
       // Without a valid form nothing can be accepted anyway: accept answers invalid_form.
-      validity: form && overview ? suggestionValidity(suggestion, form, overview) : ('ok' as const)
+      validity: form ? suggestionValidity(suggestion, form, overview) : ('ok' as const)
     }))
     return {
       file: this.file,

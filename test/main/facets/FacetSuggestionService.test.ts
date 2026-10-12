@@ -61,6 +61,27 @@ describe('FacetSuggestionService', () => {
     await s.close()
   })
 
+  it('reads the papers for the list only while an alias suggestion waits for review', async () => {
+    const { s } = await suggested()
+    let reads = 0
+    const read = s.store.readExtraction.bind(s.store)
+    s.store.readExtraction = (id) => {
+      reads++
+      return read(id)
+    }
+    await s.facets.list()
+    expect(reads).toBe(2)
+    await s.facets.reject(ALIAS)
+    reads = 0
+    const list = await s.facets.list()
+    expect(reads).toBe(0)
+    expect(list.suggestions.filter((v) => v.suggestion.status === 'suggested').map((v) => [v.suggestion.id, v.validity])).toEqual([
+      [FACET, 'ok'],
+      [VALUE, 'ok']
+    ])
+    await s.close()
+  })
+
   it('accepting a new facet adds it without making summaries stale, and undo takes it out again', async () => {
     const { s } = await suggested()
     let projectEvents = 0
