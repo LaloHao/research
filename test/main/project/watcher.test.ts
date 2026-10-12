@@ -63,6 +63,30 @@ describe('watchProject', () => {
     await waitFor(() => changes > 0)
     stop()
   })
+
+  it('reports conversations written, replaced and removed in chats/, even when the folder appears later', async () => {
+    const root = await tmpDir()
+    let changes = 0
+    const stop = watchProject(root, { onPaper: () => undefined, onConfig: () => undefined, onChats: () => changes++ }, 50)
+    await new Promise((r) => setTimeout(r, 100))
+    await mkdir(join(root, 'chats'))
+    await waitFor(() => changes > 0)
+    await new Promise((r) => setTimeout(r, 150))
+    for (const change of [
+      () => atomicWrite(join(root, 'chats/20261011-120000-a1b2.md'), 'a'),
+      () => atomicWrite(join(root, 'chats/20261011-120000-a1b2.md'), 'b'),
+      () => unlink(join(root, 'chats/20261011-120000-a1b2.md'))
+    ]) {
+      const before = changes
+      await change()
+      await waitFor(() => changes > before)
+      await new Promise((r) => setTimeout(r, 150))
+    }
+    const before = changes
+    await rm(join(root, 'chats'), { recursive: true })
+    await waitFor(() => changes > before)
+    stop()
+  })
 })
 
 describe('watchProject after files are replaced', () => {
