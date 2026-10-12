@@ -9,7 +9,9 @@ export const MAX_CHAT_MESSAGE = 20_000
 /** Longest excerpt quoted from a selection (a citation marker's quote has the same limit). */
 export const MAX_EXCERPT = 1000
 
-const paperKey = z.string().regex(/^[a-z][a-z0-9]*$/)
+/** A paper's key (its folder under papers/ and its citation key). */
+export const PAPER_KEY = /^[a-z][a-z0-9]*$/
+const paperKey = z.string().regex(PAPER_KEY)
 
 /** The whole library, or one paper (its «Chat» tab); Claude may search the whole library in both. */
 export const ChatScopeSchema = z.union([z.literal('library'), z.strictObject({ paper: paperKey })])

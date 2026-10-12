@@ -1,3 +1,4 @@
+import { PAPER_KEY } from '../../shared/chat'
 import type { SimilarityReason } from '../../shared/relations'
 import type { IndexCache } from '../cache/IndexCache'
 import type { EmbeddingRuntime } from '../embeddings/EmbeddingRuntime'
@@ -185,7 +186,7 @@ export function libraryTools(deps: { store: ProjectStore; cache: IndexCache; map
   const { store, cache, map, embeddings } = deps
 
   const requirePaper = (id: string) => {
-    const row = /^[a-z][a-z0-9]*$/.test(id) ? cache.getPaper(id) : null
+    const row = PAPER_KEY.test(id) ? cache.getPaper(id) : null
     if (!row || row.problem) {
       const shown = id.length > MAX_ID_CHARS ? `${id.slice(0, MAX_ID_CHARS)}…` : id
       throw new ToolError(`Unknown paper id "${shown}". Use the ids given in the prompt or returned by the search tools.`)

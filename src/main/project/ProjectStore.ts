@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { appendFile, mkdir, readdir, readFile, rename, rm, rmdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PaperSchema, ProjectConfigSchema, type Paper, type ProjectConfig } from '../../shared/schemas'
-import { CHAT_ID, ChatMetaSchema, type ChatFile } from '../../shared/chat'
+import { CHAT_ID, ChatMetaSchema, PAPER_KEY, type ChatFile } from '../../shared/chat'
 import { parse } from 'yaml'
 import { SnowballSchema, type Snowball } from '../../shared/relations'
 import {
@@ -31,7 +31,7 @@ import { hasConflictMarkers, parseFrontmatterFile, parseYamlFile, toFrontmatter,
 
 export const PROJECT_FILE = 'project.yaml'
 
-const PAPER_ID = /^[a-z][a-z0-9]*$/
+const PAPER_ID = PAPER_KEY
 const DEVICE_ID = /^[A-Za-z0-9-]+$/
 /** A file directly inside a paper folder: no path separators, no dot files. */
 const FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { asWritten } from '../../../src/main/chats/ChatService'
+import type { LlmModel } from '../../../src/shared/summary'
 import { parseChat, renderChat } from '../../../src/main/project/chatFile'
 import { assistantMessage, CHAT_AT, CHAT_ID_A, chatFile, DEVICE, DRAIN_QUOTE, setupChats, userMessage } from '../../helpers/chats'
 import { DRAIN_ID, LOGHUB_ID } from '../../helpers/pair'
@@ -69,6 +70,7 @@ describe('ChatService conversations', () => {
     expect(counter.events).toBe(3)
     await expect(chats.rename(CHAT_ID_A, '   ')).rejects.toMatchObject({ code: 'invalid_edit' })
     await expect(chats.rename(CHAT_ID_A, 'x'.repeat(121))).rejects.toMatchObject({ code: 'invalid_edit' })
+    await expect(chats.setModel(CHAT_ID_A, 'gpt' as LlmModel)).rejects.toMatchObject({ code: 'invalid_edit' })
     await expect(chats.remove(CHAT_ID_A, false)).rejects.toMatchObject({ code: 'invalid_edit' })
     expect(await store.listChatIds()).toEqual([CHAT_ID_A])
     await expect(chats.remove('../../papers/he2017drain/paper', true)).rejects.toMatchObject({ code: 'chat_not_found' })
@@ -100,6 +102,46 @@ describe('ChatService conversations', () => {
     expect(await chats.reindexIfChanged()).toBe(true)
     expect(chats.list()[0].title).toBe('Edited by hand')
     await writeFile(store.chatPath(CHAT_ID_A), renderChat(chatFile(undefined, { title: 'Edited by hand' })))
+    expect(await chats.reindexIfChanged()).toBe(false)
+    await rm(store.chatPath(CHAT_ID_A))
+    expect(await chats.reindexIfChanged()).toBe(true)
+    expect(chats.list()).toEqual([])
+  })
+
+  it('reports a conversation that opening found new or changed on disk', async () => {
+    const { store, chats, counter } = await setupChats()
+    await chats.reindex()
+    await store.writeChat(chatFile(), null)
+    await chats.open(CHAT_ID_A)
+    expect(counter.events).toBe(1)
+    expect(chats.list().map((c) => c.id)).toEqual([CHAT_ID_A])
+    await chats.open(CHAT_ID_A)
+    expect(counter.events).toBe(1)
+    expect(await chats.reindexIfChanged()).toBe(false)
+  })
+
+  it('never lets a scan that started before its own write put the older version back', async () => {
+    const { store, chats } = await setupChats()
+    await store.writeChat(chatFile(), null)
+    await chats.reindex()
+    const readChat = store.readChat.bind(store)
+    let release = (): void => {}
+    let paused = false
+    store.readChat = async (id) => {
+      const r = await readChat(id)
+      if (!paused) {
+        paused = true
+        await new Promise<void>((resolve) => (release = resolve))
+      }
+      return r
+    }
+    const scan = chats.reindex()
+    await new Promise((r) => setTimeout(r, 20))
+    await chats.rename(CHAT_ID_A, 'Renamed meanwhile')
+    release()
+    await scan
+    expect(chats.list()[0].title).toBe('Renamed meanwhile')
+    store.readChat = readChat
     expect(await chats.reindexIfChanged()).toBe(false)
   })
 
@@ -151,6 +193,37 @@ describe('ChatService conversations', () => {
     expect(bib.startsWith('@inproceedings{he2017drain,')).toBe(true)
     expect(bib).toContain('@misc{zhu2020loghub,')
     expect(bib).not.toContain('gone2020x')
+    await expect(chats.saveToNotes(CHAT_ID_A, 1)).rejects.toMatchObject({ code: 'invalid_edit' })
+  })
+
+  it('leaves a trashed cited paper out of the notes targets and the BibTeX, also when it goes during the copy', async () => {
+    const { store, cache, chats } = await setupChats()
+    const answer = `Drain [[${DRAIN_ID}|p. 1|"${DRAIN_QUOTE}"]] and Loghub [[${LOGHUB_ID}|"a large collection"]].`
+    await store.writeChat(chatFile([userMessage(), assistantMessage({ text: answer })]), null)
+    await chats.reindex()
+    const readPaper = store.readPaper.bind(store)
+    store.readPaper = async (id) => {
+      if (id === DRAIN_ID) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+      return readPaper(id)
+    }
+    expect(await chats.citationsBibtex(CHAT_ID_A, 1)).toMatch(/^@misc\{zhu2020loghub,/)
+    store.readPaper = readPaper
+    await store.trashPaper(LOGHUB_ID, DEVICE, new Date(CHAT_AT))
+    cache.moveToTrash(LOGHUB_TRASH_ROW)
+    await expect(chats.saveToNotes(CHAT_ID_A, 1, LOGHUB_ID)).rejects.toMatchObject({ code: 'paper_not_in_library' })
+    const bib = await chats.citationsBibtex(CHAT_ID_A, 1)
+    expect(bib.startsWith('@inproceedings{he2017drain,')).toBe(true)
+    expect(bib).not.toContain('zhu2020loghub')
+  })
+
+  it("saves to a paper chat's own paper unless the user picked another", async () => {
+    const { store, chats } = await setupChats()
+    await store.writeChat(chatFile(undefined, { scope: { paper: DRAIN_ID } }), null)
+    await chats.reindex()
+    await chats.saveToNotes(CHAT_ID_A, 1)
+    expect((await store.readNotes(DRAIN_ID)).text.startsWith('### Claude — ')).toBe(true)
+    await chats.saveToNotes(CHAT_ID_A, 1, LOGHUB_ID)
+    expect((await store.readNotes(LOGHUB_ID)).text.startsWith('### Claude — ')).toBe(true)
   })
 
   it('never rewrites what the user wrote in the notes, and retries when they change meanwhile', async () => {

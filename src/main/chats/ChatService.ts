@@ -3,6 +3,7 @@ import {
   ChatMetaSchema,
   MAX_CHAT_TITLE,
   normalizeExcerpt,
+  PAPER_KEY,
   type AssistantMessage,
   type ChatConversation,
   type ChatFile,
@@ -14,7 +15,7 @@ import {
   type PaperState
 } from '../../shared/chat'
 import { citationsToText, citedPapers } from '../../shared/chatCitations'
-import type { LlmModel } from '../../shared/summary'
+import { LLM_MODELS, type LlmModel } from '../../shared/summary'
 import type { IndexCache } from '../cache/IndexCache'
 import { rekeyBibtex } from '../ingest/bibtex'
 import { UserFacingError } from '../library/UserFacingError'
@@ -70,7 +71,6 @@ interface Run {
 
 const SEARCH_CHARS = 200_000
 const MAX_WRITE_ATTEMPTS = 3
-const PAPER_KEY = /^[a-z][a-z0-9]*$/
 
 function toEntry(id: string, read: ReadResult<ChatFile>): Entry {
   if (!read.ok) return { id, hash: read.hash, file: null, search: '' }
@@ -124,20 +124,25 @@ export class ChatService {
   private readonly sending = new Set<string>()
   /** Orders the stream updates of every answer of the session. */
   private seq = 0
+  /** Counts the app's own writes and deletions; `changedAt` holds the count at each conversation's last one. */
+  private writes = 0
+  private readonly changedAt = new Map<string, number>()
 
   constructor(private readonly deps: ChatServiceDeps) {}
 
   async reindex(): Promise<void> {
+    const start = this.writes
     const next = new Map<string, Entry>()
     for (const id of await this.deps.store.listChatIds()) {
       const read = await this.deps.store.readChat(id)
       if (read) next.set(id, toEntry(id, read))
     }
-    this.replaceEntries(next)
+    this.replaceEntries(next, start)
   }
 
   /** For the watcher: true when some file differs from the index (the app's own writes are already in it). */
   async reindexIfChanged(): Promise<boolean> {
+    const start = this.writes
     const ids = await this.deps.store.listChatIds()
     let changed = ids.length !== this.entries.size
     const next = new Map<string, Entry>()
@@ -154,7 +159,7 @@ export class ChatService {
         next.set(id, toEntry(id, read))
       }
     }
-    if (changed) this.replaceEntries(next)
+    if (changed) this.replaceEntries(next, start)
     return changed
   }
 
@@ -198,6 +203,7 @@ export class ChatService {
 
   /** The model for the next answers. */
   async setModel(id: string, model: LlmModel): Promise<void> {
+    if (!(LLM_MODELS as readonly string[]).includes(model)) throw new UserFacingError('invalid_edit')
     await this.update(id, (f) => ({ ...f, meta: { ...f.meta, model } }))
   }
 
@@ -212,16 +218,20 @@ export class ChatService {
     const read = await this.deps.store.readChat(id)
     if (read) await this.deps.store.deleteChat(id, read.hash)
     this.entries.delete(id)
+    this.changedAt.set(id, ++this.writes)
     this.deps.emit()
   }
 
   /**
-   * «Guardar en notas del paper»: the answer and its citations, as text, appended to that paper's notes.md. The
-   * notes are hash-checked and re-read on a concurrent change; what is there is never rewritten.
+   * «Guardar en notas del paper»: the answer and its citations, as text, appended to a paper's notes.md: the paper the
+   * user picked, or in a paper chat its own paper by default (a global chat needs a pick). The notes are hash-checked
+   * and re-read on a concurrent change; what is there is never rewritten.
    */
-  async saveToNotes(id: string, index: number, paperId: string): Promise<void> {
+  async saveToNotes(id: string, index: number, picked?: string | null): Promise<void> {
     const { file, answer } = await this.answerAt(id, index)
     if (!answer.text.trim()) throw new UserFacingError('invalid_edit')
+    const paperId = picked ?? (file.meta.scope === 'library' ? null : file.meta.scope.paper)
+    if (!paperId) throw new UserFacingError('invalid_edit')
     const block = notesBlock(file.meta.title, answer)
     for (let attempt = 1; ; attempt++) {
       if (!PAPER_KEY.test(paperId) || !this.deps.store.paperExists(paperId)) throw new UserFacingError('paper_not_in_library')
@@ -241,12 +251,11 @@ export class ChatService {
     const entries: string[] = []
     for (const key of citedPapers(answer.text)) {
       if (!PAPER_KEY.test(key) || !this.deps.store.paperExists(key)) continue
-      const read = await this.deps.store.readPaper(key)
-      if (!read.ok) continue
       try {
-        entries.push(rekeyBibtex(read.value.bibtex, key))
+        const read = await this.deps.store.readPaper(key)
+        if (read.ok) entries.push(rekeyBibtex(read.value.bibtex, key))
       } catch {
-        // An invalid BibTeX entry is left out, as in exports/library.bib.
+        // A paper trashed meanwhile, or an invalid BibTeX entry (left out as in exports/library.bib), is skipped.
       }
     }
     return entries.join('\n\n')
@@ -266,9 +275,19 @@ export class ChatService {
     return this.runs.has(id) || this.sending.has(id)
   }
 
-  private replaceEntries(next: Map<string, Entry>): void {
+  /**
+   * Installs a scan that started when the write count was `start`; a conversation the app wrote or deleted since keeps
+   * its current entry (or absence), so a scan never puts back a version older than the app's own write.
+   */
+  private replaceEntries(next: Map<string, Entry>, start: number): void {
+    const newer = new Map<string, Entry | undefined>()
+    for (const [id, at] of this.changedAt) if (at > start) newer.set(id, this.entries.get(id))
     this.entries.clear()
     for (const [id, e] of next) this.entries.set(id, e)
+    for (const [id, e] of newer) {
+      if (e) this.entries.set(id, e)
+      else this.entries.delete(id)
+    }
   }
 
   private summary(e: Entry): ChatSummary {
@@ -303,8 +322,10 @@ export class ChatService {
       throw new UserFacingError('chat_not_found')
     }
     const known = this.entries.get(id)
-    const e = known && known.hash === read.hash ? known : toEntry(id, read)
+    if (known && known.hash === read.hash) return known
+    const e = toEntry(id, read)
     this.entries.set(id, e)
+    this.deps.emit()
     return e
   }
 
@@ -324,6 +345,7 @@ export class ChatService {
     const written = asWritten({ ...file, meta: { ...file.meta, updated_at: this.now().toISOString(), updated_on: this.deps.machine } })
     const hash = await this.deps.store.writeChat(written, expectedHash)
     this.entries.set(written.meta.id, toEntry(written.meta.id, { ok: true, hash, value: written }))
+    this.changedAt.set(written.meta.id, ++this.writes)
     this.deps.emit()
     return written
   }
