@@ -88,7 +88,8 @@ export function FacetCard({
   entry,
   fallback,
   onOpenEvidence,
-  run
+  run,
+  unfilled = false
 }: {
   paperId: string
   def: FacetDef
@@ -96,7 +97,10 @@ export function FacetCard({
   fallback: Origin
   onOpenEvidence: OpenEvidence
   run: RunAction
+  /** A facet added to the form after this up-to-date summary was made: «Faceta nueva sin llenar». */
+  unfilled?: boolean
 }): React.JSX.Element {
+  const { t } = useTranslation()
   const [editing, setEditing] = useState(false)
   const status = entry ? cardStatus(entry) : null
   const save = async (patch: FacetPatch): Promise<void> => {
@@ -109,7 +113,13 @@ export function FacetCard({
         <code>{def.key}</code>
       </h4>
       <p className="muted small">{def.description}</p>
-      {editing ? <FacetEditor def={def} entry={entry} onSave={save} onCancel={() => setEditing(false)} /> : <p className="card-text">{facetValueText(def, entry)}</p>}
+      {editing ? (
+        <FacetEditor def={def} entry={entry} onSave={save} onCancel={() => setEditing(false)} />
+      ) : !entry && unfilled ? (
+        <p className="muted">{t('facets.unfilled')}</p>
+      ) : (
+        <p className="card-text">{facetValueText(def, entry)}</p>
+      )}
       {entry && entry.proposed.length > 0 && allowed.length > 0 && (
         <div className="proposals">
           {entry.proposed.map((p) => (

@@ -142,7 +142,8 @@
       "reviewed": "Revisados",
       "stale": "Desactualizados",
       "failed": "Con error",
-      "relations_to_review": "Con relaciones por revisar"
+      "relations_to_review": "Con relaciones por revisar",
+      "unfilled": "Con facetas sin llenar"
     },
     "model_filter": { "label": "Resumido con", "any": "Cualquier modelo" },
     "summarize_pending": "Resumir pendientes",
@@ -162,6 +163,10 @@
     "suggest_relations_filtered": "Pide a Claude relaciones tipadas para los papers que se ven con la búsqueda y los filtros actuales, si sus candidatos cambiaron desde su último análisis.",
     "relations_none": "No hay papers con candidatos nuevos por analizar.",
     "relations_queued": "{{count}} papers en cola para sugerir relaciones.",
+    "fill_facets": "Llenar facetas nuevas",
+    "fill_facets_all": "Pide a Claude, en los papers con resumen al día, las facetas agregadas al formulario después de resumirlos, sin regenerar los resúmenes.",
+    "fill_facets_filtered": "Pide a Claude las facetas nuevas solo de los papers que se ven con la búsqueda y los filtros actuales y tienen resumen al día, sin regenerar los resúmenes.",
+    "fill_none": "Ningún paper con resumen al día tiene facetas nuevas sin llenar.",
     "remove_filtered": "Quitar de la biblioteca",
     "remove_filtered_hint": "Mueve a la papelera los papers que se ven con la búsqueda y los filtros activos",
     "remove_confirm_one": "¿Quitar 1 paper de la biblioteca? Se mueve a la papelera y puedes restaurarlo cuando quieras.",
@@ -177,7 +182,8 @@
     "reviewed": "Revisado",
     "stale": "Desactualizado",
     "summary_failed": "Resumen falló",
-    "no_citations": "Sin citas"
+    "no_citations": "Sin citas",
+    "unfilled": "Faceta nueva sin llenar"
   },
   "text_status": {
     "pending": "Indexando…",
@@ -608,6 +614,11 @@
     "fill_queued_one": "Llenado en cola para {{count}} paper; sigue su avance en Actividad.",
     "fill_queued_other": "Llenado en cola para {{count}} papers; sigue su avance en Actividad.",
     "later": "Ahora no",
+    "unfilled": "Faceta nueva sin llenar",
+    "unfilled_banner": "Facetas nuevas sin llenar: {{keys}}",
+    "fill_paper": "Llenar facetas nuevas (~${{cost}})",
+    "fill_confirm_one": "Llenar facetas nuevas en {{count}} paper · est. ~${{cost}} · tope del lote ${{limit}}",
+    "fill_confirm_other": "Llenar facetas nuevas en {{count}} papers · est. ~${{cost}} · tope del lote ${{limit}}",
     "file": {
       "conflict": "facet-suggestions.yaml tiene un conflicto de git sin resolver: sincroniza o corrígelo a mano para ver y decidir sugerencias.",
       "invalid": "facet-suggestions.yaml no se puede leer: {{message}}"

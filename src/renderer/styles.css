@@ -108,6 +108,7 @@ code { font-family: ui-monospace, 'JetBrains Mono', monospace; font-size: 12px; 
 .badge-stale { background: var(--warning-soft); }
 .badge-to_review { background: var(--accent-soft); }
 .badge-no_citations { background: var(--warning-soft); }
+.badge-unfilled { background: var(--warning-soft); }
 .summary-toolbar { display: flex; flex-direction: column; gap: 6px; padding: 0 12px 8px; border-bottom: 1px solid var(--border); }
 .summary-toolbar select { min-width: 0; }
 .jobs { border-top: 1px solid var(--border); max-height: 34%; overflow: auto; padding: 6px 12px; }

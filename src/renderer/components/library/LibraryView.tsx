@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PaperRow } from '../../../shared/library'
 import type { FacetFilter } from '../../../shared/relations'
-import type { LlmModel } from '../../../shared/summary'
+import type { LlmModel, SummaryPlan } from '../../../shared/summary'
 import type { RelationPlan } from '../../../shared/typedRelations'
 import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
@@ -46,6 +46,9 @@ export function LibraryView({
   const [removeConfirm, setRemoveConfirm] = useState<string[] | null>(null)
   const [removeBusy, setRemoveBusy] = useState(false)
   const [removeNotice, setRemoveNotice] = useState<{ error: boolean; text: string } | null>(null)
+  const [fillConfirm, setFillConfirm] = useState<{ ids: string[] | undefined; plan: SummaryPlan } | null>(null)
+  const [fillBusy, setFillBusy] = useState(false)
+  const [fillNotice, setFillNotice] = useState<{ error: boolean; text: string } | null>(null)
   const undo = useTrashUndo()
   const showUndo = undo.show
 
@@ -133,6 +136,7 @@ export function LibraryView({
   const visibleKey = useMemo(() => visibleRows.map((row) => row.id).join(' '), [visibleRows])
   useEffect(() => {
     setRemoveConfirm(null)
+    setFillConfirm(null)
     // Old notices go when the visible papers change, except the list a batch removal just left.
     if (visibleKey !== keepNoticeFor.current) setRemoveNotice(null)
     keepNoticeFor.current = null
@@ -189,6 +193,42 @@ export function LibraryView({
     )
   }
 
+  /** «Llenar facetas nuevas»: with a search or filter active, only the visible papers; otherwise every paper that needs it. */
+  const planFill = (): void => {
+    if (fillBusy || !removeReady) return
+    const ids = anyFilter ? visibleRows.map((row) => row.id) : undefined
+    setFillBusy(true)
+    setFillNotice(null)
+    setFillConfirm(null)
+    window.research.facets.fillPlan(ids).then(
+      (plan) => {
+        setFillBusy(false)
+        if (plan.count === 0) setFillNotice({ error: false, text: t('library.fill_none') })
+        else setFillConfirm({ ids, plan })
+      },
+      () => {
+        setFillBusy(false)
+        setFillNotice({ error: true, text: errorText(t, 'unknown') })
+      }
+    )
+  }
+
+  const runFill = (): void => {
+    if (!fillConfirm || fillBusy) return
+    setFillBusy(true)
+    window.research.facets.fill(fillConfirm.ids).then(
+      (r) => {
+        setFillBusy(false)
+        setFillConfirm(null)
+        setFillNotice(r.ok ? { error: false, text: t('facets.fill_queued', { count: r.count }) } : { error: true, text: errorText(t, r.error) })
+      },
+      () => {
+        setFillBusy(false)
+        setFillNotice({ error: true, text: errorText(t, 'unknown') })
+      }
+    )
+  }
+
   return (
     <div
       className={`library${dragging ? ' dragging' : ''}`}
@@ -237,6 +277,15 @@ export function LibraryView({
           >
             {t('library.suggest_relations')}
           </button>
+          {/* With a filter, the visible rows must be the ones loaded for the current search and facet filters. */}
+          <button
+            className="small"
+            disabled={fillBusy || !removeReady}
+            onClick={planFill}
+            title={t(anyFilter ? 'library.fill_facets_filtered' : 'library.fill_facets_all')}
+          >
+            {t('library.fill_facets')}
+          </button>
           {anyFilter && removeReady && visibleRows.length > 0 && (
             <button
               className="small"
@@ -268,6 +317,24 @@ export function LibraryView({
           </div>
         )}
         {relationsNotice && <div className={`banner${relationsNotice.error ? ' error' : ''}`}>{relationsNotice.text}</div>}
+        {fillConfirm && (
+          <div className="banner">
+            <span>
+              {t('facets.fill_confirm', {
+                count: fillConfirm.plan.count,
+                cost: fillConfirm.plan.estimateUsd.toFixed(2),
+                limit: fillConfirm.plan.batchLimitUsd.toFixed(2)
+              })}
+            </span>
+            <button className="primary" disabled={fillBusy} onClick={runFill}>
+              {t('library.confirm')}
+            </button>
+            <button disabled={fillBusy} onClick={() => setFillConfirm(null)}>
+              {t('jobs.cancel')}
+            </button>
+          </div>
+        )}
+        {fillNotice && <div className={`banner${fillNotice.error ? ' error' : ''}`}>{fillNotice.text}</div>}
         {removeConfirm && (
           <div className="banner warning">
             <span>{t('library.remove_confirm', { count: removeConfirm.length })}</span>

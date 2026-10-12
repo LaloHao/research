@@ -1,7 +1,23 @@
 import type { PaperRow } from '../../shared/library'
 import type { LlmModel } from '../../shared/summary'
 
-export type Badge = 'problem' | 'incomplete' | 'web' | 'no_pdf' | 'summary_none' | 'to_review' | 'reviewed' | 'stale' | 'summary_failed' | 'no_citations'
+export type Badge =
+  | 'problem'
+  | 'incomplete'
+  | 'web'
+  | 'no_pdf'
+  | 'summary_none'
+  | 'to_review'
+  | 'reviewed'
+  | 'stale'
+  | 'summary_failed'
+  | 'no_citations'
+  | 'unfilled'
+
+/** An up-to-date summary missing facets added to the form since: «Faceta nueva sin llenar». */
+export function hasUnfilledFacets(row: PaperRow): boolean {
+  return row.unfilled_facets > 0 && (row.summary_status === 'generated' || row.summary_status === 'reviewed')
+}
 
 export function rowBadges(row: PaperRow): Badge[] {
   if (row.problem) return ['problem']
@@ -28,6 +44,7 @@ export function rowBadges(row: PaperRow): Badge[] {
     case 'too_long':
       break
   }
+  if (hasUnfilledFacets(row)) badges.push('unfilled')
   if (row.citations_status === 'unresolved') badges.push('no_citations')
   // "Por revisar" also covers suggested typed relations, whatever the state of the summary.
   if (row.relations_pending > 0 && !badges.includes('to_review')) badges.push('to_review')
@@ -39,10 +56,10 @@ export function reviewCount(row: PaperRow): number {
   return row.pending_review + row.relations_pending
 }
 
-export type SummaryFilter = 'all' | 'none' | 'to_review' | 'reviewed' | 'stale' | 'failed' | 'relations_to_review'
-export const SUMMARY_FILTERS: SummaryFilter[] = ['all', 'none', 'to_review', 'reviewed', 'stale', 'failed', 'relations_to_review']
+export type SummaryFilter = 'all' | 'none' | 'to_review' | 'reviewed' | 'stale' | 'failed' | 'relations_to_review' | 'unfilled'
+export const SUMMARY_FILTERS: SummaryFilter[] = ['all', 'none', 'to_review', 'reviewed', 'stale', 'failed', 'relations_to_review', 'unfilled']
 
-const SUMMARY_FILTER_STATUS: Record<Exclude<SummaryFilter, 'all' | 'relations_to_review'>, PaperRow['summary_status']> = {
+const SUMMARY_FILTER_STATUS: Record<Exclude<SummaryFilter, 'all' | 'relations_to_review' | 'unfilled'>, PaperRow['summary_status']> = {
   none: 'none',
   to_review: 'generated',
   reviewed: 'reviewed',
@@ -53,6 +70,7 @@ const SUMMARY_FILTER_STATUS: Record<Exclude<SummaryFilter, 'all' | 'relations_to
 export function filterBySummary(rows: PaperRow[], filter: SummaryFilter): PaperRow[] {
   if (filter === 'all') return rows
   if (filter === 'relations_to_review') return rows.filter((row) => row.relations_pending > 0)
+  if (filter === 'unfilled') return rows.filter(hasUnfilledFacets)
   const status = SUMMARY_FILTER_STATUS[filter]
   return rows.filter((row) => row.summary_status === status)
 }

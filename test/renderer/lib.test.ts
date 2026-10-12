@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { TFunction } from 'i18next'
-import { filterByIds, filterByModel, filterBySummary, reviewCount, rowBadges } from '../../src/renderer/lib/badges'
+import { filterByIds, filterByModel, filterBySummary, hasUnfilledFacets, reviewCount, rowBadges } from '../../src/renderer/lib/badges'
 import { errorText } from '../../src/renderer/lib/errorText'
 import { jobDetail, jobLabel, jobProgress, visibleJobs } from '../../src/renderer/lib/jobLabel'
 import { nextRqId } from '../../src/renderer/lib/thesis'
@@ -138,6 +138,21 @@ describe('relations to review', () => {
   it('filters the papers with relations to review', () => {
     const rows = [row({ id: 'a', relations_pending: 0 }), row({ id: 'b', relations_pending: 2 })]
     expect(filterBySummary(rows, 'relations_to_review').map((r) => r.id)).toEqual(['b'])
+  })
+})
+
+describe('unfilled facets', () => {
+  it('shows «Faceta nueva sin llenar» and filters by it only for up-to-date summaries', () => {
+    expect(rowBadges(row({ summary_status: 'reviewed', unfilled_facets: 1 }))).toEqual(['reviewed', 'unfilled'])
+    expect(rowBadges(row({ summary_status: 'generated', unfilled_facets: 2 }))).toEqual(['to_review', 'unfilled'])
+    expect(rowBadges(row({ summary_status: 'stale', unfilled_facets: 1 }))).toEqual(['stale'])
+    expect(hasUnfilledFacets(row({ summary_status: 'reviewed', unfilled_facets: 0 }))).toBe(false)
+    const rows = [
+      row({ id: 'a', summary_status: 'generated', unfilled_facets: 2 }),
+      row({ id: 'b', summary_status: 'stale', unfilled_facets: 1 }),
+      row({ id: 'c', summary_status: 'reviewed' })
+    ]
+    expect(filterBySummary(rows, 'unfilled').map((r) => r.id)).toEqual(['a'])
   })
 })
 
