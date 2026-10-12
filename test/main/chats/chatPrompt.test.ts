@@ -9,25 +9,10 @@ import {
   trimHistory,
   type PaperContext
 } from '../../../src/main/chats/chatPrompt'
-import type { AssistantMessage, ChatMessage, UserMessage } from '../../../src/shared/chat'
+import type { ChatMessage } from '../../../src/shared/chat'
 import { parseCitations } from '../../../src/shared/chatCitations'
+import { assistantMessage, userMessage } from '../../helpers/chats'
 import { sampleThesis } from '../../helpers/summaries'
-
-// Local builders: test/helpers/chats.ts belongs to another task of this stage.
-function userMessage(over: Partial<UserMessage> = {}): UserMessage {
-  return { role: 'user', at: '2026-10-11T12:00:00.000Z', text: 'What does Drain do?', excerpt: null, ...over }
-}
-function assistantMessage(over: Partial<AssistantMessage> = {}): AssistantMessage {
-  return {
-    role: 'assistant',
-    at: '2026-10-11T12:00:05.000Z',
-    model: 'claude-sonnet-5',
-    costUsd: 0.02,
-    stopped: false,
-    text: 'Drain parses logs online [[he2017drain|p. 1|"An online log parser"]].',
-    ...over
-  }
-}
 
 const EMPTY_THESIS = { ...sampleThesis, title: '', description: '', research_questions: [] }
 const DRAIN: PaperContext = {
