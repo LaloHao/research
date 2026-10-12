@@ -7,6 +7,7 @@ import { useEvent } from '../../hooks/useEvent'
 import { chartCsv, chartFileName, chartRows, pickFilters, tipLabel, yearColors, type PlotRow } from '../../lib/chartExport'
 import { errorText } from '../../lib/errorText'
 import { PALETTE } from '../../lib/graphElements'
+import { svgToPng } from '../../lib/svgPng'
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
 const cssVar = (name: string, fallback: string): string => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
@@ -101,31 +102,6 @@ function exportableSvg(svg: SVGSVGElement, legend: { label: string; color: strin
   return out
 }
 
-async function svgToPng(svg: SVGSVGElement, bg: string): Promise<Uint8Array> {
-  const width = Number(svg.getAttribute('width'))
-  const height = Number(svg.getAttribute('height'))
-  const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(svg)], { type: 'image/svg+xml' }))
-  try {
-    const image = new Image()
-    image.src = url
-    await image.decode()
-    const scale = 2
-    const canvas = document.createElement('canvas')
-    canvas.width = width * scale
-    canvas.height = height * scale
-    const ctx = canvas.getContext('2d')
-    if (!ctx) throw new Error('No 2D canvas')
-    ctx.fillStyle = bg
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-    ctx.scale(scale, scale)
-    ctx.drawImage(image, 0, 0, width, height)
-    const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('PNG export failed'))), 'image/png'))
-    return new Uint8Array(await blob.arrayBuffer())
-  } finally {
-    URL.revokeObjectURL(url)
-  }
-}
-
 /** Bumps when the OS color scheme changes, so the chart is drawn again with the new theme colors. */
 function useColorScheme(): boolean {
   const [dark, setDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
@@ -207,7 +183,8 @@ export function ChartsTab({ onOpenLibrary }: { onOpenLibrary: (filters: FacetFil
       else {
         if (!svg.current) return
         const full = exportableSvg(svg.current, legend, cssVar('--text', '#222222'))
-        payload = ext === 'svg' ? new XMLSerializer().serializeToString(full) : await svgToPng(full, cssVar('--bg', '#ffffff'))
+        const text = new XMLSerializer().serializeToString(full)
+        payload = ext === 'svg' ? text : await svgToPng(text, Number(full.getAttribute('width')), Number(full.getAttribute('height')), cssVar('--bg', '#ffffff'))
       }
       const result = await window.research.exports.save(chartFileName(data, ext), payload)
       if (result.ok) setNotice({ error: false, text: t('map.graph.exported', { path: result.path }) })

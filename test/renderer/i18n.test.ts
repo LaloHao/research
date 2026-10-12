@@ -51,6 +51,8 @@ describe('es.json covers every code the UI can receive', () => {
     ...PAPER_KINDS.map((k) => `mappings.kinds.${k}`),
     ...OPENALEX_TYPES.map((k) => `mappings.openalex_types.${k}`),
     ...['identification', 'screening', 'included'].map((k) => `mappings.prisma.stages.${k}`),
+    'mappings.prisma.inconsistent_one',
+    'mappings.prisma.inconsistent_other',
     ...['protocol.errors.title', 'protocol.errors.empty_item', 'protocol.errors.years', 'screening.without_text_one', 'screening.without_text_other'].map((k) => `mappings.${k}`),
     ...['confirm_snowball_one', 'confirm_snowball_other', 'truncated', 'pick_again', 'inconsistent', 'years_invalid'].map((k) => `mappings.searches.${k}`),
     ...['duplicate_pending', 'inactive', 'conflict_pending', 'unchanged', 'same_keeps'].map((k) => `mappings.screening.${k}`),

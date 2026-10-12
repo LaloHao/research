@@ -390,3 +390,6 @@ button.danger { color: var(--error); border-color: var(--error); }
 .screening-abstract mark { background: var(--accent-soft); color: inherit; }
 .screening-suggestion { border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent-soft); padding: 8px 12px; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
 .criteria-picker { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.prisma { display: flex; flex-direction: column; gap: 8px; }
+.prisma-holder { overflow: auto; }
+.prisma-diagram { display: block; max-width: none; border: 1px solid var(--border); border-radius: var(--radius); background: #ffffff; }

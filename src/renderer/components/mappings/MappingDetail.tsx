@@ -4,6 +4,7 @@ import type { MappingView } from '../../../shared/mapping'
 import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
 import { MAPPING_TABS, type MappingTab } from '../../lib/navigation'
+import { PrismaTab } from './PrismaTab'
 import { ProtocolTab } from './ProtocolTab'
 import { ScreeningTab } from './ScreeningTab'
 import { SearchesTab } from './SearchesTab'
@@ -108,6 +109,9 @@ export function MappingDetail({ id }: { id: string }): React.JSX.Element {
         </div>
         <div id="mapping-panel-screening" role="tabpanel" aria-labelledby="mapping-tab-screening" hidden={tab !== 'screening'}>
           <ScreeningTab view={view} />
+        </div>
+        <div id="mapping-panel-prisma" role="tabpanel" aria-labelledby="mapping-tab-prisma" hidden={tab !== 'prisma'}>
+          <PrismaTab view={view} />
         </div>
       </div>
     </div>

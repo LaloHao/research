@@ -887,7 +887,9 @@
       "assessed_pending": "Reportes evaluados para elegibilidad (n = {{count}}; {{pending}} sin decidir)",
       "excluded_full_text": "Reportes excluidos:",
       "reason": "{{criterion}} (n = {{count}})",
-      "included": "Estudios incluidos en la revisión (n = {{count}})"
+      "included": "Estudios incluidos en la revisión (n = {{count}})",
+      "inconsistent_one": "{{count}} búsqueda dice traer menos registros de los que la tienen como fuente (searches.yaml se editó a mano): las cuentas del diagrama no cuadran. Revísala en «Búsquedas».",
+      "inconsistent_other": "{{count}} búsquedas dicen traer menos registros de los que las tienen como fuente (searches.yaml se editó a mano): las cuentas del diagrama no cuadran. Revísalas en «Búsquedas»."
     }
   },
   "chat": {
