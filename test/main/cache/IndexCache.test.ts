@@ -28,6 +28,42 @@ const typed = (from: string, to: string, over: Partial<TypedRelation> = {}): Typ
 })
 
 describe('IndexCache papers', () => {
+  it('keeps how many form facets a paper has not filled yet', async () => {
+    const { cache } = await openCache()
+    cache.upsertPaper(samplePaper(), 'h', true)
+    expect(cache.getPaper('he2017drain')?.unfilled_facets).toBe(0)
+    cache.setSummaryState('he2017drain', 'generated', 2, '', 'm', 3)
+    expect(cache.getPaper('he2017drain')).toMatchObject({ summary_status: 'generated', unfilled_facets: 3 })
+    cache.setSummaryState('he2017drain', 'reviewed', 0, '', 'm')
+    expect(cache.getPaper('he2017drain')?.unfilled_facets).toBe(0)
+  })
+
+  it('migrates a schema 8 cache in place, keeping its rows (and so its text and vectors)', async () => {
+    const file = join(await tmpDir(), 'index.sqlite')
+    const db = new DatabaseSync(file)
+    db.exec("CREATE TABLE papers (id TEXT PRIMARY KEY, title TEXT NOT NULL); INSERT INTO papers (id, title) VALUES ('he2017drain', 'Drain'); PRAGMA user_version = 8")
+    db.close()
+    IndexCache.open(file).close()
+    const check = new DatabaseSync(file)
+    expect(check.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 9 })
+    expect(check.prepare('SELECT id, unfilled_facets FROM papers').all().map((r) => ({ ...r }))).toEqual([{ id: 'he2017drain', unfilled_facets: 0 }])
+    check.close()
+  })
+
+  it('finishes a schema 8 upgrade an interrupted run left with the column already added, keeping its rows', async () => {
+    const file = join(await tmpDir(), 'index.sqlite')
+    const db = new DatabaseSync(file)
+    db.exec(
+      "CREATE TABLE papers (id TEXT PRIMARY KEY, title TEXT NOT NULL, unfilled_facets INTEGER NOT NULL DEFAULT 0); INSERT INTO papers (id, title, unfilled_facets) VALUES ('he2017drain', 'Drain', 2); PRAGMA user_version = 8"
+    )
+    db.close()
+    IndexCache.open(file).close()
+    const check = new DatabaseSync(file)
+    expect(check.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 9 })
+    expect(check.prepare('SELECT id, unfilled_facets FROM papers').all().map((r) => ({ ...r }))).toEqual([{ id: 'he2017drain', unfilled_facets: 2 }])
+    check.close()
+  })
+
   it('upserts and lists papers with a display label', async () => {
     const { cache } = await openCache()
     cache.upsertPaper(samplePaper(), 'h1', false)

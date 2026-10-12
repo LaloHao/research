@@ -24,7 +24,7 @@ import type { CostLedger } from '../llm/CostLedger'
 import { toUserFacing, UserFacingError } from '../library/UserFacingError'
 import { facetRowsFor } from '../map/facetStats'
 import type { ProjectStore } from '../project/ProjectStore'
-import { DEFAULT_EXTRACTION_FORM, formHash, loadForm } from './extractionForm'
+import { DEFAULT_EXTRACTION_FORM, formHashFor, loadForm, unfilledFacets } from './extractionForm'
 import { renderSummaryMarkdown } from './markdown'
 import {
   acceptProposed,
@@ -52,14 +52,15 @@ import { editThesisRelation, hasThesisContext, thesisHash, type ThesisPatch } fr
 const BATCH_STOPPERS = new Set(['llm_quota', 'budget_exceeded'])
 const ELIGIBLE = new Set(['none', 'stale', 'failed'])
 
-/** Brings the summary columns of one cache row up to date (status, pending count, searchable text). */
+/** Brings the summary columns of one cache row up to date (status, pending count, unfilled facets, searchable text). */
 export async function indexSummary(store: ProjectStore, cache: IndexCache, id: string): Promise<void> {
   const s = await store.readSummary(id)
   const e = await store.readExtraction(id)
   const summary = s?.ok ? s.value : null
   const extraction = e?.ok ? e.value : null
-  const form = loadForm(store.config.extraction_form)
-  const facetDefs = form.status === 'ok' ? form.form.facets : null
+  const load = loadForm(store.config.extraction_form)
+  const form = load.status === 'ok' ? load : null
+  const facetDefs = form ? form.form.facets : null
   const facetKeys = facetDefs ? facetDefs.map((f) => f.key) : null
   const currentThesis = currentThesisHash(store)
   const status = summaryState({
@@ -67,7 +68,8 @@ export async function indexSummary(store: ProjectStore, cache: IndexCache, id: s
     facetDefs,
     summary,
     extraction,
-    formHash: form.status === 'ok' ? form.hash : null,
+    // Per paper: a facet the paper has no entry for (added after it was summarized) leaves it up to date, only unfilled.
+    formHash: form ? (extraction ? formHashFor(form.form, Object.keys(extraction.facets)) : form.hash) : null,
     thesisHash: currentThesis,
     textChars: cache.textChars(id),
     maxChars: store.config.llm.max_input_chars,
@@ -78,7 +80,9 @@ export async function indexSummary(store: ProjectStore, cache: IndexCache, id: s
     status,
     countPending(summary, extraction, facetKeys, currentThesis, facetDefs),
     summarySearchText(summary, extraction),
-    summary?.generated.model ?? null
+    summary?.generated.model ?? null,
+    // Only an up-to-date summary has unfilled facets: a stale one is regenerated whole, never filled.
+    form && summary && extraction && (status === 'generated' || status === 'reviewed') ? unfilledFacets(form.form, extraction).length : 0
   )
   // The map's charts, lenses and similarity read facet values from the index, never from the files.
   cache.setFacets(id, facetRowsFor(extraction, facetDefs), extraction?.thesis_relation?.score ?? null)
@@ -304,16 +308,22 @@ export class SummaryService {
   }
 
   /**
-   * What saving `next` over the current form would do. 0 stale summaries when the facet hashes are equal (editing
-   * descriptions or adding/removing facets or a scale's min/max changes the hash; adding/removing allowed values does not).
+   * What saving `next` over the current form would do. A summary goes stale when a facet it has entries for is removed or
+   * changes its key, type, description or a scale's min/max; adding a facet, or adding/removing allowed values, stales nothing.
    * `removedValuesInUse` only looks at single/multi facets kept under the same key in both forms.
    */
   async formImpact(next: ExtractionForm): Promise<FormImpact> {
     const { store, cache } = this.deps
     const current = loadForm(store.config.extraction_form)
     if (current.status !== 'ok') return { staleCount: 0, removedValuesInUse: [] }
-    const staleCount =
-      formHash(next) === current.hash ? 0 : cache.listPapers().filter((r) => r.summary_status === 'generated' || r.summary_status === 'reviewed').length
+    // Per paper, like the stale check: only facets a paper has entries for count, so adding a facet stales nothing.
+    let staleCount = 0
+    for (const row of cache.listPapers()) {
+      if (row.summary_status !== 'generated' && row.summary_status !== 'reviewed') continue
+      const e = await store.readExtraction(row.id)
+      if (!e?.ok) continue
+      if (formHashFor(next, Object.keys(e.value.facets)) !== e.value.form_hash) staleCount++
+    }
 
     // One candidate (with its removed values) per kept single/multi facet; checked against each paper's
     // extraction with a single read, instead of re-reading every paper once per facet.
