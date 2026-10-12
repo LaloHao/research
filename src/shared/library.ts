@@ -79,6 +79,12 @@ export const USER_ERROR_CODES = [
   'chat_message_budget',
   'approval_gone',
   'undo_unavailable',
+  'mapping_not_found',
+  'mapping_invalid',
+  'import_unreadable',
+  'criterion_required',
+  'not_eligible',
+  'nothing_to_snowball',
   'unknown'
 ] as const
 export type UserErrorCode = (typeof USER_ERROR_CODES)[number]
@@ -104,7 +110,10 @@ export const JOB_OUTCOMES = [
   'relations_no_candidates',
   'facets_suggested',
   'facets_filled',
-  'facets_nothing_to_fill'
+  'facets_nothing_to_fill',
+  'mapping_searched',
+  'snowballed',
+  'screening_suggested'
 ] as const
 
 export interface PaperDetail {

@@ -40,6 +40,7 @@ describe('es.json covers every code the UI can receive', () => {
     ...VIEWS.map((v) => `rail.${v}`),
     ...MAP_TABS.map((tab) => `map.tabs.${tab}`),
     ...['citations', 'cited_by', 'embed', 'model_download', 'suggest_relations', 'fill_facets', 'suggest_facets', 'suggest_facets_auto'].map((type) => `jobs.${type}`),
+    ...['mapping_search', 'mapping_snowball', 'screen_suggest', 'ingest_record'].map((type) => `jobs.${type}`),
     ...['coupling_one', 'coupling_other', 'cocitation_one', 'cocitation_other', 'direct', 'content'].map((k) => `relations.reasons.${k}`),
     ...['score', 'no_value', 'no_relation', 'other_values', 'legend_count', 'model_missing', 'export_png', 'exported'].map((k) => `map.graph.${k}`),
     ...['typed', 'hide_suggested', 'typed_hover'].map((k) => `map.graph.${k}`),

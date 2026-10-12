@@ -209,6 +209,10 @@
     "fill_facets": "Llenar facetas nuevas de {{id}}",
     "suggest_facets": "Sugerir facetas",
     "suggest_facets_auto": "Sugerir facetas (automático)",
+    "mapping_search": "Buscar en OpenAlex para un mapeo: {{query}}",
+    "mapping_snowball": "Snowballing de un mapeo",
+    "screen_suggest": "Sugerir cribado de registros de un mapeo ({{count}})",
+    "ingest_record": "Agregar a la biblioteca un registro de un mapeo",
     "state": {
       "queued": "En cola",
       "running": "En curso",
@@ -231,7 +235,10 @@
       "relations_no_candidates": "sin candidatos para analizar",
       "facets_suggested": "sugerencias listas",
       "facets_filled": "facetas llenadas",
-      "facets_nothing_to_fill": "nada que llenar"
+      "facets_nothing_to_fill": "nada que llenar",
+      "mapping_searched": "búsqueda registrada en el mapeo",
+      "snowballed": "snowballing registrado en el mapeo",
+      "screening_suggested": "sugerencias de cribado listas"
     }
   },
   "errors": {
@@ -278,6 +285,12 @@
     "chat_message_budget": "La respuesta llegó a su tope por mensaje y se detuvo. Sube «Tope por mensaje de chat (USD est.)» en Ajustes → Claude o reintenta con otro modelo.",
     "approval_gone": "Esa aprobación ya no está pendiente: la respuesta terminó, se detuvo o pasó el tiempo.",
     "undo_unavailable": "Esa acción ya no se puede deshacer: cambió desde entonces, ya se deshizo o la app se cerró después.",
+    "mapping_not_found": "Ese mapeo ya no existe en el proyecto.",
+    "mapping_invalid": "Un archivo del mapeo no se puede leer (marcadores de conflicto de git o formato inválido). Sincroniza o corrígelo a mano.",
+    "import_unreadable": "No encontré registros en ese archivo. Usa una exportación BibTeX, RIS o CSV (Scopus, IEEE Xplore, ACM Digital Library, Web of Science).",
+    "criterion_required": "Elige un criterio del protocolo: uno de exclusión para excluir; uno de inclusión, o ninguno, para incluir.",
+    "not_eligible": "Ese registro no está en esa fase: a texto completo solo se criban los incluidos en título y resumen, y «No se pudo conseguir» es solo de texto completo.",
+    "nothing_to_snowball": "Todavía no hay estudios incluidos a texto completo desde los cuales hacer snowballing.",
     "unknown": "Ocurrió un error inesperado."
   },
   "paper": {
