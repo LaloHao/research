@@ -63,7 +63,7 @@ const evidenceJson = {
 
 const range = (min: number, max: number): number[] => Array.from({ length: max - min + 1 }, (_, i) => min + i)
 
-function facetJson(f: FacetDef): object {
+export function facetJson(f: FacetDef): object {
   switch (f.type) {
     case 'single':
       return obj({ value: { anyOf: [{ type: 'string', enum: f.values }, { type: 'null' }] }, proposed: strArr, evidence: evidenceJson })
@@ -101,7 +101,7 @@ export function outputJsonSchema(form: ExtractionForm, thesis?: ThesisContext | 
 
 const evidenceZod = z.array(z.object({ quote: z.string(), page: z.number().int().nullable() }))
 
-function facetZod(f: FacetDef): z.ZodType {
+export function facetZod(f: FacetDef): z.ZodType {
   switch (f.type) {
     case 'single':
       return z.object({ value: z.string().nullable(), proposed: z.array(z.string()), evidence: evidenceZod })
@@ -150,7 +150,7 @@ function toEvidence(list: LlmEvidence[]): Evidence[] {
     .map((e) => ({ quote: e.quote.trim(), page: e.page !== null && e.page > 0 ? e.page : null, found: false }))
 }
 
-function facetEntry(form: ExtractionForm, f: FacetDef, out: LlmFacet, origin: Provenance): FacetEntry {
+export function facetEntry(form: ExtractionForm, f: FacetDef, out: LlmFacet, origin: Provenance): FacetEntry {
   const evidence = toEvidence(out.evidence ?? [])
   switch (f.type) {
     case 'single': {

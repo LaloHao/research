@@ -11,6 +11,7 @@ export type JobSpec =
   | { type: 'embed'; paperId: string }
   | { type: 'model_download' }
   | { type: 'suggest_relations'; paperId: string; batchId?: string; model?: LlmModel; force?: boolean }
+  | { type: 'fill_facets'; paperId: string; batchId?: string }
 
 export type JobType = JobSpec['type']
 
