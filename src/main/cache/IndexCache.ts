@@ -726,8 +726,18 @@ function connect(file: string): DatabaseSync {
     const { user_version } = db.prepare('PRAGMA user_version').get() as { user_version: number }
     if (user_version === 8) {
       // 9 only adds a column: an 8 cache keeps its text, vectors and neighbours, and the next reindex fills the count.
-      db.exec('ALTER TABLE papers ADD COLUMN unfilled_facets INTEGER NOT NULL DEFAULT 0')
-      db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
+      // One transaction, so a crash never leaves the column added under version 8; the column check also tolerates a
+      // cache an interrupted earlier upgrade left that way.
+      db.exec('BEGIN')
+      try {
+        const columns = db.prepare('PRAGMA table_info(papers)').all() as { name: string }[]
+        if (!columns.some((c) => c.name === 'unfilled_facets')) db.exec('ALTER TABLE papers ADD COLUMN unfilled_facets INTEGER NOT NULL DEFAULT 0')
+        db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
+        db.exec('COMMIT')
+      } catch (error) {
+        db.exec('ROLLBACK')
+        throw error
+      }
     } else if (user_version !== SCHEMA_VERSION) {
       if (user_version !== 0) throw new Error('Stale cache schema')
       db.exec(DDL)

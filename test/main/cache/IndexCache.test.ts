@@ -50,6 +50,20 @@ describe('IndexCache papers', () => {
     check.close()
   })
 
+  it('finishes a schema 8 upgrade an interrupted run left with the column already added, keeping its rows', async () => {
+    const file = join(await tmpDir(), 'index.sqlite')
+    const db = new DatabaseSync(file)
+    db.exec(
+      "CREATE TABLE papers (id TEXT PRIMARY KEY, title TEXT NOT NULL, unfilled_facets INTEGER NOT NULL DEFAULT 0); INSERT INTO papers (id, title, unfilled_facets) VALUES ('he2017drain', 'Drain', 2); PRAGMA user_version = 8"
+    )
+    db.close()
+    IndexCache.open(file).close()
+    const check = new DatabaseSync(file)
+    expect(check.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 9 })
+    expect(check.prepare('SELECT id, unfilled_facets FROM papers').all().map((r) => ({ ...r }))).toEqual([{ id: 'he2017drain', unfilled_facets: 2 }])
+    check.close()
+  })
+
   it('upserts and lists papers with a display label', async () => {
     const { cache } = await openCache()
     cache.upsertPaper(samplePaper(), 'h1', false)

@@ -81,7 +81,8 @@ export async function indexSummary(store: ProjectStore, cache: IndexCache, id: s
     countPending(summary, extraction, facetKeys, currentThesis, facetDefs),
     summarySearchText(summary, extraction),
     summary?.generated.model ?? null,
-    form && summary && extraction ? unfilledFacets(form.form, extraction).length : 0
+    // Only an up-to-date summary has unfilled facets: a stale one is regenerated whole, never filled.
+    form && summary && extraction && (status === 'generated' || status === 'reviewed') ? unfilledFacets(form.form, extraction).length : 0
   )
   // The map's charts, lenses and similarity read facet values from the index, never from the files.
   cache.setFacets(id, facetRowsFor(extraction, facetDefs), extraction?.thesis_relation?.score ?? null)

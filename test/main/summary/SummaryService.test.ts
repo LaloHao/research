@@ -195,7 +195,8 @@ describe('SummaryService', () => {
       const changed = { ...added, facets: added.facets.map((f) => (f.key === 'rigor' ? { ...f, description: 'Changed' } : f)) }
       expect(await s.summaries.formImpact(changed)).toMatchObject({ staleCount: 1 })
       await s.summaries.updateForm(changed)
-      expect(s.library.list()[0]).toMatchObject({ summary_status: 'stale' })
+      // A stale summary is regenerated whole, so it counts no unfilled facets even though data_source is still missing.
+      expect(s.library.list()[0]).toMatchObject({ summary_status: 'stale', unfilled_facets: 0 })
       await s.close()
     })
 
