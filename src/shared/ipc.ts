@@ -11,6 +11,7 @@ import type {
   MappingRecordRow,
   MappingSummary,
   MappingView,
+  OpenAlexCount,
   OpenAlexSearchRequest,
   Phase,
   ProtocolDraft,
@@ -135,6 +136,8 @@ export const IPC = {
   mappingsOpen: 'mappings:open',
   mappingsSaveProtocol: 'mappings:save-protocol',
   mappingsSearch: 'mappings:search',
+  mappingsCount: 'mappings:count',
+  mappingsComplete: 'mappings:complete',
   mappingsChooseImport: 'mappings:choose-import',
   mappingsImport: 'mappings:import',
   mappingsAddFromLibrary: 'mappings:add-from-library',
@@ -410,6 +413,10 @@ export interface ResearchApi {
     saveProtocol(id: string, draft: ProtocolDraft, version: number): Promise<ActionResult>
     /** Queues the OpenAlex search after the user confirmed it; its log entry and records appear when the job ends. */
     searchOpenAlex(id: string, req: OpenAlexSearchRequest, confirmed: true): Promise<ActionResult>
+    /** OpenAlex's own count of the search's results (one request, no money), asked before the confirmation. */
+    countOpenAlex(id: string, req: Omit<OpenAlexSearchRequest, 'cap'>): Promise<OpenAlexCount>
+    /** «Completar búsqueda»: queues the same search at the maximum cap; it replaces `searchId` once it is logged. */
+    completeSearch(id: string, searchId: string, confirmed: true): Promise<ActionResult>
     /**
      * Asks for an export file (BibTeX, RIS or CSV) in the app's dialog; null when the user cancels. The path stays in
      * the main process: `importFile` names the file by the token, once.

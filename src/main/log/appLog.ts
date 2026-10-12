@@ -442,6 +442,7 @@ export function jobFields(spec: JobSpec): LogFields {
   if (spec.type === 'mapping_search') {
     out.queryChars = spec.query.length
     out.cap = spec.cap
+    if (spec.replaces) out.replaces = spec.replaces
   }
   if (spec.type === 'mapping_snowball') out.direction = spec.direction
   if (spec.type === 'screen_suggest') out.records = spec.recordIds.length

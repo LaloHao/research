@@ -295,6 +295,10 @@ describe('typed relation arguments', () => {
     for (const bad of [{ ...search, cap: 6000 }, { ...search, types: ['conference'] }, { ...search, query: '' }, { ...search, mailto: 'x' }]) {
       expect(() => arg(ipcArgs.openalexSearch, bad, 'search')).toThrow()
     }
+    // The count before confirming: the same search without a cap (a cap, or anything else, is refused).
+    const { cap: _cap, ...count } = search
+    expect(arg(ipcArgs.openalexCount, count, 'search')).toEqual(count)
+    for (const bad of [search, { ...count, query: ' ' }, { ...count, fromYear: 1700 }, { ...count, types: ['conference'] }]) expect(() => arg(ipcArgs.openalexCount, bad, 'search')).toThrow()
     expect(arg(ipcArgs.importSource, { database: 'Scopus', query: '' }, 'source')).toEqual({ database: 'Scopus', query: '' })
     expect(() => arg(ipcArgs.importSource, { database: 'Scopus', query: '', path: '/etc/passwd' }, 'source')).toThrow()
     // The file to import is named by the token the main process's dialog handed out, never by a path.

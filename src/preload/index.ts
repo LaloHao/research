@@ -137,6 +137,8 @@ const api: ResearchApi = {
     saveProtocol: (id, draft, version) => ipcRenderer.invoke(IPC.mappingsSaveProtocol, id, draft, version),
     // `confirmed` comes from the window's confirmation of a costly request, never assumed here.
     searchOpenAlex: (id, req, confirmed) => ipcRenderer.invoke(IPC.mappingsSearch, id, req, confirmed),
+    countOpenAlex: (id, req) => ipcRenderer.invoke(IPC.mappingsCount, id, req),
+    completeSearch: (id, searchId, confirmed) => ipcRenderer.invoke(IPC.mappingsComplete, id, searchId, confirmed),
     // The export file is picked by the main process; the window only gets its name and a token.
     chooseImportFile: () => ipcRenderer.invoke(IPC.mappingsChooseImport),
     importFile: (id, token, source) => ipcRenderer.invoke(IPC.mappingsImport, id, token, source),

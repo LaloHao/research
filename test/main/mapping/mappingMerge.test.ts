@@ -31,6 +31,19 @@ describe('searches.yaml', () => {
     expect(read<{ searches: Search[] }>(mergeSearchesText({ base: null, ours: searchesText([discarded]), theirs: searchesText([earlier]) })).searches[0].discarded?.reason).toBe('First.')
   })
 
+  it('keeps the link of a search «Completar búsqueda» replaced, made on either machine', () => {
+    const s1 = search({ kind: 'openalex', capped: true })
+    const s2 = search({ id: hexId('s', 2), at: LATE, kind: 'openalex' })
+    const completed = { ...s1, discarded: { at: LATE, reason: 'completed', machine: 'machine-b', replaced_by: s2.id } }
+    const merged = read<{ searches: Search[] }>(mergeSearchesText({ base: searchesText([s1]), ours: searchesText([s1]), theirs: searchesText([completed, s2]) }))
+    expect(merged.searches.map((s) => [s.id, s.discarded?.replaced_by ?? null])).toEqual([
+      [s1.id, s2.id],
+      [s2.id, null]
+    ])
+    const both = read<{ searches: Search[] }>(mergeSearchesText({ base: null, ours: searchesText([completed, s2]), theirs: searchesText([completed, s2]) }))
+    expect(both.searches[0].discarded).toEqual(completed.discarded)
+  })
+
   it('keeps unknown keys of both machines, and a one-sided change of a search', () => {
     const s1 = search()
     const ours = { ...s1, count: 5, note_a: 'ours' }

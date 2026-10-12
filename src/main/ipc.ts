@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
+import type { OpenAlexCount } from '../shared/mapping'
 import type { CountResult } from '../shared/relations'
 import type { FormImpact } from '../shared/summary'
 import type { DeletePlanResult, RestoreOutcome, TrashOutcome } from '../shared/trash'
@@ -34,6 +35,9 @@ import { appLog, RendererErrorGate } from './log/appLog'
 import type { MappingService } from './mapping/MappingService'
 import { RELATIONS_FILE } from './project/relationsFile'
 import type { SyncService } from './sync/SyncService'
+
+/** How long «Buscar» waits for OpenAlex's count before showing the confirmation without it. */
+const COUNT_TIMEOUT_MS = 20_000
 
 /** Writes travel back as `{ ok }`; failures carry the code the UI translates. */
 async function actionResult(action: () => Promise<unknown>): Promise<ActionResult> {
@@ -493,6 +497,22 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     const req = arg(ipcArgs.openalexSearch, rawReq, 'search')
     arg(ipcArgs.confirmed, rawConfirmed, 'confirmed')
     return actionResult(async () => app.requireSession().mappings.requestSearch(id, req))
+  })
+  ipcMain.handle(IPC.mappingsCount, async (_e, rawId: unknown, rawReq: unknown): Promise<OpenAlexCount> => {
+    const id = arg(ipcArgs.mappingId, rawId, 'id')
+    const req = arg(ipcArgs.openalexCount, rawReq, 'search')
+    try {
+      // Not tracked: closing the project never waits on a count, which gives up after a while anyway.
+      return { ok: true, total: await app.requireSession().mappings.countSearch(id, req, AbortSignal.timeout(COUNT_TIMEOUT_MS)) }
+    } catch (error) {
+      return failed(error)
+    }
+  })
+  ipcMain.handle(IPC.mappingsComplete, (_e, rawId: unknown, rawSearch: unknown, rawConfirmed: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.mappingId, rawId, 'id')
+    const searchId = arg(ipcArgs.searchId, rawSearch, 'search')
+    arg(ipcArgs.confirmed, rawConfirmed, 'confirmed')
+    return actionResult(() => mappings((m) => m.requestComplete(id, searchId)))
   })
   ipcMain.handle(IPC.mappingsChooseImport, async (): Promise<ImportChoice | null> => {
     const path = await chooseExport(getWindow())

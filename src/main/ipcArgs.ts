@@ -205,6 +205,13 @@ export const ipcArgs = {
     types: z.array(z.enum(OPENALEX_TYPES)).max(OPENALEX_TYPES.length),
     cap: z.number().int().min(1).max(SEARCH_CAP.max)
   }),
+  /** «Buscar» asks OpenAlex for the count first: the same search without its cap. */
+  openalexCount: z.strictObject({
+    query: z.string().trim().min(1).max(MAX_QUERY),
+    fromYear: yearSchema,
+    toYear: yearSchema,
+    types: z.array(z.enum(OPENALEX_TYPES)).max(OPENALEX_TYPES.length)
+  }),
   /** The database the export came from and the string used there; the file is named apart, by its dialog token. */
   importSource: z.strictObject({ database: z.string().trim().min(1).max(200), query: z.string().max(MAX_QUERY) }),
   /** The export file to import: the token the main process's dialog handed out for it, never a path from the window. */

@@ -2,9 +2,11 @@ import type { TFunction } from 'i18next'
 import {
   criterionText,
   hasFilterSeparator,
+  quotedWildcard,
   QUEUE_FILTERS,
   SEARCH_CAP,
   SNOWBALL_CAP,
+  type OpenAlexCount,
   type OpenAlexSearchRequest,
   type OpenAlexType,
   type Phase,
@@ -18,9 +20,11 @@ import {
   YEAR_MAX,
   YEAR_MIN
 } from '../../shared/mapping'
+import type { JobRecord } from '../../shared/jobs'
 import type { PaperKind } from '../../shared/schemas'
 import type { ThesisContext } from '../../shared/summary'
 import { locateInOriginal } from '../../shared/textMatch'
+import { errorText } from './errorText'
 import type { PrismaLabels } from './prismaSvg'
 
 export type ScreeningCommand =
@@ -187,6 +191,38 @@ export function searchField(t: TFunction, s: Search): string | null {
   return s.field ? t('mappings.searches.field', { field: t(`mappings.searches.fields.${s.field}`, { defaultValue: s.field }) }) : null
 }
 
+/**
+ * A search's figures in the log: the rows it received (read, for an export or the library), OpenAlex's own total when
+ * it gave one, and the distinct records the mapping holds from it now (its rows less the works OpenAlex repeated
+ * while paging and the records later merged as duplicates).
+ */
+export function searchCountParts(t: TFunction, s: Search, held: number): string[] {
+  const received = s.kind === 'import' || s.kind === 'library' ? 'count_read' : 'count_received'
+  return [
+    t(`mappings.searches.${received}`, { count: s.count }),
+    ...(s.total === null ? [] : [t(s.kind === 'openalex' ? 'mappings.searches.count_total' : 'mappings.searches.count_found', { count: s.total })]),
+    t('mappings.searches.count_held', { count: held })
+  ]
+}
+
+/** How a discarded search reads in the log: completed by a later search (its date), or discarded with the user's reason. */
+export function discardedText(t: TFunction, s: Search, searches: readonly Search[]): string | null {
+  const d = s.discarded
+  if (!d) return null
+  if (d.replaced_by) {
+    const by = searches.find((x) => x.id === d.replaced_by)
+    return t('mappings.searches.completed_by', { date: new Date(by?.at ?? d.at).toLocaleString() })
+  }
+  return t('mappings.searches.discarded', { date: new Date(d.at).toLocaleDateString(), reason: d.reason })
+}
+
+/** The searches a queued or running «Completar búsqueda» will replace (its job's `replaces`). */
+export function pendingCompletions(jobs: readonly JobRecord[]): Set<string> {
+  const out = new Set<string>()
+  for (const job of jobs) if ((job.state === 'queued' || job.state === 'running') && job.spec.type === 'mapping_search' && job.spec.replaces) out.add(job.spec.replaces)
+  return out
+}
+
 /** The OpenAlex form as typed. */
 export interface OpenAlexForm {
   query: string
@@ -199,13 +235,18 @@ export interface OpenAlexForm {
 const validYear = (n: number | null): boolean => n === null || (Number.isInteger(n) && n >= YEAR_MIN && n <= YEAR_MAX)
 
 /**
- * The request «Buscar» asks to confirm, or why it cannot run yet: no search string, or a year out of range (or the
- * first after the last). The cap is kept within 1 and the maximum; an unreadable cap is the default.
+ * The request «Buscar» asks to confirm, or why it cannot run yet: no search string, a string OpenAlex would refuse or
+ * read differently (a filter separator, a wildcard inside a quoted phrase: `phrase` names it), or a year out of range
+ * (or the first after the last). The cap is kept within 1 and the maximum; an unreadable cap is the default.
  */
-export function openAlexRequest(form: OpenAlexForm): { ok: true; req: OpenAlexSearchRequest } | { ok: false; problem: 'query' | 'separator' | 'years' } {
+export function openAlexRequest(
+  form: OpenAlexForm
+): { ok: true; req: OpenAlexSearchRequest } | { ok: false; problem: 'query' | 'separator' | 'years' } | { ok: false; problem: 'quoted_wildcard'; phrase: string } {
   const query = form.query.trim()
   if (!query) return { ok: false, problem: 'query' }
   if (hasFilterSeparator(query)) return { ok: false, problem: 'separator' }
+  const phrase = quotedWildcard(query)
+  if (phrase) return { ok: false, problem: 'quoted_wildcard', phrase }
   const fromYear = yearValue(form.fromYear)
   const toYear = yearValue(form.toYear)
   if (!validYear(fromYear) || !validYear(toYear) || (fromYear !== null && toYear !== null && fromYear > toYear)) return { ok: false, problem: 'years' }
@@ -217,11 +258,48 @@ export function openAlexRequest(form: OpenAlexForm): { ok: true; req: OpenAlexSe
 /** OpenAlex's search pages hold 100 results. */
 const OPENALEX_PAGE = 100
 
-/** The confirmation of «Buscar en OpenAlex»: how many results at most, the years and types it filters by, and that it costs no money. */
-export function openAlexPlanLines(t: TFunction, req: OpenAlexSearchRequest): string[] {
+/**
+ * What OpenAlex's count says about the cap, for the confirmation: `fits` (everything comes), `raise` (more than the
+ * cap, but a cap of `total` is allowed: «Subir el tope»), `too_many` (more than any cap: refine the string), or
+ * `unknown` (the count could not be read).
+ */
+export type CountAdvice = { kind: 'unknown'; error: string } | { kind: 'fits' | 'raise' | 'too_many'; total: number; fetched: number }
+
+export function countAdvice(req: Pick<OpenAlexSearchRequest, 'cap'>, count: OpenAlexCount): CountAdvice {
+  if (!count.ok) return { kind: 'unknown', error: count.error }
+  const { total } = count
+  const fetched = Math.min(total, req.cap)
+  if (total <= req.cap) return { kind: 'fits', total, fetched }
+  return { kind: total <= SEARCH_CAP.max ? 'raise' : 'too_many', total, fetched }
+}
+
+/** The cap «Subir el tope a N» sets; null when the count does not call for one. */
+export function raisedCap(req: Pick<OpenAlexSearchRequest, 'cap'>, count: OpenAlexCount): number | null {
+  const advice = countAdvice(req, count)
+  return advice.kind === 'raise' ? advice.total : null
+}
+
+/**
+ * The confirmation of «Buscar en OpenAlex»: what OpenAlex's count says (when it was asked: how many results there are
+ * and how many come, or that the count failed and why), the years and types it filters by, and that it costs no money.
+ */
+export function openAlexPlanLines(t: TFunction, req: OpenAlexSearchRequest, count?: OpenAlexCount): string[] {
   const { fromYear: from, toYear: to } = req
+  const advice = count ? countAdvice(req, count) : null
+  const head =
+    advice === null || advice.kind === 'unknown'
+      ? [
+          ...(advice ? [t('mappings.searches.count_failed', { error: errorText(t, advice.error) })] : []),
+          t('mappings.searches.confirm_openalex', { cap: req.cap, pages: Math.ceil(req.cap / OPENALEX_PAGE) })
+        ]
+      : [
+          advice.total === 0
+            ? t('mappings.searches.confirm_count_none')
+            : t('mappings.searches.confirm_count', { total: advice.total, fetched: advice.fetched, pages: Math.ceil(advice.fetched / OPENALEX_PAGE) }),
+          ...(advice.kind === 'too_many' ? [t('mappings.searches.count_too_many', { max: SEARCH_CAP.max })] : [])
+        ]
   return [
-    t('mappings.searches.confirm_openalex', { cap: req.cap, pages: Math.ceil(req.cap / OPENALEX_PAGE) }),
+    ...head,
     t('mappings.searches.confirm_field'),
     from !== null && to !== null
       ? t('mappings.searches.confirm_years_range', { from, to })

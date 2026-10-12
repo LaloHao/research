@@ -137,6 +137,7 @@ describe('jobFields', () => {
       queryChars: 12,
       cap: 500
     })
+    expect(jobFields({ type: 'mapping_search', mappingId: 'm1', query: 'secret', fromYear: null, toYear: null, types: [], cap: 5000, replaces: 's0123456789ab' })).toMatchObject({ replaces: 's0123456789ab' })
     expect(jobFields({ type: 'screen_suggest', mappingId: 'm1', phase: 'title_abstract', recordIds: ['a', 'b'], batchId: 'b1' })).toEqual({
       type: 'screen_suggest',
       mappingId: 'm1',
