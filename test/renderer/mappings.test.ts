@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { TFunction } from 'i18next'
 import {
+  approxUsd,
   draftOf,
   draftOutdated,
   draftProblems,
@@ -214,5 +215,14 @@ describe('search confirmations', () => {
       'mappings.searches.confirm_snowball_cap {"cap":2000}',
       'mappings.searches.confirm_free'
     ])
+  })
+})
+
+describe('approxUsd', () => {
+  it('shows an estimate with two decimals, and never ~$0.00', () => {
+    expect(approxUsd(1.234)).toBe('~$1.23')
+    expect(approxUsd(0.01)).toBe('~$0.01')
+    expect(approxUsd(0.004)).toBe('< $0.01')
+    expect(approxUsd(0)).toBe('< $0.01')
   })
 })

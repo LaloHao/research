@@ -12,7 +12,8 @@ import {
 } from '../../../shared/mapping'
 import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
-import { criterionLabel, filtersFor, highlight, keepPosition, phaseLabel, planLines, screeningCommand, type ScreeningCommand } from '../../lib/mappings'
+import { approxUsd, criterionLabel, filtersFor, highlight, keepPosition, phaseLabel, planLines, screeningCommand, type ScreeningCommand } from '../../lib/mappings'
+import { trapTab } from '../../lib/focusTrap'
 import { UNDO_MS } from '../../lib/typedRelations'
 import { PaperDetail } from '../paper/PaperDetail'
 
@@ -83,12 +84,15 @@ export function ScreeningTab({ view }: { view: MappingView }): React.JSX.Element
   const load = useCallback(
     (keep: boolean) => {
       const token = ++request.current
-      const before = place.current
+      // A new phase or filter never shows the previous list's record meanwhile.
+      if (!keep) setRows(null)
       window.research.mappings.queue(view.id, { phase, filter }).then(
         (next) => {
           if (token !== request.current) return
+          // The place as displayed now: a move made while the request was in flight is kept.
+          const shown = place.current
           setRows(next)
-          setIndex(keep ? keepPosition(before.ids, before.index, next.map((r) => r.id)) : 0)
+          setIndex(keep ? keepPosition(shown.ids, shown.index, next.map((r) => r.id)) : 0)
         },
         () => {
           if (token === request.current) setError(errorText(t, 'unknown'))
@@ -130,6 +134,9 @@ export function ScreeningTab({ view }: { view: MappingView }): React.JSX.Element
   const suggestion = row?.suggestions[phase] ?? null
   const conflicts = view.conflicts.filter((c) => c.phase === phase)
   const current = row ? row[phase] : null
+  const rowId = row?.id ?? null
+  // The criteria list belongs to the record E was pressed on: another record on screen closes it.
+  useEffect(() => setChoosing(false), [rowId])
   // decide and resolveConflict refuse these (not_eligible): the buttons are not offered.
   const blockedReason = !row
     ? null
@@ -164,7 +171,8 @@ export function ScreeningTab({ view }: { view: MappingView }): React.JSX.Element
 
   /** The queue reloads on 'mappings-changed', keeping the place (a decided record leaves a «sin decidir» list). */
   const decide = (decision: UserDecision, criterion: string | null, suggestionId: string | null = null): void => {
-    if (!row || !canDecide || busy) return
+    if (!row || !current || !canDecide || busy) return
+    const before = current.decisionId
     setBusy(true)
     setError(null)
     setNotice(null)
@@ -173,7 +181,11 @@ export function ScreeningTab({ view }: { view: MappingView }): React.JSX.Element
         if (!r.ok) return fail(r.error)
         setBusy(false)
         setChoosing(false)
-        showUndo(r.decisionId)
+        // The same decision again writes nothing and answers with the current one: there is nothing to undo.
+        if (r.decisionId === before) {
+          clearUndo()
+          setNotice(t('mappings.screening.unchanged'))
+        } else showUndo(r.decisionId)
       },
       () => fail('unknown')
     )
@@ -339,10 +351,12 @@ export function ScreeningTab({ view }: { view: MappingView }): React.JSX.Element
     )
   }
 
-  const closeOnEscape = (close: () => void) => (e: React.KeyboardEvent) => {
-    if (e.key !== 'Escape') return
-    e.preventDefault()
-    close()
+  /** A confirmation's keys: Esc cancels, Tab stays inside. */
+  const dialogKeys = (close: () => void) => (e: React.KeyboardEvent<HTMLElement>) => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      close()
+    } else trapTab(e)
   }
 
   return (
@@ -375,13 +389,21 @@ export function ScreeningTab({ view }: { view: MappingView }): React.JSX.Element
           </button>
         )}
       </div>
-      {notice && <div className="banner">{notice}</div>}
-      {error && <div className="banner error">{error}</div>}
+      {notice && (
+        <div className="banner" role="status">
+          {notice}
+        </div>
+      )}
+      {error && (
+        <div className="banner error" role="alert">
+          {error}
+        </div>
+      )}
       {/* Outside the card: deciding the last record of a list empties it, and «Deshacer» must stay. */}
       {undo && (
-        <div className="banner">
+        <div className="banner" role="status">
           <span>{t('mappings.screening.decided')}</span>
-          <button className="small" disabled={busy} onClick={undoLast}>
+          <button className="small" disabled={busy} aria-keyshortcuts="U" onClick={undoLast}>
             {t('mappings.screening.undo')}
           </button>
         </div>
@@ -399,6 +421,7 @@ export function ScreeningTab({ view }: { view: MappingView }): React.JSX.Element
                     <strong>{r.title}</strong> <span className="muted">{[r.authors_label, r.year, r.venue, r.doi].filter(Boolean).join(' · ')}</span>
                   </p>
                 ))}
+                <p className="muted small">{t('mappings.screening.same_keeps', { title: d.other.title })}</p>
                 <div className="row small">
                   <span className="muted">{t(`mappings.screening.duplicate_reasons.${d.reason}`)}</span>
                   <button disabled={busy} onClick={() => resolveDuplicate(d.record.id, true)}>
@@ -494,7 +517,7 @@ export function ScreeningTab({ view }: { view: MappingView }): React.JSX.Element
                 )}
                 {suggestion.outdated && <p className="warning-text small">{t('mappings.screening.suggestion_outdated')}</p>}
                 {canDecide && (
-                  <button className="small" disabled={busy} onClick={accept}>
+                  <button className="small" disabled={busy} aria-keyshortcuts="A" onClick={accept}>
                     {t('mappings.screening.accept')}
                   </button>
                 )}
@@ -505,21 +528,22 @@ export function ScreeningTab({ view }: { view: MappingView }): React.JSX.Element
             ) : (
               <>
                 <div className="row card-actions">
-                  <button disabled={busy} onClick={() => decide('include', null)}>
+                  <button disabled={busy} aria-keyshortcuts="I" onClick={() => decide('include', null)}>
                     {t('mappings.screening.include')}
                   </button>
                   <button
                     disabled={busy || exclusions.length === 0}
+                    aria-keyshortcuts="E"
                     aria-expanded={exclusions.length > 1 ? choosing : undefined}
                     onClick={() => (exclusions.length === 1 ? decide('exclude', exclusions[0].id) : setChoosing((open) => !open))}
                   >
                     {t('mappings.screening.exclude')}
                   </button>
-                  <button disabled={busy} onClick={() => decide('uncertain', null)}>
+                  <button disabled={busy} aria-keyshortcuts="D" onClick={() => decide('uncertain', null)}>
                     {t('mappings.screening.uncertain')}
                   </button>
                   {phase === 'full_text' && (
-                    <button disabled={busy} onClick={() => decide('not_retrieved', null)}>
+                    <button disabled={busy} aria-keyshortcuts="N" onClick={() => decide('not_retrieved', null)}>
                       {t('mappings.screening.not_retrieved')}
                     </button>
                   )}
@@ -539,7 +563,8 @@ export function ScreeningTab({ view }: { view: MappingView }): React.JSX.Element
             )}
           </div>
           {phase === 'full_text' && (
-            <div className="screening-paper">
+            // Focusable, so a click on its text or PDF takes the focus there and the shortcuts stay out of the paper.
+            <div className="screening-paper" tabIndex={-1}>
               {row.paper_id ? (
                 <PaperDetail key={row.paper_id} id={row.paper_id} />
               ) : (
@@ -557,7 +582,7 @@ export function ScreeningTab({ view }: { view: MappingView }): React.JSX.Element
 
       {plan && (
         <div className="modal-backdrop">
-          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="suggest-title" onKeyDown={closeOnEscape(() => setPlan(null))}>
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="suggest-title" onKeyDown={dialogKeys(() => setPlan(null))}>
             <h3 id="suggest-title">{t('mappings.screening.suggest_title')}</h3>
             {planLines(t, plan).map((line) => (
               <p key={line}>{line}</p>
@@ -577,12 +602,12 @@ export function ScreeningTab({ view }: { view: MappingView }): React.JSX.Element
 
       {ingest && (
         <div className="modal-backdrop">
-          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="ingest-title" onKeyDown={closeOnEscape(() => setIngest(null))}>
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="ingest-title" onKeyDown={dialogKeys(() => setIngest(null))}>
             <p id="ingest-title">
               <strong>{t('mappings.screening.ingest_confirm', { count: ingest.count })}</strong>
             </p>
             <p className="muted small">{t('mappings.screening.ingest_help')}</p>
-            {ingest.autoSummarize && <p className="warning-text">{t('mappings.screening.ingest_auto', { cost: ingest.estimateUsd.toFixed(2) })}</p>}
+            {ingest.autoSummarize && <p className="warning-text">{t('mappings.screening.ingest_auto', { cost: approxUsd(ingest.estimateUsd) })}</p>}
             <div className="row">
               <button autoFocus onClick={() => setIngest(null)}>
                 {t('mappings.screening.cancel')}

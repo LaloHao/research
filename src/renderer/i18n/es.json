@@ -830,7 +830,7 @@
       "ingest_help": "Los incluidos en título y resumen pasan a la biblioteca con la ingesta de siempre: metadatos, BibTeX y el PDF de acceso abierto si existe.",
       "ingest_confirm_one": "Se agregará {{count}} registro a la biblioteca.",
       "ingest_confirm_other": "Se agregarán {{count}} registros a la biblioteca.",
-      "ingest_auto": "Tienes activado «Resumir automáticamente al agregar»: también se resumirán, con un costo estimado de ~${{cost}}.",
+      "ingest_auto": "Tienes activado «Resumir automáticamente al agregar»: también se resumirán, con un costo estimado de {{cost}}.",
       "ingest_run": "Agregar",
       "ingest_queued_one": "{{count}} registro en cola para agregarse (Actividad).",
       "ingest_queued_other": "{{count}} registros en cola para agregarse (Actividad).",
@@ -851,7 +851,9 @@
       "keep": "Quedarme con esta",
       "duplicate_pending": "Este registro puede ser un duplicado: responde «Es el mismo» o «Son distintos» arriba antes de cribarlo.",
       "inactive": "Este registro ya no está en el cribado: se fusionó con otro o solo lo trajo una búsqueda descartada.",
-      "conflict_pending": "Este registro tiene decisiones distintas en dos equipos: elige arriba con cuál quedarte."
+      "conflict_pending": "Este registro tiene decisiones distintas en dos equipos: elige arriba con cuál quedarte.",
+      "unchanged": "Ese registro ya tenía esa decisión: no cambió nada.",
+      "same_keeps": "«Es el mismo» conserva «{{title}}» y le suma las fuentes y los datos que le falten del otro."
     },
     "state": {
       "pending": "Sin decidir",

@@ -247,6 +247,11 @@ export function snowballPlanLines(t: TFunction, plan: { direction: SnowballDirec
 
 const usd = (n: number): string => n.toFixed(2)
 
+/** An estimate as the confirmations show it: «~$1.23», or «< $0.01» for a smaller one (never «~$0.00»). */
+export function approxUsd(n: number): string {
+  return n >= 0.005 ? `~$${n.toFixed(2)}` : '< $0.01'
+}
+
 /** The lines of «Sugerir cribado»'s confirmation: records, calls and estimate; the caps; the month; papers without text. */
 export function planLines(t: TFunction, plan: ScreeningPlan): string[] {
   return [
