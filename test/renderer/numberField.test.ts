@@ -33,6 +33,8 @@ describe('parseCount', () => {
     expect(parseCount('1.5')).toEqual({ ok: false, issue: 'not_integer' })
     expect(parseCount('0')).toEqual({ ok: false, issue: 'not_positive' })
     expect(parseCount('')).toEqual({ ok: false, issue: 'required' })
+    expect(parseCount('1000', 1000)).toEqual({ ok: true, value: 1000 })
+    expect(parseCount('1001', 1000)).toEqual({ ok: false, issue: 'too_large' })
   })
 })
 

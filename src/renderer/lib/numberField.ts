@@ -1,5 +1,5 @@
 /** Why a number typed in Settings was rejected; each has a message under `settings.invalid`. */
-export const NUMBER_ISSUES = ['required', 'not_number', 'not_positive', 'cap_not_positive', 'not_integer'] as const
+export const NUMBER_ISSUES = ['required', 'not_number', 'not_positive', 'cap_not_positive', 'not_integer', 'too_large'] as const
 export type NumberIssue = (typeof NUMBER_ISSUES)[number]
 export type Parsed<T> = { ok: true; value: T } | { ok: false; issue: NumberIssue }
 
@@ -24,13 +24,14 @@ export function parseCap(raw: string): Parsed<number | null> {
   return !parsed.ok && parsed.issue === 'not_positive' ? { ok: false, issue: 'cap_not_positive' } : parsed
 }
 
-/** A required whole count greater than zero. */
-export function parseCount(raw: string): Parsed<number> {
+/** A required whole count greater than zero (and at most `max`, when given). */
+export function parseCount(raw: string, max?: number): Parsed<number> {
   if (raw.trim() === '') return { ok: false, issue: 'required' }
   const value = toNumber(raw)
   if (value === null) return { ok: false, issue: 'not_number' }
   if (!Number.isInteger(value)) return { ok: false, issue: 'not_integer' }
-  return value > 0 ? { ok: true, value } : { ok: false, issue: 'not_positive' }
+  if (value <= 0) return { ok: false, issue: 'not_positive' }
+  return max !== undefined && value > max ? { ok: false, issue: 'too_large' } : { ok: true, value }
 }
 
 /** A required whole number that may be negative or zero — e.g. a scale facet's min/max bound. */

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { FacetSuggestion, FacetSuggestionList, FacetSuggestionView, FacetSuggestPlan, SuggestionEdit, SuggestionExample } from '../../../shared/facetSuggestions'
 import type { FacetDecisionResult } from '../../../shared/ipc'
@@ -24,8 +24,10 @@ export function FacetSuggestionsSection({ form, formDirty }: { form: ExtractionF
   const [fillOffer, setFillOffer] = useState<SummaryPlan | null>(null)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<Notice | null>(null)
-  const [editing, setEditing] = useState<{ id: string; edit: SuggestionEdit } | null>(null)
-  const [undo, setUndo] = useState<{ token: string; text: string } | null>(null)
+  /** The open «Editar y aceptar», tied to the version of the suggestion it was opened on. */
+  const [editing, setEditing] = useState<{ id: string; updatedAt: string; edit: SuggestionEdit } | null>(null)
+  /** `accepted`: undoing rewrites the saved form, so it waits for the form editor to be clean, like accepting. */
+  const [undo, setUndo] = useState<{ token: string; text: string; accepted: boolean } | null>(null)
   const [evidence, setEvidence] = useState<{ example: SuggestionExample; detail: PaperDetail } | null>(null)
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const listRequest = useRef(0)
@@ -54,6 +56,22 @@ export function FacetSuggestionsSection({ form, formDirty }: { form: ExtractionF
     []
   )
 
+  // A run replaced the suggestion being edited (same id, new proposal), or it was decided elsewhere: drop the old edit.
+  useEffect(() => {
+    if (!list) return
+    setEditing((current) => {
+      if (!current) return current
+      const view = list.suggestions.find((v) => v.suggestion.id === current.id)
+      return view && view.suggestion.status === 'suggested' && view.suggestion.updated_at === current.updatedAt ? current : null
+    })
+  }, [list])
+
+  // A run started (from here, another window or the automatic trigger): its cost confirmation no longer applies.
+  const running = list?.running ?? false
+  useEffect(() => {
+    if (running) setPlan(null)
+  }, [running])
+
   const fail = (code: string): void => setNotice({ error: true, text: errorText(t, code) })
 
   const clearUndo = (): void => {
@@ -62,9 +80,9 @@ export function FacetSuggestionsSection({ form, formDirty }: { form: ExtractionF
     setUndo(null)
   }
 
-  const showUndo = (token: string, text: string): void => {
+  const showUndo = (token: string, text: string, accepted: boolean): void => {
     clearUndo()
-    setUndo({ token, text })
+    setUndo({ token, text, accepted })
     undoTimer.current = setTimeout(() => {
       undoTimer.current = null
       setUndo(null)
@@ -122,7 +140,7 @@ export function FacetSuggestionsSection({ form, formDirty }: { form: ExtractionF
     )
   }
 
-  const decide = (action: () => Promise<FacetDecisionResult>, done: Done, accepted?: FacetSuggestion): void => {
+  const decide = (id: string, action: () => Promise<FacetDecisionResult>, done: Done, accepted?: FacetSuggestion): void => {
     if (busy) return
     setBusy(true)
     setNotice(null)
@@ -134,8 +152,9 @@ export function FacetSuggestionsSection({ form, formDirty }: { form: ExtractionF
           fail(r.error)
           return
         }
-        setEditing(null)
-        showUndo(r.undoToken, t(`facets.done.${done}`))
+        // Only the decided card's editor closes; an edit open on another card stays.
+        setEditing((current) => (current?.id === id ? null : current))
+        showUndo(r.undoToken, t(`facets.done.${done}`), done === 'accepted')
         if (accepted?.kind === 'new_facet') offerFill()
       },
       () => {
@@ -153,9 +172,13 @@ export function FacetSuggestionsSection({ form, formDirty }: { form: ExtractionF
     window.research.facets.revert(token).then(
       (r) => {
         setBusy(false)
-        clearUndo() // the token is spent either way
+        if (!r.ok) {
+          // A transient failure keeps the token in the main process: «Deshacer» stays for a retry until it expires.
+          fail(r.error)
+          return
+        }
+        clearUndo()
         dropFillOffer()
-        if (!r.ok) fail(r.error)
       },
       () => {
         setBusy(false)
@@ -200,12 +223,15 @@ export function FacetSuggestionsSection({ form, formDirty }: { form: ExtractionF
   }
 
   const groups = groupSuggestions(list)
+  // With a conflicted or unreadable file the main process refuses every decision, so the buttons are off.
+  const fileOk = !list || (list.file.status !== 'conflict' && list.file.status !== 'invalid')
+  const undoBlocked = undo !== null && undo.accepted && formDirty
   return (
     <section className="facet-suggestions">
       <header className="row">
         <h3>{t('facets.title')}</h3>
         {list && list.pending > 0 && <span className="badge badge-to_review">{t('facets.pending', { count: list.pending })}</span>}
-        <button className="primary" disabled={busy || !list || list.running || list.file.status === 'conflict' || list.file.status === 'invalid'} onClick={openPlan}>
+        <button className="primary" disabled={busy || !list || list.running || !fileOk} onClick={openPlan}>
           {t('facets.suggest')}
         </button>
       </header>
@@ -214,7 +240,7 @@ export function FacetSuggestionsSection({ form, formDirty }: { form: ExtractionF
       {list?.lastRun && <p className="muted small">{t(list.lastRun.ok ? 'facets.last_run' : 'facets.last_run_failed', { date: formatDate(list.lastRun.at) })}</p>}
       {list?.file.status === 'conflict' && <div className="banner error">{t('facets.file.conflict')}</div>}
       {list?.file.status === 'invalid' && <div className="banner error">{t('facets.file.invalid', { message: list.file.message })}</div>}
-      {plan && (
+      {plan && !running && (
         <div className="banner">
           <span>{t('facets.confirm', { count: plan.papers, cost: plan.estimateUsd.toFixed(2), cap: plan.capUsd.toFixed(2) })}</span>
           <button className="primary" disabled={busy} onClick={runSuggest}>
@@ -225,17 +251,21 @@ export function FacetSuggestionsSection({ form, formDirty }: { form: ExtractionF
           </button>
         </div>
       )}
-      {notice && <div className={`banner${notice.error ? ' error' : ''}`}>{notice.text}</div>}
+      {notice && (
+        <div className={`banner${notice.error ? ' error' : ''}`} role={notice.error ? 'alert' : 'status'}>
+          {notice.text}
+        </div>
+      )}
       {undo && (
-        <div className="banner">
+        <div className="banner" role="status">
           <span>{undo.text}</span>
-          <button disabled={busy} onClick={revert}>
+          <button disabled={busy || undoBlocked} onClick={revert}>
             {t('facets.undo')}
           </button>
         </div>
       )}
       {fillOffer && (
-        <div className="banner">
+        <div className="banner" role="status">
           <span>{t('facets.fill_offer', { count: fillOffer.count, cost: fillOffer.estimateUsd.toFixed(2), limit: fillOffer.batchLimitUsd.toFixed(2) })}</span>
           <button className="primary" disabled={busy} onClick={runFill}>
             {t('facets.fill', { count: fillOffer.count })}
@@ -245,7 +275,7 @@ export function FacetSuggestionsSection({ form, formDirty }: { form: ExtractionF
           </button>
         </div>
       )}
-      {formDirty && groups.pending.length > 0 && <div className="banner warning">{t('facets.form_dirty')}</div>}
+      {formDirty && (groups.pending.length > 0 || undoBlocked) && <div className="banner warning">{t('facets.form_dirty')}</div>}
       {list && groups.pending.length === 0 && <p className="muted">{t('facets.none')}</p>}
       {groups.pending.map((view) => {
         const id = view.suggestion.id
@@ -254,12 +284,13 @@ export function FacetSuggestionsSection({ form, formDirty }: { form: ExtractionF
             key={id}
             view={view}
             form={form}
-            acceptable={canAccept(view, formDirty)}
+            acceptable={fileOk && canAccept(view, formDirty)}
+            decidable={fileOk}
             busy={busy}
-            edit={editing?.id === id ? editing.edit : null}
-            onEdit={(edit) => setEditing(edit ? { id, edit } : null)}
-            onAccept={(edit) => decide(() => window.research.facets.accept(id, edit), 'accepted', view.suggestion)}
-            onReject={() => decide(() => window.research.facets.reject(id), 'rejected')}
+            edit={editing?.id === id && editing.updatedAt === view.suggestion.updated_at ? editing.edit : null}
+            onEdit={(edit) => setEditing(edit ? { id, updatedAt: view.suggestion.updated_at, edit } : null)}
+            onAccept={(edit) => decide(id, () => window.research.facets.accept(id, edit), 'accepted', view.suggestion)}
+            onReject={() => decide(id, () => window.research.facets.reject(id), 'rejected')}
             onExample={openExample}
           />
         )
@@ -282,7 +313,7 @@ export function FacetSuggestionsSection({ form, formDirty }: { form: ExtractionF
             <div className="row small" key={view.suggestion.id}>
               <span className="chip">{t(`facets.kinds.${view.suggestion.kind}`)}</span>
               <ProposalLine suggestion={view.suggestion} />
-              <button disabled={busy} onClick={() => decide(() => window.research.facets.restore(view.suggestion.id), 'restored')}>
+              <button disabled={busy || !fileOk} onClick={() => decide(view.suggestion.id, () => window.research.facets.restore(view.suggestion.id), 'restored')}>
                 {t('facets.restore')}
               </button>
             </div>
@@ -323,11 +354,19 @@ function ProposalLine({ suggestion: s }: { suggestion: FacetSuggestion }): React
   }
 }
 
-function Issue({ issue }: { issue: DraftIssue | undefined }): React.JSX.Element | null {
+/** Ids for a field's hint and error, and the `aria-describedby` linking them to its input. */
+function useFieldIds(issue: DraftIssue | undefined): { hint: string; error: string; describedBy: string } {
+  const base = useId()
+  const hint = `${base}-hint`
+  const error = `${base}-error`
+  return { hint, error, describedBy: issue ? `${hint} ${error}` : hint }
+}
+
+function Issue({ id, issue }: { id: string; issue: DraftIssue | undefined }): React.JSX.Element | null {
   const { t } = useTranslation()
   if (!issue) return null
   return (
-    <small className="field-error" role="alert">
+    <small id={id} className="field-error" role="alert">
       {t(`settings.form_editor.issues.${issue}`)}
     </small>
   )
@@ -337,6 +376,8 @@ interface SuggestionCardProps {
   view: FacetSuggestionView
   form: ExtractionForm
   acceptable: boolean
+  /** Rejecting is possible (the suggestions file is readable). */
+  decidable: boolean
   busy: boolean
   edit: SuggestionEdit | null
   onEdit: (edit: SuggestionEdit | null) => void
@@ -345,7 +386,7 @@ interface SuggestionCardProps {
   onExample: (example: SuggestionExample) => void
 }
 
-function SuggestionCard({ view, form, acceptable, busy, edit, onEdit, onAccept, onReject, onExample }: SuggestionCardProps): React.JSX.Element {
+function SuggestionCard({ view, form, acceptable, decidable, busy, edit, onEdit, onAccept, onReject, onExample }: SuggestionCardProps): React.JSX.Element {
   const { t } = useTranslation()
   const s = view.suggestion
   const issues = edit ? editIssues(edit, s, form) : {}
@@ -399,7 +440,7 @@ function SuggestionCard({ view, form, acceptable, busy, edit, onEdit, onAccept, 
             </button>
           </>
         )}
-        <button disabled={busy} onClick={onReject}>
+        <button disabled={busy || !decidable} onClick={onReject}>
           {t('facets.reject')}
         </button>
       </div>
@@ -408,29 +449,50 @@ function SuggestionCard({ view, form, acceptable, busy, edit, onEdit, onAccept, 
 }
 
 function SuggestionEditor({ edit, issues, onChange }: { edit: SuggestionEdit; issues: Record<string, DraftIssue>; onChange: (edit: SuggestionEdit) => void }): React.JSX.Element {
-  const { t } = useTranslation()
   switch (edit.kind) {
     case 'new_value':
-      return (
-        <label className="field">
-          <span>{t('facets.value_label')}</span>
-          <input value={edit.value} onChange={(e) => onChange({ kind: 'new_value', value: e.target.value })} />
-          <small className="muted">{t('settings.form_editor.snake_case_hint')}</small>
-          <Issue issue={issues.value} />
-        </label>
-      )
+      return <NameField labelKey="facets.value_label" value={edit.value} issue={issues.value} onChange={(value) => onChange({ kind: 'new_value', value })} />
     case 'alias':
-      return (
-        <label className="field">
-          <span>{t('facets.to_label')}</span>
-          <input value={edit.to} onChange={(e) => onChange({ kind: 'alias', to: e.target.value })} />
-          <small className="muted">{t('settings.form_editor.snake_case_hint')}</small>
-          <Issue issue={issues.to} />
-        </label>
-      )
+      return <NameField labelKey="facets.to_label" value={edit.to} issue={issues.to} onChange={(to) => onChange({ kind: 'alias', to })} />
     case 'new_facet':
       return <FacetEditor facet={edit.facet} issues={issues} onChange={(facet) => onChange({ kind: 'new_facet', facet })} />
   }
+}
+
+/** A snake_case name (a facet key, a value), with the hint and its error linked to the input. */
+function NameField({ labelKey, value, issue, onChange }: { labelKey: string; value: string; issue: DraftIssue | undefined; onChange: (value: string) => void }): React.JSX.Element {
+  const { t } = useTranslation()
+  const ids = useFieldIds(issue)
+  return (
+    <label className="field">
+      <span>{t(labelKey)}</span>
+      <input aria-invalid={issue ? true : undefined} aria-describedby={ids.describedBy} className={issue ? 'invalid' : undefined} value={value} onChange={(e) => onChange(e.target.value)} />
+      <small id={ids.hint} className="muted">
+        {t('settings.form_editor.snake_case_hint')}
+      </small>
+      <Issue id={ids.error} issue={issue} />
+    </label>
+  )
+}
+
+/** A text field (a description, a scale bound) with its error linked to the input. */
+function PlainField({
+  label,
+  issue,
+  children
+}: {
+  label: string
+  issue: DraftIssue | undefined
+  children: (props: { 'aria-invalid': true | undefined; 'aria-describedby': string | undefined; className: string | undefined }) => React.JSX.Element
+}): React.JSX.Element {
+  const errorId = `${useId()}-error`
+  return (
+    <label className="field">
+      <span>{label}</span>
+      {children({ 'aria-invalid': issue ? true : undefined, 'aria-describedby': issue ? errorId : undefined, className: issue ? 'invalid' : undefined })}
+      <Issue id={errorId} issue={issue} />
+    </label>
+  )
 }
 
 /** A new facet being edited; the values and the range are typed as text so a half-typed value is never read as empty. */
@@ -438,6 +500,7 @@ function FacetEditor({ facet, issues, onChange }: { facet: FacetDef; issues: Rec
   const { t } = useTranslation()
   const [valuesText, setValuesText] = useState('values' in facet ? facet.values.join(', ') : '')
   const [range, setRange] = useState({ min: facet.type === 'scale' ? String(facet.min) : '1', max: facet.type === 'scale' ? String(facet.max) : '5' })
+  const valuesIds = useFieldIds(issues.values)
 
   const setBound = (field: 'min' | 'max', text: string): void => {
     setRange((r) => ({ ...r, [field]: text }))
@@ -456,12 +519,7 @@ function FacetEditor({ facet, issues, onChange }: { facet: FacetDef; issues: Rec
 
   return (
     <div className="editor">
-      <label className="field">
-        <span>{t('settings.form_editor.key_label')}</span>
-        <input value={facet.key} onChange={(e) => onChange({ ...facet, key: e.target.value })} />
-        <small className="muted">{t('settings.form_editor.snake_case_hint')}</small>
-        <Issue issue={issues.key} />
-      </label>
+      <NameField labelKey="settings.form_editor.key_label" value={facet.key} issue={issues.key} onChange={(key) => onChange({ ...facet, key })} />
       <label className="field">
         <span>{t('settings.form_editor.type_label')}</span>
         <select value={facet.type} onChange={(e) => retype(e.target.value as FacetDef['type'])}>
@@ -472,37 +530,36 @@ function FacetEditor({ facet, issues, onChange }: { facet: FacetDef; issues: Rec
           ))}
         </select>
       </label>
-      <label className="field">
-        <span>{t('settings.form_editor.description_label')}</span>
-        <textarea value={facet.description} onChange={(e) => onChange({ ...facet, description: e.target.value })} />
-        <Issue issue={issues.description} />
-      </label>
+      <PlainField label={t('settings.form_editor.description_label')} issue={issues.description}>
+        {(aria) => <textarea {...aria} value={facet.description} onChange={(e) => onChange({ ...facet, description: e.target.value })} />}
+      </PlainField>
       {'values' in facet && (
         <label className="field">
           <span>{t('facets.values_label')}</span>
           <input
+            aria-invalid={issues.values ? true : undefined}
+            aria-describedby={valuesIds.describedBy}
+            className={issues.values ? 'invalid' : undefined}
             value={valuesText}
             onChange={(e) => {
               setValuesText(e.target.value)
               onChange({ ...facet, values: splitValues(e.target.value) })
             }}
           />
-          <small className="muted">{t('settings.form_editor.snake_case_hint')}</small>
-          <Issue issue={issues.values} />
+          <small id={valuesIds.hint} className="muted">
+            {t('settings.form_editor.snake_case_hint')}
+          </small>
+          <Issue id={valuesIds.error} issue={issues.values} />
         </label>
       )}
       {facet.type === 'scale' && (
         <div className="row">
-          <label className="field">
-            <span>{t('settings.form_editor.min_label')}</span>
-            <input type="text" inputMode="numeric" value={range.min} onChange={(e) => setBound('min', e.target.value)} />
-            <Issue issue={issues.min} />
-          </label>
-          <label className="field">
-            <span>{t('settings.form_editor.max_label')}</span>
-            <input type="text" inputMode="numeric" value={range.max} onChange={(e) => setBound('max', e.target.value)} />
-            <Issue issue={issues.max} />
-          </label>
+          <PlainField label={t('settings.form_editor.min_label')} issue={issues.min}>
+            {(aria) => <input {...aria} type="text" inputMode="numeric" value={range.min} onChange={(e) => setBound('min', e.target.value)} />}
+          </PlainField>
+          <PlainField label={t('settings.form_editor.max_label')} issue={issues.max}>
+            {(aria) => <input {...aria} type="text" inputMode="numeric" value={range.max} onChange={(e) => setBound('max', e.target.value)} />}
+          </PlainField>
         </div>
       )}
     </div>

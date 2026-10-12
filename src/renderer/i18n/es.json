@@ -116,7 +116,8 @@
       "not_number": "Debe ser un número, por ejemplo 0.5.",
       "not_positive": "Debe ser mayor que 0.",
       "cap_not_positive": "Debe ser mayor que 0. Para no tener tope, deja el campo vacío.",
-      "not_integer": "Debe ser un número entero, sin decimales."
+      "not_integer": "Debe ser un número entero, sin decimales.",
+      "too_large": "Debe ser como mucho {{max}}."
     },
     "thesis_title": "Título",
     "thesis_description": "Descripción (problema, enfoque, alcance)",
@@ -560,7 +561,8 @@
     "title": "Sugerencias de Claude",
     "intro": "Claude lee tu tesis, el formulario y la biblioteca con herramientas de solo lectura y propone facetas nuevas, valores nuevos y alias para los valores propuestos sueltos. Nada cambia hasta que aceptes.",
     "suggest": "Sugerir facetas",
-    "confirm": "Claude revisará {{count}} papers · est. ~${{cost}} · tope de la ejecución ${{cap}}",
+    "confirm_one": "Claude revisará {{count}} paper · est. ~${{cost}} · tope de la ejecución ${{cap}}",
+    "confirm_other": "Claude revisará {{count}} papers · est. ~${{cost}} · tope de la ejecución ${{cap}}",
     "queued": "Sugerencia en cola: aparecerá aquí al terminar.",
     "running": "Claude está buscando sugerencias…",
     "pending_one": "{{count}} sugerencia por revisar",
@@ -599,12 +601,12 @@
       "value_exists": "La faceta ya tiene ese valor.",
       "source_gone": "Ningún paper propone ya esos valores."
     },
-    "fill_offer_one": "Faceta agregada: queda sin llenar en {{count}} paper con resumen al día. est. ~${{cost}} · tope del lote ${{limit}}",
-    "fill_offer": "Faceta agregada: queda sin llenar en {{count}} papers con resumen al día. est. ~${{cost}} · tope del lote ${{limit}}",
+    "fill_offer_one": "Faceta agregada. {{count}} paper con resumen al día tiene facetas sin llenar · est. ~${{cost}} · tope del lote ${{limit}}",
+    "fill_offer_other": "Faceta agregada. {{count}} papers con resumen al día tienen facetas sin llenar · est. ~${{cost}} · tope del lote ${{limit}}",
     "fill_one": "Llenar en {{count}} paper",
-    "fill": "Llenar en {{count}} papers",
+    "fill_other": "Llenar en {{count}} papers",
     "fill_queued_one": "Llenado en cola para {{count}} paper; sigue su avance en Actividad.",
-    "fill_queued": "Llenado en cola para {{count}} papers; sigue su avance en Actividad.",
+    "fill_queued_other": "Llenado en cola para {{count}} papers; sigue su avance en Actividad.",
     "later": "Ahora no",
     "file": {
       "conflict": "facet-suggestions.yaml tiene un conflicto de git sin resolver: sincroniza o corrígelo a mano para ver y decidir sugerencias.",

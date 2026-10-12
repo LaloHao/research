@@ -130,6 +130,9 @@ export type ExtractionFile = z.infer<typeof ExtractionFileSchema>
 export const LLM_MODELS = ['sonnet', 'haiku', 'opus'] as const
 export type LlmModel = (typeof LLM_MODELS)[number]
 
+/** Largest «Papers resumidos nuevos para sugerir» the app accepts from the renderer. */
+export const AUTO_SUGGEST_FACETS_AFTER_MAX = 1000
+
 export const DEFAULT_LLM_CONFIG = {
   model: 'sonnet' as const,
   auto_summarize: false,

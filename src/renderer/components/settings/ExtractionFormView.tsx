@@ -6,7 +6,9 @@ import {
   addValue,
   draftFromForm,
   formFromDraft,
+  hasPendingInput,
   isDirty,
+  rebaseDraft,
   removeAlias,
   removeFacet,
   removeValue,
@@ -48,8 +50,9 @@ function describedBy(...ids: Array<string | undefined>): string | undefined {
   return list.length ? list.join(' ') : undefined
 }
 
-function editorFor(saved: ExtractionForm): Editor {
-  const draft = draftFromForm(saved)
+/** An editor on `saved`; with `previous`, facets whose key is still there keep their ids (and the input keyed by them). */
+function editorFor(saved: ExtractionForm, previous?: FormDraft): Editor {
+  const draft = previous ? rebaseDraft(previous, saved) : draftFromForm(saved)
   return { saved, draft, savedIds: new Set(draft.facets.map((f) => f.id)) }
 }
 
@@ -118,11 +121,13 @@ export function ExtractionFormView(): React.JSX.Element {
       }
       const nextSaved = info.form.form
       const current = editorRef.current
+      // The saved form is unchanged (most facet-suggestion events): keep the editor exactly as it is, typed input included.
+      if (current && !isDirty(current.saved, draftFromForm(nextSaved))) return
       if (current && isDirty(current.saved, current.draft)) {
-        if (isDirty(current.saved, draftFromForm(nextSaved))) setOutdated(true)
+        setOutdated(true)
         return
       }
-      applyEditor(editorFor(nextSaved))
+      applyEditor(editorFor(nextSaved, current?.draft))
       setOutdated(false)
     }, () => undefined)
   }, [])
@@ -209,7 +214,7 @@ export function ExtractionFormView(): React.JSX.Element {
         setImpactDraft(null)
         setIssues({})
         setAttempted(false)
-        applyEditor(editorFor(formFromDraft(impactDraft)))
+        applyEditor(editorFor(formFromDraft(impactDraft), impactDraft))
         setOutdated(false)
       },
       () => {
@@ -338,6 +343,9 @@ export function ExtractionFormView(): React.JSX.Element {
   if (!formInfo) return <section className="extraction-form" />
 
   const dirty = editor ? isDirty(editor.saved, editor.draft) : false
+  // Typed input not in the draft yet would be lost if a suggestion rewrote the saved form, so it blocks accepting too.
+  const addingFacet = newFacet !== null && JSON.stringify(newFacet) !== JSON.stringify(EMPTY_NEW_FACET)
+  const pendingInput = editor ? hasPendingInput(editor.draft, newValueText, scaleText, addingFacet) : false
 
   return (
     <section className="extraction-form">
@@ -719,7 +727,7 @@ export function ExtractionFormView(): React.JSX.Element {
             <button onClick={() => void window.research.llm.showProjectFile()}>{t('settings.form_show_file')}</button>
           </div>
 
-          <FacetSuggestionsSection form={editor.saved} formDirty={dirty} />
+          <FacetSuggestionsSection form={editor.saved} formDirty={dirty || pendingInput} />
         </>
       )}
     </section>

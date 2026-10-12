@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { LLM_MODELS, type LlmConfig, type LlmModel } from '../../../shared/summary'
+import { AUTO_SUGGEST_FACETS_AFTER_MAX, LLM_MODELS, type LlmConfig, type LlmModel } from '../../../shared/summary'
 import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
 import { parseCap, parseCount, parseUsd, type NumberIssue, type Parsed } from '../../lib/numberField'
@@ -135,8 +135,9 @@ export function ClaudeSection(): React.JSX.Element {
         value={facetsAfter}
         issue={issues.facetsAfter}
         integer
+        max={AUTO_SUGGEST_FACETS_AFTER_MAX}
         onChange={(v) => edit('facetsAfter', setFacetsAfter, v)}
-        onBlur={() => commit('facetsAfter', parseCount(facetsAfter), (value) => save({ auto_suggest_facets_after: value }))}
+        onBlur={() => commit('facetsAfter', parseCount(facetsAfter, AUTO_SUGGEST_FACETS_AFTER_MAX), (value) => save({ auto_suggest_facets_after: value }))}
       />
       <NumberField
         id="budget-operation"
@@ -193,12 +194,14 @@ interface NumberFieldProps {
   value: string
   issue: NumberIssue | undefined
   integer?: boolean
+  /** The largest value accepted, for the `too_large` message. */
+  max?: number
   onChange: (value: string) => void
   onBlur: () => void
 }
 
 /** A text input for numbers (so a half-typed value is never read as empty) with its own error under it. */
-function NumberField({ id, label, value, issue, integer, onChange, onBlur }: NumberFieldProps): React.JSX.Element {
+function NumberField({ id, label, value, issue, integer, max, onChange, onBlur }: NumberFieldProps): React.JSX.Element {
   const { t } = useTranslation()
   const errorId = `${id}-error`
   return (
@@ -216,7 +219,7 @@ function NumberField({ id, label, value, issue, integer, onChange, onBlur }: Num
       />
       {issue && (
         <small id={errorId} className="field-error" role="alert">
-          {t(`settings.invalid.${issue}`)}
+          {t(`settings.invalid.${issue}`, { max })}
         </small>
       )}
     </label>

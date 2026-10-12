@@ -4,7 +4,7 @@ import { SUGGESTION_ID } from '../shared/facetSuggestions'
 import { CANDIDATE_DIRECTIONS, OPENALEX_ID } from '../shared/relations'
 import { PDF_POLICIES } from '../shared/schemas'
 import { AUTO_SYNC_MINUTES, CLOSE_DECISIONS, CONFLICT_CHOICES, CONFLICT_ID, CONFLICT_VERSION, isRemoteUrl } from '../shared/sync'
-import { ExtractionFormSchema, FacetDefSchema, LLM_MODELS, ThesisContextSchema } from '../shared/summary'
+import { AUTO_SUGGEST_FACETS_AFTER_MAX, ExtractionFormSchema, FacetDefSchema, LLM_MODELS, ThesisContextSchema } from '../shared/summary'
 import { MAX_JUSTIFICATION, RELATION_ID, RELATION_STATUSES, RELATION_TYPES } from '../shared/typedRelations'
 
 const paperIdSchema = z.string().regex(/^[a-z][a-z0-9]*$/)
@@ -45,7 +45,7 @@ export const ipcArgs = {
     auto_summarize: z.boolean().optional(),
     auto_suggest_relations: z.boolean().optional(),
     auto_suggest_facets: z.boolean().optional(),
-    auto_suggest_facets_after: z.number().int().min(1).max(1000).optional(),
+    auto_suggest_facets_after: z.number().int().min(1).max(AUTO_SUGGEST_FACETS_AFTER_MAX).optional(),
     max_input_chars: z.number().int().positive().optional(),
     budget: z
       .strictObject({
