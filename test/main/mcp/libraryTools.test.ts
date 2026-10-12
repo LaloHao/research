@@ -70,6 +70,12 @@ describe('libraryTools', () => {
     await expect(tools.findInPaper(LOGHUB_ID, 'x'.repeat(201))).rejects.toBeInstanceOf(ToolError)
   })
 
+  it('returns literal matches as written after emoji and over math alphanumerics', async () => {
+    const { tools, cache } = await setup()
+    cache.setText(DRAIN_ID, 'x', 'ok', [{ index: 0, page: 1, text: '\u{1F44D}\u{1F44D} Un análisis de \u{1D403}\u{1D42B}\u{1D41A}\u{1D422}\u{1D427}. Fin.' }])
+    expect((await tools.findInPaper(DRAIN_ID, 'analisis de drain')).map((h) => h.match)).toEqual(['análisis de \u{1D403}\u{1D42B}\u{1D41A}\u{1D422}\u{1D427}'])
+  })
+
   it('reads a range of pages, at most five at a time', async () => {
     const { tools } = await setup()
     expect(await tools.readPages(DRAIN_ID, 2, 2)).toEqual({ paper_id: DRAIN_ID, pages: [{ page: 2, text: DRAIN_PAGES[1] }] })

@@ -84,12 +84,11 @@ describe('action tools', () => {
       'write_note',
       'decide_relation',
       'review_summary',
-      'edit_summary',
-      'resolve_proposed_value',
       'decide_facet_suggestion',
       'restore_papers'
     ])
     expect([TOOL_RISK.summarize, TOOL_RISK.trash_papers, TOOL_RISK.delete_forever, TOOL_RISK.sync_now, TOOL_RISK.attach_pdf]).toEqual(['spends', 'removes', 'removes', 'sync', 'file'])
+    expect([TOOL_RISK.edit_summary, TOOL_RISK.resolve_proposed_value]).toEqual(['edits', 'edits'])
     const all: readonly string[] = [...ACTION_TOOLS, ...ACTION_READ_TOOLS]
     expect(SYNC_TOOLS.every((t) => all.includes(t))).toBe(true)
     expect(new Set(all).size).toBe(all.length)

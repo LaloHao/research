@@ -4,7 +4,7 @@ import type { IndexCache } from '../cache/IndexCache'
 import type { EmbeddingRuntime } from '../embeddings/EmbeddingRuntime'
 import type { MapService } from '../map/MapService'
 import type { ProjectStore } from '../project/ProjectStore'
-import { normalizeForMatch, normalizeWithMap } from '../../shared/textMatch'
+import { clusterEnd, normalizeForMatch, normalizeWithMap } from '../../shared/textMatch'
 import { cosine } from '../relations/similarity'
 import { pagesFromChunks } from '../summary/paperText'
 import { SUMMARY_FIELD_KEYS, type FieldStatus, type SummaryStatus } from '../../shared/summary'
@@ -167,15 +167,18 @@ function syntheticPages(pages: { page: number | null; text: string }[]): { page:
 
 const stripMarks = (s: string): string => s.normalize('NFD').replace(/\p{M}/gu, '')
 
-/** `text` folded for literal search (normalizeForMatch, then without accents), with each folded unit's index in the original. */
+/** `text` folded for literal search (normalizeForMatch, then without accents), with the original index of each folded UTF-16 unit. */
 export function foldWithMap(text: string): { text: string; map: number[] } {
   const n = normalizeWithMap(text)
   let folded = ''
   const map: number[] = []
-  for (let i = 0; i < n.text.length; i++) {
-    const f = stripMarks(n.text[i])
-    for (let k = 0; k < f.length; k++) map.push(n.map[i])
+  // By code point (a surrogate pair is never split); n.map has one entry per UTF-16 unit, and so has the result.
+  let unit = 0
+  for (const cp of n.text) {
+    const f = stripMarks(cp)
+    for (let k = 0; k < f.length; k++) map.push(n.map[unit])
     folded += f
+    unit += cp.length
   }
   return { text: folded, map }
 }
@@ -248,7 +251,7 @@ export function libraryTools(deps: { store: ProjectStore; cache: IndexCache; map
         const f = foldWithMap(p.text)
         for (let at = f.text.indexOf(q); at >= 0; at = f.text.indexOf(q, at + q.length)) {
           const start = f.map[at]
-          const end = f.map[at + q.length - 1] + 1
+          const end = clusterEnd(p.text, f.map[at + q.length - 1])
           hits.push({ page: p.page, match: p.text.slice(start, end), context: p.text.slice(Math.max(0, start - CONTEXT_CHARS), end + CONTEXT_CHARS) })
           if (hits.length >= max) return hits
         }
