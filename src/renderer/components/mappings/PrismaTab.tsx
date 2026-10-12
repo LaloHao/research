@@ -47,7 +47,11 @@ export function PrismaTab({ view }: { view: MappingView }): React.JSX.Element {
       </div>
       <p className="muted small">{t('mappings.prisma.note')}</p>
       {inconsistent > 0 && <div className="banner warning" role="status">{t('mappings.prisma.inconsistent', { count: inconsistent })}</div>}
-      {notice && <div className={`banner${notice.error ? ' error' : ''}`}>{notice.text}</div>}
+      {notice && (
+        <div className={`banner${notice.error ? ' error' : ''}`} role="status">
+          {notice.text}
+        </div>
+      )}
       <div className="prisma-holder">
         <img className="prisma-diagram" alt={t('mappings.prisma.alt')} width={diagram.width} height={diagram.height} src={source} />
       </div>
