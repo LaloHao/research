@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { parse } from 'yaml'
+import { gitattributesLines } from '../../../src/main/project/gitFiles'
 import { toYaml } from '../../../src/main/project/yamlFile'
 import { ProjectRepo } from '../../../src/main/sync/ProjectRepo'
 import { SyncService, type SyncServiceDeps } from '../../../src/main/sync/SyncService'
@@ -12,6 +14,15 @@ import type { TypedRelation } from '../../../src/shared/typedRelations'
 import { applyFiles, commitAll, identify, pathWithOnlyGit, trashOnDisk, twoMachines, type Machines } from '../../helpers/git'
 import { typedRelation } from '../../helpers/relations'
 import { tmpDir } from '../../helpers/tmp'
+
+const lfsInstalled = ((): boolean => {
+  try {
+    execFileSync('git', ['lfs', 'version'], { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
+})()
 
 const service = (m: Machines, root: string, over: Partial<SyncServiceDeps> = {}): SyncService =>
   new SyncService({ root, exclusive: (fn) => fn(), pdfPolicy: () => 'track', machineName: 'laptop', gitEnv: m.env, ...over })
@@ -325,6 +336,82 @@ describe('SyncService', () => {
     expect(await fresh.setup(empty)).toEqual({ ok: false, error: { code: 'lfs_missing', paths: [] } })
     expect(existsSync(join(root, '.git'))).toBe(false)
     expect(m.git(empty, 'branch', '--list')).toBe('')
+  })
+
+  describe.skipIf(!lfsInstalled)('with the PDFs in git LFS and git hooks turned off', () => {
+    const PDF = Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.from(Array.from({ length: 4096 }, (_, i) => (i * 7919) % 256))])
+    const lfsObject = (remote: string, data: Buffer): string => {
+      const oid = createHash('sha256').update(data).digest('hex')
+      return join(remote, 'lfs', 'objects', oid.slice(0, 2), oid.slice(2, 4), oid)
+    }
+    /** As a global `core.hooksPath=/dev/null` does: git-lfs's pre-push hook never runs. */
+    const hooksOff = async (m: Machines): Promise<void> => {
+      await writeFile(m.env.GIT_CONFIG_GLOBAL, '[core]\n\thooksPath = /dev/null\n')
+    }
+    const lfsMachines = async (): Promise<Machines> => {
+      const m = await twoMachines({ 'project.yaml': 'schema_version: 1\nname: Thesis\n', '.gitattributes': `${gitattributesLines('lfs').join('\n')}\n` })
+      await hooksOff(m)
+      return m
+    }
+
+    it('uploads the PDFs to the remote before pushing, and the other machine gets their real content', async () => {
+      const m = await lfsMachines()
+      const a = service(m, m.projectA, { pdfPolicy: () => 'lfs' })
+      const b = service(m, m.projectB, { pdfPolicy: () => 'lfs', machineName: 'desktop' })
+      await applyFiles(m.projectA, { 'papers/k/paper.yaml': PAPER })
+      await writeFile(join(m.projectA, 'papers/k/paper.pdf'), PDF)
+      expect(await a.run({ auto: false })).toEqual({ ok: true, outcome: 'synced' })
+      // History has a pointer, and the remote has what it points to.
+      expect(m.git(m.remote, 'show', 'main:papers/k/paper.pdf')).toMatch(/^version https:\/\/git-lfs\.github\.com\/spec\/v1/)
+      expect(existsSync(lfsObject(m.remote, PDF))).toBe(true)
+      expect(await b.run({ auto: false })).toEqual({ ok: true, outcome: 'synced' })
+      expect(await readFile(join(m.projectB, 'papers/k/paper.pdf'))).toEqual(PDF)
+      expect(m.git(m.b, 'status', '--porcelain')).toBe('')
+    })
+
+    it('uploads the PDFs on the first push of a new repository', async () => {
+      const m = await twoMachines()
+      await hooksOff(m)
+      const root = await tmpDir()
+      await applyFiles(root, { 'project.yaml': 'name: New\n', '.gitattributes': `${gitattributesLines('lfs').join('\n')}\n` })
+      await mkdir(join(root, 'papers/k'), { recursive: true })
+      await writeFile(join(root, 'papers/k/paper.pdf'), PDF)
+      const empty = join(await tmpDir(), 'empty.git')
+      m.git(root, 'init', '--quiet', '--bare', '--initial-branch=main', empty)
+      m.git(root, 'init', '--quiet', '--initial-branch=main')
+      identify(m.env, root, 'Machine C')
+      const fresh = service(m, root, { pdfPolicy: () => 'lfs' })
+      expect(await fresh.setup(empty)).toEqual({ ok: true, outcome: 'synced' })
+      expect(m.git(empty, 'show', 'main:papers/k/paper.pdf')).toMatch(/^version https:\/\/git-lfs\.github\.com\/spec\/v1/)
+      expect(existsSync(lfsObject(empty, PDF))).toBe(true)
+    })
+
+    it('initializes a repository for LFS even when git-lfs cannot install its hooks', async () => {
+      const m = await twoMachines()
+      await hooksOff(m)
+      const root = await tmpDir()
+      await applyFiles(root, { 'project.yaml': 'name: New\n', '.gitattributes': `${gitattributesLines('lfs').join('\n')}\n` })
+      await mkdir(join(root, 'papers/k'), { recursive: true })
+      await writeFile(join(root, 'papers/k/paper.pdf'), PDF)
+      const empty = join(await tmpDir(), 'empty.git')
+      m.git(root, 'init', '--quiet', '--bare', '--initial-branch=main', empty)
+      const fresh = service(m, root, { pdfPolicy: () => 'lfs', gitEnv: { ...m.env, GIT_AUTHOR_NAME: 'C', GIT_AUTHOR_EMAIL: 'c@example.test', GIT_COMMITTER_NAME: 'C', GIT_COMMITTER_EMAIL: 'c@example.test' } })
+      expect(await fresh.setup(empty)).toEqual({ ok: true, outcome: 'synced' })
+      expect(m.git(empty, 'show', 'main:papers/k/paper.pdf')).toMatch(/^version https:\/\/git-lfs\.github\.com\/spec\/v1/)
+      expect(existsSync(lfsObject(empty, PDF))).toBe(true)
+    })
+
+    it('never pushes the commits when the PDFs cannot be uploaded', async () => {
+      const m = await lfsMachines()
+      const a = service(m, m.projectA, { pdfPolicy: () => 'lfs' })
+      const before = m.git(m.remote, 'rev-parse', 'main')
+      // A pointer whose content this machine does not have: there is nothing to upload.
+      const pointer = `version https://git-lfs.github.com/spec/v1\noid sha256:${'1'.repeat(64)}\nsize 5\n`
+      await applyFiles(m.projectA, { 'papers/k/paper.yaml': PAPER, 'papers/k/paper.pdf': pointer })
+      expect(await a.run({ auto: false })).toEqual({ ok: false, error: { code: 'lfs_upload_failed', paths: [] } })
+      expect(m.git(m.remote, 'rev-parse', 'main')).toBe(before)
+      expect((await a.status()).ahead).toBe(1)
+    })
   })
 
   it('does not commit while setting up a repository with a merge left half-done by hand', async () => {

@@ -281,6 +281,7 @@ export class SyncService {
         repo = (await ProjectRepo.open(this.deps.root, this.gitOptions)) ?? fail('not_a_repo')
         if (lfs) await repo.installLfs()
       }
+      if (lfs) await repo.ensureLfsFilters()
       let info = await repo.info()
       // Before anything commits: connecting runs the first local commit.
       await this.checkClean(repo, info)
@@ -402,6 +403,7 @@ export class SyncService {
       if ((await this.integrate(repo, theirs, decided)) === 'conflicts') return { ok: true, outcome: 'conflicts' }
       if ((await repo.aheadCount()) === 0) return { ok: true, outcome: 'synced' }
       this.checkOpen()
+      await this.pushLfs(repo, upstream.remote)
       try {
         await repo.push(upstream.remote, upstream.ref, { signal: this.stopping.signal })
         return { ok: true, outcome: 'synced' }
@@ -490,7 +492,10 @@ export class SyncService {
     const upstream = info.upstream
     if (setup !== 'ready' || !upstream) fail(setup === 'ready' ? 'no_upstream' : SETUP_ERRORS[setup])
     await this.checkClean(repo, info)
-    if (this.deps.pdfPolicy() === 'lfs' && !(await repo.lfsAvailable())) fail('lfs_missing')
+    if (this.deps.pdfPolicy() === 'lfs') {
+      if (!(await repo.lfsAvailable())) fail('lfs_missing')
+      await repo.ensureLfsFilters()
+    }
     return { repo, upstream }
   }
 
@@ -515,8 +520,16 @@ export class SyncService {
     await repo.setUpstream(branch, remote)
     if (!remoteHead) {
       this.checkOpen()
+      await this.pushLfs(repo, remote)
       await repo.push(remote, `refs/heads/${branch}`, { signal: this.stopping.signal })
     }
+  }
+
+  /** Under the LFS policy, the PDFs go up before the commits that point to them; a failed upload pushes nothing. */
+  private async pushLfs(repo: ProjectRepo, remote: string): Promise<void> {
+    if (this.deps.pdfPolicy() !== 'lfs') return
+    await repo.pushLfs(remote, this.stopping.signal)
+    this.checkOpen()
   }
 
   private async openRepo(): Promise<ProjectRepo> {

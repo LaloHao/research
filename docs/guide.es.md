@@ -136,7 +136,7 @@ La app sincroniza la carpeta del proyecto con un repositorio git: guarda tus cam
 - **Automática**: «Sincronizar automáticamente» (Ajustes → Aplicación, encendida por defecto) sincroniza al abrir el proyecto y cada 10 minutos (o el intervalo que elijas, de 5 a 120) si el repositorio tiene remoto. Se salta un intervalo si hay conflictos esperando tu decisión o si en ese momento se están moviendo papers a o desde la papelera, y nunca abre ventanas: si falla (sin red, credenciales), solo lo muestra la barra lateral y lo vuelve a intentar en el siguiente intervalo.
 - **Al cerrar**: si quedan cambios sin commit en el proyecto, commits sin subir o decisiones pendientes, la app pregunta «Sincronizar y cerrar», «Cerrar sin sincronizar» o «Cancelar». La ventana se cierra solo si esa sincronización termina bien; si encuentra conflictos o falla, se queda abierta y puedes ir a «Ver sincronización». Si en ese momento corría una sincronización automática, la espera y vuelve a sincronizar, para que se suba también lo último que guardaste. Mientras sincroniza puedes elegir «Cerrar sin sincronizar»: la subida se detiene y lo que no alcanzó a subirse queda en tu equipo para la próxima vez.
 - **Primer uso**: si la carpeta no está en un repositorio, la vista Sincronización ofrece «Inicializar repositorio» (`git init` en la carpeta del proyecto, en la rama `main`, con el `.gitignore` que la app ya mantiene) y un campo para la URL de un repositorio remoto vacío (en GitHub, GitLab o una carpeta compartida); una URL con contraseña se rechaza. Con la URL, al terminar sube el proyecto. Si el repositorio no tiene remoto, la misma URL con «Agregar remoto y sincronizar»; si la rama no sigue a ninguna rama remota, «Conectar y sincronizar» la conecta con la rama del mismo nombre (o la publica si no existe). Esa URL solo se puede corregir mientras ese remoto nunca llegó a funcionar (no se usó para sincronizar todavía); una vez que funcionó, para cambiarla hay que usar `git remote set-url origin <url>` a mano. Si el remoto tiene una historia distinta de la de este repositorio, la app lo rechaza (ver «Problemas comunes» más abajo). Para un segundo equipo, clona el repositorio con git y abre esa carpeta como proyecto.
-- **PDFs con git LFS**: con la política «Versionarlos con git LFS» hace falta tener git-lfs instalado; si falta, la sincronización lo avisa.
+- **PDFs con git LFS**: con la política «Versionarlos con git LFS» hace falta tener git-lfs instalado; si falta, la sincronización lo avisa. La app prepara git-lfs en el repositorio y sube los PDF antes que los commits que apuntan a ellos, así que funciona aunque tengas desactivados los hooks de git (`core.hooksPath`); si la subida falla, no se sube nada.
 
 ## Detalle del paper
 
@@ -439,6 +439,9 @@ Al subir o bajar, git se cancela solo si pasan 3 minutos sin ningún avance (no 
 
 **«Este proyecto guarda los PDF con git LFS y git-lfs no está instalado…»**
 Instala git-lfs (https://git-lfs.com), o cambia la política de PDFs en Ajustes → Proyecto.
+
+**«No se pudieron subir los PDF a git LFS…»**
+Los commits se quedan sin subir hasta que sus PDF estén en el remoto. Revisa que el remoto acepte git LFS (algunos servidores lo tienen desactivado) y que este equipo tenga los PDF: `git lfs push origin <rama>` en una terminal te dice cuál falta.
 
 **«git no sabe tu nombre ni tu correo…»**
 Configúralos una vez en una terminal: `git config --global user.name "Tu nombre"` y `git config --global user.email "tu@correo"`.

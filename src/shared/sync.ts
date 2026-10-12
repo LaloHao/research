@@ -26,6 +26,8 @@ export const SYNC_ERROR_CODES = [
   'timeout',
   'remote_not_found',
   'push_rejected',
+  // Under the LFS policy: the PDFs could not be uploaded (other than offline or credentials), so nothing was pushed.
+  'lfs_upload_failed',
   'conflict_outside',
   'local_changes_block',
   'unrelated_histories',

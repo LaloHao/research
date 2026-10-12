@@ -174,8 +174,45 @@ export class ProjectRepo {
     }
   }
 
+  /**
+   * A repository the app just created: git-lfs's filters, and its hooks too so a push the user makes by hand with git
+   * also uploads the PDFs. The hooks cannot always be installed (a global `core.hooksPath=/dev/null`, a pre-push hook of
+   * the user's own): then only the filters, which is all the app needs, since it never relies on hooks.
+   */
   async installLfs(): Promise<void> {
-    await this.git.run(['lfs', 'install', '--local'])
+    try {
+      await this.git.run(['lfs', 'install', '--local'])
+    } catch (error) {
+      if (error instanceof GitError && error.kind === 'lfs_missing') throw error
+      await this.git.run(['lfs', 'install', '--local', '--skip-repo'])
+    }
+  }
+
+  /**
+   * git-lfs's clean and smudge filters, without which `add` would commit the PDFs as plain files and a checkout would
+   * leave pointers in their place. Set in this repository (never its hooks) when no git config defines them yet.
+   */
+  async ensureLfsFilters(): Promise<void> {
+    if ((await this.config('filter.lfs.process')) && (await this.config('filter.lfs.smudge')) && (await this.config('filter.lfs.clean'))) return
+    await this.git.run(['lfs', 'install', '--local', '--skip-repo'])
+  }
+
+  /**
+   * Uploads the LFS objects the commits about to be pushed point to (those not reachable from `remote`'s branches as
+   * last fetched), so a push never leaves the remote with pointers to nothing. Explicit, not through git-lfs's pre-push
+   * hook: hooks can be turned off (`core.hooksPath`) or replaced. Any failure that is not about the network or the
+   * credentials is `lfs_upload_failed`.
+   */
+  async pushLfs(remote: string, signal?: AbortSignal): Promise<void> {
+    const args = ['lfs', 'push', remote, 'HEAD']
+    try {
+      await this.git.run(args, { ...this.transfer, signal })
+    } catch (error) {
+      if (error instanceof GitError && ['git_failed', 'push_rejected', 'push_behind'].includes(error.kind)) {
+        throw new GitError(args, error.exitCode, error.output, 'lfs_upload_failed')
+      }
+      throw error
+    }
   }
 
   async operationInProgress(): Promise<boolean> {

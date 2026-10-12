@@ -136,7 +136,7 @@ The app syncs the project folder with a git repository: it commits your changes,
 - **Automatic**: «Sincronizar automáticamente» (Sync automatically; Settings → App, on by default) syncs when the project opens and every 10 minutes (or the interval you choose, 5 to 120) if the repository has a remote. It skips an interval while conflicts wait for your decision or while papers are being moved to or from the trash, and it never opens windows: if it fails (offline, credentials), only the side rail shows it, and it tries again at the next interval.
 - **On close**: if the project has uncommitted changes, unpushed commits or pending decisions, the app asks «Sincronizar y cerrar» (Sync and close), «Cerrar sin sincronizar» (Close without syncing) or «Cancelar» (Cancel). The window closes only if that sync succeeds; if it finds conflicts or fails, it stays open and you can go to «Ver sincronización» (Show sync). If an automatic sync was running at that moment, it waits for it and syncs again, so what you saved last is pushed too. While it syncs you can still choose «Cerrar sin sincronizar»: the transfer stops and whatever wasn't pushed stays on your machine for next time.
 - **First use**: if the folder isn't in a repository, the Sync view offers «Inicializar repositorio» (Initialize repository: `git init` in the project folder, on branch `main`, with the `.gitignore` the app already maintains) and a field for the URL of an empty remote repository (on GitHub, GitLab or a shared folder); a URL with a password is refused. With a URL, it pushes the project when done. If the repository has no remote, the same URL with «Agregar remoto y sincronizar» (Add remote and sync); if the branch tracks no remote branch, «Conectar y sincronizar» (Connect and sync) connects it to the branch of the same name (or publishes it if there's none). That URL can only be corrected while that remote has never worked (it hasn't yet been used to sync); once it has, changing it needs `git remote set-url origin <url>` by hand. If the remote has a different history from this repository, the app refuses it (see "Common problems" below). For a second machine, clone the repository with git and open that folder as the project.
-- **PDFs in git LFS**: with the «Versionarlos con git LFS» (Track them with git LFS) policy, git-lfs must be installed; if it's missing, the sync says so.
+- **PDFs in git LFS**: with the «Versionarlos con git LFS» (Track them with git LFS) policy, git-lfs must be installed; if it's missing, the sync says so. The app sets up git-lfs in the repository itself and uploads the PDFs before the commits that point to them, so it works even with git hooks turned off (`core.hooksPath`); if the upload fails, nothing is pushed.
 
 ## Paper detail
 
@@ -441,6 +441,9 @@ When pushing or fetching, git is cancelled only after 3 minutes without any prog
 
 **«Este proyecto guarda los PDF con git LFS y git-lfs no está instalado…»** (This project keeps its PDFs in git LFS and git-lfs isn't installed…)
 Install git-lfs (https://git-lfs.com), or change the PDF policy in Settings → Project.
+
+**«No se pudieron subir los PDF a git LFS…»** (The PDFs couldn't be uploaded to git LFS…)
+The commits stay unpushed until their PDFs are on the remote. Check that the remote accepts git LFS (some servers have it turned off) and that this machine has the PDFs: `git lfs push origin <branch>` in a terminal names the one that's missing.
 
 **«git no sabe tu nombre ni tu correo…»** (git doesn't know your name or email…)
 Set them once in a terminal: `git config --global user.name "Your Name"` and `git config --global user.email "you@example.com"`.

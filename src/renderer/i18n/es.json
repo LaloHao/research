@@ -644,6 +644,7 @@
       "timeout": "git tardó demasiado y se canceló. Revisa tu conexión y vuelve a intentarlo.",
       "remote_not_found": "El remoto no existe o no tienes acceso. Revisa la URL.",
       "push_rejected": "El remoto rechazó la subida (otro equipo sigue subiendo cambios, o la rama está protegida). Vuelve a sincronizar en un momento.",
+      "lfs_upload_failed": "No se pudieron subir los PDF a git LFS, así que no se subió ningún cambio. Revisa que el remoto acepte git LFS y que este equipo tenga los PDF; «git lfs push origin <rama>» te dice cuál falta.",
       "conflict_outside": "Hay conflictos en archivos fuera de la carpeta del proyecto: {{paths}}. La app no los toca; resuélvelos con git.",
       "local_changes_block": "Hay cambios locales sin commit que la sincronización sobrescribiría: {{paths}}. Haz commit o muévelos con git y vuelve a sincronizar.",
       "unrelated_histories": "El remoto tiene una historia distinta de la de este repositorio. Clona el remoto en otra carpeta y abre ese proyecto.",
