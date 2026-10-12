@@ -4,6 +4,7 @@ import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ProjectStore } from '../../../src/main/project/ProjectStore'
 import { CHAT_ID_A, chatFile } from '../../helpers/chats'
+import { MAPPING_A, protocolFile } from '../../helpers/mappings'
 import { samplePaper } from '../../helpers/papers'
 import { tmpDir } from '../../helpers/tmp'
 
@@ -116,6 +117,10 @@ describe('ProjectStore write gate', () => {
     'readPaperFile',
     'freeSibling',
     'readCosts',
+    'mappingDir',
+    'mappingExists',
+    'listMappingIds',
+    'readMappingFile',
     // Private helpers called only from inside an already-gated method; wrapping them again would deadlock.
     'requirePaper',
     'move',
@@ -123,7 +128,8 @@ describe('ProjectStore write gate', () => {
     'moveOutOfTrash',
     'removeTrashDirIfDone',
     'writeChecked',
-    'syncIgnoreFiles'
+    'syncIgnoreFiles',
+    'requireMapping'
   ]
 
   it('accounts for every prototype method as gated or explicitly non-writing', () => {
@@ -132,6 +138,24 @@ describe('ProjectStore write gate', () => {
       if (typeof descriptor.value !== 'function') continue // getters (config, cacheDir, exportsDir) only compute a value
       expect([...ProjectStore.GATED_WRITES, ...UNGATED]).toContain(name)
     }
+  })
+
+  it('holds mapping writes while the sync has the folder', async () => {
+    const store = await ProjectStore.create(await tmpDir(), 'Thesis')
+    let release!: () => void
+    const held = new Promise<void>((r) => (release = r))
+    const sync = store.exclusive(() => held)
+    let wrote = false
+    const write = store.writeMappingFile(MAPPING_A, 'protocol', protocolFile(), null).then(() => {
+      wrote = true
+    })
+    await tick()
+    expect(wrote).toBe(false)
+    expect(store.mappingExists(MAPPING_A)).toBe(false)
+    release()
+    await sync
+    await write
+    expect(store.mappingExists(MAPPING_A)).toBe(true)
   })
 
   it('holds the bibliography write while the sync has the folder', async () => {

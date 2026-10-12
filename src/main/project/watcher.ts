@@ -1,7 +1,9 @@
 import { readdirSync, statSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import { CHATS_DIR } from './chatFile'
+import { MAPPING_ID } from '../../shared/mapping'
 import { FACET_SUGGESTIONS_FILE } from './facetSuggestionsFile'
+import { MAPPINGS_DIR } from './mappingFiles'
 import { RELATIONS_FILE } from './relationsFile'
 import { TRASH_DIR } from './trashPaths'
 
@@ -17,6 +19,8 @@ export interface WatchHandlers {
   onTrash?(): void
   /** `chats/` appeared or went away, or a conversation file in it was written, replaced or removed. */
   onChats?(): void
+  /** A file in `mappings/<id>/` was written, replaced or removed, or the mapping's folder appeared or went away. */
+  onMappings?(id: string): void
 }
 
 export const PAPER_FOLDER = '.'
@@ -178,6 +182,56 @@ export function watchProject(root: string, handlers: WatchHandlers, debounceMs =
     if (rearm) chatsChanged()
   }
 
+  const mappingsDir = join(root, MAPPINGS_DIR)
+  let mappingsWatcher: FSWatcher | null = null
+  const mappingWatchers = new Map<string, FSWatcher>()
+  const mappingChanged = (id: string): void => schedule(`mapping:${id}`, () => handlers.onMappings?.(id))
+  const closeMapping = (id: string): void => {
+    mappingWatchers.get(id)?.close()
+    mappingWatchers.delete(id)
+  }
+  const closeMappingsDir = (): void => {
+    mappingsWatcher?.close()
+    mappingsWatcher = null
+    for (const id of [...mappingWatchers.keys()]) closeMapping(id)
+  }
+  /** One folder per mapping: its files are replaced by atomic writes and git checkouts. Names that are not mapping ids are ignored. */
+  const syncMapping = (id: string): void => {
+    if (closed || !MAPPING_ID.test(id)) return
+    if (!isDir(join(mappingsDir, id))) return closeMapping(id)
+    if (mappingWatchers.has(id)) return
+    const w = watchDir(
+      join(mappingsDir, id),
+      (name) => {
+        if (!name.startsWith('.')) mappingChanged(id)
+      },
+      () => closeMapping(id)
+    )
+    if (w) mappingWatchers.set(id, w)
+  }
+  const mappingFolders = (): string[] => subfolders(mappingsDir).filter((id) => MAPPING_ID.test(id))
+  /**
+   * Watches mappings/ and each mapping folder in it. A root event for mappings/ itself (`rearm`) re-opens everything and
+   * reports every mapping, like chats/: the folder may have been removed and recreated between two events.
+   */
+  const syncMappingsDir = (rearm: boolean): void => {
+    if (closed) return
+    if (rearm || !isDir(mappingsDir)) closeMappingsDir()
+    if (isDir(mappingsDir)) {
+      mappingsWatcher ??= watchDir(
+        mappingsDir,
+        (name) => {
+          if (!MAPPING_ID.test(name)) return
+          syncMapping(name)
+          mappingChanged(name)
+        },
+        closeMappingsDir
+      )
+      for (const id of mappingFolders()) syncMapping(id)
+    }
+    if (rearm) for (const id of mappingFolders()) mappingChanged(id)
+  }
+
   const rootWatcher = watchDir(
     root,
     (name) => {
@@ -185,6 +239,7 @@ export function watchProject(root: string, handlers: WatchHandlers, debounceMs =
       else if (name === RELATIONS_FILE) schedule(RELATIONS_FILE, () => handlers.onRelations?.())
       else if (name === FACET_SUGGESTIONS_FILE) schedule(FACET_SUGGESTIONS_FILE, () => handlers.onFacetSuggestions?.())
       else if (name === CHATS_DIR) syncChatsDir(true)
+      else if (name === MAPPINGS_DIR) syncMappingsDir(true)
       else if (name === TRASH_DIR) syncTrashDir(true)
       else if (name === 'papers') syncPapersDir()
     },
@@ -193,6 +248,7 @@ export function watchProject(root: string, handlers: WatchHandlers, debounceMs =
   syncPapersDir()
   syncTrashDir(false)
   syncChatsDir(false)
+  syncMappingsDir(false)
 
   return () => {
     closed = true
@@ -200,6 +256,7 @@ export function watchProject(root: string, handlers: WatchHandlers, debounceMs =
     closePapersDir()
     closeTrashDir()
     closeChatsDir()
+    closeMappingsDir()
     for (const timer of timers.values()) clearTimeout(timer)
     timers.clear()
   }

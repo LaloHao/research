@@ -3,6 +3,7 @@ import { appendFile, mkdir, readdir, readFile, rename, rm, rmdir } from 'node:fs
 import { join } from 'node:path'
 import { PaperSchema, ProjectConfigSchema, type Paper, type ProjectConfig } from '../../shared/schemas'
 import { CHAT_ID, ChatMetaSchema, PAPER_KEY, type ChatFile } from '../../shared/chat'
+import { MAPPING_ID } from '../../shared/mapping'
 import { parse } from 'yaml'
 import { SnowballSchema, type Snowball } from '../../shared/relations'
 import {
@@ -24,6 +25,7 @@ import { CHATS_DIR, chatFileName, checkMessages, isChatFileName, parseChat, rend
 import { ConflictError, ProjectError, type ReadResult } from './errors'
 import { FACET_SUGGESTIONS_FILE, sortSuggestions } from './facetSuggestionsFile'
 import { gitattributesLines, gitignoreLines, withManagedBlock } from './gitFiles'
+import { MAPPING_FILE_NAMES, MAPPING_SCHEMAS, MAPPINGS_DIR, sortedMappingFile, type MappingFileKind, type MappingFiles } from './mappingFiles'
 import { RELATIONS_FILE, resolveConflictText, sortRelations } from './relationsFile'
 import { siblingName, TRASH_DIR, TRASHED_FILE } from './trashPaths'
 import { WriteGate } from './writeGate'
@@ -67,6 +69,7 @@ export class ProjectStore {
     'writeRelations',
     'resolveRelationsConflict',
     'writeFacetSuggestions',
+    'writeMappingFile',
     'writeChat',
     'deleteChat',
     'updateConfig',
@@ -316,6 +319,44 @@ export class ProjectStore {
     return this.writeChecked(join(this.root, FACET_SUGGESTIONS_FILE), toYaml(valid), expectedHash, { refuseConflictMarkers: true })
   }
 
+  /** `mappings/<id>/`; an id that is not a mapping id (e.g. one with a path separator) throws. */
+  mappingDir(id: string): string {
+    if (!MAPPING_ID.test(id)) throw new Error(`Invalid mapping id: ${id}`)
+    return join(this.root, MAPPINGS_DIR, id)
+  }
+
+  /** A mapping exists while its folder has a protocol.yaml. */
+  mappingExists(id: string): boolean {
+    return MAPPING_ID.test(id) && existsSync(join(this.mappingDir(id), MAPPING_FILE_NAMES.protocol))
+  }
+
+  /** Mapping ids under mappings/ (folders with a protocol.yaml), sorted. */
+  async listMappingIds(): Promise<string[]> {
+    const entries = await readdir(join(this.root, MAPPINGS_DIR), { withFileTypes: true }).catch(() => [])
+    return entries
+      .filter((e) => e.isDirectory() && this.mappingExists(e.name))
+      .map((e) => e.name)
+      .sort()
+  }
+
+  /** One file of a mapping; null when it does not exist. */
+  async readMappingFile<K extends MappingFileKind>(id: string, kind: K): Promise<ReadResult<MappingFiles[K]> | null> {
+    const text = await readOptional(join(this.mappingDir(id), MAPPING_FILE_NAMES[kind]))
+    return text === null ? null : parseYamlFile(text, MAPPING_SCHEMAS[kind])
+  }
+
+  /**
+   * Validated, with its lists sorted, hash-checked (null: it must not exist yet) and never over conflict markers, even
+   * with their hash: one machine's searches or decisions would be lost. Writing the protocol with a null hash creates the
+   * mapping; every other file is written only next to its protocol.yaml.
+   */
+  async writeMappingFile<K extends MappingFileKind>(id: string, kind: K, file: MappingFiles[K], expectedHash: string | null): Promise<string> {
+    const path = join(this.mappingDir(id), MAPPING_FILE_NAMES[kind])
+    if (kind !== 'protocol') this.requireMapping(id, path)
+    const valid = MAPPING_SCHEMAS[kind].parse(sortedMappingFile(kind, file))
+    return this.writeChecked(path, toYaml(valid), expectedHash, { refuseConflictMarkers: true })
+  }
+
   /** Conversation ids in chats/ (files named `<id>.md`), sorted. */
   async listChatIds(): Promise<string[]> {
     const names = await readdir(join(this.root, CHATS_DIR)).catch(() => [] as string[])
@@ -538,6 +579,11 @@ export class ProjectStore {
   /** A paper's files are only written next to its paper.yaml: a folder moved to the trash meanwhile is never recreated. */
   private requirePaper(id: string, path: string): void {
     if (!this.paperExists(id)) throw new ConflictError(path)
+  }
+
+  /** A mapping's files are only written next to its protocol.yaml: a mapping removed meanwhile is never half recreated. */
+  private requireMapping(id: string, path: string): void {
+    if (!this.mappingExists(id)) throw new ConflictError(path)
   }
 
   /** A folder move inside the project; a rename Windows keeps refusing reaches the UI as `folder_busy`. */
