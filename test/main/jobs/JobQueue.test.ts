@@ -187,7 +187,25 @@ describe('JobQueue', () => {
     const waiting = queue.whenDone(slow, 1000)
     gate.resolve()
     expect(await waiting).toMatchObject({ state: 'done' })
-    expect(await queue.whenDone(9999, 10)).toBeNull()
+    const started = Date.now()
+    expect(await queue.whenDone(9999, 5000)).toBeNull()
+    expect(Date.now() - started).toBeLessThan(1000)
+  })
+
+  it('whenDone gives a queued job once it is cancelled', async () => {
+    const gate = deferred()
+    const queue = new JobQueue(await cache(), async () => {
+      await gate.promise
+      return {}
+    }, 1)
+    queue.start()
+    queue.enqueue(spec('first'))
+    const queued = queue.enqueue(spec('second'))
+    const waiting = queue.whenDone(queued, 5000)
+    queue.cancel(queued)
+    expect(await waiting).toMatchObject({ id: queued, state: 'cancelled' })
+    gate.resolve()
+    await queue.whenIdle()
   })
 })
 

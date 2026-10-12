@@ -206,7 +206,7 @@ export class SummaryService {
    */
   private async eligibleIds(ids?: string[]): Promise<string[]> {
     const { cache, store } = this.deps
-    const rows = ids ? ids.flatMap((id) => cache.getPaper(id) ?? []) : cache.listPapers()
+    const rows = ids ? unique(ids).flatMap((id) => cache.getPaper(id) ?? []) : cache.listPapers()
     const eligible: string[] = []
     for (const r of rows) {
       if (r.text_status !== 'ok' || (!ids && !ELIGIBLE.has(r.summary_status)) || cache.hasActiveJob('summarize', r.id)) continue
@@ -238,7 +238,7 @@ export class SummaryService {
   /** Papers whose up-to-date summary lacks facets of the current form (among `ids` when given), none being filled or summarized now. */
   private fillableIds(ids?: string[]): string[] {
     const { cache } = this.deps
-    const rows = ids ? ids.flatMap((id) => cache.getPaper(id) ?? []) : cache.listPapers()
+    const rows = ids ? unique(ids).flatMap((id) => cache.getPaper(id) ?? []) : cache.listPapers()
     return rows
       .filter(
         (r) =>
@@ -418,8 +418,11 @@ export class SummaryService {
 
   /**
    * «Deshacer» of a review change or a proposed value: once, and only while what it wrote is still there (InvalidEdit
-   * otherwise, before anything is written, which spends the token). A transient failure (a file being written, a
-   * conflict) keeps the token, so the undo can be tried again.
+   * otherwise, before anything is written, which spends the token). A paper that is gone (in the trash or deleted)
+   * counts as changed, for both kinds, as undoFormChange already decides: the paper the change was made on is no
+   * longer there, and a later restore may bring it back under another key or merged. A transient failure (a file
+   * being written, a conflict) changes nothing and keeps the token, so the undo can be tried again. Once the files
+   * are back the token is spent, even if re-indexing them then fails (logged, like a summary's own reindex).
    */
   async revert(undoToken: string): Promise<void> {
     const undo = this.undo.get(undoToken)
@@ -427,20 +430,53 @@ export class SummaryService {
     try {
       if (undo.kind === 'form') {
         await this.undoFormChange(undo.formBefore, undo.formAfter, undo.changes)
-      } else {
-        const files = await this.read(undo.paperId)
-        const changed =
-          (undo.after.summary !== null && files.summary?.hash !== undo.after.summary) ||
-          (undo.after.extraction !== null && files.extraction?.hash !== undo.after.extraction)
-        if (changed) throw new InvalidEdit(`${undo.paperId} changed since`)
-        await this.save(undo.paperId, files, undo.before)
-        await this.changed([undo.paperId])
+        this.undo.delete(undoToken)
+        return
       }
+      if (!this.deps.store.paperExists(undo.paperId)) throw new InvalidEdit(`${undo.paperId} is gone`)
+      const raw = await this.readRaw(undo.paperId)
+      // Compared before parsing: an unreadable file (hand-edited, conflict markers) is a change too.
+      const changed =
+        (undo.after.summary !== null && raw.summary?.hash !== undo.after.summary) ||
+        (undo.after.extraction !== null && raw.extraction?.hash !== undo.after.extraction)
+      if (changed) throw new InvalidEdit(`${undo.paperId} changed since`)
+      const files = await this.read(undo.paperId)
+      await this.restorePaper(undo.paperId, files, undo.before)
     } catch (error) {
       if (error instanceof InvalidEdit) this.undo.delete(undoToken)
       throw error
     }
     this.undo.delete(undoToken)
+    try {
+      await this.changed([undo.paperId])
+    } catch (error) {
+      console.error('reindex', undo.paperId, error)
+      this.deps.emit()
+    }
+  }
+
+  /**
+   * save() of a paper's files as they were, all or nothing: if summary.md cannot be written after extraction.yaml was,
+   * extraction.yaml is put back (hash-checked) before rethrowing, so the paper stays as the change left it and the
+   * undo can be tried again.
+   */
+  private async restorePaper(paperId: string, files: PaperFiles, before: { summary?: SummaryFile; extraction?: ExtractionFile }): Promise<void> {
+    const { store } = this.deps
+    if (!before.extraction) {
+      await this.save(paperId, files, before)
+      return
+    }
+    const extractionHash = await store.writeExtraction(paperId, before.extraction, files.extraction?.hash ?? null)
+    const summary = before.summary ?? files.summary?.value
+    if (!summary) return
+    try {
+      await store.writeSummary(paperId, summary, renderSummaryMarkdown(files.title, summary, before.extraction), files.summary?.hash ?? null)
+    } catch (error) {
+      if (files.extraction) {
+        await store.writeExtraction(paperId, files.extraction.value, extractionHash).catch((e: unknown) => console.error('could not put back', paperId, e))
+      }
+      throw error
+    }
   }
 
   private rememberEdit(paperId: string, files: PaperFiles, written: WrittenHashes): string {
@@ -465,7 +501,7 @@ export class SummaryService {
   /** Fields and facets still `generated`, paper by paper (in `ids` order when given, otherwise in list order). */
   async reviewQueue(ids?: string[]): Promise<ReviewItem[]> {
     const { cache, store } = this.deps
-    const rows = ids ? ids.flatMap((id) => cache.getPaper(id) ?? []) : cache.listPapers()
+    const rows = ids ? unique(ids).flatMap((id) => cache.getPaper(id) ?? []) : cache.listPapers()
     const form = loadForm(store.config.extraction_form)
     const thesis = currentThesisHash(store)
     const items: ReviewItem[] = []
@@ -769,6 +805,11 @@ export class SummaryService {
 function keepUpToDate(form: ExtractionForm, before: ExtractionFile, after: ExtractionFile): ExtractionFile {
   if (formHashFor(form, Object.keys(before.facets)) !== before.form_hash) return after
   return { ...after, form_hash: formHashFor(form, Object.keys(after.facets)) }
+}
+
+/** `ids` without repeats, in first-seen order (a paper named twice is summarized, planned or listed once). */
+function unique(ids: string[]): string[] {
+  return [...new Set(ids)]
 }
 
 function fieldKey(key: string): SummaryFieldKey {

@@ -87,7 +87,7 @@ export class JobQueue {
 
   /**
    * The job's record once it finished (done, failed or cancelled); null when it is still queued or running after
-   * `timeoutMs` (or the id is unknown), so a caller can say it goes on in Actividad.
+   * `timeoutMs`, so a caller can say it goes on in Actividad. An unknown id gives null at once.
    */
   whenDone(id: number, timeoutMs: number): Promise<JobRecord | null> {
     const finished = (): JobRecord | null => {
@@ -95,7 +95,7 @@ export class JobQueue {
       return row && (row.state === 'done' || row.state === 'failed' || row.state === 'cancelled') ? toRecord(row, null) : null
     }
     const now = finished()
-    if (now || timeoutMs <= 0) return Promise.resolve(now)
+    if (now || timeoutMs <= 0 || !this.cache.getJob(id)) return Promise.resolve(now)
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         off()
