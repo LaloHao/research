@@ -55,10 +55,15 @@ const escapeAttribute = (s: string): string => s.replace(/[^a-z0-9]/gi, '')
 const oneLine = (s: string): string => s.replace(/\s+/g, ' ').trim()
 const cut = (s: string, n: number): string => (s.length <= n ? s : `${s.slice(0, n).trimEnd()}…`)
 
+/** Line breaks JSON leaves raw (NEL, line and paragraph separators): written as JSON escapes too. */
+const RAW_LINE_BREAKS = /[\u0085\u2028\u2029]/g
+const oneLineJson = (value: unknown): string =>
+  JSON.stringify(value).replace(RAW_LINE_BREAKS, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
+
 /** An action as one line: what was asked, how it ended and what it left (JSON, so its data never breaks the line). */
 export function actionLine(m: ActionMessage): string {
-  const args = Object.keys(m.args).length > 0 ? ` ${JSON.stringify(m.args)}` : ''
-  const result = Object.keys(m.result).length > 0 ? ` -> ${JSON.stringify(m.result)}` : ''
+  const args = Object.keys(m.args).length > 0 ? ` ${oneLineJson(m.args)}` : ''
+  const result = Object.keys(m.result).length > 0 ? ` -> ${oneLineJson(m.result)}` : ''
   return `${m.tool} ${m.state}${args}${result}`
 }
 

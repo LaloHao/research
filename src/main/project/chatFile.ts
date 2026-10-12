@@ -132,8 +132,11 @@ const actionBody = (m: ActionBody): ActionBody => ({ approval: m.approval, reque
  */
 const actionYaml = (body: ActionBody): string => stringify(body, { lineWidth: 0, aliasDuplicateObjects: false }).trimEnd()
 
-/** A record's YAML is read without aliases: the app never writes them, and a hand-edited one cannot expand. */
-const readActionYaml = (yaml: string): unknown => parse(yaml, { maxAliasCount: 0 })
+/**
+ * A record's YAML is read without aliases: the app never writes them, and a hand-edited one cannot expand. Warnings
+ * (a hand-edited unknown tag) are not logged: such a body reads as text or as empty, every time it is read.
+ */
+const readActionYaml = (yaml: string): unknown => parse(yaml, { maxAliasCount: 0, logLevel: 'error' })
 
 /** Whether the body reads back from its YAML exactly as it is (plain JSON-like data, no undefined, Date, Map or bigint). */
 function actionBodyRoundTrips(body: ActionBody): boolean {

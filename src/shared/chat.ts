@@ -166,9 +166,9 @@ export function questionIndex(messages: ChatMessage[]): number {
   return -1
 }
 
-/** The ids of the actions a «Deshacer» took back. */
+/** The ids of the actions a «Deshacer» took back (only an undo that ran counts). */
 export function undoneActions(messages: ChatMessage[]): Set<string> {
-  return new Set(messages.flatMap((m) => (m.role === 'action' && m.tool === UNDO_TOOL && typeof m.args.action === 'string' ? [m.args.action] : [])))
+  return new Set(messages.flatMap((m) => (m.role === 'action' && m.tool === UNDO_TOOL && m.state === 'executed' && typeof m.args.action === 'string' ? [m.args.action] : [])))
 }
 
 /** How a citation checked against the cited paper's text; each has a text under `chat.citation.<state>`. */
@@ -201,6 +201,7 @@ export interface ChatSummary {
   model: LlmModel
   updatedAt: string
   costUsd: number
+  /** Questions and answers (action records are not counted). */
   messages: number
   /** A copy the sync split off, and the machine its version came from («(copia de <equipo>)»). */
   copyOf: { machine: string | null } | null

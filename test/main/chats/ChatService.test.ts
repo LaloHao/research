@@ -24,6 +24,7 @@ describe('ChatService conversations', () => {
       { role: 'action', tool: 'undo', undone: false, undoable: false }
     ])
     expect(chats.list({ text: 'write_note' })).toEqual([])
+    expect(c.summary.messages).toBe(1)
     expect(chats.list({ text: 'Parses online' })).toEqual([])
     await chats.retry(CHAT_ID_A)
     await chats.idle()

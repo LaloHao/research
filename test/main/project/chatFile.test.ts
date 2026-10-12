@@ -167,6 +167,23 @@ describe('chat file format', () => {
     expect(exploded).toMatchObject({ args: {} })
   })
 
+  it('reads a hand-edited unknown tag without logging a warning', () => {
+    const head = '## Acción — 2026-10-11T12:00:03.000Z · write_note · ejecutada · a0b1c2'
+    const warnings: unknown[] = []
+    const onWarning = (w: unknown): void => void warnings.push(w)
+    const emit = process.emitWarning
+    process.emitWarning = ((w: unknown) => void warnings.push(w)) as typeof process.emitWarning
+    process.on('warning', onWarning)
+    try {
+      const m = read(`${renderChat(chatFile([userMessage()]))}\n\n${head}\n\n\`\`\`yaml\nargs:\n  a: !custom x\n  b: !!float 1\nresult: {}\n\`\`\`\n`).messages[1]
+      expect(m).toMatchObject({ role: 'action', result: {} })
+    } finally {
+      process.emitWarning = emit
+      process.off('warning', onWarning)
+    }
+    expect(warnings).toEqual([])
+  })
+
   it('reads a file with Windows line endings, hashing the bytes on disk', () => {
     const text = renderChat(chatFile())
     const crlf = text.replace(/\n/g, '\r\n')

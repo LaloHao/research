@@ -419,7 +419,8 @@ export class ChatService {
       model: meta.model,
       updatedAt: meta.updated_at,
       costUsd: meta.cost_usd,
-      messages: messages.length,
+      // The messages the user reads as the conversation: action records are not counted.
+      messages: messages.filter((m) => m.role !== 'action').length,
       copyOf: meta.copy_of ? { machine: meta.copy_of.machine } : null,
       problem: false
     }
