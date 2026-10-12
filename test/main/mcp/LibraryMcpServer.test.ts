@@ -20,13 +20,24 @@ describe('truncate', () => {
 })
 
 describe('startLibraryMcpServer', () => {
-  it('serves the seven read-only tools on 127.0.0.1, each with a description', async () => {
+  it('serves the ten read-only tools on 127.0.0.1, each with a description', async () => {
     const server = await startLibraryMcpServer(stubTools(), { maxToolCalls: 12 })
     try {
       expect(server.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/)
       expect(server.token).toMatch(/^[0-9a-f]{48}$/)
       const tools = await listTools(server)
-      expect(tools.map((t) => t.name).sort()).toEqual(['find_in_paper', 'get_citations', 'get_neighbours', 'get_paper', 'read_pages', 'search_similar', 'search_text'])
+      expect(tools.map((t) => t.name).sort()).toEqual([
+        'facet_overview',
+        'find_in_paper',
+        'get_citations',
+        'get_neighbours',
+        'get_paper',
+        'get_summary',
+        'list_papers',
+        'read_pages',
+        'search_similar',
+        'search_text'
+      ])
       expect(tools.every((t) => (t.description ?? '').length > 30)).toBe(true)
     } finally {
       await server.close()
@@ -162,6 +173,37 @@ describe('startLibraryMcpServer', () => {
       const outcomes = (await Promise.all([1, 2].map(() => callTools(server, [{ name: 'search_text', arguments: { query: 'q' } }])))).flat()
       expect(outcomes.filter((o) => o.isError)).toHaveLength(1)
       expect(runs).toBe(1)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('serves the facet suggestion tools: papers a page at a time, one summary and the facet overview', async () => {
+    const seen: unknown[] = []
+    const server = await startLibraryMcpServer(
+      stubTools({
+        listPapers: async (offset, limit) => {
+          seen.push([offset, limit])
+          return { total: 1, offset: offset ?? 0, papers: [{ paper_id: 'he2017drain', title: 'Drain', year: 2017, has_summary: true }] }
+        }
+      }),
+      { maxToolCalls: 12 }
+    )
+    try {
+      const [page, summary, overview] = await callTools(server, [
+        { name: 'list_papers', arguments: { offset: 0, limit: 1 } },
+        { name: 'get_summary', arguments: { paper_id: 'he2017drain' } },
+        { name: 'facet_overview', arguments: {} }
+      ])
+      expect(JSON.parse(page.text)).toMatchObject({ total: 1, papers: [{ paper_id: 'he2017drain', has_summary: true }] })
+      expect(JSON.parse(summary.text)).toMatchObject({ paper_id: 'he2017drain', fields: null })
+      expect(JSON.parse(overview.text)).toEqual({ papers: 0, facets: [] })
+      expect(seen).toEqual([[0, 1]])
+      expect(server.calls().map((c) => [c.name, c.ok])).toEqual([
+        ['list_papers', true],
+        ['get_summary', true],
+        ['facet_overview', true]
+      ])
     } finally {
       await server.close()
     }

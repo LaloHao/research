@@ -98,6 +98,33 @@ function defineTools(server: McpServer, tools: LibraryTools, run: Run): void {
     },
     (a) => run('get_neighbours', () => tools.getNeighbours(a.paper_id))
   )
+  server.registerTool(
+    'list_papers',
+    {
+      description: 'Lists the library papers by key, sorted, up to 50 at a time: title, year and whether each has a summary. Use offset to page through a large library.',
+      inputSchema: {
+        offset: z.number().int().min(0).optional().describe('How many papers to skip'),
+        limit: z.number().int().min(1).max(50).optional().describe('Maximum number of papers')
+      }
+    },
+    (a) => run('list_papers', () => tools.listPapers(a.offset, a.limit))
+  )
+  server.registerTool(
+    'get_summary',
+    {
+      description: "One paper's summary fields and facet values, each with its review status (generated, verified or edited), the values it proposed outside the form, and its relation to the thesis.",
+      inputSchema: { paper_id: paperId }
+    },
+    (a) => run('get_summary', () => tools.getSummary(a.paper_id))
+  )
+  server.registerTool(
+    'facet_overview',
+    {
+      description: 'How each facet of the extraction form is used across the library: the allowed values with how many papers have each, and the values papers proposed that are not in the form yet, with the papers that proposed them.',
+      inputSchema: {}
+    },
+    () => run('facet_overview', () => tools.facetOverview())
+  )
 }
 
 function authorized(header: string | undefined, token: string): boolean {

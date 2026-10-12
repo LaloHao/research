@@ -12,6 +12,9 @@ export function stubTools(over: Partial<LibraryTools> = {}): LibraryTools {
     getPaper: async (paperId) => ({ paper_id: paperId, title: 'T', authors: 'A', year: 2020, venue: null, abstract: null, summary: null, facets: {}, pages: 1 }),
     getCitations: async (paperId) => ({ paper_id: paperId, cites: [], cited_by: [] }),
     getNeighbours: async (paperId) => ({ paper_id: paperId, similar: [] }),
+    listPapers: async () => ({ total: 0, offset: 0, papers: [] }),
+    getSummary: async (paperId) => ({ paper_id: paperId, title: 'T', status: 'none', fields: null, facets: {}, thesis_relation: null }),
+    facetOverview: async () => ({ papers: 0, facets: [] }),
     ...over
   }
 }

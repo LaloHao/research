@@ -6,6 +6,10 @@ import type { ProjectStore } from '../project/ProjectStore'
 import { normalizeForMatch, normalizeWithMap } from '../../shared/textMatch'
 import { cosine } from '../relations/similarity'
 import { pagesFromChunks } from '../summary/paperText'
+import { SUMMARY_FIELD_KEYS, type FieldStatus, type SummaryStatus } from '../../shared/summary'
+import { computeFacetOverview, facetEntryValue, libraryExtractions, type FacetOverview } from '../facets/facetOverview'
+import { loadForm } from '../summary/extractionForm'
+import { entryFitsFacet } from '../summary/merge'
 
 /** A failure the model can act on; its message is returned as the tool's error result. */
 export class ToolError extends Error {
@@ -57,6 +61,25 @@ export interface NeighbourOut extends LinkedOut {
   score: number
   reasons: SimilarityReason[]
 }
+export interface PaperListItem {
+  paper_id: string
+  title: string
+  year: number | null
+  has_summary: boolean
+}
+export interface PaperListPage {
+  total: number
+  offset: number
+  papers: PaperListItem[]
+}
+export interface SummaryCard {
+  paper_id: string
+  title: string
+  status: SummaryStatus
+  fields: Record<string, { value: unknown; status: FieldStatus }> | null
+  facets: Record<string, { value: unknown; proposed: string[]; status: FieldStatus }>
+  thesis_relation: { text: string; score: number; research_questions: string[]; status: FieldStatus } | null
+}
 
 /** Read-only views of the library for the agent. Papers are named by key; nothing returns a file path. */
 export interface LibraryTools {
@@ -72,6 +95,12 @@ export interface LibraryTools {
   getPaper(paperId: string): Promise<PaperCard>
   getCitations(paperId: string): Promise<{ paper_id: string; cites: LinkedOut[]; cited_by: LinkedOut[] }>
   getNeighbours(paperId: string): Promise<{ paper_id: string; similar: NeighbourOut[] }>
+  /** The readable library papers sorted by key, `limit` (at most 50) from `offset`. */
+  listPapers(offset?: number, limit?: number): Promise<PaperListPage>
+  /** One paper's summary fields and the facets of the current form, each with its review status. */
+  getSummary(paperId: string): Promise<SummaryCard>
+  /** How each facet of the current form is used, with the proposed values not in the form yet. */
+  facetOverview(): Promise<FacetOverview>
 }
 
 export const MAX_PAGES_PER_READ = 5
@@ -84,6 +113,9 @@ const MAX_QUERY_WORDS = 20
 const MAX_ID_CHARS = 40
 const PAGELESS_CHUNK_CHARS = 6000
 const SUMMARY_KEYS = ['tldr', 'problem', 'contribution', 'method', 'evaluation', 'results'] as const
+const PAPER_PAGE = 50
+/** Summary states that mean summary.md exists. */
+const HAS_SUMMARY = new Set(['generated', 'reviewed', 'stale'])
 
 const clamp = (n: number | undefined, fallback: number, max: number): number => {
   const v = typeof n === 'number' && Number.isFinite(n) ? Math.trunc(n) : fallback
@@ -262,6 +294,51 @@ export function libraryTools(deps: { store: ProjectStore; cache: IndexCache; map
       requirePaper(paperId)
       const detail = await map.relations(paperId)
       return { paper_id: paperId, similar: detail.similar.map((s) => ({ ...linked(s), score: s.score, reasons: s.reasons })) }
+    },
+
+    async listPapers(offset, limit) {
+      const rows = cache
+        .listPapers()
+        .filter((r) => !r.problem)
+        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      const start = typeof offset === 'number' && Number.isFinite(offset) ? Math.max(0, Math.trunc(offset)) : 0
+      const page = rows.slice(start, start + clamp(limit, PAPER_PAGE, PAPER_PAGE))
+      return {
+        total: rows.length,
+        offset: start,
+        papers: page.map((r) => ({ paper_id: r.id, title: r.title, year: r.year, has_summary: HAS_SUMMARY.has(r.summary_status) }))
+      }
+    },
+
+    async getSummary(paperId) {
+      const row = requirePaper(paperId)
+      const summary = await store.readSummary(paperId)
+      const read = await store.readExtraction(paperId)
+      const extraction = read?.ok ? read.value : null
+      const form = loadForm(store.config.extraction_form)
+      const facets: SummaryCard['facets'] = {}
+      for (const def of form.status === 'ok' ? form.form.facets : []) {
+        const entry = extraction?.facets[def.key]
+        if (!entry || !entryFitsFacet(def, entry)) continue
+        facets[def.key] = { value: facetEntryValue(def, entry), proposed: entry.proposed, status: entry.status }
+      }
+      const relation = extraction?.thesis_relation
+      return {
+        paper_id: paperId,
+        title: row.title,
+        status: row.summary_status,
+        fields: summary?.ok
+          ? Object.fromEntries(SUMMARY_FIELD_KEYS.map((k) => [k, { value: summary.value.fields[k].value, status: summary.value.fields[k].status }]))
+          : null,
+        facets,
+        thesis_relation: relation ? { text: relation.text, score: relation.score, research_questions: relation.research_questions, status: relation.status } : null
+      }
+    },
+
+    async facetOverview() {
+      const form = loadForm(store.config.extraction_form)
+      if (form.status !== 'ok') throw new ToolError('The project has no valid extraction form.')
+      return computeFacetOverview(form.form, await libraryExtractions(store, cache))
     }
   }
 }
