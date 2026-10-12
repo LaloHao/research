@@ -149,7 +149,15 @@ export const fixturePath = (name: string): string => fileURLToPath(new URL(`../f
 
 /** A mapping service over a fresh project and library, with a fixed clock, counting ids, fake jobs and a fake Claude. */
 export async function setupMappings(
-  opts: { routes?: Route[]; resolver?: Record<string, ResolvedMetadata>; llm?: FakeLlmProvider; citations?: MappingServiceDeps['citations'] } = {}
+  opts: {
+    routes?: Route[]
+    resolver?: Record<string, ResolvedMetadata>
+    llm?: FakeLlmProvider
+    citations?: MappingServiceDeps['citations']
+    /** The search client's contact email and API key (never in the logged request). */
+    contactEmail?: string
+    openalexApiKey?: string
+  } = {}
 ) {
   const lib = await setupLibrary({ routes: opts.routes, resolver: opts.resolver })
   let changes = 0
@@ -159,6 +167,7 @@ export async function setupMappings(
   const ledger = new CostLedger(lib.store, '11111111-1111-1111-1111-111111111111', () => new Date('2026-10-12T10:00:00.000Z'))
   const budget = new BudgetGuard(() => limitsFromConfig(lib.store.config.llm), () => ledger.monthTotal(), 0.05, { screening: 0.1 })
   const citationCalls: string[] = []
+  const cancelledBatches: string[] = []
   const service = new MappingService({
     store: lib.store,
     cache: lib.cache,
@@ -167,7 +176,7 @@ export async function setupMappings(
     now: () => new Date('2026-10-12T10:00:00.000Z'),
     randomHex: (digits) => (++n).toString(16).padStart(digits, '0'),
     library: lib.library,
-    openalex: new OpenAlexSearch(new HttpClient({ fetch: lib.fetch, sleep: async () => {} })),
+    openalex: new OpenAlexSearch(new HttpClient({ fetch: lib.fetch, sleep: async () => {}, contactEmail: opts.contactEmail, openalexApiKey: opts.openalexApiKey })),
     citations: opts.citations ?? {
       fetch: async (id) => void citationCalls.push(`references:${id}`),
       fetchCitedBy: async (id) => void citationCalls.push(`cited_by:${id}`)
@@ -182,7 +191,11 @@ export async function setupMappings(
     }),
     costs: { estimate: (op) => budget.currentEstimate(op), limits: () => limitsFromConfig(lib.store.config.llm), monthSpent: () => ledger.monthTotal() },
     enqueue: (spec) => queued.push(spec),
+    cancelBatch: (batchId) => {
+      cancelledBatches.push(batchId)
+      return 0
+    },
     pauseMs: 0
   })
-  return { ...lib, service, provider, queued, citationCalls, changes: () => changes }
+  return { ...lib, service, provider, ledger, queued, citationCalls, cancelledBatches, changes: () => changes }
 }

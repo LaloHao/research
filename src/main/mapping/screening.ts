@@ -112,7 +112,7 @@ export function activeSearchIds(searches: Search[]): Set<string> {
 }
 
 /** The newest suggestion of each record and phase. */
-function latestSuggestions(list: ScreeningSuggestion[]): Map<string, ScreeningSuggestion> {
+export function latestSuggestions(list: ScreeningSuggestion[]): Map<string, ScreeningSuggestion> {
   const out = new Map<string, ScreeningSuggestion>()
   for (const s of [...list].sort(byTime)) out.set(`${s.record}|${s.phase}`, s)
   return out

@@ -305,6 +305,7 @@ export class ProjectSession {
       }),
       costs: { estimate: (op) => budget.currentEstimate(op), limits: () => limitsFromConfig(store.config.llm), monthSpent: () => ledger.monthTotal() },
       enqueue: (spec) => queue.enqueue(spec),
+      cancelBatch: (batchId) => queue.cancelBatch(batchId),
       pauseMs: opts.citationPauseMs
     })
     const session: ProjectSession = new ProjectSession(store, cache, http, library, queue, summaries, citations, similarity, map, relations, sync, facets, chats, mappings)

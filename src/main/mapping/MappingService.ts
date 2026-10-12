@@ -55,6 +55,7 @@ import {
   decisionProblem,
   duplicatePairs,
   headsOf,
+  latestSuggestions,
   matchesFilter,
   phaseView,
   recordRows,
@@ -86,6 +87,8 @@ export interface MappingServiceDeps {
   costs: { estimate(operation: CostOperation): number; limits(): BudgetLimits; monthSpent(): Promise<number> }
   /** Queues a job; returns its id. Jobs never queue themselves: the window asks after the user confirms. */
   enqueue: (spec: JobSpec) => number
+  /** Cancels the queued jobs of a batch (a «Sugerir» that hit a cap or the CLI quota stops there). */
+  cancelBatch: (batchId: string) => number
   /** Pause before each OpenAlex request; tests pass 0. */
   pauseMs?: number
   sleep?: (ms: number) => Promise<void>
@@ -228,6 +231,9 @@ function filtersOf(filter: string | null): Record<string, string> {
   }
   return out
 }
+
+/** Failures that would fail every remaining call of a batch too. */
+const BATCH_STOPPERS = new Set(['llm_quota', 'budget_exceeded'])
 
 type Spec<T extends JobSpec['type']> = Extract<JobSpec, { type: T }>
 
@@ -595,6 +601,7 @@ export class MappingService {
     if (!this.deps.store.mappingExists(id)) throw new UserFacingError('mapping_not_found')
     const query = req.query.trim()
     if (!query) throw new UserFacingError('invalid_edit')
+    if (req.fromYear !== null && req.toYear !== null && req.fromYear > req.toYear) throw new UserFacingError('invalid_edit')
     const cap = Number.isFinite(req.cap) ? Math.round(req.cap) : SEARCH_CAP.default
     return this.deps.enqueue({
       type: 'mapping_search',
@@ -651,23 +658,24 @@ export class MappingService {
       const { cache, citations, openalex } = this.deps
       const from = this.included(spec.mappingId)
       if (from.length === 0) throw new UserFacingError('nothing_to_snowball')
-      const found = new Set<string>()
-      for (const row of from) {
-        const paperId = row.paper_id!
+      const paperIds = new Set(from.map((r) => r.paper_id!))
+      for (const paperId of paperIds) {
         signal.throwIfAborted()
         // A paper whose citations were never fetched has neither its references nor its OpenAlex id yet.
         if (cache.getPaper(paperId)?.citations_status === 'none') await citations.fetch(paperId, signal)
         signal.throwIfAborted()
-        if (spec.direction !== 'forward') {
-          for (const e of cache.citationEdges()) if (e.citing === paperId) found.add(e.cited)
-        }
-        if (spec.direction !== 'backward') {
+      }
+      if (spec.direction !== 'backward') {
+        const known = new Set(cache.relationRows().flatMap((r) => (paperIds.has(r.id) && r.openalex_id ? [r.id] : [])))
+        for (const paperId of paperIds) {
           // A paper OpenAlex does not know has no citing works to fetch.
-          if (cache.relationRows().find((r) => r.id === paperId)?.openalex_id) await citations.fetchCitedBy(paperId, signal)
+          if (known.has(paperId)) await citations.fetchCitedBy(paperId, signal)
           signal.throwIfAborted()
-          for (const e of cache.incomingEdges()) if (e.paperId === paperId) found.add(e.citing)
         }
       }
+      const found = new Set<string>()
+      if (spec.direction !== 'forward') for (const e of cache.citationEdges()) if (paperIds.has(e.citing)) found.add(e.cited)
+      if (spec.direction !== 'backward') for (const e of cache.incomingEdges()) if (paperIds.has(e.paperId)) found.add(e.citing)
       const ids = [...found].sort().slice(0, SNOWBALL_CAP)
       let works: WorkCandidate[] = []
       if (ids.length > 0) {
@@ -740,9 +748,12 @@ export class MappingService {
         if (!identifier || signal.aborted || toUserFacing(error).code !== 'not_found') throw error
         outcome = await library.ingestMetadata(recordMetadata(record), signal)
       }
-      signal.throwIfAborted()
+      // The paper is in the library now: a cancel from here on still links it (and the handler runs the usual follow-ups),
+      // or the record would stay unlinked and a new run would see a duplicate that never got its summary or citations.
       // A new paper is this record's; a paper the ingest merged into is linked only when it is the same work by identifier
       // or by title without different DOIs (the library's ingest may have taken a preprint for its published version).
+      // When they disagree the record stays unlinked and keeps its place in the plan (backlog: the library merged the
+      // record's work into another version of it).
       const link = outcome.status === 'added' ? outcome.paperId : libraryPaper(recordCandidate(record), cache.dedupeEntries())
       if (link === outcome.paperId) await this.linkPaper(spec.mappingId, record.id, outcome.paperId)
       return outcome
@@ -791,7 +802,8 @@ export class MappingService {
       const { protocol } = content
       const wanted = new Set(spec.recordIds)
       // Records decided, merged, waiting for a duplicate answer or already suggested since the job was queued are not asked about.
-      const pending = content.records.filter((r) => wanted.has(r.id) && this.suggestable(content, r, spec.phase))
+      const latest = latestSuggestions(content.suggestions)
+      const pending = content.records.filter((r) => wanted.has(r.id) && this.suggestable(content, r, spec.phase, latest))
       if (pending.length === 0) return { message: 'screening_suggested' }
       const made: SuggestedScreening[] = []
       let model = ''
@@ -812,7 +824,10 @@ export class MappingService {
       await this.appendSuggestions(spec.mappingId, spec.phase, made, model, protocol.version)
       return { message: 'screening_suggested' }
     } catch (error) {
-      throw signal.aborted ? error : toUserFacing(error)
+      if (signal.aborted) throw error
+      const facing = toUserFacing(error)
+      if (spec.batchId && BATCH_STOPPERS.has(facing.code)) this.deps.cancelBatch(spec.batchId)
+      throw facing
     }
   }
 
@@ -834,7 +849,10 @@ export class MappingService {
       )
   }
 
-  /** Undecided records without a suggestion made with the current protocol; on full text, only papers with text. */
+  /**
+   * Undecided records whose newest suggestion (if any) was made with an earlier protocol; on full text, only papers with
+   * text. The same rule as `suggestable`, which the job applies again to the files.
+   */
   private toSuggest(id: string, phase: Phase): { ready: MappingRecordRow[]; withoutText: number } {
     const rows = this.queue(id, { phase, filter: 'pending' }).filter((r) => !r.suggestions[phase] || r.suggestions[phase]!.outdated)
     if (phase === 'title_abstract') return { ready: rows, withoutText: 0 }
@@ -854,7 +872,7 @@ export class MappingService {
   }
 
   /** Still worth asking Claude about: decidable, pending in the phase, and not suggested with the current protocol yet. */
-  private suggestable(c: MappingContent, record: MappingRecord, phase: Phase): boolean {
+  private suggestable(c: MappingContent, record: MappingRecord, phase: Phase, latest: Map<string, ScreeningSuggestion>): boolean {
     if (!this.decidable(c, record)) return false
     const heads = decisionHeads(c.decisions)
     const version = c.protocol.version
@@ -864,7 +882,9 @@ export class MappingService {
       const paperId = record.paper_id
       if (!paperId || !this.deps.store.paperExists(paperId) || this.deps.cache.getPaper(paperId)?.text_status !== 'ok') return false
     }
-    return !c.suggestions.some((s) => s.record === record.id && s.phase === phase && s.protocol_version === version)
+    // As the plan counts it (the row's `outdated`): only the newest suggestion of the record and phase matters.
+    const newest = latest.get(`${record.id}|${phase}`)
+    return !newest || newest.protocol_version < version
   }
 
   private linkPaper(id: string, recordId: string, paperId: string): Promise<void> {
