@@ -1,4 +1,22 @@
-import { CHAT_ID, ChatMessageSchema, ChatMetaSchema, MAX_MESSAGE_COST, MESSAGE_MODEL, normalizeExcerpt, type AssistantMessage, type ChatFile, type ChatMessage, type UserMessage } from '../../shared/chat'
+import { isDeepStrictEqual } from 'node:util'
+import { parse, stringify } from 'yaml'
+import { z } from 'zod'
+import {
+  ACTION_ID,
+  ACTION_TOOL_NAME,
+  CHAT_ID,
+  ChatMessageSchema,
+  ChatMetaSchema,
+  MAX_MESSAGE_COST,
+  MESSAGE_MODEL,
+  normalizeExcerpt,
+  type ActionMessage,
+  type AssistantMessage,
+  type ChatFile,
+  type ChatMessage,
+  type UserMessage
+} from '../../shared/chat'
+import { ACTION_STATES, MAX_REQUEST_QUOTE, type ActionState } from '../../shared/chatActions'
 import { citationMarker, parseCitations } from '../../shared/chatCitations'
 import { sha256 } from './atomicWrite'
 import type { ReadResult } from './errors'
@@ -10,16 +28,29 @@ export const USER_HEADING = 'Tú'
 export const ASSISTANT_HEADING = 'Claude'
 /** Marks an answer the user stopped. */
 export const STOPPED_MARK = 'detenida'
+/** An action's heading and the words for how it ended, in the UI's language like the other headings. */
+export const ACTION_HEADING = 'Acción'
+export const ACTION_STATE_WORDS: Record<ActionState, string> = { executed: 'ejecutada', denied: 'rechazada', failed: 'fallida' }
 export const TITLE_CHARS = 80
 
-const HEADING = /^## (Tú|Claude) — (\S+)(?: · (.*?))?\s*$/
+const HEADING = /^## (Tú|Claude|Acción) — (\S+)(?: · (.*?))?\s*$/
 /**
  * Message lines written with one more leading backslash, and read back with one less, so that any text round-trips:
- * lines that would read as a message heading (with any number of backslashes already in front), and lines that would
- * read as git conflict markers (a file with them is never overwritten, so a message must not look like one).
+ * lines that would read as a message or action heading (with any number of backslashes already in front), and lines
+ * that would read as git conflict markers (a file with them is never overwritten, so a message must not look like one).
  */
-const NEEDS_ESCAPE = /^\\*(?:## (?:Tú|Claude) — |<{7} |={7}$|>{7} )/
-const ESCAPED = /^\\(\\*(?:## (?:Tú|Claude) — |<{7} |={7}$|>{7} ))/
+const NEEDS_ESCAPE = /^\\*(?:## (?:Tú|Claude|Acción) — |<{7} |={7}$|>{7} )/
+const ESCAPED = /^\\(\\*(?:## (?:Tú|Claude|Acción) — |<{7} |={7}$|>{7} ))/
+/** An action's body: one fenced YAML block. */
+const ACTION_BODY = /^```yaml\n([\s\S]*?)\n?```$/
+const ActionBodySchema = z.object({
+  approval: z.enum(['request', 'user']).nullable().catch(null),
+  request: z.string().max(MAX_REQUEST_QUOTE).nullable().catch(null),
+  args: z.record(z.string(), z.unknown()).catch({}),
+  result: z.record(z.string(), z.unknown()).catch({})
+})
+type ActionBody = Pick<ActionMessage, 'approval' | 'request' | 'args' | 'result'>
+const EMPTY_ACTION_BODY: ActionBody = { approval: null, request: null, args: {}, result: {} }
 /** A user message's first line that would read as the excerpt line; escaped the same way. */
 const NEEDS_EXCERPT_ESCAPE = /^\\*> \[\[/
 const ESCAPED_EXCERPT = /^\\(\\*> \[\[)/
@@ -59,6 +90,7 @@ export function checkMessages(messages: ChatMessage[]): ChatMessage[] {
   return messages.map((m, i) => {
     const valid = ChatMessageSchema.parse(m)
     if (valid.role === 'assistant' && valid.model === STOPPED_MARK) throw new Error(`Message ${i}: the model id cannot be "${STOPPED_MARK}"`)
+    if (valid.role === 'action' && !actionBodyRoundTrips(actionBody(valid))) throw new Error(`Message ${i}: the action's record would not read back the same`)
     return valid
   })
 }
@@ -91,7 +123,38 @@ function unescapeBody(text: string, user: boolean): string {
     .join('\n')
 }
 
+const actionBody = (m: ActionBody): ActionBody => ({ approval: m.approval, request: m.request, args: m.args, result: m.result })
+
+/**
+ * The YAML of an action's body. Every value is the YAML library's own scalar or block: whatever a key or value holds
+ * (newlines, fences, headings, conflict markers, YAML syntax), it stays quoted or indented inside the block, and the
+ * block's own top-level lines are the four fixed keys. No anchors, so a record reads on its own.
+ */
+const actionYaml = (body: ActionBody): string => stringify(body, { lineWidth: 0, aliasDuplicateObjects: false }).trimEnd()
+
+/**
+ * A record's YAML is read without aliases: the app never writes them, and a hand-edited one cannot expand. Warnings
+ * (a hand-edited unknown tag) are not logged: such a body reads as text or as empty, every time it is read.
+ */
+const readActionYaml = (yaml: string): unknown => parse(yaml, { maxAliasCount: 0, logLevel: 'error' })
+
+/** Whether the body reads back from its YAML exactly as it is (plain JSON-like data, no undefined, Date, Map or bigint). */
+function actionBodyRoundTrips(body: ActionBody): boolean {
+  try {
+    return isDeepStrictEqual(readActionYaml(actionYaml(body)), body)
+  } catch {
+    return false
+  }
+}
+
+/** `## Acción — <at> · <tool> · <state> · <id>`, then what was asked and what happened as a YAML block. */
+function renderAction(m: ActionMessage): string {
+  const head = [m.at, m.tool, ACTION_STATE_WORDS[m.state], m.id].join(' · ')
+  return `## ${ACTION_HEADING} — ${head}\n\n${escapeBody(`\`\`\`yaml\n${actionYaml(actionBody(m))}\n\`\`\``, false)}`
+}
+
 function renderMessage(m: ChatMessage): string {
+  if (m.role === 'action') return renderAction(m)
   if (m.role === 'user') {
     const excerpt = m.excerpt ? `> ${citationMarker(m.excerpt)}\n\n` : ''
     return `## ${USER_HEADING} — ${m.at}\n\n${excerpt}${escapeBody(cleanMessageText(m.text), true)}`.trimEnd()
@@ -100,7 +163,7 @@ function renderMessage(m: ChatMessage): string {
   return `## ${ASSISTANT_HEADING} — ${parts.join(' · ')}\n\n${escapeBody(cleanMessageText(m.text), false)}`.trimEnd()
 }
 
-/** chats/<id>.md: the frontmatter, then one `## Tú — …` / `## Claude — …` section per message. */
+/** chats/<id>.md: the frontmatter, then one `## Tú — …` / `## Claude — …` / `## Acción — …` section per message. */
 export function renderChat(file: ChatFile): string {
   return toFrontmatter(file.meta, file.messages.map(renderMessage).join('\n\n'))
 }
@@ -126,6 +189,32 @@ function readAssistantMessage(at: string, rest: string, raw: string): AssistantM
   return { role: 'assistant', at, model, costUsd, stopped: parts.includes(STOPPED_MARK), text: unescapeBody(raw, false) }
 }
 
+/**
+ * A hand-edited action still reads: an unknown state word counts as failed, an odd tool or id becomes a placeholder,
+ * a field of the wrong type reads as empty, and a body that is no longer one valid YAML block (or holds data the app
+ * could not write back the same) reads as empty. Either way it is written back in the app's own form.
+ */
+function readActionMessage(at: string, rest: string, raw: string): ActionMessage {
+  const [tool = '', word = '', id = ''] = rest.split(' · ').map((p) => p.trim())
+  const state = ACTION_STATES.find((s) => ACTION_STATE_WORDS[s] === word) ?? 'failed'
+  const fenced = ACTION_BODY.exec(unescapeBody(raw, false))
+  let body: ActionBody = EMPTY_ACTION_BODY
+  try {
+    const read = fenced ? ActionBodySchema.safeParse(readActionYaml(fenced[1])) : null
+    if (read?.success && actionBodyRoundTrips(read.data)) body = read.data
+  } catch {
+    body = EMPTY_ACTION_BODY
+  }
+  return {
+    role: 'action',
+    at,
+    id: ACTION_ID.test(id) ? id : '000000',
+    tool: ACTION_TOOL_NAME.test(tool) ? tool : 'unknown',
+    state,
+    ...actionBody(body)
+  }
+}
+
 function parseMessages(body: string): ChatMessage[] {
   const out: ChatMessage[] = []
   let head: RegExpExecArray | null = null
@@ -133,7 +222,9 @@ function parseMessages(body: string): ChatMessage[] {
   const flush = (): void => {
     if (!head) return
     const raw = cleanMessageText(lines.join('\n'))
-    out.push(head[1] === USER_HEADING ? readUserMessage(head[2], raw) : readAssistantMessage(head[2], head[3] ?? '', raw))
+    if (head[1] === USER_HEADING) out.push(readUserMessage(head[2], raw))
+    else if (head[1] === ASSISTANT_HEADING) out.push(readAssistantMessage(head[2], head[3] ?? '', raw))
+    else out.push(readActionMessage(head[2], head[3] ?? '', raw))
   }
   for (const line of body.split('\n')) {
     const m = HEADING.exec(nfc(line))

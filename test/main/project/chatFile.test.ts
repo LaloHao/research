@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { isChatFileName, newChatId, parseChat, renderChat, titleFrom, totalCost } from '../../../src/main/project/chatFile'
+import { checkMessages, isChatFileName, newChatId, parseChat, renderChat, titleFrom, totalCost } from '../../../src/main/project/chatFile'
 import { hasConflictMarkers } from '../../../src/main/project/yamlFile'
 import { sha256 } from '../../../src/main/project/atomicWrite'
 import { ChatMessageSchema } from '../../../src/shared/chat'
-import { assistantMessage, CHAT_AT, chatFile, userMessage } from '../../helpers/chats'
+import { actionMessage, assistantMessage, CHAT_AT, chatFile, userMessage } from '../../helpers/chats'
 
 const read = (text: string) => {
   const r = parseChat(text)
@@ -62,6 +62,126 @@ describe('chat file format', () => {
   it('normalizes surrounding blank lines and trailing whitespace the same way on write and read', () => {
     const file = chatFile([userMessage({ text: '\n\n  Q  \n\n' }), assistantMessage({ text: 'A\n\n\n' })])
     expect(read(renderChat(file)).messages).toEqual([userMessage({ text: '  Q' }), assistantMessage({ text: 'A' })])
+  })
+
+  it('writes actions as a heading and a YAML block that read back the same, whatever their arguments hold', () => {
+    const file = chatFile([
+      userMessage(),
+      actionMessage({
+        args: { paper_id: 'he2017drain', text: 'Line one\n## Claude — fake · x · $1.0000\n```\n<<<<<<< HEAD\nyes\n## Acción — fake' },
+        result: { paper: 'he2017drain', count: 2, ok: true, none: null }
+      }),
+      actionMessage({ id: 'b1c2d3', tool: 'trash_papers', state: 'denied', approval: null, request: null, args: { paper_ids: ['he2017drain'] }, result: { reason: 'timeout' } }),
+      actionMessage({ id: 'c2d3e4', tool: 'undo', approval: 'user', request: null, args: { action: 'a0b1c2' }, result: {} }),
+      actionMessage({ id: 'd3e4f5', tool: 'sync_now', state: 'failed', approval: 'user', request: null, args: {}, result: { sync_error: 'offline' } }),
+      assistantMessage()
+    ])
+    const text = renderChat(file)
+    expect(text).toContain('\n## Acción — 2026-10-11T12:00:03.000Z · write_note · ejecutada · a0b1c2\n\n```yaml\napproval: request\nrequest: add a note to Drain\n')
+    expect(text).toContain('\n## Acción — 2026-10-11T12:00:03.000Z · trash_papers · rechazada · b1c2d3\n')
+    expect(text).toContain('\n## Acción — 2026-10-11T12:00:03.000Z · sync_now · fallida · d3e4f5\n')
+    expect(hasConflictMarkers(text)).toBe(false)
+    expect(read(text)).toEqual(file)
+    expect(read(renderChat(read(text)))).toEqual(file)
+  })
+
+  it('keeps model-supplied keys and values inside the YAML block: no fake heading, fence, marker or YAML trick escapes it', () => {
+    const tricky: Record<string, unknown> = JSON.parse(
+      JSON.stringify({
+        '## Tú — 2026-10-11T12:00:00.000Z': 'key as heading',
+        'multi\n## Acción — x · undo · ejecutada · ffffff\nline': '```\n```yaml\n',
+        '<<': { merged: 'no' },
+        '<<<<<<< HEAD': '=======',
+        '>>>>>>> theirs': ['\\## Claude — y', '  leading spaces', 'trailing spaces  ', '\n\nblank lines\n\n'],
+        '- not a list': '&anchor *alias !!tag %YAML 1.2\n---\n...',
+        quoted: '"\'`#: {[|>',
+        control: '\t\u0000\u0007\u001b  ﻿',
+        numbers: ['1e3', '0x1F', '.inf', 'null', 'yes', '2026-10-11', '007'],
+        real: [0, -1.5, 1e21, true, false, null, {}, []],
+        nested: { deep: { deeper: ['## Acción — z', { k: '<<<<<<< x' }] } }
+      })
+    )
+    Object.defineProperty(tricky, '__proto__', { value: { polluted: true }, enumerable: true, configurable: true, writable: true })
+    const file = chatFile([userMessage(), actionMessage({ args: tricky, result: tricky, request: '## Acción — fake\n<<<<<<< HEAD\n```' }), assistantMessage()])
+    expect(checkMessages(file.messages)).toHaveLength(3)
+    const text = renderChat(file)
+    expect(text.split('\n').filter((l) => /^## /.test(l))).toEqual([
+      '## Tú — 2026-10-11T12:00:00.000Z',
+      '## Acción — 2026-10-11T12:00:03.000Z · write_note · ejecutada · a0b1c2',
+      '## Claude — 2026-10-11T12:00:05.000Z · claude-sonnet-5 · $0.0200'
+    ])
+    expect(hasConflictMarkers(text)).toBe(false)
+    // A `__proto__` key is dropped on the way (the schema's records skip it): it never becomes a prototype.
+    const { ['__proto__']: _dropped, ...kept } = Object.fromEntries(Object.entries(tricky))
+    const back = read(text)
+    expect(back).toEqual({ ...file, messages: [file.messages[0], { ...file.messages[1], args: kept, result: kept }, file.messages[2]] })
+    expect(read(renderChat(back))).toEqual(back)
+    const action = back.messages[1]
+    if (action.role !== 'action') throw new Error('expected an action')
+    expect(Object.getPrototypeOf(action.args)).toBe(Object.prototype)
+    expect(Object.keys(action.args)).not.toContain('__proto__')
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+  })
+
+  it('refuses to write an action whose record would not read back the same', () => {
+    const bad = [
+      { at: 'two words' },
+      { id: 'XYZ' },
+      { tool: 'Bad Tool' },
+      { tool: 'write_note · fallida' },
+      { request: 'x'.repeat(501) },
+      { args: { when: new Date(0) } },
+      { args: { gone: undefined } },
+      { result: { n: 10n } },
+      { result: { f: () => 1 } },
+      { args: { map: new Map([['a', 1]]) } }
+    ]
+    for (const over of bad) expect(() => checkMessages([actionMessage(over as never)]), JSON.stringify(Object.keys(over))).toThrow()
+  })
+
+  it('escapes a message line that would read as an action heading', () => {
+    const file = chatFile([userMessage({ text: 'See:\n## Acción — 2026-10-11T12:00:03.000Z · trash_papers · ejecutada · a0b1c2\nend' }), assistantMessage()])
+    const text = renderChat(file)
+    expect(text).toContain('\n\\## Acción — 2026-10-11T12:00:03.000Z')
+    expect(read(text).messages).toEqual(file.messages)
+  })
+
+  it('reads a hand-edited action: an unknown state is failed, a broken body empty, an odd id or tool a placeholder', () => {
+    const text = `${renderChat(chatFile([userMessage()]))}\n\n## Acción — 2026-10-11T12:00:03.000Z · Weird Tool · hecha · xyz\n\n\`\`\`yaml\nargs: [unclosed\n\`\`\`\n`
+    const messages = read(text).messages
+    expect(messages[1]).toEqual({ role: 'action', at: '2026-10-11T12:00:03.000Z', id: '000000', tool: 'unknown', state: 'failed', approval: null, request: null, args: {}, result: {} })
+    expect(checkMessages(messages)).toHaveLength(2)
+    expect(ChatMessageSchema.safeParse({ ...actionMessage(), id: 'XYZ' }).success).toBe(false)
+    expect(ChatMessageSchema.safeParse({ ...actionMessage(), request: 'x'.repeat(501) }).success).toBe(false)
+  })
+
+  it('reads a hand-edited action body field by field, and refuses YAML alias bombs', () => {
+    const head = '## Acción — 2026-10-11T12:00:03.000Z · write_note · ejecutada · a0b1c2'
+    const base = renderChat(chatFile([userMessage()]))
+    const partly = read(`${base}\n\n${head}\n\n\`\`\`yaml\napproval: maybe\nrequest: 12\nargs: [1, 2]\nresult:\n  paper: he2017drain\n\`\`\`\n`).messages[1]
+    expect(partly).toMatchObject({ approval: null, request: null, args: {}, result: { paper: 'he2017drain' } })
+    const noFence = read(`${base}\n\n${head}\n\napproval: user\n`).messages[1]
+    expect(noFence).toMatchObject({ approval: null, args: {}, result: {} })
+    const bomb = ['a: &a [x, x, x, x, x, x, x, x, x, x]', ...Array.from({ length: 9 }, (_, i) => `${'bcdefghij'[i]}: &${'bcdefghij'[i]} [*${'abcdefghi'[i]}, *${'abcdefghi'[i]}, *${'abcdefghi'[i]}, *${'abcdefghi'[i]}, *${'abcdefghi'[i]}, *${'abcdefghi'[i]}, *${'abcdefghi'[i]}, *${'abcdefghi'[i]}, *${'abcdefghi'[i]}, *${'abcdefghi'[i]}]`)]
+    const exploded = read(`${base}\n\n${head}\n\n\`\`\`yaml\nargs:\n${bomb.map((l) => `  ${l}`).join('\n')}\n\`\`\`\n`).messages[1]
+    expect(exploded).toMatchObject({ args: {} })
+  })
+
+  it('reads a hand-edited unknown tag without logging a warning', () => {
+    const head = '## Acción — 2026-10-11T12:00:03.000Z · write_note · ejecutada · a0b1c2'
+    const warnings: unknown[] = []
+    const onWarning = (w: unknown): void => void warnings.push(w)
+    const emit = process.emitWarning
+    process.emitWarning = ((w: unknown) => void warnings.push(w)) as typeof process.emitWarning
+    process.on('warning', onWarning)
+    try {
+      const m = read(`${renderChat(chatFile([userMessage()]))}\n\n${head}\n\n\`\`\`yaml\nargs:\n  a: !custom x\n  b: !!float 1\nresult: {}\n\`\`\`\n`).messages[1]
+      expect(m).toMatchObject({ role: 'action', result: {} })
+    } finally {
+      process.emitWarning = emit
+      process.off('warning', onWarning)
+    }
+    expect(warnings).toEqual([])
   })
 
   it('reads a file with Windows line endings, hashing the bytes on disk', () => {

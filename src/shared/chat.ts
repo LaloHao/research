@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { citationMarker, parseCitations } from './chatCitations'
-import type { PendingApproval } from './chatActions'
+import { ACTION_STATES, MAX_REQUEST_QUOTE, UNDO_TOOL, type ActionState, type PendingApproval } from './chatActions'
 import { LLM_MODELS, type LlmModel } from './summary'
 
 /** `<UTC yyyymmdd>-<hhmmss>-<4 hex>`, plus `-<6 hex>` for each copy the git sync split off. */
@@ -69,7 +69,30 @@ export interface AssistantMessage {
   text: string
 }
 
-export type ChatMessage = UserMessage | AssistantMessage
+/** An action's id in its conversation; «Deshacer» and the undo's record name it. */
+export const ACTION_ID = /^[0-9a-f]{6}$/
+/** A tool name as an action's heading holds it (a later version's tools read back as written). */
+export const ACTION_TOOL_NAME = /^[a-z][a-z_]{0,39}$/
+
+/** An action Claude asked for in this conversation: run, denied or failed (stage 4b). */
+export interface ActionMessage {
+  role: 'action'
+  at: string
+  id: string
+  /** An action tool, or `undo` for the record of a «Deshacer». */
+  tool: string
+  state: ActionState
+  /** `request`: the user's latest message asked for it (quoted in `request`); `user`: approved in the conversation; null: it did not run. */
+  approval: 'request' | 'user' | null
+  /** The words of the user's message the call quoted, when the app found them there. */
+  request: string | null
+  /** The tool's arguments, without the quote (and never a file path). */
+  args: Record<string, unknown>
+  /** What happened: paper keys, counts and outcome codes, `error`, `sync_error`, or the denial's `reason`. */
+  result: Record<string, unknown>
+}
+
+export type ChatMessage = UserMessage | AssistantMessage | ActionMessage
 
 /**
  * The excerpt as its citation marker reads back (whitespace collapsed, `"]]` and `[[` broken up), or null when the
@@ -112,12 +135,40 @@ export const ChatMessageSchema = z.discriminatedUnion('role', [
     costUsd: z.number().min(0).lt(MAX_MESSAGE_COST),
     stopped: z.boolean(),
     text: z.string()
+  }),
+  z.object({
+    role: z.literal('action'),
+    at: z.string().regex(MESSAGE_AT),
+    id: z.string().regex(ACTION_ID),
+    tool: z.string().regex(ACTION_TOOL_NAME),
+    state: z.enum(ACTION_STATES),
+    approval: z.enum(['request', 'user']).nullable(),
+    request: z.string().max(MAX_REQUEST_QUOTE).nullable(),
+    args: z.record(z.string(), z.unknown()),
+    result: z.record(z.string(), z.unknown())
   })
 ])
 
 export interface ChatFile {
   meta: ChatMeta
   messages: ChatMessage[]
+}
+
+/**
+ * The question an answer is for: the last user message, when nothing but action records follow it (the actions an
+ * answer ran before it failed or was retried). -1 when the last question already has an answer.
+ */
+export function questionIndex(messages: ChatMessage[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') return i
+    if (messages[i].role === 'assistant') return -1
+  }
+  return -1
+}
+
+/** The ids of the actions a «Deshacer» took back (only an undo that ran counts). */
+export function undoneActions(messages: ChatMessage[]): Set<string> {
+  return new Set(messages.flatMap((m) => (m.role === 'action' && m.tool === UNDO_TOOL && m.state === 'executed' && typeof m.args.action === 'string' ? [m.args.action] : [])))
 }
 
 /** How a citation checked against the cited paper's text; each has a text under `chat.citation.<state>`. */
@@ -150,6 +201,7 @@ export interface ChatSummary {
   model: LlmModel
   updatedAt: string
   costUsd: number
+  /** Questions and answers (action records are not counted). */
   messages: number
   /** A copy the sync split off, and the machine its version came from («(copia de <equipo>)»). */
   copyOf: { machine: string | null } | null
@@ -158,7 +210,9 @@ export interface ChatSummary {
 }
 
 export type AssistantView = AssistantMessage & { citations: ChatCitation[]; unverified: number }
-export type ChatMessageView = UserMessage | AssistantView
+/** An action as the conversation shows it: whether «Deshacer» is offered, and whether it was already undone. */
+export type ActionView = ActionMessage & { undoable: boolean; undone: boolean }
+export type ChatMessageView = UserMessage | AssistantView | ActionView
 
 /** The answer being written right now; `seq` orders it against the stream updates. */
 export interface ChatPartial {

@@ -7,7 +7,7 @@ import { MapService } from '../../src/main/map/MapService'
 import { startLibraryMcpServer } from '../../src/main/mcp/LibraryMcpServer'
 import { libraryTools } from '../../src/main/mcp/libraryTools'
 import { ProjectStore } from '../../src/main/project/ProjectStore'
-import type { AssistantMessage, ChatFile, ChatMessage, ChatMeta, ChatStreamUpdate, UserMessage } from '../../src/shared/chat'
+import type { ActionMessage, AssistantMessage, ChatFile, ChatMessage, ChatMeta, ChatStreamUpdate, UserMessage } from '../../src/shared/chat'
 import { chatAnswer, FakeLlmProvider, type ChatResponse } from './llm'
 import { seedPair } from './pair'
 import { tmpDir } from './tmp'
@@ -41,6 +41,21 @@ export function userMessage(over: Partial<UserMessage> = {}): UserMessage {
 
 export function assistantMessage(over: Partial<AssistantMessage> = {}): AssistantMessage {
   return { role: 'assistant', at: '2026-10-11T12:00:05.000Z', model: 'claude-sonnet-5', costUsd: 0.02, stopped: false, text: DRAIN_ANSWER, ...over }
+}
+
+export function actionMessage(over: Partial<ActionMessage> = {}): ActionMessage {
+  return {
+    role: 'action',
+    at: '2026-10-11T12:00:03.000Z',
+    id: 'a0b1c2',
+    tool: 'write_note',
+    state: 'executed',
+    approval: 'request',
+    request: 'add a note to Drain',
+    args: { paper_id: 'he2017drain', text: 'Parses online.' },
+    result: { paper: 'he2017drain' },
+    ...over
+  }
 }
 
 /** A conversation whose `cost_usd` adds up its answers, as the app writes it. */

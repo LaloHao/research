@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { CHAT_ID, ChatMessageSchema, ChatMetaSchema, ChatScopeSchema, normalizeExcerpt } from '../../src/shared/chat'
+import { CHAT_ID, ChatMessageSchema, ChatMetaSchema, ChatScopeSchema, normalizeExcerpt, questionIndex, undoneActions } from '../../src/shared/chat'
 import { ACTION_READ_TOOLS, ACTION_TOOLS, SYNC_TOOLS, TOOL_RISK } from '../../src/shared/chatActions'
+
+import { actionMessage, assistantMessage, userMessage } from '../helpers/chats'
 
 const AT = '2026-10-11T12:00:00.000Z'
 const meta = { schema_version: 1, id: '20261011-120000-a1b2', title: 'What does Drain do?', scope: 'library', model: 'sonnet', created_at: AT, updated_at: AT }
@@ -91,5 +93,22 @@ describe('action tools', () => {
     const all: readonly string[] = [...ACTION_TOOLS, ...ACTION_READ_TOOLS]
     expect(SYNC_TOOLS.every((t) => all.includes(t))).toBe(true)
     expect(new Set(all).size).toBe(all.length)
+  })
+})
+
+describe('action records', () => {
+  const undo = (target: string, state: 'executed' | 'denied' | 'failed') =>
+    actionMessage({ id: `${state[0]}00000`, tool: 'undo', state, approval: 'user', request: null, args: { action: target }, result: {} })
+
+  it('counts as undone only the actions an executed undo took back', () => {
+    const messages = [userMessage(), actionMessage({ id: 'a00001' }), actionMessage({ id: 'a00002' }), actionMessage({ id: 'a00003' }), undo('a00001', 'executed'), undo('a00002', 'failed'), undo('a00003', 'denied')]
+    expect([...undoneActions(messages)]).toEqual(['a00001'])
+  })
+
+  it('finds the unanswered question behind the actions that followed it', () => {
+    expect(questionIndex([userMessage(), actionMessage(), actionMessage({ id: 'b00000' })])).toBe(0)
+    expect(questionIndex([userMessage(), actionMessage(), assistantMessage()])).toBe(-1)
+    expect(questionIndex([userMessage(), assistantMessage(), userMessage()])).toBe(2)
+    expect(questionIndex([])).toBe(-1)
   })
 })

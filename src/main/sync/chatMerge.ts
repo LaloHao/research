@@ -23,9 +23,9 @@ const instant = (s: string): number => {
 /** Whether `short` is the start of `long`: the same messages, in order. */
 const isPrefix = (short: ChatMessage[], long: ChatMessage[]): boolean => short.length <= long.length && short.every((m, i) => isDeepStrictEqual(m, long[i]))
 
-type MergedField = 'title' | 'model' | 'archived'
+type MergedField = 'title' | 'model' | 'archived' | 'actions' | 'sync'
 
-/** title, model and archived: changed on one machine only → that machine's value; on both → the newest `updated_at`'s. */
+/** title, model, archived and the switches: changed on one machine only → that machine's value; on both → the newest `updated_at`'s. */
 function mergeMeta(base: ChatMeta | null, ours: ChatMeta, theirs: ChatMeta): ChatMeta {
   const newer = instant(theirs.updated_at) > instant(ours.updated_at) ? theirs : ours
   const pick = <K extends MergedField>(key: K): ChatMeta[K] => {
@@ -43,6 +43,8 @@ function mergeMeta(base: ChatMeta | null, ours: ChatMeta, theirs: ChatMeta): Cha
     title: pick('title'),
     model: pick('model'),
     archived: pick('archived'),
+    actions: pick('actions'),
+    sync: pick('sync'),
     updated_at: newer.updated_at
   }
   if (newer.updated_on === undefined) delete meta.updated_on
@@ -68,7 +70,7 @@ function renderChecked(file: ChatFile): string | null {
 
 /**
  * chats/<id>.md changed on both machines. When one side only added messages at the end of what the other has (or
- * neither added any), the conversation merges: the longer list, and title/model/archived field by field. Otherwise both
+ * neither added any), the conversation merges: the longer list, and title/model/archived/actions/sync field by field. Otherwise both
  * are kept: ours at its path, theirs as `<id>-<6 hex of its text>` marked `copy_of` (the same id on every machine that
  * merges the same two versions). Null when a side cannot be read (conflict markers, invalid frontmatter, a frontmatter
  * id that is not `fileId`, the file's own): the user decides, as for any other file.

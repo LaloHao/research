@@ -7,6 +7,8 @@ import {
   MESSAGE_MODEL,
   normalizeExcerpt,
   PAPER_KEY,
+  questionIndex,
+  undoneActions,
   type AssistantMessage,
   type ChatConversation,
   type ChatFile,
@@ -96,7 +98,8 @@ export function answerModel(id: string): string {
 function toEntry(id: string, read: ReadResult<ChatFile>): Entry {
   if (!read.ok) return { id, hash: read.hash, file: null, search: '' }
   const { meta, messages } = read.value
-  const text = [meta.title, ...messages.map((m) => (m.role === 'assistant' ? citationsToText(m.text) : m.text))].join('\n')
+  // Action records are not searched: their arguments are the model's, and their words are the app's.
+  const text = [meta.title, ...messages.flatMap((m) => (m.role === 'action' ? [] : [m.role === 'assistant' ? citationsToText(m.text) : m.text]))].join('\n')
   return { id, hash: read.hash, file: read.value, search: foldQuery(text.slice(0, SEARCH_CHARS)) }
 }
 
@@ -113,7 +116,7 @@ export const roundCost = (usd: number): number => Math.round(usd * 10000) / 1000
 export function asWritten(file: ChatFile): ChatFile {
   const prepared: ChatMessage[] = file.messages.map((m) => {
     if (m.role === 'assistant') return { ...m, costUsd: roundCost(m.costUsd) }
-    if (!m.excerpt) return m
+    if (m.role === 'action' || !m.excerpt) return m
     const excerpt = normalizeExcerpt(m.excerpt)
     if (!excerpt) throw new UserFacingError('invalid_edit')
     return { ...m, excerpt }
@@ -131,7 +134,7 @@ export function notesBlock(title: string, m: AssistantMessage): string {
 }
 
 /** `text` with `block` after it, separated by a blank line; `text` itself is kept byte for byte. */
-function appendBlock(text: string, block: string): string {
+export function appendBlock(text: string, block: string): string {
   if (!text) return block
   const gap = text.endsWith('\n\n') ? '' : text.endsWith('\n') ? '\n' : '\n\n'
   return `${text}${gap}${block}`
@@ -202,8 +205,10 @@ export class ChatService {
     const e = await this.fresh(id)
     if (!e.file) throw new UserFacingError('chat_invalid')
     const sources = { paperState: (p: string) => this.paperState(p), pages: (p: string) => pagesFromChunks(this.deps.cache.chunksFor(p)) }
+    const undone = undoneActions(e.file.messages)
     const messages: ChatMessageView[] = e.file.messages.map((m) => {
       if (m.role === 'user') return m
+      if (m.role === 'action') return { ...m, undoable: false, undone: undone.has(m.id) }
       const citations = verifyCitations(m.text, sources)
       return { ...m, citations, unverified: unverifiedCount(citations) }
     })
@@ -212,7 +217,7 @@ export class ChatService {
       summary: this.summary(e),
       messages,
       partial: run ? { text: run.text, tools: run.tools, seq: run.seq } : null,
-      canRetry: !this.busy(id) && e.file.messages.at(-1)?.role === 'user',
+      canRetry: !this.busy(id) && questionIndex(e.file.messages) >= 0,
       approvals: []
     }
   }
@@ -365,7 +370,7 @@ export class ChatService {
     try {
       const e = await this.fresh(id)
       if (!e.file) throw new UserFacingError('chat_invalid')
-      if (e.file.messages.at(-1)?.role !== 'user') throw new UserFacingError('invalid_edit')
+      if (questionIndex(e.file.messages) < 0) throw new UserFacingError('invalid_edit')
       this.start(id, await this.deps.budget.admit(undefined, 'chat'))
     } finally {
       this.sending.delete(id)
@@ -414,7 +419,8 @@ export class ChatService {
       model: meta.model,
       updatedAt: meta.updated_at,
       costUsd: meta.cost_usd,
-      messages: messages.length,
+      // The messages the user reads as the conversation: action records are not counted.
+      messages: messages.filter((m) => m.role !== 'action').length,
       copyOf: meta.copy_of ? { machine: meta.copy_of.machine } : null,
       problem: false
     }
@@ -525,15 +531,17 @@ export class ChatService {
       const e = await this.fresh(id)
       if (!e.file) throw new UserFacingError('chat_invalid')
       const { meta, messages } = e.file
-      const question = messages.at(-1)
-      if (question?.role !== 'user') throw new UserFacingError('invalid_edit')
+      // The question may be followed by the actions an earlier attempt ran (a retry): they stay where they are.
+      const asked = questionIndex(messages)
+      const question = messages[asked]
+      if (asked < 0 || question?.role !== 'user') throw new UserFacingError('invalid_edit')
       model = meta.model
       paperId = meta.scope === 'library' ? '' : meta.scope.paper
       const input = chatInput({
         thesis: store.config.thesis,
         scope: meta.scope,
         paper: await this.paperContext(meta.scope),
-        history: messages.slice(0, -1),
+        history: messages.slice(0, asked),
         question: question.text,
         excerpt: question.excerpt
       })
