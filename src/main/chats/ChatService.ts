@@ -724,10 +724,17 @@ export class ChatService {
       await this.record(id, { ...base, state: 'failed', approval, result: { error: code } }).catch(logged)
       return { status: 'failed', error: code }
     }
-    const actionId = await this.record(id, { ...base, state: done.failed ? 'failed' : 'executed', approval, result: done.result }).catch((error: unknown) => {
-      logged(error)
-      return null
-    })
+    // It ran: its record (and with it «Deshacer») is tried twice, like an undo's.
+    const record = (): Promise<string> => this.record(id, { ...base, state: done.failed ? 'failed' : 'executed', approval, result: done.result })
+    const actionId = await record()
+      .catch((error: unknown) => {
+        logged(error)
+        return record()
+      })
+      .catch((error: unknown) => {
+        logged(error)
+        return null
+      })
     if (actionId && done.undo && !done.failed) this.undos.set(undoKey(id, actionId), done.undo)
     return { status: done.failed ? 'failed' : 'done', ...done.result }
   }

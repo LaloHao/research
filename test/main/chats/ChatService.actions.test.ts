@@ -581,6 +581,40 @@ describe('ChatService actions', () => {
     expect(ran).toEqual(['write_note', 'undo write_note'])
     expect((await chats.open(id)).messages.at(-1)).toMatchObject({ role: 'action', tool: 'undo', args: { action: action.id } })
   })
+
+  it('an executed action whose record fails to write once is still recorded, with its undo', async () => {
+    const { executor, ran } = fakeActions()
+    let failNextWrite = (): void => {}
+    const wrapped: ActionExecutor = {
+      read: executor.read,
+      prepare: async (tool, args) => {
+        const p = await executor.prepare(tool, args)
+        return {
+          ...p,
+          execute: async (opts) => {
+            const done = await p.execute(opts)
+            failNextWrite()
+            return done
+          }
+        }
+      }
+    }
+    const { store, chats } = await setupChats({
+      actions: wrapped,
+      responses: [
+        async (req) => {
+          await callTools(actionsOf(req), [note('x')])
+          return chatAnswer('ok')
+        }
+      ]
+    })
+    failNextWrite = () => void vi.spyOn(store, 'writeChat').mockRejectedValueOnce(new Error('disk full'))
+    const id = await chats.send({ ...ask('Please add a note to Drain.'), actions: true })
+    await chats.idle()
+    expect(ran).toEqual(['write_note'])
+    const action = (await chats.open(id)).messages[1] as ActionView
+    expect(action).toMatchObject({ role: 'action', tool: 'write_note', state: 'executed', undoable: true })
+  })
 })
 
 async function waitForAsync(check: () => Promise<boolean>, ms = 3000): Promise<void> {
