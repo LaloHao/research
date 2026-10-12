@@ -687,7 +687,7 @@ export class ChatService {
     // Checked again in the same synchronous step as the gate: a stop, a switch turned off or the answer ending while
     // the call was being prepared means it never runs nor asks.
     const cancelled = this.cancelled(id, run, tool)
-    const gate = gateAction({ tool: prepared.tool, risk: prepared.risk, quote, latest: run.latest, unconfirmed: run.unconfirmed })
+    const gate = gateAction({ tool: prepared.tool, risk: prepared.risk, quote, latest: run.latest, unconfirmed: run.unconfirmed, args: prepared.args })
     // Counted in the same step as the decision: no other call can see the count before this one raised it.
     if (!cancelled && !gate.ask) run.unconfirmed++
     const base = { tool: prepared.tool, request: gate.request, args: prepared.args }

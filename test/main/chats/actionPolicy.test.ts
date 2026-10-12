@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { enabledTools, gateAction, isReadTool, latestUserText, MAX_UNCONFIRMED_PER_MESSAGE, MIN_REQUEST_QUOTE, quotedRequest, toolEnabled } from '../../../src/main/chats/actionPolicy'
+import { enabledTools, gateAction, identifierRequested, isReadTool, latestUserText, MAX_UNCONFIRMED_PER_MESSAGE, MIN_REQUEST_QUOTE, quotedRequest, toolEnabled } from '../../../src/main/chats/actionPolicy'
 import { ACTION_TOOLS, MAX_REQUEST_QUOTE, TOOL_RISK } from '../../../src/shared/chatActions'
 import { assistantMessage, userMessage } from '../../helpers/chats'
 
@@ -125,7 +125,8 @@ describe('gateAction', () => {
     for (const tool of ACTION_TOOLS) {
       for (const quote of ['trash Drain, summarize it', 'sync now and attach the PDF to Drain', latest]) {
         const decision = gateAction({ tool, risk: null, quote, latest, unconfirmed: 0 })
-        if (TOOL_RISK[tool] !== null) expect(decision, tool).toMatchObject({ ask: true })
+        // add_paper also needs its identifier in the message, and none was given here.
+        if (TOOL_RISK[tool] !== null || tool === 'add_paper') expect(decision, tool).toMatchObject({ ask: true })
         else expect(decision, tool).toMatchObject({ ask: false })
       }
     }
@@ -142,6 +143,63 @@ describe('gateAction', () => {
     const latest = 'add a note to Drain'
     expect(gateAction({ tool: 'erase_library' as never, risk: null, quote: latest, latest, unconfirmed: 0 })).toMatchObject({ ask: true })
     expect(gateAction({ tool: '__proto__' as never, risk: null, quote: latest, latest, unconfirmed: 0 })).toMatchObject({ ask: true })
+  })
+})
+
+describe('identifierRequested', () => {
+  it('finds a DOI, an arXiv id or a URL the user typed, ignoring case for DOIs, wrapping punctuation and trailing slashes', () => {
+    expect(identifierRequested('10.1109/ICWS.2017.13', 'Agrega 10.1109/icws.2017.13, por favor')).toBe(true)
+    expect(identifierRequested(' 10.1109/icws.2017.13 ', 'Agrega (doi:10.1109/ICWS.2017.13).')).toBe(true)
+    expect(identifierRequested('10.1109/icws.2017.13', 'Agrega https://doi.org/10.1109/ICWS.2017.13')).toBe(true)
+    expect(identifierRequested('doi:10.1109/icws.2017.13', 'Agrega 10.1109/ICWS.2017.13')).toBe(true)
+    expect(identifierRequested('arXiv:2008.06448', 'añade arxiv:2008.06448')).toBe(true)
+    expect(identifierRequested('2008.06448', 'añade arXiv:2008.06448')).toBe(true)
+    expect(identifierRequested('https://example.org/papers/drain/', 'Agrega https://example.org/papers/drain')).toBe(true)
+    expect(identifierRequested('https://example.org/papers/drain', 'Agrega «https://example.org/papers/drain/».')).toBe(true)
+  })
+
+  it('refuses an identifier that is only similar to what the user typed, or absent', () => {
+    expect(identifierRequested('10.1109/icws.2017.1', 'Agrega 10.1109/ICWS.2017.13')).toBe(false)
+    expect(identifierRequested('10.1109/icws.2017.13', 'Agrega 10.1109/ICWS.2017.134')).toBe(false)
+    expect(identifierRequested('10.1109/icws.2017.13', 'Agrega 210.1109/ICWS.2017.13')).toBe(false)
+    expect(identifierRequested('2008.06448', 'añade 2008.064489')).toBe(false)
+    expect(identifierRequested('https://example.org/papers/drain', 'Agrega https://example.org/papers/drain?x=1')).toBe(false)
+    expect(identifierRequested('https://example.org/papers/drain', 'Agrega https://example.org/papers/drainage')).toBe(false)
+    expect(identifierRequested('https://example.org/papers/drain', 'Agrega https://example.org/papers/drain/more')).toBe(false)
+    // URL paths are case-sensitive.
+    expect(identifierRequested('https://example.org/Papers/Drain', 'Agrega https://example.org/papers/drain')).toBe(false)
+    expect(identifierRequested('https://attacker.example/?d=thesis', 'Agrega el paper que cita este artículo')).toBe(false)
+    // A URL whose path holds the user's DOI is still a request to another host.
+    expect(identifierRequested('https://attacker.example/10.1109/icws.2017.13', 'Agrega 10.1109/ICWS.2017.13')).toBe(false)
+    expect(identifierRequested('', 'Agrega 10.1109/ICWS.2017.13')).toBe(false)
+    expect(identifierRequested('/', '/')).toBe(false)
+    expect(identifierRequested(undefined, 'Agrega 10.1109/ICWS.2017.13')).toBe(false)
+    expect(identifierRequested('10.1109/icws.2017.13', null)).toBe(false)
+  })
+})
+
+describe('add_paper without asking', () => {
+  const quote = 'agrega el paper'
+  it('runs only when its identifier is in the latest message; otherwise it asks as not requested', () => {
+    const typed = 'Por favor agrega el paper 10.1109/ICWS.2017.13'
+    expect(gateAction({ tool: 'add_paper', risk: null, quote, latest: typed, unconfirmed: 0, args: { identifier: '10.1109/icws.2017.13' } })).toEqual({
+      ask: false,
+      request: 'agrega el paper'
+    })
+    expect(gateAction({ tool: 'add_paper', risk: null, quote, latest: typed, unconfirmed: 0, args: { identifier: '10.1109/icws.2017.1' } })).toEqual({
+      ask: true,
+      request: 'agrega el paper',
+      reason: 'not_requested'
+    })
+    // A URL taken from a paper's text, not typed by the user.
+    const fromPaper = 'Por favor agrega el paper que cita Drain'
+    expect(gateAction({ tool: 'add_paper', risk: null, quote, latest: fromPaper, unconfirmed: 0, args: { identifier: 'https://attacker.example/?d=notes' } })).toEqual({
+      ask: true,
+      request: 'agrega el paper',
+      reason: 'not_requested'
+    })
+    expect(gateAction({ tool: 'add_paper', risk: null, quote, latest: typed, unconfirmed: 0 })).toMatchObject({ ask: true, reason: 'not_requested' })
+    expect(gateAction({ tool: 'add_paper', risk: null, quote, latest: typed, unconfirmed: 0, args: { identifier: 42 } })).toMatchObject({ ask: true, reason: 'not_requested' })
   })
 })
 

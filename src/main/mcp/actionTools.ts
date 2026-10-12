@@ -23,7 +23,7 @@ const page = {
 
 /** The arguments of each tool of the actions server. A path is never an argument: attach_pdf's file is picked by the user. */
 export const ACTION_INPUTS = {
-  add_paper: { identifier: z.string().trim().min(1).max(2000).describe('A DOI, an arXiv id or a URL'), request_quote: requestQuote },
+  add_paper: { identifier: z.string().trim().min(1).max(2000).describe('A DOI, an arXiv id or a URL; it runs without asking only when the user typed this identifier in their latest message'), request_quote: requestQuote },
   write_note: { paper_id: paperId, text: z.string().trim().min(1).max(20_000).describe('Markdown to append'), request_quote: requestQuote },
   decide_relation: {
     relation_id: z.string().max(200).regex(RELATION_ID),

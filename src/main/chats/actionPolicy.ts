@@ -1,6 +1,7 @@
 import type { ChatMessage } from '../../shared/chat'
 import { ACTION_READ_TOOLS, ACTION_TOOLS, MAX_REQUEST_QUOTE, SYNC_TOOLS, TOOL_RISK, type ActionReadTool, type ActionRisk, type ActionTool, type ApprovalReason, type ChatTools } from '../../shared/chatActions'
 import { clusterEnd } from '../../shared/textMatch'
+import { parseInput } from '../ingest/identifiers'
 import { foldQuery, foldWithMap } from '../mcp/libraryTools'
 
 /** Fewer folded letters and digits than this is too little to tell a request apart (a «sí» asks instead). */
@@ -67,6 +68,54 @@ export function quotedRequest(quote: unknown, latest: string | null): string | n
   return null
 }
 
+/** Characters that continue an identifier: one found right before or after a match makes it a different identifier. */
+const ID_CHAR_BEFORE = /[\p{L}\p{N}._~%+-]/u
+/** What may follow an identifier the user typed: closing punctuation and trailing slashes, up to a space or the end. */
+const ID_TAIL = /^[/.,;:!?)\]}>»"'’”…]*(?:\s|$)/u
+/** Hosts whose URLs name an id the app resolves itself, never fetching that URL. */
+const ID_HOSTS = /(^|\.)(doi\.org|arxiv\.org|openalex\.org)$/i
+
+const bare = (s: string): string => s.normalize('NFKC').replace(INVISIBLE, '').trim().replace(/\/+$/, '')
+
+/** Whether `id` occurs in `text` as a whole identifier (not as part of a longer one). */
+function occursWhole(id: string, text: string): boolean {
+  for (let at = text.indexOf(id); at >= 0; at = text.indexOf(id, at + 1)) {
+    if (at > 0 && ID_CHAR_BEFORE.test(text[at - 1])) continue
+    if (ID_TAIL.test(text.slice(at + id.length))) return true
+  }
+  return false
+}
+
+/**
+ * Whether the user typed this identifier in the latest message: the model's identifier as given (trailing slashes and
+ * spaces aside), or the DOI, arXiv or OpenAlex id it names. DOIs and arXiv ids are compared without case; a URL is
+ * compared as typed, and only a doi.org, arxiv.org or openalex.org URL may match by the id it names, since any other
+ * URL is fetched as it is.
+ */
+export function identifierRequested(identifier: unknown, latest: string | null): boolean {
+  if (typeof identifier !== 'string' || typeof latest !== 'string') return false
+  const raw = bare(identifier)
+  if (raw === '') return false
+  const text = latest.normalize('NFKC').replace(INVISIBLE, '')
+  const parsed = parseInput(raw)
+  if (parsed.kind === 'invalid') return false
+  const isUrl = /^https?:\/\//i.test(raw)
+  if (parsed.kind === 'url') return occursWhole(raw, text)
+  const lower = text.toLowerCase()
+  if (occursWhole(raw.toLowerCase(), lower)) return true
+  if (isUrl) {
+    let host = ''
+    try {
+      host = new URL(raw).hostname
+    } catch {
+      return false
+    }
+    if (!ID_HOSTS.test(host)) return false
+  }
+  const id = parsed.kind === 'doi' ? parsed.doi : parsed.kind === 'arxiv' ? parsed.arxiv : parsed.openalex
+  return id !== '' && occursWhole(id.toLowerCase(), lower)
+}
+
 /**
  * Why a call asks: its tool has a risk (or is unknown), the latest message did not ask for it in those words, or that
  * message already ran MAX_UNCONFIRMED_PER_MESSAGE actions without asking.
@@ -75,17 +124,29 @@ export type GateReason = ApprovalReason
 export type GateDecision = { ask: false; request: string } | { ask: true; request: string | null; reason: GateReason }
 
 /**
- * The app's confirmation rule: a reversible free action runs on its own only when the latest user message asked for it
- * in the quoted words, and only while that message has run fewer than MAX_UNCONFIRMED_PER_MESSAGE actions without
- * asking (`unconfirmed`: how many it has; anything but a whole number from 0 counts as the limit reached). Everything
+ * The app's confirmation rule: a reversible free action runs on its own only when the latest user message holds the
+ * quoted words (and, for add_paper, the identifier), and only while that message has run fewer than
+ * MAX_UNCONFIRMED_PER_MESSAGE actions without asking (`unconfirmed`: how many it has; anything but a whole number from
+ * 0 counts as the limit reached). Everything
  * else asks the user in the conversation. A tool whose catalogue risk is not null (spends, removes, syncs, picks a
  * file, rewrites reviewed data) or that is not in the catalogue always asks, whatever risk it is given.
  */
-export function gateAction(a: { tool: ActionTool; risk: ActionRisk | null; quote?: unknown; latest: string | null; unconfirmed: number }): GateDecision {
+export function gateAction(a: {
+  tool: ActionTool
+  risk: ActionRisk | null
+  quote?: unknown
+  latest: string | null
+  unconfirmed: number
+  /** The call's validated arguments: add_paper's identifier must be in the latest message too. */
+  args?: Readonly<Record<string, unknown>>
+}): GateDecision {
   const request = quotedRequest(a.quote, a.latest)
   const known = typeof a.tool === 'string' && Object.hasOwn(TOOL_RISK, a.tool)
   if (!known || TOOL_RISK[a.tool] !== null || a.risk !== null) return { ask: true, request, reason: 'risk' }
   if (request === null || request === '') return { ask: true, request: null, reason: 'not_requested' }
+  // Adding a paper fetches what the identifier names: a URL or id the model picked (from a paper's text, say) could
+  // carry the library's data to any host, so it runs unasked only when the user typed that identifier.
+  if (a.tool === 'add_paper' && !identifierRequested(a.args?.identifier, a.latest)) return { ask: true, request, reason: 'not_requested' }
   const n = a.unconfirmed
   if (!Number.isInteger(n) || n < 0 || n >= MAX_UNCONFIRMED_PER_MESSAGE) return { ask: true, request, reason: 'limit' }
   return { ask: false, request }

