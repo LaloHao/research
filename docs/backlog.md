@@ -7,8 +7,7 @@
 
 ## Upcoming stages
 
-- Stage 3c: Claude suggests facets (and values) from the thesis context and the papers, reusing the read-only library MCP server and agent runner of stage 3b; suggestions reviewed like the summaries' proposed values.
-- Principle for every future LLM use (3b, 3c, chat): Claude gets **read-only tools** over the library (full-text search, semantic search, grep over the project files, reading a paper's pages, reading a summary and its facets, querying citations and neighbours) and never write tools; the 3b relation suggester already uses them (src/main/mcp/).
+- Principle for every future LLM use (3b, 3c, chat): Claude gets **read-only tools** over the library (full-text search, semantic search, grep over the project files, reading a paper's pages, reading a summary and its facets, querying citations and neighbours) and never write tools; the 3b relation suggester and the 3c facet suggester already use them (src/main/mcp/).
 - Stage 4: chat (per paper and global) over the library. Syncing from the chat goes through a separate MCP server used only for that (tools `sync_status`, `sync_now`, `resolve_conflict` over the app's `SyncService`), enabled per conversation and always behind the user's approval; it is not part of the read-only library tools.
 - Stage 5: formal systematic mapping. Design decision already taken: a project can hold **several mappings** (each with its own protocol, research questions, inclusion/exclusion criteria, search log and screening) over one shared library, so papers, PDFs and summaries are never analysed twice; excluding a paper from one mapping never removes it from the library.
 
@@ -102,3 +101,22 @@
 - The automatic sync is a per-device setting shared by every project opened on that machine.
 - Two overlapping `openProject` calls (e.g. opening one project while another is still opening) can leave an orphaned session that is never closed, and that session keeps its own automatic sync timer running against its project.
 - A fast-forward that brings many files (or, with git LFS, downloads the PDFs it checks out) holds the write gate while it runs, so the app's own saves wait for it.
+
+## Stage 3c technical minutiae
+
+- A decided alias suggestion (accepted or rejected) keeps its id (`alias__<facet>__<to>`): once a target is decided, a later run proposing new synonyms for the same target produces the same id and is dropped, so it never resurfaces. New synonyms have to be mapped by hand with the summary's own «Mapear a…» on the proposed chip.
+- `FacetSuggester` duplicates `RelationSuggester`'s run/charge flow (one agent run, admitted through `BudgetGuard`, logged by `CostLedger`, same retry and timeout shape) almost line for line; the two could share a base.
+- `writeChecked` (used by every gated write, including `facet-suggestions.yaml`) has no per-file lock: two writes to the same file racing from different code paths rely entirely on the hash check and a retry, not on mutual exclusion.
+- A run cancelled while still queued is remembered only in memory (`autoDay`); after a restart on the same day the automatic trigger can queue one more run than "once a day" promises.
+- The fill offer after accepting a new facet, and the library's batch, count every paper with an up-to-date summary that has *any* unfilled facet, not only the one just accepted; the per-batch cap bounds what that can cost.
+- Undo tokens for facet suggestion decisions live in the main process (the last 50) and are lost on restart. Undoing the acceptance of a new facet after a fill already ran leaves the filled values in the papers' files, like any removed facet's.
+- The automatic trigger counts papers with an up-to-date summary now minus that count at the last successful run: removing papers delays it, and regenerating a paper never counts as new.
+- Listing the suggestions and accepting one read every paper's `extraction.yaml` to compute how facets are used; fine for hundreds of papers, slow for many thousands.
+- The suggestion prompt lists at most 150 papers; the agent pages through the rest with `list_papers`, within its 20 tool calls.
+- Example quotes are checked once, when the run ends; a paper whose text changes later keeps the old `found` flag.
+- `facet_overview` counts a scale's scores as values; for a text facet it only counts how many papers have it.
+- Accepting is disabled while the form editor has unsaved changes, rather than merging the acceptance into the draft.
+- A `suggest_facets` cost line has an empty `paper_id`.
+- `facet-suggestions.yaml` with conflict markers (only possible after a hand-run git merge; the app's sync never leaves them) has no automatic resolution button, unlike `relations.yaml`: it must be fixed by hand.
+- A suggestion edited before acceptance keeps its original id (e.g. `new_facet__data_source` for a facet saved as `data_origin`), so a later run may suggest the original key again.
+- The cache schema went from 8 to 9 in place (`ALTER TABLE`); any other older schema is still rebuilt from scratch.
