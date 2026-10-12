@@ -1,3 +1,5 @@
+import type { RunClock } from './RunClock'
+
 /** `operation_budget`: the call reached its own --max-budget-usd (fails that paper only); `budget_exceeded`: a batch or monthly cap refused it. */
 export const LLM_ERROR_CODES = ['llm_unavailable', 'llm_quota', 'llm_invalid_output', 'llm_timeout', 'budget_exceeded', 'operation_budget'] as const
 export type LlmErrorCode = (typeof LLM_ERROR_CODES)[number]
@@ -73,6 +75,10 @@ export interface ChatRequest {
   maxTurns: number
   signal?: AbortSignal
   timeoutMs?: number
+  /** Counts `timeoutMs`; the caller holds it while an action waits for the user, so that wait does not count. */
+  clock?: RunClock
+  /** How long the CLI waits for one tool call (an action waiting for approval holds its call open). */
+  toolTimeoutMs?: number
 }
 
 /** `turn`: the model starts a new turn (after a tool call), so the text shown so far is replaced. */
