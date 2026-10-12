@@ -21,8 +21,10 @@ const byCriterion = (a: string, b: string): number => (a[0] === b[0] ? Number(a.
  * PRISMA 2020 flow from the live searches and the current decisions. Database searches (OpenAlex, imports) are grouped
  * by database (case-insensitively, under the first spelling); snowballing and library searches by kind, in the «other
  * methods» column. A record belongs to the first column when any live source of it is a database search.
- * Duplicates = records read by the column's searches − the column's active records, floored at 0: reads are never
- * fewer than the records they brought unless `searches.yaml` was edited by hand.
+ * Duplicates = records read by the column's searches − the column's screened records, floored at 0: reads are never
+ * fewer than the records they brought unless `searches.yaml` was edited by hand. A record waiting for «Es el mismo» or
+ * «Son distintos» is not screened (it is in no queue, and its decisions go to the other record if it is the same), so
+ * until it is answered it counts among the duplicates; «Son distintos» moves it to the screening.
  */
 export function prismaCounts(rows: MappingRecordRow[], searches: Search[]): PrismaCounts {
   const columns = { databases: emptyColumn(), other: emptyColumn() }
@@ -37,7 +39,7 @@ export function prismaCounts(rows: MappingRecordRow[], searches: Search[]): Pris
   }
   const reasons = { databases: new Map<string, number>(), other: new Map<string, number>() }
   for (const row of rows) {
-    if (!row.active) continue
+    if (!row.active || row.duplicate) continue
     const c = columns[row.column]
     c.screened++
     const ta = row.title_abstract.state

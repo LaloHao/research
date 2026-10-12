@@ -160,6 +160,7 @@ describe('MappingService screening', () => {
     expect((await service.open(id)).duplicates).toEqual([expect.objectContaining({ record: expect.objectContaining({ id: R2 }) })])
     const on = (recordId: string) => ({ recordId, phase: 'title_abstract' as const, decision: 'uncertain' as const, criterion: null, suggestionId: null })
     await expect(service.decide(id, on(R2))).rejects.toMatchObject({ code: 'not_eligible' })
+    await expect(service.resolveConflict(id, R2, 'title_abstract', hexId('d', 1))).rejects.toMatchObject({ code: 'not_eligible' })
     await service.decide(id, on(R1))
     await service.resolveDuplicate(id, R2, true)
     await expect(service.decide(id, on(R2))).rejects.toMatchObject({ code: 'not_eligible' })

@@ -179,4 +179,14 @@ describe('prismaCounts invariants', () => {
     const rows = recordRows({ protocol: protocolFile(), searches, records: [record()], decisions: [first, a, b], suggestions: [] })
     expect(prismaCounts(rows, searches).databases).toMatchObject({ screened: 1, pendingScreening: 1, excludedScreening: 0, sought: 0 })
   })
+
+  it('counts a record waiting for a duplicate answer among the duplicates, not the screened, even when it was decided', () => {
+    const searches = [search({ count: 2 })]
+    const waiting = record({ id: hexId('r', 2), title: 'Waiting duplicate', identifiers: {}, duplicate_of: { record: hexId('r', 1), reason: 'same_title' } })
+    const decided = [decision({ id: hexId('d', 201), record: hexId('r', 1) }), decision({ id: hexId('d', 202), record: hexId('r', 2) })]
+    const rows = recordRows({ protocol: protocolFile(), searches, records: [record(), waiting], decisions: decided, suggestions: [] })
+    expect(prismaCounts(rows, searches).databases).toMatchObject({ screened: 1, duplicates: 1, sought: 1, pendingScreening: 0 })
+    const answered = recordRows({ protocol: protocolFile(), searches, records: [record(), { ...waiting, duplicate_of: null, distinct_from: [hexId('r', 1)] }], decisions: decided, suggestions: [] })
+    expect(prismaCounts(answered, searches).databases).toMatchObject({ screened: 2, duplicates: 0, sought: 2 })
+  })
 })

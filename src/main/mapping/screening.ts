@@ -212,10 +212,13 @@ export function duplicatePairs(rows: MappingRecordRow[]): DuplicatePair[] {
   })
 }
 
-/** Records two machines decided differently, per phase; full text only while the record is included on title and abstract. */
+/**
+ * Records two machines decided differently, per phase; full text only while the record is included on title and
+ * abstract. A record waiting for a duplicate answer is left out, as in the queues: «Es el mismo» carries its decisions.
+ */
 export function conflictsOf(rows: MappingRecordRow[]): ScreeningConflict[] {
   return rows.flatMap((row) =>
-    row.active
+    row.active && !row.duplicate
       ? PHASES.filter((p) => row[p].state === 'conflict' && (p === 'title_abstract' || row.title_abstract.state === 'include')).map((phase) => ({
           record: brief(row),
           phase,
@@ -277,11 +280,13 @@ export function decisionProblem(
 const readsPending = (d: Decision): boolean => d.decision === 'none' || (d.decision === 'not_retrieved' && d.phase !== 'full_text')
 
 /**
- * The id of the copy of decision `original` carried onto record `survivor` by «Es el mismo»: derived from both, so a
- * retry, or the other machine making the same merge, finds the copy already written (and the sync joins them by id).
+ * The id of the copy of decision `original` carried onto record `survivor` by «Es el mismo», replacing `replaces`:
+ * derived from all three, so a retry (or the other machine making the same merge from the same heads) finds the copy
+ * already written, and the sync joins them by id. Two machines whose survivor heads differed write copies with
+ * different ids and contents; they agree, so they read as two agreeing heads (never a file clash).
  */
-export function carriedDecisionId(original: string, survivor: string): string {
-  return `d${createHash('sha256').update(`${original}|${survivor}`).digest('hex').slice(0, 12)}`
+export function carriedDecisionId(original: string, survivor: string, replaces: readonly string[] = []): string {
+  return `d${createHash('sha256').update([original, survivor, ...[...replaces].sort()].join('|')).digest('hex').slice(0, 12)}`
 }
 
 /**
@@ -302,7 +307,8 @@ export function carriedDecisions(decisions: Decision[], merged: string, survivor
     const pending = target.every(readsPending)
     for (const h of list) {
       if (readsPending(h)) continue
-      const id = carriedDecisionId(h.id, survivor)
+      const replaces = pending ? target.map((t) => t.id) : []
+      const id = carriedDecisionId(h.id, survivor, replaces)
       if (byId.has(id)) continue
       if ([...target, ...out.filter((o) => o.phase === h.phase && o.reviewer === h.reviewer)].some((t) => !readsPending(t) && sameOutcome(t, h))) continue
       out.push({
@@ -311,7 +317,7 @@ export function carriedDecisions(decisions: Decision[], merged: string, survivor
         record: survivor,
         by: 'user',
         suggestion: null,
-        replaces: pending ? target.map((t) => t.id) : [],
+        replaces,
         undoes: null,
         copied_from: h.id
       })

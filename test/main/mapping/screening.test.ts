@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { parse } from 'yaml'
+import { mergeDecisionsText } from '../../../src/main/mapping/mappingMerge'
+import { toYaml } from '../../../src/main/project/yamlFile'
 import {
   carriedDecisionId,
   carriedDecisions,
@@ -176,6 +179,18 @@ describe('queues and lists', () => {
   })
 })
 
+describe('conflictsOf and waiting duplicates', () => {
+  it('leaves out a record waiting for a duplicate answer, as the queues do', () => {
+    const first = d(1, { record: R2 })
+    const a = d(2, { record: R2, decision: 'exclude', criterion: 'E1', replaces: [first.id] })
+    const b = d(3, { record: R2, decision: 'uncertain', replaces: [first.id] })
+    const waiting = record({ id: R2, title: 'Waiting duplicate', identifiers: {}, duplicate_of: { record: R1, reason: 'same_title' } })
+    const rows = recordRows(content({ records: [record(), waiting], decisions: [first, a, b] }))
+    expect(rows.find((r) => r.id === R2)?.title_abstract.state).toBe('conflict')
+    expect(conflictsOf(rows)).toEqual([])
+  })
+})
+
 describe('conflictsOf on full text', () => {
   it('leaves out a full-text conflict once the record is no longer included on title and abstract', () => {
     const ta = d(1)
@@ -294,6 +309,35 @@ describe('carriedDecisions («Es el mismo»)', () => {
     expect(copies).toHaveLength(1)
     const [row] = recordRows(content({ records: [record({ id: survivor })], decisions: [mine, unlike, ...copies] }))
     expect(row.title_abstract.state).toBe('conflict')
+  })
+
+  it('derives the copy’s id from what it replaces too, in any order', () => {
+    const a = hexId('d', 1)
+    expect(carriedDecisionId(a, survivor, [hexId('d', 2), hexId('d', 3)])).toBe(carriedDecisionId(a, survivor, [hexId('d', 3), hexId('d', 2)]))
+    expect(carriedDecisionId(a, survivor, [hexId('d', 2)])).not.toBe(carriedDecisionId(a, survivor))
+  })
+
+  it('lets the sync join two machines’ merges of one pair made from different survivor heads, as agreeing heads', () => {
+    const theirs = d(1, { record: merged, decision: 'exclude', criterion: 'E1', machine: 'machine-b' })
+    // Machine A had decided the survivor and undone it back to none before «Es el mismo»; machine B had not decided it.
+    const mine = d(2, { record: survivor })
+    const undone = d(3, { record: survivor, decision: 'none', replaces: [mine.id], undoes: mine.id })
+    const onA = [theirs, mine, undone]
+    const onB = [theirs]
+    const copyA = carriedDecisions(onA, merged, survivor)
+    const copyB = carriedDecisions(onB, merged, survivor)
+    expect(copyA).toMatchObject([{ replaces: [undone.id] }])
+    expect(copyB).toMatchObject([{ replaces: [] }])
+    expect(copyA[0].id).not.toBe(copyB[0].id)
+    const text = (decisions: Decision[]): string => toYaml({ schema_version: 1, decisions })
+    const joined = mergeDecisionsText({ base: text([theirs]), ours: text([...onA, ...copyA]), theirs: text([...onB, ...copyB]) })
+    expect(joined).not.toBeNull()
+    const decisions = (parse(joined!) as { decisions: Decision[] }).decisions
+    expect(decisions).toHaveLength(5)
+    const [row] = recordRows(content({ records: [record({ id: survivor })], decisions }))
+    expect(row.title_abstract).toMatchObject({ state: 'exclude', criterion: 'E1' })
+    // The same merge on both machines from the same heads writes one and the same copy.
+    expect(carriedDecisions(onB, merged, survivor)).toEqual(copyB)
   })
 
   it('replaces a survivor’s decision that was undone back to none, instead of a conflict with it', () => {

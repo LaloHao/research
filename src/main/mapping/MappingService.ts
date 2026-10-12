@@ -499,7 +499,12 @@ export class MappingService {
   resolveConflict(id: string, recordId: string, phase: Phase, keepDecisionId: string): Promise<void> {
     const ctx = { id: this.newId('d'), at: this.now().toISOString(), machine: this.deps.machine }
     return this.mutate(id, (files) => {
-      const decisions = files.decisions.value.decisions
+      const content = contentOf(files)
+      const record = content.records.find((r) => r.id === recordId)
+      if (!record) throw new UserFacingError('mapping_not_found')
+      // As `decide`: a record waiting for a duplicate answer (or merged) is settled there first.
+      if (record.merged_into || record.duplicate_of || syncPairs(content).has(record.id)) throw new UserFacingError('not_eligible')
+      const decisions = content.decisions
       const heads = headsOf(decisionHeads(decisions), recordId, phase)
       const keep = heads.find((d) => d.id === keepDecisionId)
       if (!keep || heads.every((d) => d.decision === keep.decision && d.criterion === keep.criterion)) throw new UserFacingError('conflict')
