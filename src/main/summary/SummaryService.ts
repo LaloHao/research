@@ -24,7 +24,7 @@ import type { CostLedger } from '../llm/CostLedger'
 import { toUserFacing, UserFacingError } from '../library/UserFacingError'
 import { facetRowsFor } from '../map/facetStats'
 import type { ProjectStore } from '../project/ProjectStore'
-import { DEFAULT_EXTRACTION_FORM, formHashFor, loadForm, unfilledFacets } from './extractionForm'
+import { DEFAULT_EXTRACTION_FORM, formHashFor, loadForm, sortKeys, unfilledFacets } from './extractionForm'
 import { renderSummaryMarkdown } from './markdown'
 import {
   acceptProposed,
@@ -116,6 +116,26 @@ interface PaperFiles {
   title: string
   summary: { value: SummaryFile; hash: string } | null
   extraction: { value: ExtractionFile; hash: string } | null
+}
+
+/** One paper's classification before a form change rewrote it, and its hash after: enough to undo exactly that change. */
+export interface ExtractionChange {
+  paperId: string
+  before: ExtractionFile
+  afterHash: string
+}
+
+/** One paper a form change rewrites: its files as read, and the classification it gets. */
+interface PaperRewrite {
+  id: string
+  files: PaperFiles
+  next: ExtractionFile
+}
+
+/** Hashes of what saveOrRestore wrote (summary: null when the paper has no summary.md). */
+interface SavedHashes {
+  extraction: string
+  summary: string | null
 }
 
 /** Summaries of one project: jobs, batches, review edits and proposed values. */
@@ -315,6 +335,55 @@ export class SummaryService {
     await this.replaceProposals((e) => mapProposed(e, facetKey, from, to), addAlias(form, facetKey, from, to))
   }
 
+  /**
+   * Saves `next` (validated like updateForm) after rewriting, in every paper, what `rewrite` changes (null: nothing).
+   * All or nothing: every paper is read and checked first; if a write fails, or the form is no longer `base` (when
+   * given) by the time it would be saved, the papers already rewritten are put back and the form is left as it was.
+   * Returns what changed, for undoFormChange.
+   */
+  async changeForm(
+    next: ExtractionForm,
+    rewrite: ((e: ExtractionFile) => ExtractionFile | null) | null,
+    base?: ExtractionForm
+  ): Promise<ExtractionChange[]> {
+    const load = loadForm(next)
+    if (load.status !== 'ok') throw new UserFacingError('invalid_form')
+    if (base) this.assertForm(base)
+    const pending: PaperRewrite[] = []
+    if (rewrite) {
+      for (const id of await this.deps.store.listPaperIds()) {
+        const raw = await this.readRaw(id)
+        // An unreadable extraction.yaml cannot tell whether the paper proposed the value; it is left alone.
+        if (!raw.extraction?.ok) continue
+        const after = rewrite(raw.extraction.value)
+        if (!after) continue
+        if (raw.summary && !raw.summary.ok) throw new UserFacingError('file_problem')
+        pending.push({ id, files: { title: raw.title, summary: raw.summary, extraction: raw.extraction }, next: after })
+      }
+    }
+    return this.rewriteAndSaveForm(pending, load.form, base)
+  }
+
+  /**
+   * Undoes a changeForm: only while the form is exactly `expected` and every rewritten classification is exactly what
+   * the change left (InvalidEdit otherwise, before anything is written). All or nothing, like changeForm. Returns the
+   * undo's own changes, so it can in turn be undone (undoFormChange(expected, previous, returned)).
+   */
+  async undoFormChange(previous: ExtractionForm, expected: ExtractionForm, changes: ExtractionChange[]): Promise<ExtractionChange[]> {
+    const load = loadForm(previous)
+    if (load.status !== 'ok') throw new UserFacingError('invalid_form')
+    this.assertForm(expected)
+    const pending: PaperRewrite[] = []
+    for (const change of changes) {
+      if (!this.deps.store.paperExists(change.paperId)) throw new InvalidEdit(`${change.paperId} is gone`)
+      const raw = await this.readRaw(change.paperId)
+      if (!raw.extraction?.ok || raw.extraction.hash !== change.afterHash) throw new InvalidEdit(`${change.paperId} changed since`)
+      if (raw.summary && !raw.summary.ok) throw new UserFacingError('file_problem')
+      pending.push({ id: change.paperId, files: { title: raw.title, summary: raw.summary, extraction: raw.extraction }, next: change.before })
+    }
+    return this.rewriteAndSaveForm(pending, load.form, expected)
+  }
+
   /** Fields and facets still `generated`, paper by paper (in `ids` order when given, otherwise in list order). */
   async reviewQueue(ids?: string[]): Promise<ReviewItem[]> {
     const { cache, store } = this.deps
@@ -496,6 +565,59 @@ export class SummaryService {
     }
     this.deps.emit()
     this.deps.statesRefreshed?.()
+  }
+
+  /** InvalidEdit unless the saved form is exactly `form`. */
+  private assertForm(form: ExtractionForm): void {
+    const current = loadForm(this.deps.store.config.extraction_form)
+    const wanted = loadForm(form)
+    if (current.status !== 'ok' || wanted.status !== 'ok' || JSON.stringify(sortKeys(current.form)) !== JSON.stringify(sortKeys(wanted.form))) {
+      throw new InvalidEdit('The form changed since')
+    }
+  }
+
+  /**
+   * Writes each paper's new classification, then the form. If anything fails (or the form is no longer `base`), the
+   * papers already written are put back (hash-checked) before the error is rethrown, and the form is not saved.
+   * Every state is refreshed either way.
+   */
+  private async rewriteAndSaveForm(pending: PaperRewrite[], form: ExtractionForm, base?: ExtractionForm): Promise<ExtractionChange[]> {
+    const written: { p: PaperRewrite; hashes: SavedHashes }[] = []
+    try {
+      for (const p of pending) written.push({ p, hashes: await this.saveOrRestore(p.id, p.files, p.next) })
+      if (base) this.assertForm(base)
+      await this.deps.store.updateConfig({ extraction_form: form })
+    } catch (error) {
+      for (const { p, hashes } of written.reverse()) {
+        const files: PaperFiles = {
+          title: p.files.title,
+          summary: p.files.summary && hashes.summary ? { value: p.files.summary.value, hash: hashes.summary } : p.files.summary,
+          extraction: { value: p.next, hash: hashes.extraction! }
+        }
+        await this.save(p.id, files, { extraction: p.files.extraction!.value }).catch((e: unknown) => console.error('could not put back', p.id, e))
+      }
+      throw error
+    } finally {
+      await this.refreshStates()
+    }
+    return written.map(({ p, hashes }) => ({ paperId: p.id, before: p.files.extraction!.value, afterHash: hashes.extraction! }))
+  }
+
+  /** save() of a new classification; if summary.md then cannot be written, the classification is put back before rethrowing. */
+  private async saveOrRestore(paperId: string, files: PaperFiles, next: ExtractionFile): Promise<SavedHashes> {
+    const { store } = this.deps
+    const extractionHash = await store.writeExtraction(paperId, next, files.extraction?.hash ?? null)
+    const summary = files.summary?.value
+    if (!summary) return { extraction: extractionHash, summary: null }
+    try {
+      const summaryHash = await store.writeSummary(paperId, summary, renderSummaryMarkdown(files.title, summary, next), files.summary!.hash)
+      return { extraction: extractionHash, summary: summaryHash }
+    } catch (error) {
+      if (files.extraction) {
+        await store.writeExtraction(paperId, files.extraction.value, extractionHash).catch((e: unknown) => console.error('could not put back', paperId, e))
+      }
+      throw error
+    }
   }
 
   /**

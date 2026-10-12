@@ -58,6 +58,8 @@ describe('jobLabel', () => {
     expect(jobLabel(t, job({ spec: { type: 'model_download' } }))).toBe('jobs.model_download')
     expect(jobLabel(t, job({ spec: { type: 'suggest_relations', paperId: 'he2017drain' } }))).toBe('jobs.suggest_relations {"id":"he2017drain"}')
     expect(jobLabel(t, job({ spec: { type: 'fill_facets', paperId: 'he2017drain' } }))).toBe('jobs.fill_facets {"id":"he2017drain"}')
+    expect(jobLabel(t, job({ spec: { type: 'suggest_facets' } }))).toBe('jobs.suggest_facets')
+    expect(jobLabel(t, job({ spec: { type: 'suggest_facets', auto: true, batchId: 'auto-2026-10-11' } }))).toBe('jobs.suggest_facets_auto')
   })
 })
 

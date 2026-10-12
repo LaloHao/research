@@ -194,6 +194,8 @@
     "model_download": "Descargar el modelo de similitud",
     "suggest_relations": "Sugerir relaciones de {{id}}",
     "fill_facets": "Llenar facetas nuevas de {{id}}",
+    "suggest_facets": "Sugerir facetas",
+    "suggest_facets_auto": "Sugerir facetas (automático)",
     "state": {
       "queued": "En cola",
       "running": "En curso",
