@@ -1,7 +1,8 @@
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import type { CountResult } from '../shared/relations'
 import type { FormImpact } from '../shared/summary'
 import type { DeletePlanResult, RestoreOutcome, TrashOutcome } from '../shared/trash'
@@ -10,8 +11,13 @@ import {
   type ActionResult,
   type ChatOpenResult,
   type ChatSendResult,
+  type DecideResult,
   type FacetDecisionResult,
+  type ImportChoice,
+  type ImportResult,
   type LlmInfo,
+  type MappingCreateResult,
+  type MappingOpenResult,
   type ProjectInfo,
   type ProjectOpenResult,
   type RelationDecisionResult,
@@ -23,7 +29,8 @@ import {
 import type { AppController } from './AppController'
 import { WindowDecisions } from './chats/windowDecisions'
 import { arg, ipcArgs } from './ipcArgs'
-import { toUserFacing } from './library/UserFacingError'
+import { toUserFacing, UserFacingError } from './library/UserFacingError'
+import type { MappingService } from './mapping/MappingService'
 import { RELATIONS_FILE } from './project/relationsFile'
 import type { SyncService } from './sync/SyncService'
 
@@ -48,6 +55,38 @@ async function choosePdf(window: BrowserWindow | null): Promise<string | null> {
   const options: Electron.OpenDialogOptions = { properties: ['openFile'], filters: [{ name: 'PDF', extensions: ['pdf'] }] }
   const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
   return result.canceled ? null : (result.filePaths[0] ?? null)
+}
+
+/** The picker of «Importar»: an export of a database (BibTeX, RIS or CSV). */
+async function chooseExport(window: BrowserWindow | null): Promise<string | null> {
+  const options: Electron.OpenDialogOptions = {
+    properties: ['openFile'],
+    filters: [{ name: 'BibTeX, RIS, CSV', extensions: ['bib', 'bibtex', 'ris', 'csv', 'txt'] }]
+  }
+  const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
+  return result.canceled ? null : (result.filePaths[0] ?? null)
+}
+
+/**
+ * The export files the dialog of «Importar» returned, by the token handed to the window: the path never comes from the
+ * window. A token is used once; only the latest few are kept.
+ */
+class ImportChoices {
+  private readonly paths = new Map<string, string>()
+
+  add(path: string): ImportChoice {
+    const token = randomUUID()
+    this.paths.set(token, path)
+    while (this.paths.size > 8) this.paths.delete(this.paths.keys().next().value!)
+    return { token, name: basename(path) }
+  }
+
+  take(token: string): string {
+    const path = this.paths.get(token)
+    if (path === undefined) throw new UserFacingError('import_unreadable')
+    this.paths.delete(token)
+    return path
+  }
 }
 
 /** Project errors reach the UI as codes it can translate. */
@@ -389,6 +428,138 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     } catch (error) {
       return { ok: false, error: toUserFacing(error).code }
     }
+  })
+
+  // Systematic mappings. Every call that reads files or writes is tracked, so closing the project waits for it. The
+  // requests that cost money or the OpenAlex budget (searches, snowballing, suggestions, ingest) take `confirmed`, the
+  // user's click on the confirmation, and are refused without it.
+  const mappings = <T>(work: (service: MappingService) => Promise<T>): Promise<T> => {
+    const session = app.requireSession()
+    return session.track(work(session.mappings))
+  }
+  const failed = (error: unknown): { ok: false; error: string } => ({ ok: false, error: toUserFacing(error).code })
+  const imports = new ImportChoices()
+  ipcMain.handle(IPC.mappingsList, () => app.requireSession().mappings.list())
+  ipcMain.handle(IPC.mappingsCreate, async (_e, rawTitle: unknown): Promise<MappingCreateResult> => {
+    const title = arg(ipcArgs.mappingTitle, rawTitle, 'title')
+    try {
+      return { ok: true, id: await mappings((m) => m.create(title)) }
+    } catch (error) {
+      return failed(error)
+    }
+  })
+  ipcMain.handle(IPC.mappingsOpen, async (_e, rawId: unknown): Promise<MappingOpenResult> => {
+    const id = arg(ipcArgs.mappingId, rawId, 'id')
+    try {
+      return { ok: true, mapping: await mappings((m) => m.open(id)) }
+    } catch (error) {
+      return failed(error)
+    }
+  })
+  ipcMain.handle(IPC.mappingsSaveProtocol, (_e, rawId: unknown, rawDraft: unknown, rawVersion: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.mappingId, rawId, 'id')
+    const draft = arg(ipcArgs.protocolDraft, rawDraft, 'draft')
+    const version = arg(ipcArgs.protocolVersion, rawVersion, 'version')
+    return actionResult(() => mappings((m) => m.saveProtocol(id, draft, version)))
+  })
+  ipcMain.handle(IPC.mappingsSearch, (_e, rawId: unknown, rawReq: unknown, rawConfirmed: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.mappingId, rawId, 'id')
+    const req = arg(ipcArgs.openalexSearch, rawReq, 'search')
+    arg(ipcArgs.confirmed, rawConfirmed, 'confirmed')
+    return actionResult(async () => app.requireSession().mappings.requestSearch(id, req))
+  })
+  ipcMain.handle(IPC.mappingsChooseImport, async (): Promise<ImportChoice | null> => {
+    const path = await chooseExport(getWindow())
+    return path === null ? null : imports.add(path)
+  })
+  ipcMain.handle(IPC.mappingsImport, async (_e, rawId: unknown, rawToken: unknown, rawSource: unknown): Promise<ImportResult> => {
+    const id = arg(ipcArgs.mappingId, rawId, 'id')
+    const token = arg(ipcArgs.importToken, rawToken, 'file')
+    const source = arg(ipcArgs.importSource, rawSource, 'source')
+    try {
+      const path = imports.take(token)
+      return { ok: true, outcome: await mappings((m) => m.importFile(id, path, source)) }
+    } catch (error) {
+      return failed(error)
+    }
+  })
+  ipcMain.handle(IPC.mappingsAddFromLibrary, async (_e, rawId: unknown, rawIds: unknown): Promise<ImportResult> => {
+    const id = arg(ipcArgs.mappingId, rawId, 'id')
+    const ids = arg(ipcArgs.mappingPaperIds, rawIds, 'ids')
+    try {
+      return { ok: true, outcome: await mappings((m) => m.addFromLibrary(id, ids)) }
+    } catch (error) {
+      return failed(error)
+    }
+  })
+  ipcMain.handle(IPC.mappingsSnowball, (_e, rawId: unknown, rawDirection: unknown, rawConfirmed: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.mappingId, rawId, 'id')
+    const direction = arg(ipcArgs.snowballDirection, rawDirection, 'direction')
+    arg(ipcArgs.confirmed, rawConfirmed, 'confirmed')
+    return actionResult(async () => app.requireSession().mappings.requestSnowball(id, direction))
+  })
+  ipcMain.handle(IPC.mappingsDiscardSearch, (_e, rawId: unknown, rawSearch: unknown, rawReason: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.mappingId, rawId, 'id')
+    const searchId = arg(ipcArgs.searchId, rawSearch, 'search')
+    const reason = arg(ipcArgs.discardReason, rawReason, 'reason')
+    return actionResult(() => mappings((m) => m.discardSearch(id, searchId, reason)))
+  })
+  ipcMain.handle(IPC.mappingsQueue, (_e, rawId: unknown, rawQuery: unknown) => {
+    const id = arg(ipcArgs.mappingId, rawId, 'id')
+    const query = arg(ipcArgs.queueQuery, rawQuery, 'query')
+    return app.requireSession().mappings.queue(id, query)
+  })
+  ipcMain.handle(IPC.mappingsDecide, async (_e, rawId: unknown, rawReq: unknown): Promise<DecideResult> => {
+    const id = arg(ipcArgs.mappingId, rawId, 'id')
+    const req = arg(ipcArgs.decideRequest, rawReq, 'request')
+    try {
+      return { ok: true, decisionId: await mappings((m) => m.decide(id, req)) }
+    } catch (error) {
+      return failed(error)
+    }
+  })
+  ipcMain.handle(IPC.mappingsUndo, (_e, rawId: unknown, rawDecision: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.mappingId, rawId, 'id')
+    const decisionId = arg(ipcArgs.decisionId, rawDecision, 'decision')
+    return actionResult(() => mappings((m) => m.undo(id, decisionId)))
+  })
+  ipcMain.handle(IPC.mappingsResolveConflict, (_e, rawId: unknown, rawRecord: unknown, rawPhase: unknown, rawKeep: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.mappingId, rawId, 'id')
+    const recordId = arg(ipcArgs.recordId, rawRecord, 'record')
+    const phase = arg(ipcArgs.phase, rawPhase, 'phase')
+    const keep = arg(ipcArgs.decisionId, rawKeep, 'keep')
+    return actionResult(() => mappings((m) => m.resolveConflict(id, recordId, phase, keep)))
+  })
+  ipcMain.handle(IPC.mappingsResolveDuplicate, (_e, rawId: unknown, rawRecord: unknown, rawSame: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.mappingId, rawId, 'id')
+    const recordId = arg(ipcArgs.recordId, rawRecord, 'record')
+    const same = arg(ipcArgs.flag, rawSame, 'same')
+    return actionResult(() => mappings((m) => m.resolveDuplicate(id, recordId, same)))
+  })
+  ipcMain.handle(IPC.mappingsSuggestPlan, (_e, rawId: unknown, rawPhase: unknown) => {
+    const id = arg(ipcArgs.mappingId, rawId, 'id')
+    const phase = arg(ipcArgs.phase, rawPhase, 'phase')
+    return mappings((m) => m.suggestPlan(id, phase))
+  })
+  // «Sugerir» in the cost confirmation: the user's click after seeing the plan.
+  ipcMain.handle(IPC.mappingsSuggest, (_e, rawId: unknown, rawPhase: unknown, rawConfirmed: unknown): RunBatchResult => {
+    const id = arg(ipcArgs.mappingId, rawId, 'id')
+    const phase = arg(ipcArgs.phase, rawPhase, 'phase')
+    arg(ipcArgs.confirmed, rawConfirmed, 'confirmed')
+    try {
+      const { batchId, count } = app.requireSession().mappings.requestSuggestions(id, phase)
+      return { ok: true, batchId, count }
+    } catch (error) {
+      return failed(error)
+    }
+  })
+  ipcMain.handle(IPC.mappingsIngestPlan, (_e, rawId: unknown) => app.requireSession().mappings.ingestPlan(arg(ipcArgs.mappingId, rawId, 'id')))
+  // «Agregar a la biblioteca» in its confirmation (how many, and the summaries' estimate when they are automatic).
+  ipcMain.handle(IPC.mappingsIngest, (_e, rawId: unknown, rawIds: unknown, rawConfirmed: unknown): CountResult => {
+    const id = arg(ipcArgs.mappingId, rawId, 'id')
+    const ids = arg(ipcArgs.mappingRecordIds, rawIds, 'ids')
+    arg(ipcArgs.confirmed, rawConfirmed, 'confirmed')
+    return count(() => app.requireSession().mappings.requestIngest(id, ids))
   })
 
   // Chat over the library (read-only tools; answers stream on CHAT_STREAM_CHANNEL). Every call is tracked so closing

@@ -130,6 +130,29 @@ const api: ResearchApi = {
       return () => ipcRenderer.removeListener(CHAT_STREAM_CHANNEL, handler)
     }
   },
+  mappings: {
+    list: () => ipcRenderer.invoke(IPC.mappingsList),
+    create: (title) => ipcRenderer.invoke(IPC.mappingsCreate, title),
+    open: (id) => ipcRenderer.invoke(IPC.mappingsOpen, id),
+    saveProtocol: (id, draft, version) => ipcRenderer.invoke(IPC.mappingsSaveProtocol, id, draft, version),
+    // `confirmed` comes from the window's confirmation of a costly request, never assumed here.
+    searchOpenAlex: (id, req, confirmed) => ipcRenderer.invoke(IPC.mappingsSearch, id, req, confirmed),
+    // The export file is picked by the main process; the window only gets its name and a token.
+    chooseImportFile: () => ipcRenderer.invoke(IPC.mappingsChooseImport),
+    importFile: (id, token, source) => ipcRenderer.invoke(IPC.mappingsImport, id, token, source),
+    addFromLibrary: (id, paperIds) => ipcRenderer.invoke(IPC.mappingsAddFromLibrary, id, paperIds),
+    snowball: (id, direction, confirmed) => ipcRenderer.invoke(IPC.mappingsSnowball, id, direction, confirmed),
+    discardSearch: (id, searchId, reason) => ipcRenderer.invoke(IPC.mappingsDiscardSearch, id, searchId, reason),
+    queue: (id, query) => ipcRenderer.invoke(IPC.mappingsQueue, id, query),
+    decide: (id, req) => ipcRenderer.invoke(IPC.mappingsDecide, id, req),
+    undo: (id, decisionId) => ipcRenderer.invoke(IPC.mappingsUndo, id, decisionId),
+    resolveConflict: (id, recordId, phase, keepDecisionId) => ipcRenderer.invoke(IPC.mappingsResolveConflict, id, recordId, phase, keepDecisionId),
+    resolveDuplicate: (id, recordId, same) => ipcRenderer.invoke(IPC.mappingsResolveDuplicate, id, recordId, same),
+    suggestPlan: (id, phase) => ipcRenderer.invoke(IPC.mappingsSuggestPlan, id, phase),
+    suggest: (id, phase, confirmed) => ipcRenderer.invoke(IPC.mappingsSuggest, id, phase, confirmed),
+    ingestPlan: (id) => ipcRenderer.invoke(IPC.mappingsIngestPlan, id),
+    ingest: (id, recordIds, confirmed) => ipcRenderer.invoke(IPC.mappingsIngest, id, recordIds, confirmed)
+  },
   exports: {
     save: (defaultName, data) => ipcRenderer.invoke(IPC.exportSave, defaultName, data)
   },

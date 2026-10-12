@@ -4,6 +4,21 @@ import type { FacetSuggestionList, FacetSuggestPlan, SuggestionEdit } from './fa
 import type { JobRecord } from './jobs'
 import type { PaperDetail, PaperRow, UserErrorCode } from './library'
 import type {
+  DecideRequest,
+  ImportOutcome,
+  ImportSource,
+  IngestPlan,
+  MappingRecordRow,
+  MappingSummary,
+  MappingView,
+  OpenAlexSearchRequest,
+  Phase,
+  ProtocolDraft,
+  QueueQuery,
+  ScreeningPlan,
+  SnowballDirection
+} from './mapping'
+import type {
   CandidateList,
   CandidateQuery,
   ChartData,
@@ -115,6 +130,25 @@ export const IPC = {
   chatsSetTools: 'chats:set-tools',
   chatsDecide: 'chats:decide',
   chatsUndo: 'chats:undo',
+  mappingsList: 'mappings:list',
+  mappingsCreate: 'mappings:create',
+  mappingsOpen: 'mappings:open',
+  mappingsSaveProtocol: 'mappings:save-protocol',
+  mappingsSearch: 'mappings:search',
+  mappingsChooseImport: 'mappings:choose-import',
+  mappingsImport: 'mappings:import',
+  mappingsAddFromLibrary: 'mappings:add-from-library',
+  mappingsSnowball: 'mappings:snowball',
+  mappingsDiscardSearch: 'mappings:discard-search',
+  mappingsQueue: 'mappings:queue',
+  mappingsDecide: 'mappings:decide',
+  mappingsUndo: 'mappings:undo',
+  mappingsResolveConflict: 'mappings:resolve-conflict',
+  mappingsResolveDuplicate: 'mappings:resolve-duplicate',
+  mappingsSuggestPlan: 'mappings:suggest-plan',
+  mappingsSuggest: 'mappings:suggest',
+  mappingsIngestPlan: 'mappings:ingest-plan',
+  mappingsIngest: 'mappings:ingest',
   exportSave: 'export:save',
   syncStatus: 'sync:status',
   syncRun: 'sync:run',
@@ -130,7 +164,8 @@ export const IPC = {
 /**
  * `sync-changed`: the git sync's state changed. `facets-changed`: the facet suggestions changed (a run, a decision,
  * or facet-suggestions.yaml edited outside the app). `chats-changed`: a conversation was written, deleted or changed
- * outside the app (answers stream on CHAT_STREAM_CHANNEL instead). `flush-request`: the window is about to close; save
+ * outside the app (answers stream on CHAT_STREAM_CHANNEL instead). `mappings-changed`: a mapping was written, or changed outside
+ * the app. `flush-request`: the window is about to close; save
  * pending edits, then call `flushDone()`. `close-request`: there are changes not synced; ask, then answer with `closeDecision()`.
  */
 export type ResearchEvent =
@@ -140,6 +175,7 @@ export type ResearchEvent =
   | 'sync-changed'
   | 'facets-changed'
   | 'chats-changed'
+  | 'mappings-changed'
   | 'flush-request'
   | 'close-request'
 
@@ -162,6 +198,16 @@ export type PdfReadResult = { ok: true; data: Uint8Array | null } | { ok: false;
 /** Any action that only signals success or failure; errors travel as a `UserErrorCode`. */
 export type ActionResult = { ok: true } | { ok: false; error: string }
 export type RunBatchResult = { ok: true; batchId: string; count: number } | { ok: false; error: string }
+export type MappingCreateResult = { ok: true; id: string } | { ok: false; error: string }
+export type MappingOpenResult = { ok: true; mapping: MappingView } | { ok: false; error: string }
+/** An export file picked in the app's dialog: the window sees its name and hands back only the token. */
+export interface ImportChoice {
+  token: string
+  name: string
+}
+export type ImportResult = { ok: true; outcome: ImportOutcome } | { ok: false; error: string }
+/** `decisionId` is what «Deshacer» sends back. */
+export type DecideResult = { ok: true; decisionId: string } | { ok: false; error: string }
 export type SaveResult = { ok: true; path: string } | { ok: false; error?: string }
 
 /** A review decision on a typed relation; `undoToken` is what "Deshacer" sends back. */
@@ -342,6 +388,37 @@ export interface ResearchApi {
     undo(id: string, actionId: string): Promise<ActionResult>
     /** Answers as they stream; `seq` orders them against `open()`'s `partial`. */
     onStream(callback: (update: ChatStreamUpdate) => void): () => void
+  }
+  mappings: {
+    list(): Promise<MappingSummary[]>
+    create(title: string): Promise<MappingCreateResult>
+    open(id: string): Promise<MappingOpenResult>
+    /** «Guardar protocolo»; `version` is the protocol version the draft was edited from. */
+    saveProtocol(id: string, draft: ProtocolDraft, version: number): Promise<ActionResult>
+    /** Queues the OpenAlex search after the user confirmed it; its log entry and records appear when the job ends. */
+    searchOpenAlex(id: string, req: OpenAlexSearchRequest, confirmed: true): Promise<ActionResult>
+    /**
+     * Asks for an export file (BibTeX, RIS or CSV) in the app's dialog; null when the user cancels. The path stays in
+     * the main process: `importFile` names the file by the token, once.
+     */
+    chooseImportFile(): Promise<ImportChoice | null>
+    importFile(id: string, token: string, source: ImportSource): Promise<ImportResult>
+    addFromLibrary(id: string, paperIds: string[]): Promise<ImportResult>
+    /** Queues a snowballing iteration from the records included on full text, after the user confirmed it. */
+    snowball(id: string, direction: SnowballDirection, confirmed: true): Promise<ActionResult>
+    discardSearch(id: string, searchId: string, reason: string): Promise<ActionResult>
+    queue(id: string, query: QueueQuery): Promise<MappingRecordRow[]>
+    decide(id: string, req: DecideRequest): Promise<DecideResult>
+    undo(id: string, decisionId: string): Promise<ActionResult>
+    resolveConflict(id: string, recordId: string, phase: Phase, keepDecisionId: string): Promise<ActionResult>
+    resolveDuplicate(id: string, recordId: string, same: boolean): Promise<ActionResult>
+    /** What «Sugerir cribado» would cost, before asking. */
+    suggestPlan(id: string, phase: Phase): Promise<ScreeningPlan>
+    /** «Sugerir» in the cost confirmation: `confirmed` is that click. */
+    suggest(id: string, phase: Phase, confirmed: true): Promise<RunBatchResult>
+    ingestPlan(id: string): Promise<IngestPlan>
+    /** After the confirmation: adds the records included on title and abstract that are not library papers yet (these, or all). */
+    ingest(id: string, recordIds: string[] | undefined, confirmed: true): Promise<CountResult>
   }
   exports: {
     /** Asks where to save, then writes the file there. */

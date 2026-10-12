@@ -154,6 +154,7 @@ export class AppController {
     session.on('sync', () => this.emit('sync-changed'))
     session.on('facets', () => this.emit('facets-changed'))
     session.on('chats', () => this.emit('chats-changed'))
+    session.on('mappings', () => this.emit('mappings-changed'))
     session.onChatStream((u) => this.emitChatStream(u))
     this.emit('project-changed')
     // The first automatic sync may already be running (it starts as the session opens, before these listeners).
