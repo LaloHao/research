@@ -15,6 +15,7 @@ import type {
 import type { PdfPolicy } from './schemas'
 import type { AppSettings } from './settings'
 import type { ExtractionForm, FormImpact, FormInfo, LlmConfig, LlmModel, ReviewItem, Section, SummaryPlan, ThesisContext } from './summary'
+import type { CloseDecision, ConflictDecision, ConflictDiff, ConflictItem, SyncResult, SyncStatus } from './sync'
 import type { DeletePlanResult, RestoreOutcome, TrashEntry, TrashOutcome, TrashTarget } from './trash'
 import type { PaperRelations, RelationPlan, RelationsFileState, RelationStatus, RelationType } from './typedRelations'
 
@@ -89,11 +90,22 @@ export const IPC = {
   relationsResolveConflict: 'relations:resolve-conflict',
   relationsShowFile: 'relations:show-file',
   exportSave: 'export:save',
+  syncStatus: 'sync:status',
+  syncRun: 'sync:run',
+  syncConflicts: 'sync:conflicts',
+  syncDiff: 'sync:diff',
+  syncResolve: 'sync:resolve',
+  syncAbort: 'sync:abort',
+  syncInit: 'sync:init',
+  closeDecision: 'window:close-decision',
   flushDone: 'window:flush-done'
 } as const
 
-/** `flush-request`: the window is about to close; save pending edits, then call `flushDone()`. */
-export type ResearchEvent = 'library-changed' | 'jobs-changed' | 'project-changed' | 'flush-request'
+/**
+ * `sync-changed`: the git sync's state changed. `flush-request`: the window is about to close; save pending edits, then
+ * call `flushDone()`. `close-request`: there are changes not synced; ask, then answer with `closeDecision()`.
+ */
+export type ResearchEvent = 'library-changed' | 'jobs-changed' | 'project-changed' | 'sync-changed' | 'flush-request' | 'close-request'
 
 export const eventChannel = (event: ResearchEvent): string => `event:${event}`
 
@@ -129,8 +141,8 @@ export interface LlmInfo {
 export interface ResearchApi {
   settings: {
     get(): Promise<AppSettings>
-    /** Contact email and OpenAlex API key; the last project path is managed by the main process. */
-    set(patch: Pick<Partial<AppSettings>, 'contactEmail' | 'openalexApiKey'>): Promise<AppSettings>
+    /** Contact email, OpenAlex API key and the automatic sync; the last project path is managed by the main process. */
+    set(patch: Pick<Partial<AppSettings>, 'contactEmail' | 'openalexApiKey' | 'autoSync' | 'autoSyncMinutes'>): Promise<AppSettings>
   }
   project: {
     current(): Promise<ProjectInfo | null>
@@ -240,9 +252,27 @@ export interface ResearchApi {
     /** Asks where to save, then writes the file there. */
     save(defaultName: string, data: string | Uint8Array): Promise<SaveResult>
   }
+  sync: {
+    status(): Promise<SyncStatus>
+    /** «Sincronizar»: commit, fetch, merge and push; `conflicts` when decisions are waiting. */
+    run(): Promise<SyncResult>
+    conflicts(): Promise<ConflictItem[]>
+    diff(id: string): Promise<ConflictDiff>
+    /**
+     * «Terminar sincronización» with a choice per conflict id, each with the `version` it was made for; a choice whose
+     * conflict changed since is not taken (the result is `conflicts` again).
+     */
+    resolve(choices: Record<string, ConflictDecision>): Promise<SyncResult>
+    /** «Cancelar»: forgets the decisions; the local commit stays, unpushed. */
+    abort(): Promise<void>
+    /** «Inicializar repositorio» (when there is none) and/or adds `url` as origin, then the first sync. */
+    init(url: string | null): Promise<SyncResult>
+  }
   on(event: ResearchEvent, callback: () => void): () => void
   /** Acknowledges a 'flush-request' once pending saves have finished. */
   flushDone(): void
+  /** Answers a 'close-request': close the window, or keep it open. */
+  closeDecision(decision: CloseDecision): void
   /** Absolute path of a dropped file. */
   pathForFile(file: File): string
 }

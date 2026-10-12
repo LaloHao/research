@@ -16,6 +16,7 @@ export class AppController {
   constructor(
     private readonly settingsFile: string,
     private readonly emit: (event: ResearchEvent) => void,
+    /** `autoSync: null` turns the automatic sync off (tests); otherwise it follows the settings. */
     private readonly sessionDefaults: Omit<SessionOptions, 'contactEmail' | 'openalexApiKey'> = {}
   ) {}
 
@@ -40,10 +41,13 @@ export class AppController {
   }
 
   async setSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
+    const before = this.settings
     this.settings = { ...this.settings, ...patch }
     await saveSettings(this.settingsFile, this.settings)
     this.session?.http.setContactEmail(this.settings.contactEmail)
     this.session?.http.setOpenAlexApiKey(this.settings.openalexApiKey)
+    // A full new interval starts on a reschedule: saving the same values again must not push the next sync back.
+    if (before.autoSync !== this.settings.autoSync || before.autoSyncMinutes !== this.settings.autoSyncMinutes) this.session?.rescheduleSync()
     return this.settings
   }
 
@@ -96,6 +100,11 @@ export class AppController {
     this.emit('project-changed')
   }
 
+  /** Whether closing should offer to sync first. A git failure counts as nothing to sync: closing must never get stuck. */
+  async hasUnsyncedChanges(): Promise<boolean> {
+    return this.session ? this.session.sync.hasUnsynced().catch(() => false) : false
+  }
+
   /** The local similarity model, as Settings → App shows it. */
   async modelInfo(): Promise<ModelInfo> {
     const runtime = this.sessionDefaults.embeddings
@@ -109,7 +118,10 @@ export class AppController {
     else await this.sessionDefaults.embeddings?.remove()
   }
 
-  /** Called on quit: running jobs go back to the queue and resume on the next launch. */
+  /**
+   * Called on quit: running jobs go back to the queue and resume on the next launch; a sync's fetch or push is cut
+   * short (its git would otherwise outlive the app) and no automatic sync starts again.
+   */
   async shutdown(): Promise<void> {
     const session = this.session
     this.session = null
@@ -118,7 +130,17 @@ export class AppController {
   }
 
   private sessionOptions(): SessionOptions {
-    return { ...this.sessionDefaults, contactEmail: this.settings.contactEmail, openalexApiKey: this.settings.openalexApiKey, deviceId: this.settings.deviceId }
+    return {
+      ...this.sessionDefaults,
+      contactEmail: this.settings.contactEmail,
+      openalexApiKey: this.settings.openalexApiKey,
+      deviceId: this.settings.deviceId,
+      // Read at every tick, so a settings change applies without reopening the project.
+      autoSync:
+        this.sessionDefaults.autoSync === null
+          ? null
+          : { enabled: () => this.settings.autoSync, intervalMs: () => this.settings.autoSyncMinutes * 60_000 }
+    }
   }
 
   private attach(session: ProjectSession): void {
@@ -126,6 +148,9 @@ export class AppController {
     session.on('library', () => this.emit('library-changed'))
     session.on('jobs', () => this.emit('jobs-changed'))
     session.on('project', () => this.emit('project-changed'))
+    session.on('sync', () => this.emit('sync-changed'))
     this.emit('project-changed')
+    // The first automatic sync may already be running (it starts as the session opens, before these listeners).
+    this.emit('sync-changed')
   }
 }

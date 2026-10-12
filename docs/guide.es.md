@@ -14,6 +14,7 @@ Esta app es una biblioteca de papers para la tesis *Método computacional para l
 - Encontrar **papers similares** combinando referencias en común, citas compartidas, facetas en común y un modelo local de contenido, con las razones de cada parecido.
 - Ver el área en la vista **Mapa**: un grafo de papers con dos lentes (área y tesis) y gráficas por faceta.
 - Pedir a Claude **relaciones tipadas** entre papers (extiende, usa el método de, compara con, contradice, replica, mismo problema), con justificación y citas de ambos papers que Claude busca por sí mismo con herramientas de solo lectura sobre tu biblioteca; tú las confirmas, rechazas o cambias de tipo.
+- **Sincronizar** el proyecto entre tus equipos con git desde la app: guarda tus cambios en un commit, trae los del otro equipo, los mezcla y los sube, sin dejar nunca marcadores de conflicto en tus archivos; lo que no sabe mezclar solo te lo pregunta.
 
 Próximamente (no implementado todavía): facetas sugeridas por Claude, chat sobre la biblioteca y mapeo sistemático de literatura.
 
@@ -44,7 +45,7 @@ Al arrancar sin un proyecto abierto, la app pide crear uno nuevo (nombre y una c
 
 ### Sincronizar el proyecto entre equipos
 
-La carpeta del proyecto es texto plano (YAML, Markdown) pensado para versionarse con git o sincronizarse con una herramienta como Syncthing. Los archivos se recargan solos cuando cambian por fuera de la app (un `git pull`, una sincronización, un editor externo) — no hace falta reiniciar. Si dos equipos editan el mismo archivo a la vez, la app lo detecta como conflicto (ver «Problemas comunes» más abajo). La papelera (`.trash/`) también se sincroniza: un paper que quitas en un equipo aparece en la Papelera del otro tras un `git pull`, y desde ahí se restaura o se elimina igual.
+La carpeta del proyecto es texto plano (YAML, Markdown) pensado para versionarse con git. La app sincroniza sola con git (ver «Sincronizar con git» más abajo); también puedes usar git a mano o una herramienta como Syncthing. Los archivos se recargan solos cuando cambian por fuera de la app (una sincronización, un `git pull`, un editor externo): no hace falta reiniciar. Si dos equipos editan el mismo archivo a la vez sin pasar por la sincronización de la app, la app lo detecta como conflicto (ver «Problemas comunes» más abajo). La papelera (`.trash/`) también se sincroniza: un paper que quitas en un equipo aparece en la Papelera del otro, y desde ahí se restaura o se elimina igual.
 
 ## Agregar papers
 
@@ -122,6 +123,20 @@ La vista **Papelera** (🗑 en la barra lateral) lista los papers quitados con t
 - Una carpeta de la papelera que no se puede restaurar aparece con el motivo, por ejemplo «No se puede restaurar: le falta paper.yaml.»; revísala en la carpeta `.trash` del proyecto. «Restaurar (N)» (para los marcados) cuenta y restaura solo los que se pueden restaurar.
 
 En **Candidatos** (vista Mapa), un trabajo que corresponde a un paper de tu papelera (por id de OpenAlex o DOI) aparece «En la papelera» con **Restaurar** en lugar de «Agregar».
+
+## Sincronizar con git
+
+La app sincroniza la carpeta del proyecto con un repositorio git: guarda tus cambios en un commit, trae los del otro equipo, los mezcla y sube el resultado. Usa el git instalado en tu equipo y sus credenciales (ssh-agent o el gestor de credenciales de git): nunca pide ni guarda contraseñas. Si tu clave SSH tiene frase de paso, tiene que estar cargada en el ssh-agent (`ssh-add`) antes de sincronizar; la app no puede escribirla por ti.
+
+- **En la barra lateral**, sobre ⚙, el botón ⟳ sincroniza en ese momento (o abre la vista Sincronización si no puede, o si esa sincronización terminó en error o en conflictos); debajo aparece un estado corto («ahora», «3 min», «sin subir», «sin red», «conflictos»…) y, al pasar el cursor, el completo: «Sincronizado hace 3 min», «Cambios sin subir», «Sin conexión», «Conflictos por resolver» o «Sincronizando…». Tocar el estado abre la vista **Sincronización**, con el repositorio, la rama, el último error y el botón «Sincronizar».
+- **Qué se sube**: solo los archivos de la carpeta del proyecto (respetando `.gitignore`; `.cache/` nunca), en un commit «research: sync from <equipo>» que lista los papers tocados. Si no cambió nada, no hace commit. Si el proyecto está dentro de un repositorio mayor (por ejemplo, el de tu tesis), lo que tengas fuera de la carpeta, preparado o no, no se toca ni entra en el commit; los commits que hayas hecho tú con git sí se suben con la rama. Si habías preparado (`git add`) algún cambio dentro del proyecto a mano, la sincronización lo incluye en su commit igual: no se pierde, pero deja de aparecer como «preparado» por separado.
+- **Cómo mezcla**: nunca reescribe la historia (mezcla, no rebase: los commits del otro equipo quedan tal cual) y nunca deja marcadores de conflicto en tus archivos, porque calcula la mezcla aparte y solo cambia los archivos cuando el resultado está completo. Mezcla sola `relations.yaml` (une por `id`; si una relación cambió en ambos equipos gana el cambio más reciente, y una que se borró en un equipo sin tocarse en el otro queda borrada), los registros de gasto `costs/` (une las líneas), `project.yaml` clave por clave (los candidatos descartados se suman), el `trashed.yaml` de un paper quitado en ambos equipos (gana la fecha más reciente) y `exports/library.bib` (la app la vuelve a generar). Un archivo que agregaste y que git reubicó por una carpeta renombrada en el otro equipo no se pierde ni se pregunta: queda junto al original como `<nombre>.conflict` (o `.conflict-2`, etc., si ya existe uno).
+- **Conflictos**: si un archivo cambió en ambos equipos y la app no sabe mezclarlo (un `summary.md`, `extraction.yaml`, `paper.yaml` o `notes.md`, o la misma clave de `project.yaml`), la sincronización se detiene sin tocar tus archivos y la vista Sincronización muestra «Conflictos por resolver»: cada archivo con el paper al que pertenece, qué hizo cada equipo, «Ver diferencias» (las dos versiones lado a lado) y «Quedarme con la mía» / «Usar la del otro equipo». Si un equipo quitó un paper a la papelera mientras el otro lo editaba, eliges «Conservar el paper» (vuelve a la biblioteca con las ediciones y sale de la papelera) o «Aceptar que se quitó» (se queda en la papelera, con las ediciones que git pudo llevar ahí). Nada se sube hasta que elijas en todos («Terminar sincronización» se activa recién entonces); «Cancelar» deja todo como estaba (tus cambios quedan en un commit local, sin subir). Si algo cambia mientras decides (se guarda algo nuevo aquí o el otro equipo sube cambios), la app te lo vuelve a preguntar antes de seguir. La versión que no elijas no se pierde: queda en el historial de git.
+- **Fuera de la carpeta del proyecto**: si el proyecto vive dentro de un repositorio mayor y el otro equipo cambió los mismos archivos de fuera, o si tienes un merge o un rebase hecho a mano sin terminar, la sincronización se detiene sin tocar nada; resuélvelo con git y vuelve a sincronizar.
+- **Automática**: «Sincronizar automáticamente» (Ajustes → Aplicación, encendida por defecto) sincroniza al abrir el proyecto y cada 10 minutos (o el intervalo que elijas, de 5 a 120) si el repositorio tiene remoto. Se salta un intervalo si hay conflictos esperando tu decisión o si en ese momento se están moviendo papers a o desde la papelera, y nunca abre ventanas: si falla (sin red, credenciales), solo lo muestra la barra lateral y lo vuelve a intentar en el siguiente intervalo.
+- **Al cerrar**: si quedan cambios sin commit en el proyecto, commits sin subir o decisiones pendientes, la app pregunta «Sincronizar y cerrar», «Cerrar sin sincronizar» o «Cancelar». La ventana se cierra solo si esa sincronización termina bien; si encuentra conflictos o falla, se queda abierta y puedes ir a «Ver sincronización». Si en ese momento corría una sincronización automática, la espera y vuelve a sincronizar, para que se suba también lo último que guardaste. Mientras sincroniza puedes elegir «Cerrar sin sincronizar»: la subida se detiene y lo que no alcanzó a subirse queda en tu equipo para la próxima vez.
+- **Primer uso**: si la carpeta no está en un repositorio, la vista Sincronización ofrece «Inicializar repositorio» (`git init` en la carpeta del proyecto, en la rama `main`, con el `.gitignore` que la app ya mantiene) y un campo para la URL de un repositorio remoto vacío (en GitHub, GitLab o una carpeta compartida); una URL con contraseña se rechaza. Con la URL, al terminar sube el proyecto. Si el repositorio no tiene remoto, la misma URL con «Agregar remoto y sincronizar»; si la rama no sigue a ninguna rama remota, «Conectar y sincronizar» la conecta con la rama del mismo nombre (o la publica si no existe). Esa URL solo se puede corregir mientras ese remoto nunca llegó a funcionar (no se usó para sincronizar todavía); una vez que funcionó, para cambiarla hay que usar `git remote set-url origin <url>` a mano. Si el remoto tiene una historia distinta de la de este repositorio, la app lo rechaza (ver «Problemas comunes» más abajo). Para un segundo equipo, clona el repositorio con git y abre esa carpeta como proyecto.
+- **PDFs con git LFS**: con la política «Versionarlos con git LFS» hace falta tener git-lfs instalado; si falta, la sincronización lo avisa. La app prepara git-lfs en el repositorio y sube los PDF antes que los commits que apuntan a ellos, así que funciona aunque tengas desactivados los hooks de git (`core.hooksPath`); si la subida falla, no se sube nada.
 
 ## Detalle del paper
 
@@ -312,6 +327,7 @@ Si el formulario cambió por fuera de este editor (otro equipo, un `git pull`) m
 - **Correo de contacto para Crossref y OpenAlex**: opcional. Crossref atiende con prioridad las consultas que lo incluyen (OpenAlex ya no lo usa). Solo se envía a esos servicios. Es un ajuste de la app por dispositivo, no se guarda en `project.yaml` y por lo tanto no se sincroniza entre equipos.
 - **Clave de API de OpenAlex**: opcional y gratuita. Sin clave, OpenAlex permite unas 1000 consultas al día; con ella, más. Se guarda solo en este equipo y solo se envía a OpenAlex.
 - **Modelos locales**: el modelo de similitud de contenido (multilingual-e5-small, unos 470 MB) corre en tu equipo. Muestra si está descargado y cuánto ocupa, con «Descargar» (el avance se ve en Actividad) y «Borrar». Se guarda en la carpeta de datos de la app, nunca en el proyecto, así que cada equipo lo descarga una vez. La descarga corre como un trabajo del proyecto abierto (hace falta tener uno abierto); si cierras el proyecto o la app a mitad de camino, se retoma la próxima vez que abras ese proyecto. «Borrar» cancela los cálculos de similitud que estaban en cola.
+- **Sincronizar automáticamente** y **Cada (minutos)**: la sincronización automática con git (ver «Sincronizar con git»), al abrir el proyecto y cada 5 a 120 minutos (10 por defecto). Es un ajuste de este equipo; no se guarda en `project.yaml`.
 - **Cerrar proyecto**: vuelve a la pantalla de bienvenida para crear o abrir otro proyecto.
 
 ## Archivos del proyecto
@@ -333,7 +349,7 @@ exports/library.bib        BibTeX de toda la biblioteca; generado, no lo edites
 .cache/                    índice local de búsqueda, PDFs descargados bajo demanda, citas entrantes, datos de candidatos, vectores, el índice de relaciones y el de la papelera; se puede borrar sin perder nada, se reconstruye solo
 ```
 
-Todo lo de arriba, salvo `.cache/`, está pensado para versionarse con git o sincronizarse entre equipos. `notes.md` y `project.yaml` (fuera de `extraction_form`) se pueden editar a mano con confianza; `paper.yaml`, `summary.md` y `extraction.yaml` también, pero con cuidado de no romper su formato. Un archivo editado por fuera de la app (o actualizado por una sincronización) se recarga solo, sin reiniciar la app.
+Todo lo de arriba, salvo `.cache/`, está pensado para versionarse con git o sincronizarse entre equipos. `notes.md` y `project.yaml` (fuera de `extraction_form`) se pueden editar a mano con confianza; `paper.yaml`, `summary.md` y `extraction.yaml` también, pero con cuidado de no romper su formato. Un archivo editado por fuera de la app (o actualizado por una sincronización) se recarga solo, sin reiniciar la app. La sincronización de la app hace commit solo de esta carpeta (sin `.cache/`) y deja sus archivos temporales en `.git/`.
 
 ## Problemas comunes / FAQ
 
@@ -402,3 +418,33 @@ Usa «Resolver automáticamente» en el aviso de abajo de la ventana (ver «Rela
 
 **«La operación llegó a su tope por paper y se detuvo. Sube «Tope por paper (USD est.)» en Ajustes → Claude o reintenta con otro modelo.»**
 Ese paper superó el tope por paper durante la consulta. Solo falla ese paper: un lote en curso sigue con los demás.
+
+**«Hay conflictos en archivos fuera de la carpeta del proyecto: …»**
+El proyecto está dentro de un repositorio mayor y el otro equipo cambió los mismos archivos de fuera que tú. La app no los toca: resuélvelos con git (`git pull`) y vuelve a sincronizar. Tus cambios del proyecto ya quedaron en un commit local.
+
+**«Hay cambios locales sin commit que la sincronización sobrescribiría: …»**
+El otro equipo cambió archivos que aquí tienes modificados sin commit (fuera de la carpeta del proyecto, o ignorados por git, como un PDF). Haz commit o muévelos con git y vuelve a sincronizar.
+
+**«Hay un merge o un rebase hecho a mano sin terminar…»**
+Tienes un merge o un rebase de git a medio terminar en este repositorio. Termínalo o cancélalo con git (`git merge --abort` o `git rebase --abort`) y vuelve a sincronizar.
+
+**«El remoto rechazó tus credenciales o no tienes permiso…»**
+git no pudo autenticarse. Revisa que tu clave SSH esté cargada (`ssh-add`) o que el gestor de credenciales de git tenga tu usuario; prueba un `git fetch` en una terminal. La app nunca pide contraseñas.
+
+**«No se pudo conectar con el remoto…»**
+Sin red o el servidor no responde. Tus cambios quedan en un commit local («Cambios sin subir») y la sincronización automática lo vuelve a intentar sola.
+
+**«git tardó demasiado y se canceló…»**
+Al subir o bajar, git se cancela solo si pasan 3 minutos sin ningún avance (no por tardar: la primera sincronización de una biblioteca grande con sus PDF puede llevar mucho rato y sigue mientras avanza). Suele ser una conexión que se cortó a medias: revísala y vuelve a sincronizar.
+
+**«Este proyecto guarda los PDF con git LFS y git-lfs no está instalado…»**
+Instala git-lfs (https://git-lfs.com), o cambia la política de PDFs en Ajustes → Proyecto.
+
+**«No se pudieron subir los PDF a git LFS…»**
+Los commits se quedan sin subir hasta que sus PDF estén en el remoto. Revisa que el remoto acepte git LFS (algunos servidores lo tienen desactivado) y que este equipo tenga los PDF: `git lfs push origin <rama>` en una terminal te dice cuál falta.
+
+**«git no sabe tu nombre ni tu correo…»**
+Configúralos una vez en una terminal: `git config --global user.name "Tu nombre"` y `git config --global user.email "tu@correo"`.
+
+**«El remoto tiene una historia distinta de la de este repositorio…»**
+Inicializaste un repositorio aquí y el remoto ya tenía otro proyecto. Clona el remoto en otra carpeta y abre esa carpeta como proyecto.

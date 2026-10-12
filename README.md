@@ -2,12 +2,13 @@
 
 *[Versión en español](./README.es.md)*
 
-A personal desktop app for thesis research: a paper library with BibTeX, full-text search, Claude-generated summaries, citations from OpenAlex, similar papers, a map of the field, a versioned trash to remove and restore papers, and, in later stages, typed relations, chat, and systematic mapping.
+A personal desktop app for thesis research: a paper library with BibTeX, full-text search, Claude-generated summaries, citations from OpenAlex, similar papers, a map of the field, a versioned trash to remove and restore papers, git sync between machines from the app, and, in later stages, typed relations, chat, and systematic mapping.
 
 ## Requirements
 
 - Node.js 24 or later and pnpm (`corepack enable`)
 - To summarize papers: the `claude` CLI installed and signed in (`claude login`)
+- To sync from the app: git (and git-lfs if PDFs are tracked with LFS)
 
 ## Run
 

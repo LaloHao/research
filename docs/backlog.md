@@ -4,13 +4,12 @@
 
 - Reorder facets in the extraction form editor.
 - Personal shared library across projects (after stages 4–5): a store outside the projects (app data folder or a user-chosen, git-synced folder) keyed by DOI/arXiv/OpenAlex/PDF hash, holding PDFs and analyses. Adding a paper to any project offers to reuse what is compatible: summary fields when the content language matches, facets whose definition is identical, never the thesis relation; verified/edited statuses kept (optionally re-review). Papers removed from a project stay there.
-- Git sync from the app (next): a "Sincronizar" button that pulls, commits and pushes the project folder (git or git LFS for PDFs), shows the last sync time, warns about unpushed changes before closing, resolves automatically the files the app knows how to merge (relations.yaml, per-device costs/, dismissed lists) and asks the user to pick a version for the rest (e.g. a summary edited on both machines). In the stage 4 chat, a separate MCP server used only for syncing, enabled per conversation and always behind the user's approval (it is not part of the read-only library tools). Today syncing between computers is done by hand with `git pull` / `git commit` / `git push`.
 
 ## Upcoming stages
 
 - Stage 3c: Claude suggests facets (and values) from the thesis context and the papers, reusing the read-only library MCP server and agent runner of stage 3b; suggestions reviewed like the summaries' proposed values.
 - Principle for every future LLM use (3b, 3c, chat): Claude gets **read-only tools** over the library (full-text search, semantic search, grep over the project files, reading a paper's pages, reading a summary and its facets, querying citations and neighbours) and never write tools; the 3b relation suggester already uses them (src/main/mcp/).
-- Stage 4: chat (per paper and global) over the library.
+- Stage 4: chat (per paper and global) over the library. Syncing from the chat goes through a separate MCP server used only for that (tools `sync_status`, `sync_now`, `resolve_conflict` over the app's `SyncService`), enabled per conversation and always behind the user's approval; it is not part of the read-only library tools.
 - Stage 5: formal systematic mapping. Design decision already taken: a project can hold **several mappings** (each with its own protocol, research questions, inclusion/exclusion criteria, search log and screening) over one shared library, so papers, PDFs and summaries are never analysed twice; excluding a paper from one mapping never removes it from the library.
 
 ## Stage 2 technical minutiae
@@ -83,3 +82,23 @@
 - Removing a paper drops it from its neighbours' lists without backfilling: a paper that had it in its top 10 shows 9 neighbours until the next full recompute (end of a batch, project open).
 - A paper trashed on another machine that arrives through `git pull` while an untracked PDF keeps its `papers/<key>/` folder loses its cached text before the trash records it; restoring it extracts the text again.
 - Listing the trash and planning a delete wait behind a long ingest (a PDF download) on the same project.
+
+## Git sync technical minutiae
+
+- The last sync time and the decisions waiting in the conflicts panel live in memory: after a restart the rail says «Sin sincronizar en esta sesión» until the first sync, and a pending conflict is found again (nothing on disk changed meanwhile).
+- `git merge-tree` (git 2.43) always detects renames: a paper trashed on one machine and edited on the other usually merges cleanly, with the edit carried into `.trash/<key>/`; the app detects the case from both sides' diffs and asks anyway.
+- A paper trashed and deleted for good on one machine while the other machine edited it is not detected as its own case: it falls back to the per-file modify/delete decisions for whatever changed, and the leftover library folder with no `paper.yaml` stays in history.
+- Sync commits are made with `git commit-tree`: commit hooks (pre-commit, commit-msg) don't run; push hooks do.
+- A project inside a bigger repository shares its branch and remote: a sync also pushes the user's own commits outside the project (never their uncommitted changes).
+- The diff view compares whole lines (no word-level highlighting) and skips files over 512 KB or binary; past 4 million line pairs it shows both sides without aligning them. It also compares git-lfs pointer files as plain text, not as the PDFs they point to.
+- `exports/library.bib` in conflict keeps this machine's copy until the app re-exports it from the merged papers.
+- A `relations.yaml` side with invalid entries or another schema version is never merged automatically: it becomes a decision.
+- Retyping or reversing the same relation on both machines (the id is the unordered pair plus the type) can leave both the old and the new id in the merged `relations.yaml`.
+- Cost-log lines (`costs/<device>.jsonl`) are merged by deduplicating identical lines across both sides, without using the merge base as a reference; a retried write whose line differs only slightly from an equivalent one on the other side is not caught.
+- A trash operation (remove, restore, delete forever) that starts right after the automatic sync's periodic check runs anyway: each write stays atomic and hash-checked under the write gate, so nothing is corrupted, but a multi-paper operation can be split across two sync commits.
+- A git command run by `status()`, `hasUnsynced()`, `conflicts()` or `diff()` (read-only) is not tracked for abort: closing the project or quitting does not wait for it or kill it, unlike `fetch`/`push`/local commit steps.
+- If the app is killed outright (a crash, a forced quit), a detached git/ssh process it started can outlive it; a clean close or quit always stops the sync's own processes first.
+- On macOS, an app started from the Finder finds git and git-lfs only in the system PATH plus `/opt/homebrew/bin` and `/usr/local/bin`.
+- The automatic sync is a per-device setting shared by every project opened on that machine.
+- Two overlapping `openProject` calls (e.g. opening one project while another is still opening) can leave an orphaned session that is never closed, and that session keeps its own automatic sync timer running against its project.
+- A fast-forward that brings many files (or, with git LFS, downloads the PDFs it checks out) holds the write gate while it runs, so the app's own saves wait for it.

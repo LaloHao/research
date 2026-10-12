@@ -20,6 +20,7 @@ import type { AppController } from './AppController'
 import { arg, ipcArgs } from './ipcArgs'
 import { toUserFacing } from './library/UserFacingError'
 import { RELATIONS_FILE } from './project/relationsFile'
+import type { SyncService } from './sync/SyncService'
 
 /** Writes travel back as `{ ok }`; failures carry the code the UI translates. */
 async function actionResult(action: () => Promise<unknown>): Promise<ActionResult> {
@@ -134,6 +135,16 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
       return { ok: false, error: toUserFacing(error).code }
     }
   })
+
+  // Git sync of the open project: status, «Sincronizar», conflicts and first use.
+  const sync = (): SyncService => app.requireSession().sync
+  ipcMain.handle(IPC.syncStatus, () => sync().status())
+  ipcMain.handle(IPC.syncRun, () => sync().run({ auto: false }))
+  ipcMain.handle(IPC.syncConflicts, () => sync().conflicts())
+  ipcMain.handle(IPC.syncDiff, (_e, rawId: unknown) => sync().diff(arg(ipcArgs.conflictId, rawId, 'id')))
+  ipcMain.handle(IPC.syncResolve, (_e, rawChoices: unknown) => sync().resolve(arg(ipcArgs.conflictChoices, rawChoices, 'choices')))
+  ipcMain.handle(IPC.syncAbort, () => sync().abort())
+  ipcMain.handle(IPC.syncInit, (_e, rawUrl: unknown) => sync().setup(arg(ipcArgs.remoteUrl, rawUrl, 'url')))
 
   ipcMain.handle(IPC.jobsList, () => app.requireSession().queue.list())
   ipcMain.handle(IPC.jobsCancel, (_e, id: unknown) => app.requireSession().queue.cancel(arg(ipcArgs.jobId, id, 'job')))

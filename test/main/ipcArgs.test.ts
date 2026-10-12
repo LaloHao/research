@@ -129,4 +129,39 @@ describe('typed relation arguments', () => {
     expect(() => arg(ipcArgs.justification, '   ', 'text')).toThrow(InvalidIpcArgument)
     expect(() => arg(ipcArgs.justification, 'x'.repeat(2001), 'text')).toThrow(InvalidIpcArgument)
   })
+
+  it('lets the renderer turn the automatic sync on or off and set its interval within bounds', () => {
+    expect(arg(ipcArgs.settingsPatch, { autoSync: false, autoSyncMinutes: 30 }, 'patch')).toEqual({ autoSync: false, autoSyncMinutes: 30 })
+    for (const bad of [{ autoSyncMinutes: 4 }, { autoSyncMinutes: 121 }, { autoSyncMinutes: 7.5 }, { autoSync: 'yes' }]) {
+      expect(() => arg(ipcArgs.settingsPatch, bad, 'patch')).toThrow()
+    }
+  })
+
+  it('accepts only the conflict ids and choices the sync hands out, and a remote URL that is no option and has no password', () => {
+    expect(arg(ipcArgs.conflictId, 'file:papers/k/summary.md', 'id')).toBe('file:papers/k/summary.md')
+    expect(arg(ipcArgs.conflictId, 'paper:he2017drain', 'id')).toBe('paper:he2017drain')
+    for (const bad of ['', 'papers/k/summary.md', 'paper:../x', 'paper:', 'file:', 3]) expect(() => arg(ipcArgs.conflictId, bad, 'id')).toThrow()
+    const v = '0123456789abcdef'
+    const choices = { 'paper:k': { choice: 'ours', version: v }, 'file:a.md': { choice: 'theirs', version: v } }
+    expect(arg(ipcArgs.conflictChoices, choices, 'choices')).toEqual(choices)
+    // Each choice carries the version of the conflict the user saw: a bare choice, a bad version or extra keys are refused.
+    for (const bad of [
+      { 'paper:k': 'ours' },
+      { 'paper:k': { choice: 'both', version: v } },
+      { 'paper:k': { choice: 'ours' } },
+      { 'paper:k': { choice: 'ours', version: 'ABCDEF0123456789' } },
+      { 'paper:k': { choice: 'ours', version: v.slice(1) } },
+      { 'paper:k': { choice: 'ours', version: v, extra: 1 } },
+      { nope: { choice: 'ours', version: v } }
+    ]) {
+      expect(() => arg(ipcArgs.conflictChoices, bad, 'choices')).toThrow()
+    }
+    expect(arg(ipcArgs.remoteUrl, '  git@github.com:me/thesis.git ', 'url')).toBe('git@github.com:me/thesis.git')
+    expect(arg(ipcArgs.remoteUrl, null, 'url')).toBeNull()
+    for (const bad of ['', '--upload-pack=touch /tmp/x', 'https://me:secret@github.com/me/thesis.git', 'a b', 7]) {
+      expect(() => arg(ipcArgs.remoteUrl, bad, 'url')).toThrow()
+    }
+    expect(arg(ipcArgs.closeDecision, 'cancel', 'decision')).toBe('cancel')
+    expect(() => arg(ipcArgs.closeDecision, 'sync', 'decision')).toThrow()
+  })
 })

@@ -18,7 +18,14 @@ describe('app settings', () => {
 
   it('round-trips and drops fields of the wrong type', async () => {
     const file = join(await tmpDir(), 'settings.json')
-    await saveSettings(file, { contactEmail: 'me@uni.test', openalexApiKey: '', lastProjectPath: '/tmp/thesis', deviceId: 'd0d0d0d0-0000-0000-0000-000000000000' })
+    await saveSettings(file, {
+      contactEmail: 'me@uni.test',
+      openalexApiKey: '',
+      lastProjectPath: '/tmp/thesis',
+      deviceId: 'd0d0d0d0-0000-0000-0000-000000000000',
+      autoSync: true,
+      autoSyncMinutes: 10
+    })
     expect(await loadSettings(file)).toMatchObject({ contactEmail: 'me@uni.test', lastProjectPath: '/tmp/thesis' })
     await writeFile(file, JSON.stringify({ contactEmail: 42, lastProjectPath: '/x', extra: true }))
     expect(await loadSettings(file)).toMatchObject({ contactEmail: '', lastProjectPath: '/x' })
@@ -41,5 +48,16 @@ describe('app settings', () => {
     expect((await loadSettings(file)).openalexApiKey).toBe('k-123')
     await writeFile(file, JSON.stringify({ openalexApiKey: 7 }))
     expect((await loadSettings(file)).openalexApiKey).toBe('')
+  })
+
+  it('keeps the automatic sync settings and falls back to the defaults on invalid ones', async () => {
+    const file = join(await tmpDir(), 'settings.json')
+    expect(await loadSettings(file)).toMatchObject({ autoSync: true, autoSyncMinutes: 10 })
+    await writeFile(file, JSON.stringify({ autoSync: false, autoSyncMinutes: 30 }))
+    expect(await loadSettings(file)).toMatchObject({ autoSync: false, autoSyncMinutes: 30 })
+    for (const bad of [{ autoSync: 'no', autoSyncMinutes: 4 }, { autoSyncMinutes: 121 }, { autoSyncMinutes: 7.5 }, { autoSyncMinutes: '10' }]) {
+      await writeFile(file, JSON.stringify(bad))
+      expect(await loadSettings(file)).toMatchObject({ autoSync: true, autoSyncMinutes: 10 })
+    }
   })
 })

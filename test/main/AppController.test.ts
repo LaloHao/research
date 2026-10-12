@@ -1,13 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AppController } from '../../src/main/AppController'
 import type { ResearchEvent } from '../../src/shared/ipc'
 import { FakeEmbeddingRuntime } from '../helpers/embeddings'
+import { hangingRemote, processAlive, twoMachines } from '../helpers/git'
 import { tmpDir } from '../helpers/tmp'
 
+/** No automatic sync: these projects are not in an isolated repository, and git must never see the user's own config. */
 async function controller(settingsFile: string, events: ResearchEvent[] = []): Promise<AppController> {
-  const c = new AppController(settingsFile, (e) => events.push(e), { watch: false })
+  const c = new AppController(settingsFile, (e) => events.push(e), { watch: false, autoSync: null })
   await c.init()
   return c
 }
@@ -39,7 +41,7 @@ describe('AppController', () => {
 
   it('tells the UI when project.yaml is edited outside the app', async () => {
     const events: ResearchEvent[] = []
-    const c = new AppController(join(await tmpDir(), 'settings.json'), (e) => events.push(e))
+    const c = new AppController(join(await tmpDir(), 'settings.json'), (e) => events.push(e), { autoSync: null })
     await c.init()
     const root = await tmpDir()
     await c.createProject(root, 'Thesis')
@@ -75,7 +77,7 @@ describe('AppController', () => {
 
   it('reports and removes the local model', async () => {
     const runtime = new FakeEmbeddingRuntime(true)
-    const c = new AppController(join(await tmpDir(), 'settings.json'), () => {}, { watch: false, embeddings: runtime })
+    const c = new AppController(join(await tmpDir(), 'settings.json'), () => {}, { watch: false, embeddings: runtime, autoSync: null })
     await c.init()
     expect(await c.modelInfo()).toEqual({ modelId: 'fake-embedder', available: true, state: 'ready', sizeBytes: 1000, downloading: false })
     await c.removeModel()
@@ -84,5 +86,99 @@ describe('AppController', () => {
     const plain = await controller(join(await tmpDir(), 'settings.json'))
     expect((await plain.modelInfo()).available).toBe(false)
     await plain.shutdown()
+  })
+
+  it('offers to sync before closing only for a project with a remote and something not synced', async () => {
+    const m = await twoMachines()
+    const c = new AppController(join(await tmpDir(), 'settings.json'), () => undefined, { watch: false, gitEnv: m.env, autoSync: null })
+    await c.init()
+    expect(await c.hasUnsyncedChanges()).toBe(false)
+    await c.openProject(m.projectA)
+    // Opening wrote the app's block in .gitignore.
+    expect(await c.hasUnsyncedChanges()).toBe(true)
+    expect(await c.requireSession().sync.run({ auto: false })).toEqual({ ok: true, outcome: 'synced' })
+    expect(await c.hasUnsyncedChanges()).toBe(false)
+    await c.createProject(await tmpDir(), 'Not in git')
+    expect(await c.hasUnsyncedChanges()).toBe(false)
+    await c.shutdown()
+  })
+
+  it('keeps the automatic sync settings across launches', async () => {
+    const settingsFile = join(await tmpDir(), 'settings.json')
+    const first = await controller(settingsFile)
+    expect(first.getSettings()).toMatchObject({ autoSync: true, autoSyncMinutes: 10 })
+    await first.setSettings({ autoSync: false, autoSyncMinutes: 30 })
+    expect((await controller(settingsFile)).getSettings()).toMatchObject({ autoSync: false, autoSyncMinutes: 30 })
+  })
+
+  it('passes sync changes on to the window', async () => {
+    const m = await twoMachines()
+    const events: ResearchEvent[] = []
+    const c = new AppController(join(await tmpDir(), 'settings.json'), (e) => events.push(e), { watch: false, gitEnv: m.env, autoSync: null })
+    await c.init()
+    await c.openProject(m.projectA)
+    // The window learns the new project's sync status as soon as it opens, before any sync.
+    expect(events).toContain('sync-changed')
+    events.length = 0
+    await c.requireSession().sync.run({ auto: false })
+    expect(events).toContain('sync-changed')
+    await c.shutdown()
+  })
+
+  it('reschedules the automatic sync only when its settings really change', async () => {
+    const c = await controller(join(await tmpDir(), 'settings.json'))
+    await c.createProject(await tmpDir(), 'Thesis')
+    const reschedule = vi.spyOn(c.requireSession(), 'rescheduleSync')
+    await c.setSettings({ autoSync: true, autoSyncMinutes: 10, contactEmail: 'me@uni.test' })
+    expect(reschedule).not.toHaveBeenCalled()
+    await c.setSettings({ autoSyncMinutes: 30 })
+    expect(reschedule).toHaveBeenCalledTimes(1)
+    await c.setSettings({ autoSync: false })
+    expect(reschedule).toHaveBeenCalledTimes(2)
+    await c.shutdown()
+  })
+
+  // git runs in its own process group and outlives the app unless it is stopped. Needs `sh`.
+  it.skipIf(process.platform !== 'linux')('closing the project and quitting kill a sync that hangs on the network', async () => {
+    const m = await twoMachines()
+    const remote = await hangingRemote(m)
+    const c = new AppController(join(await tmpDir(), 'settings.json'), () => undefined, { watch: false, gitEnv: remote.env })
+    await c.init()
+    const hung = async (count: number): Promise<number> => {
+      const start = Date.now()
+      while ((await remote.pids()).length < count) {
+        if (Date.now() - start > 10_000) throw new Error('timed out')
+        await new Promise((r) => setTimeout(r, 50))
+      }
+      return (await remote.pids())[count - 1]
+    }
+    const stopped = async (pid: number): Promise<void> => {
+      const start = Date.now()
+      while (processAlive(pid)) {
+        if (Date.now() - start > 5_000) throw new Error(`git ${pid} still running`)
+        await new Promise((r) => setTimeout(r, 50))
+      }
+    }
+
+    try {
+      // The automatic sync starts as the project opens.
+      await c.openProject(m.projectA)
+      const first = await hung(1)
+      let started = Date.now()
+      await c.closeProject()
+      expect(Date.now() - started).toBeLessThan(5_000)
+      await stopped(first)
+
+      await c.openProject(m.projectA)
+      const second = await hung(2)
+      started = Date.now()
+      await c.shutdown()
+      expect(Date.now() - started).toBeLessThan(5_000)
+      await stopped(second)
+    } finally {
+      // A failed assertion must leave neither an open project nor a sleeping fake ssh behind.
+      await c.shutdown()
+      await remote.kill()
+    }
   })
 })

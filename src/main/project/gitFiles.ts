@@ -16,8 +16,11 @@ export function withManagedBlock(existing: string, lines: string[]): string {
 /** PDFs in the library, in the trash, and copies kept beside them on a merge (paper.trashed.pdf…) follow one policy. */
 const PDF_PATTERNS = ['papers/*/paper.pdf', 'papers/*/paper.*.pdf', '.trash/*/paper.pdf', '.trash/*/paper.*.pdf']
 
+/** `.cache/` is never committed; the dot-temp names `atomicWrite` and `moveDir` leave behind on a crash never are either. */
+const ALWAYS_IGNORED = ['.cache/', '.*.tmp', '.*.moving']
+
 export function gitignoreLines(policy: PdfPolicy): string[] {
-  return policy === 'untracked' ? ['.cache/', ...PDF_PATTERNS] : ['.cache/']
+  return policy === 'untracked' ? [...ALWAYS_IGNORED, ...PDF_PATTERNS] : ALWAYS_IGNORED
 }
 
 export function gitattributesLines(policy: PdfPolicy): string[] {

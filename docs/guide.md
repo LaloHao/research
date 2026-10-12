@@ -14,6 +14,7 @@ This app is a paper library for the thesis *Método computacional para la desens
 - Find **similar papers** by combining shared references, shared citers, shared facet values and a local content model, with the reasons for each match.
 - See the field in the **Mapa** (Map) view: a graph of papers with two lenses (field and thesis) and per-facet charts.
 - Ask Claude for **typed relations** between papers (extends, uses the method of, compares with, contradicts, replicates, same problem), with a justification and quotes from both papers that Claude finds by itself with read-only tools over your library; you confirm, reject or retype them.
+- **Sync** the project between your machines with git from the app: it commits your changes, brings in the other machine's, merges them and pushes, never leaving conflict markers in your files; whatever it can't merge on its own, it asks you about.
 
 Coming soon (not implemented yet): facets suggested by Claude, chat over the library, and formal systematic literature mapping.
 
@@ -44,7 +45,7 @@ On startup with no project open, the app asks you to create a new one (a name an
 
 ### Syncing the project between machines
 
-The project folder is plain text (YAML, Markdown), meant to be versioned with git or synced with a tool like Syncthing. Files reload on their own when they change from outside the app (a `git pull`, a sync, an external editor) — no restart needed. If two machines edit the same file at the same time, the app detects it as a conflict (see "Common problems" below). The trash (`.trash/`) syncs too: a paper you remove on one machine shows up in the other's «Papelera» (Trash) after a `git pull`, and can be restored or deleted there the same way.
+The project folder is plain text (YAML, Markdown), meant to be versioned with git. The app syncs with git by itself (see "Syncing with git" below); you can also use git by hand or a tool like Syncthing. Files reload on their own when they change from outside the app (a sync, a `git pull`, an external editor) — no restart needed. If two machines edit the same file at the same time outside the app's sync, the app detects it as a conflict (see "Common problems" below). The trash (`.trash/`) syncs too: a paper you remove on one machine shows up in the other's «Papelera» (Trash), and can be restored or deleted there the same way.
 
 ## Adding papers
 
@@ -122,6 +123,20 @@ The **«Papelera»** (Trash) view (🗑 in the side rail) lists removed papers w
 - A trash folder that can't be restored shows the reason, e.g. «No se puede restaurar: le falta paper.yaml.» (Can't be restored: paper.yaml is missing.); check it in the project's `.trash` folder. «Restaurar (N)» (Restore, for the checked papers) counts and restores only the ones that can be restored.
 
 In **«Candidatos»** (Candidates, Map view), a work that matches a paper in your trash (by OpenAlex id or DOI) shows «En la papelera» (In the trash) with **«Restaurar»** (Restore) instead of «Agregar» (Add).
+
+## Syncing with git
+
+The app syncs the project folder with a git repository: it commits your changes, brings in the other machine's, merges them and pushes the result. It uses the git installed on your machine and its credentials (ssh-agent or git's credential manager): it never asks for or stores passwords. If your SSH key has a passphrase, it must be loaded in ssh-agent (`ssh-add`) before syncing; the app can't type it for you.
+
+- **In the side rail**, above ⚙, the ⟳ button syncs right away (or opens the Sync view if it can't, or if that sync ended in an error or conflicts); under it there's a short status («ahora», now; «3 min»; «sin subir», not pushed; «sin red», offline; «conflictos», conflicts…) and, on hover, the full one: «Sincronizado hace 3 min» (Synced 3 min ago), «Cambios sin subir» (Changes not pushed), «Sin conexión» (Offline), «Conflictos por resolver» (Conflicts to resolve) or «Sincronizando…» (Syncing…). Clicking the status opens the **Sincronización** (Sync) view, with the repository, the branch, the last error and the «Sincronizar» (Sync) button.
+- **What gets pushed**: only the files in the project folder (honoring `.gitignore`; `.cache/` never), in a commit «research: sync from <machine>» listing the papers touched. If nothing changed, there's no commit. If the project lives inside a bigger repository (say, your thesis's), whatever you have outside the folder, staged or not, is left alone and stays out of the commit; commits you made yourself with git are pushed with the branch. If you had staged (`git add`) a change inside the project by hand before syncing, the sync's commit includes it anyway: nothing is lost, but it stops showing up as separately "staged".
+- **How it merges**: it never rewrites history (merge, not rebase: the other machine's commits stay as they are) and never leaves conflict markers in your files, because it computes the merge apart and only changes files once the result is complete. It merges on its own `relations.yaml` (joined by `id`; if a relation changed on both machines the latest change wins, and one deleted on one machine and untouched on the other stays deleted), the `costs/` spend logs (lines joined), `project.yaml` key by key (dismissed candidates are added up), the `trashed.yaml` of a paper removed on both machines (latest date wins) and `exports/library.bib` (the app regenerates it). A file you added that git relocated because the other machine renamed its folder isn't lost or asked about: it's kept beside the original as `<name>.conflict` (or `.conflict-2`, etc. if one already exists).
+- **Conflicts**: if a file changed on both machines and the app can't merge it (a `summary.md`, `extraction.yaml`, `paper.yaml` or `notes.md`, or the same key of `project.yaml`), the sync stops without touching your files and the Sync view shows «Conflictos por resolver» (Conflicts to resolve): each file with the paper it belongs to, what each machine did, «Ver diferencias» (Show differences: both versions side by side) and «Quedarme con la mía» (Keep mine) / «Usar la del otro equipo» (Use the other machine's). If one machine moved a paper to the trash while the other edited it, you pick «Conservar el paper» (Keep the paper: it returns to the library with the edits and leaves the trash) or «Aceptar que se quitó» (Accept that it was removed: it stays in the trash, with the edits git could carry there). Nothing gets pushed until you've chosen for all of them («Terminar sincronización» (Finish sync) only enables then); «Cancelar» (Cancel) leaves everything as it was (your changes stay in a local commit, not pushed). If something changes while you're deciding (something new was saved here, or the other machine pushed), the app asks you again before going on. The version you don't pick isn't lost: it stays in git history.
+- **Outside the project folder**: if the project lives inside a bigger repository and the other machine changed the same outside files, or if you have a hand-run git merge or rebase left unfinished, the sync stops without touching anything; resolve it with git and sync again.
+- **Automatic**: «Sincronizar automáticamente» (Sync automatically; Settings → App, on by default) syncs when the project opens and every 10 minutes (or the interval you choose, 5 to 120) if the repository has a remote. It skips an interval while conflicts wait for your decision or while papers are being moved to or from the trash, and it never opens windows: if it fails (offline, credentials), only the side rail shows it, and it tries again at the next interval.
+- **On close**: if the project has uncommitted changes, unpushed commits or pending decisions, the app asks «Sincronizar y cerrar» (Sync and close), «Cerrar sin sincronizar» (Close without syncing) or «Cancelar» (Cancel). The window closes only if that sync succeeds; if it finds conflicts or fails, it stays open and you can go to «Ver sincronización» (Show sync). If an automatic sync was running at that moment, it waits for it and syncs again, so what you saved last is pushed too. While it syncs you can still choose «Cerrar sin sincronizar»: the transfer stops and whatever wasn't pushed stays on your machine for next time.
+- **First use**: if the folder isn't in a repository, the Sync view offers «Inicializar repositorio» (Initialize repository: `git init` in the project folder, on branch `main`, with the `.gitignore` the app already maintains) and a field for the URL of an empty remote repository (on GitHub, GitLab or a shared folder); a URL with a password is refused. With a URL, it pushes the project when done. If the repository has no remote, the same URL with «Agregar remoto y sincronizar» (Add remote and sync); if the branch tracks no remote branch, «Conectar y sincronizar» (Connect and sync) connects it to the branch of the same name (or publishes it if there's none). That URL can only be corrected while that remote has never worked (it hasn't yet been used to sync); once it has, changing it needs `git remote set-url origin <url>` by hand. If the remote has a different history from this repository, the app refuses it (see "Common problems" below). For a second machine, clone the repository with git and open that folder as the project.
+- **PDFs in git LFS**: with the «Versionarlos con git LFS» (Track them with git LFS) policy, git-lfs must be installed; if it's missing, the sync says so. The app sets up git-lfs in the repository itself and uploads the PDFs before the commits that point to them, so it works even with git hooks turned off (`core.hooksPath`); if the upload fails, nothing is pushed.
 
 ## Paper detail
 
@@ -314,6 +329,7 @@ If the form changed from outside this editor (another machine, a `git pull`) whi
 - **Correo de contacto para Crossref y OpenAlex** (Contact email for Crossref and OpenAlex): optional. Crossref gives priority to requests that include it (OpenAlex no longer uses it). It's sent only to those services. It's a per-device app setting, not stored in `project.yaml`, and therefore not synced between machines.
 - **Clave de API de OpenAlex** (OpenAlex API key): optional and free. Without a key OpenAlex allows about 1000 requests a day; with one, more. Stored on this machine only and sent only to OpenAlex.
 - **Modelos locales** (Local models): the content-similarity model (multilingual-e5-small, about 470 MB) runs on your machine. Shows whether it's downloaded and how much space it takes, with «Descargar» (Download; progress shows in Activity) and «Borrar» (Delete). It's stored in the app's data folder, never in the project, so each machine downloads it once. The download runs as a job of the open project (one must be open); if you close the project or the app midway, it resumes the next time you open that project. «Borrar» (Delete) cancels the similarity computations still queued.
+- **Sincronizar automáticamente** (Sync automatically) and **Cada (minutos)** (Every (minutes)): the automatic git sync (see "Syncing with git"), when the project opens and every 5 to 120 minutes (10 by default). It's a per-device setting, not stored in `project.yaml`.
 - **Cerrar proyecto** (Close project): returns to the welcome screen to create or open another project.
 
 ## Project files
@@ -335,7 +351,7 @@ exports/library.bib        BibTeX for the whole library; generated, don't edit i
 .cache/                    local search index, PDFs downloaded on demand, incoming citations, candidate data, vectors, similar papers, the relations index and the trash index; can be deleted without losing anything, rebuilds itself
 ```
 
-Everything above, except `.cache/`, is meant to be versioned with git or synced between machines. `notes.md` and `project.yaml` (outside `extraction_form`) can be edited by hand with confidence; `paper.yaml`, `summary.md` and `extraction.yaml` too, but carefully, so as not to break their format. A file edited from outside the app (or updated by a sync) reloads on its own, without restarting the app.
+Everything above, except `.cache/`, is meant to be versioned with git or synced between machines. `notes.md` and `project.yaml` (outside `extraction_form`) can be edited by hand with confidence; `paper.yaml`, `summary.md` and `extraction.yaml` too, but carefully, so as not to break their format. A file edited from outside the app (or updated by a sync) reloads on its own, without restarting the app. The app's sync commits only this folder (without `.cache/`) and keeps its temporary files inside `.git/`.
 
 ## Common problems / FAQ
 
@@ -404,3 +420,33 @@ Use «Resolver automáticamente» (Resolve automatically) in the notice at the b
 
 **«La operación llegó a su tope por paper y se detuvo. Sube «Tope por paper (USD est.)» en Ajustes → Claude o reintenta con otro modelo.»** (The operation reached its per-paper cap and stopped. Raise «Tope por paper (USD est.)» under Settings → Claude or retry with another model.)
 That paper went over the per-paper cap during the request. Only that paper fails: a running batch goes on with the rest.
+
+**«Hay conflictos en archivos fuera de la carpeta del proyecto: …»** (There are conflicts in files outside the project folder: …)
+The project lives inside a bigger repository and the other machine changed the same outside files you did. The app doesn't touch them: resolve them with git (`git pull`) and sync again. Your project changes are already in a local commit.
+
+**«Hay cambios locales sin commit que la sincronización sobrescribiría: …»** (There are uncommitted local changes the sync would overwrite: …)
+The other machine changed files you have modified here without committing (outside the project folder, or ignored by git, like a PDF). Commit or move them with git and sync again.
+
+**«Hay un merge o un rebase hecho a mano sin terminar…»** (There's a hand-run merge or rebase left unfinished…)
+This repository has a git merge or rebase left halfway through. Finish it or cancel it with git (`git merge --abort` or `git rebase --abort`) and sync again.
+
+**«El remoto rechazó tus credenciales o no tienes permiso…»** (The remote rejected your credentials or you don't have permission…)
+git couldn't authenticate. Check that your SSH key is loaded (`ssh-add`) or that git's credential manager has your user; try a `git fetch` in a terminal. The app never asks for passwords.
+
+**«No se pudo conectar con el remoto…»** (Couldn't connect to the remote…)
+No network, or the server doesn't answer. Your changes stay in a local commit («Cambios sin subir», Changes not pushed) and the automatic sync tries again by itself.
+
+**«git tardó demasiado y se canceló…»** (git took too long and was cancelled…)
+When pushing or fetching, git is cancelled only after 3 minutes without any progress (not for taking long: the first sync of a big library with its PDFs can take a good while and goes on as long as it moves). It's usually a connection that dropped halfway: check it and sync again.
+
+**«Este proyecto guarda los PDF con git LFS y git-lfs no está instalado…»** (This project keeps its PDFs in git LFS and git-lfs isn't installed…)
+Install git-lfs (https://git-lfs.com), or change the PDF policy in Settings → Project.
+
+**«No se pudieron subir los PDF a git LFS…»** (The PDFs couldn't be uploaded to git LFS…)
+The commits stay unpushed until their PDFs are on the remote. Check that the remote accepts git LFS (some servers have it turned off) and that this machine has the PDFs: `git lfs push origin <branch>` in a terminal names the one that's missing.
+
+**«git no sabe tu nombre ni tu correo…»** (git doesn't know your name or email…)
+Set them once in a terminal: `git config --global user.name "Your Name"` and `git config --global user.email "you@example.com"`.
+
+**«El remoto tiene una historia distinta de la de este repositorio…»** (The remote has a different history from this repository…)
+You initialized a repository here and the remote already held another project. Clone the remote into another folder and open that folder as the project.

@@ -2,12 +2,13 @@
 
 *[English version](./README.md)*
 
-App de escritorio personal para la investigación de una tesis: biblioteca de papers con BibTeX, búsqueda de texto completo, resúmenes con Claude, citas desde OpenAlex, papers similares, un mapa del área, una papelera versionada para quitar y restaurar papers y, en etapas siguientes, relaciones tipadas, chat y mapeo sistemático.
+App de escritorio personal para la investigación de una tesis: biblioteca de papers con BibTeX, búsqueda de texto completo, resúmenes con Claude, citas desde OpenAlex, papers similares, un mapa del área, una papelera versionada para quitar y restaurar papers, sincronización entre equipos con git desde la app y, en etapas siguientes, relaciones tipadas, chat y mapeo sistemático.
 
 ## Requisitos
 
 - Node.js 24 o superior y pnpm (`corepack enable`)
 - Para resumir papers: la CLI `claude` instalada y con sesión iniciada (`claude login`)
+- Para sincronizar desde la app: git (y git-lfs si los PDF se versionan con LFS)
 
 ## Uso
 

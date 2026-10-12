@@ -11,6 +11,8 @@ import { MAP_TABS, VIEWS } from '../../src/renderer/lib/navigation'
 import { SETTINGS_TABS } from '../../src/renderer/lib/settingsTabs'
 import { RELATION_TYPES } from '../../src/shared/typedRelations'
 import { TRASH_PROBLEMS } from '../../src/shared/trash'
+import { CONFLICT_SIDES, SYNC_ERROR_CODES } from '../../src/shared/sync'
+import { SYNC_STATES } from '../../src/renderer/lib/sync'
 
 const lookup = (path: string): unknown => path.split('.').reduce<unknown>((node, key) => (node as Record<string, unknown> | undefined)?.[key], es)
 const JOB_STATES: JobState[] = ['queued', 'running', 'done', 'failed', 'cancelled']
@@ -85,7 +87,44 @@ describe('es.json covers every code the UI can receive', () => {
     'paper.remove_confirm',
     ...['remove_filtered', 'remove_filtered_hint', 'remove_confirm_one', 'remove_confirm_other'].map((k) => `library.${k}`),
     ...['moved_one', 'moved_other', 'undo', 'undo_conflict'].map((k) => `trash.${k}`),
-    ...['in_trash', 'restore', 'restored', 'restore_conflict'].map((k) => `map.candidates.${k}`)
+    ...['in_trash', 'restore', 'restored', 'restore_conflict'].map((k) => `map.candidates.${k}`),
+    ...SYNC_STATES.flatMap((s) => [`sync.status.${s}`, `sync.short.${s}`]),
+    ...SYNC_ERROR_CODES.map((c) => `sync.errors.${c}`),
+    ...CONFLICT_SIDES.map((s) => `sync.sides.${s}`),
+    ...['title', 'run', 'repo', 'repo_upstream', 'done', 'rail_title', 'retry'].map((k) => `sync.${k}`),
+    ...['no_git', 'no_repo', 'no_remote', 'no_upstream', 'url_label', 'url_placeholder', 'url_help', 'url_fix_help', 'init', 'add_remote', 'connect', 'url_empty', 'url_password', 'url_invalid'].map(
+      (k) => `sync.setup.${k}`
+    ),
+    ...[
+      'title',
+      'intro',
+      'history_note',
+      'paper',
+      'paper_key',
+      'mine',
+      'theirs',
+      'keep_mine',
+      'use_theirs',
+      'keep_paper',
+      'accept_removal',
+      'show_diff',
+      'hide_diff',
+      'loading_diff',
+      'finish',
+      'cancel',
+      'cancel_help',
+      'pending_one',
+      'pending_other',
+      'changed',
+      'wait_sync',
+      'diff_mine',
+      'diff_theirs',
+      'diff_deleted',
+      'diff_binary',
+      'diff_too_large'
+    ].map((k) => `sync.conflicts.${k}`),
+    ...['title', 'body', 'sync_and_close', 'close_anyway', 'cancel', 'syncing', 'conflicts', 'open_sync'].map((k) => `sync.close.${k}`),
+    ...['title', 'enabled', 'enabled_help', 'minutes', 'minutes_help'].map((k) => `sync.auto.${k}`)
   ])('%s', (path) => {
     expect(typeof lookup(path)).toBe('string')
   })
