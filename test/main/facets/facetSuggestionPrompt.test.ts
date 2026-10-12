@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import type { FacetOverview } from '../../../src/main/facets/facetOverview'
-import { describeSuggestion, FACET_MAX_TURNS, facetInput, facetJsonSchema, facetSystemPrompt } from '../../../src/main/facets/facetSuggestionPrompt'
+import {
+  describeSuggestion,
+  FACET_MAX_TURNS,
+  facetInput,
+  facetJsonSchema,
+  facetSystemPrompt,
+  INVENTORY_SUMMARY_CHARS,
+  MAX_FACET_SUGGESTIONS,
+  MAX_LIST_ITEMS,
+  MAX_REJECTED,
+  MAX_USAGE_VALUES
+} from '../../../src/main/facets/facetSuggestionPrompt'
 import { DEFAULT_EXTRACTION_FORM } from '../../../src/main/summary/extractionForm'
 import { aliasSuggestion, newFacetSuggestion, newValueSuggestion } from '../../helpers/facets'
 import { sampleThesis } from '../../helpers/summaries'
@@ -51,9 +62,56 @@ describe('facet suggestion prompt', () => {
     )
   })
 
-  it('asks for three lists with every field required', () => {
-    const schema = facetJsonSchema() as { required: string[]; properties: Record<string, { items: { required: string[] } }> }
+  it('cuts long lists deterministically and says how many items it left out', () => {
+    const many = (n: number, prefix: string) => Array.from({ length: n }, (_, i) => `${prefix}_${String(i).padStart(3, '0')}`)
+    const big: FacetOverview = {
+      papers: 2,
+      facets: [
+        {
+          key: 'sanitization_technique',
+          type: 'multi',
+          description: 'd',
+          allowed: [],
+          filled: 2,
+          values: many(MAX_USAGE_VALUES + 4, 'chosen').map((value) => ({ value, papers: 1 })),
+          proposed: many(MAX_USAGE_VALUES + 2, 'proposed').map((value) => ({ value, papers: ['a1'] }))
+        }
+      ]
+    }
+    const rejected = Array.from({ length: MAX_REJECTED + 3 }, (_, i) =>
+      newValueSuggestion({ status: 'rejected', value: `value_${String(i).padStart(3, '0')}`, updated_at: `2026-10-11T00:${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}.000Z` })
+    )
+    const long = 'word '.repeat(200)
+    const input = facetInput({
+      thesis: sampleThesis,
+      form: DEFAULT_EXTRACTION_FORM,
+      inventory: [{ id: 'he2017drain', title: 'Drain', year: 2017, summary: long }],
+      total: 1,
+      overview: big,
+      rejected
+    })
+    expect(input).toContain(`chosen_${String(MAX_USAGE_VALUES - 1).padStart(3, '0')} (1) (4 more not shown).`)
+    expect(input).not.toContain(`chosen_${String(MAX_USAGE_VALUES).padStart(3, '0')}`)
+    expect(input).toContain(`proposed_${String(MAX_USAGE_VALUES - 1).padStart(3, '0')} (1 paper: a1) (2 more not shown).`)
+    // The most recent rejections are kept; the three oldest are counted, not listed.
+    expect(input).toContain(`- new_value data_type: value_${String(MAX_REJECTED + 2).padStart(3, '0')}`)
+    expect(input).not.toContain('- new_value data_type: value_002')
+    expect(input).toContain('(3 older rejected suggestions not shown)')
+    const summary = input.split('\n').find((l) => l.startsWith('- he2017drain'))!
+    expect(summary.endsWith('…')).toBe(true)
+    expect(summary.length).toBeLessThan('- he2017drain (2017): Drain — '.length + INVENTORY_SUMMARY_CHARS + 2)
+    expect(facetSystemPrompt('en')).toContain('ends with … was cut')
+  })
+
+  it('asks for three bounded lists with every field required', () => {
+    const schema = facetJsonSchema() as {
+      required: string[]
+      properties: Record<string, { maxItems: number; items: { required: string[]; properties: Record<string, { maxItems?: number }> } }>
+    }
     expect(schema.required).toEqual(['new_facets', 'new_values', 'aliases'])
+    for (const list of ['new_facets', 'new_values', 'aliases']) expect(schema.properties[list].maxItems).toBe(MAX_FACET_SUGGESTIONS)
+    expect(schema.properties.new_facets.items.properties.values.maxItems).toBe(MAX_LIST_ITEMS)
+    expect(schema.properties.aliases.items.properties.from.maxItems).toBe(MAX_LIST_ITEMS)
     expect(schema.properties.new_facets.items.required).toEqual(['key', 'type', 'description', 'values', 'min', 'max', 'rationale', 'examples'])
     expect(schema.properties.aliases.items.required).toEqual(['facet', 'from', 'to', 'rationale', 'examples'])
   })

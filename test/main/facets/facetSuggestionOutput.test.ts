@@ -88,6 +88,49 @@ describe('parseFacetOutput', () => {
   })
 })
 
+describe('parseFacetOutput edge cases', () => {
+  const withProposed = (proposed: string[]): FacetOverview => ({
+    papers: 2,
+    facets: [{ key: 'sanitization_technique', type: 'multi', description: 'd', allowed: [], filled: 2, values: [], proposed: proposed.map((value) => ({ value, papers: [LOGHUB_ID] })) }]
+  })
+
+  it('aliases proposed values that are not snake_case into an entry the file accepts, but not over-long ones', () => {
+    const long = 'x'.repeat(201)
+    const out = parseFacetOutput(
+      { new_facets: [], new_values: [], aliases: [alias({ from: ['3gpp_rules', 'Regex Rules', long] }), alias({ to: 'masking', from: [long] })] },
+      ctx({ overview: withProposed(['3gpp_rules', 'Regex Rules', long]) })
+    )
+    if (!out.ok) throw new Error('expected ok')
+    expect(out.suggestions).toMatchObject([{ kind: 'alias', from: ['3gpp_rules', 'Regex Rules'], to: 'rules_regex' }])
+    expect(out.dropped).toEqual(['unknown_source'])
+    const origin = { model: 'm', at: '2026-10-11T12:00:00.000Z', prompt_version: 1 }
+    expect(FacetSuggestionSchema.safeParse(toSuggestion(out.suggestions[0], [], origin, origin.at)).success).toBe(true)
+  })
+
+  it('drops a target the form already aliases away, an inherited-key lookalike only when it exists, and `__` names', () => {
+    const form = { ...DEFAULT_EXTRACTION_FORM, value_aliases: { sanitization_technique: { masked: 'rules_regex' }, data_type: { log_lines: 'logs' } } }
+    const out = parseFacetOutput(
+      {
+        new_facets: [],
+        new_values: [newValue({ value: 'constructor' }), newValue({ value: 'met__rics' })],
+        aliases: [alias({ to: 'masked' }), alias({ to: 'rules__regex' })]
+      },
+      ctx({ form })
+    )
+    if (!out.ok) throw new Error('expected ok')
+    expect(out.suggestions.map((s) => s.id)).toEqual(['new_value__data_type__constructor'])
+    expect(out.dropped).toEqual(['invalid', 'exists', 'invalid'])
+  })
+
+  it('drops rejected aliases and facets, and garbage items, as such', () => {
+    const out = parseFacetOutput(
+      { new_facets: [newFacet({}), null, 3], new_values: [{ facet: 'data_type' }], aliases: [alias({}), 'x'] },
+      ctx({ rejected: new Set(['new_facet__data_source', 'alias__sanitization_technique__rules_regex']) })
+    )
+    expect(out).toEqual({ ok: true, suggestions: [], dropped: ['rejected', 'invalid', 'invalid', 'invalid', 'rejected', 'invalid'] })
+  })
+})
+
 describe('checkExamples and toSuggestion', () => {
   it('marks quotes it cannot find, corrects their page, and builds an entry the file accepts', () => {
     const pages: Record<string, PageText[]> = { [LOGHUB_ID]: LOGHUB_PAGES.map((text, i) => ({ page: i + 1, text })), [DRAIN_ID]: DRAIN_PAGES.map((text, i) => ({ page: i + 1, text })) }

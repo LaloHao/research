@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { isSuggestionName, suggestionId, type FacetSuggestion, type SuggestionExample } from '../../shared/facetSuggestions'
+import { isAliasSource, isSuggestionName, suggestionId, type FacetSuggestion, type SuggestionExample } from '../../shared/facetSuggestions'
 import { FACET_TYPES, FacetDefSchema, type ExtractionForm, type FacetDef, type Provenance } from '../../shared/summary'
 import { locateQuote } from '../summary/evidence'
 import type { PageText } from '../summary/paperText'
@@ -146,7 +146,7 @@ export function parseFacetOutput(value: unknown, ctx: FacetOutputContext): Parse
       dropped.push('invalid')
       continue
     }
-    if (def.values.includes(value) || ctx.form.value_aliases[facet]?.[value] !== undefined) {
+    if (def.values.includes(value) || Object.hasOwn(ctx.form.value_aliases[facet] ?? {}, value)) {
       dropped.push('exists')
       continue
     }
@@ -168,8 +168,14 @@ export function parseFacetOutput(value: unknown, ctx: FacetOutputContext): Parse
       dropped.push('invalid')
       continue
     }
+    // A target the form already maps away would come back as an allowed value while still aliased.
+    if (Object.hasOwn(ctx.form.value_aliases[facet] ?? {}, to)) {
+      dropped.push('exists')
+      continue
+    }
     const proposed = new Set(ctx.overview.facets.find((u) => u.key === facet)?.proposed.map((p) => p.value) ?? [])
-    const from = [...new Set(item.data.from)].filter((v) => v !== to && proposed.has(v))
+    // A source is any proposed value (free text, like value_aliases' keys), not necessarily snake_case.
+    const from = [...new Set(item.data.from)].filter((v) => v !== to && proposed.has(v) && isAliasSource(v))
     if (from.length === 0) {
       dropped.push('unknown_source')
       continue
