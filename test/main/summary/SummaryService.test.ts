@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { LlmError } from '../../../src/main/llm/LlmProvider'
+import { ConflictError } from '../../../src/main/project/errors'
 import { ProjectSession } from '../../../src/main/library/ProjectSession'
-import { DEFAULT_EXTRACTION_FORM } from '../../../src/main/summary/extractionForm'
+import { DEFAULT_EXTRACTION_FORM, loadForm } from '../../../src/main/summary/extractionForm'
 import { toYaml } from '../../../src/main/project/yamlFile'
 import { thesisHash } from '../../../src/main/summary/thesis'
 import { FakeLlmProvider, fillOutputFor, llmOutputFor, PAPER_TEXT } from '../../helpers/llm'
@@ -484,6 +485,144 @@ describe('SummaryService', () => {
     const e = await s.store.readExtraction('he2017drain')
     expect(e?.ok && e.value.thesis_relation?.status).toBe('verified')
     expect((await s.summaries.reviewQueue()).some((i) => i.section === 'thesis')).toBe(false)
+    await s.close()
+  })
+
+  it('undoes an edit, a verification and «Verificar todo» exactly, once, and only while the paper is as they left it', async () => {
+    const s = await session()
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    const tldr = async () => {
+      const r = await s.store.readSummary('he2017drain')
+      return r?.ok ? r.value.fields.tldr : null
+    }
+    const files = async () => Promise.all(['summary.md', 'extraction.yaml'].map((f) => readFile(join(s.store.paperDir('he2017drain'), f), 'utf8')))
+    const original = await tldr()
+    const originalFiles = await files()
+    const edited = await s.summaries.edit('he2017drain', 'fields', 'tldr', 'my own words')
+    expect(await tldr()).toMatchObject({ value: 'my own words', status: 'edited' })
+    await s.summaries.revert(edited)
+    expect(await tldr()).toEqual(original)
+    expect(await files()).toEqual(originalFiles)
+    await expect(s.summaries.revert(edited)).rejects.toMatchObject({ name: 'InvalidEdit' })
+
+    const verified = await s.summaries.setStatus('he2017drain', 'facets', 'rigor', 'verified')
+    await s.summaries.edit('he2017drain', 'fields', 'tldr', 'changed after')
+    const changedFiles = await files()
+    await expect(s.summaries.revert(verified)).rejects.toMatchObject({ name: 'InvalidEdit' })
+    expect(await files()).toEqual(changedFiles)
+    await expect(s.summaries.revert(verified)).rejects.toMatchObject({ name: 'InvalidEdit' })
+
+    const pending = (await s.summaries.reviewQueue()).length
+    const all = await s.summaries.verifyAll('he2017drain')
+    expect(await s.summaries.reviewQueue()).toEqual([])
+    await s.summaries.revert(all)
+    expect(await s.summaries.reviewQueue()).toHaveLength(pending)
+    await s.close()
+  })
+
+  it('undoes mapping or accepting a proposed value in every paper and the form, and refuses once a paper changed', async () => {
+    const out = llmOutputFor(DEFAULT_EXTRACTION_FORM)
+    out.facets.sanitization_technique = { values: [], proposed: ['tokenization'], evidence: [] }
+    const s = await session([{ value: out, costUsd: 0.01, model: 'm' }], ['a2020x', 'b2020x'])
+    await s.summaries.requestBatch()
+    await s.queue.whenIdle()
+    const extractions = async () => Promise.all(['a2020x', 'b2020x'].map((id) => readFile(join(s.store.paperDir(id), 'extraction.yaml'), 'utf8')))
+    const before = await extractions()
+    const formBefore = loadForm(s.store.config.extraction_form)
+    const mapped = await s.summaries.mapProposed('sanitization_technique', 'tokenization', 'pseudonymization')
+    expect(await extractions()).not.toEqual(before)
+    await s.summaries.revert(mapped)
+    expect(await extractions()).toEqual(before)
+    expect(loadForm(s.store.config.extraction_form)).toEqual(formBefore)
+
+    const accepted = await s.summaries.acceptProposed('sanitization_technique', 'tokenization')
+    await s.summaries.edit('a2020x', 'facets', 'sanitization_technique', { values: ['ner'] })
+    const b = await readFile(join(s.store.paperDir('b2020x'), 'extraction.yaml'), 'utf8')
+    const formAfter = loadForm(s.store.config.extraction_form)
+    await expect(s.summaries.revert(accepted)).rejects.toMatchObject({ name: 'InvalidEdit' })
+    expect(await readFile(join(s.store.paperDir('b2020x'), 'extraction.yaml'), 'utf8')).toBe(b)
+    expect(loadForm(s.store.config.extraction_form)).toEqual(formAfter)
+    await s.close()
+  })
+
+  it('plans a batch over some papers', async () => {
+    const s = await session(undefined, ['a2020x', 'b2020x'])
+    expect(await s.summaries.plan(['a2020x'])).toMatchObject({ count: 1, estimateUsd: 0.05 })
+    expect(await s.summaries.plan()).toMatchObject({ count: 2 })
+    await s.close()
+  })
+
+  it('counts and queues a paper named twice only once', async () => {
+    const s = await session([ok(), ok()], ['a2020x', 'b2020x'])
+    expect(await s.summaries.plan(['a2020x', 'a2020x'])).toMatchObject({ count: 1, estimateUsd: 0.05 })
+    expect(await s.summaries.requestBatch({ ids: ['a2020x', 'b2020x', 'a2020x'] })).toMatchObject({ count: 2 })
+    expect(s.queue.list().filter((j) => j.spec.type === 'summarize' && j.spec.paperId === 'a2020x')).toHaveLength(1)
+    await s.queue.whenIdle()
+    expect(s.summaries.fillPlan(['a2020x', 'a2020x']).count).toBeLessThanOrEqual(1)
+    const queue = await s.summaries.reviewQueue(['a2020x', 'a2020x'])
+    expect(queue).toEqual(await s.summaries.reviewQueue(['a2020x']))
+    await s.close()
+  })
+
+  it('keeps an undo whose write failed halfway usable: the paper is left as the change left it, and a retry undoes it', async () => {
+    const s = await session()
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    const files = async () => Promise.all(['summary.md', 'extraction.yaml'].map((f) => readFile(join(s.store.paperDir('he2017drain'), f), 'utf8')))
+    const original = await files()
+    // A facet's status writes extraction.yaml and then summary.md, so its undo writes both.
+    const token = await s.summaries.setStatus('he2017drain', 'facets', 'rigor', 'verified')
+    const after = await files()
+    const spy = vi.spyOn(s.store, 'writeSummary').mockRejectedValueOnce(new ConflictError('summary.md'))
+    await expect(s.summaries.revert(token)).rejects.toMatchObject({ name: 'ConflictError' })
+    spy.mockRestore()
+    expect(await files()).toEqual(after)
+    await s.summaries.revert(token)
+    expect(await files()).toEqual(original)
+    await s.close()
+  })
+
+  it('spends an undo whose files were restored even when re-indexing them fails', async () => {
+    const s = await session()
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    const tldr = async () => {
+      const r = await s.store.readSummary('he2017drain')
+      return r?.ok ? r.value.fields.tldr : null
+    }
+    const original = await tldr()
+    const token = await s.summaries.edit('he2017drain', 'fields', 'tldr', 'my own words')
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const spy = vi.spyOn(s.library, 'indexPaper').mockRejectedValueOnce(new Error('index down'))
+    await s.summaries.revert(token)
+    spy.mockRestore()
+    quiet.mockRestore()
+    expect(await tldr()).toEqual(original)
+    await expect(s.summaries.revert(token)).rejects.toMatchObject({ name: 'InvalidEdit', message: 'Nothing to undo' })
+    await s.close()
+  })
+
+  it('refuses and spends the undo of a paper moved to the trash, like a proposed-value undo', async () => {
+    const s = await session()
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    const token = await s.summaries.edit('he2017drain', 'fields', 'tldr', 'my own words')
+    await s.trash(['he2017drain'])
+    await expect(s.summaries.revert(token)).rejects.toMatchObject({ name: 'InvalidEdit' })
+    await s.restore(['he2017drain'], { merge: false })
+    await expect(s.summaries.revert(token)).rejects.toMatchObject({ name: 'InvalidEdit', message: 'Nothing to undo' })
+    await s.close()
+  })
+
+  it('keeps the latest 100 undo tokens', async () => {
+    const s = await session()
+    await s.summaries.request('he2017drain')
+    await s.queue.whenIdle()
+    const tokens: string[] = []
+    for (let i = 0; i < 101; i++) tokens.push(await s.summaries.setStatus('he2017drain', 'fields', 'tldr', i % 2 === 0 ? 'verified' : 'generated'))
+    await expect(s.summaries.revert(tokens[0])).rejects.toMatchObject({ name: 'InvalidEdit', message: 'Nothing to undo' })
+    await s.summaries.revert(tokens[100])
     await s.close()
   })
 })
