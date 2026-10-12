@@ -1,4 +1,6 @@
+import type { CompleteResult } from '../../src/main/llm/LlmProvider'
 import type { FacetSuggestion } from '../../src/shared/facetSuggestions'
+import { DRAIN_ID, DRAIN_PAGES, LOGHUB_ID, LOGHUB_PAGES } from './pair'
 
 export type NewFacetSuggestion = Extract<FacetSuggestion, { kind: 'new_facet' }>
 export type NewValueSuggestion = Extract<FacetSuggestion, { kind: 'new_value' }>
@@ -58,4 +60,37 @@ export function aliasSuggestion(over: Partial<AliasSuggestion> = {}): AliasSugge
     to,
     id: over.id ?? `alias__${facet}__${to}`
   }
+}
+
+/** The agent's structured answer: one suggestion of each kind for the default form, quoting pair.ts verbatim. */
+export function facetAgentAnswer(over: Partial<{ new_facets: unknown[]; new_values: unknown[]; aliases: unknown[] }> = {}) {
+  return {
+    new_facets: [
+      {
+        key: 'data_source',
+        type: 'multi',
+        description: 'Where the analyzed log data comes from',
+        values: ['production_logs', 'public_dataset'],
+        min: null,
+        max: null,
+        rationale: 'Separates studies on public benchmarks from those on production logs (RQ1).',
+        examples: [{ paper: LOGHUB_ID, value: 'public_dataset', quote: LOGHUB_PAGES[0], page: 1 }]
+      }
+    ] as unknown[],
+    new_values: [{ facet: 'data_type', value: 'metrics', rationale: 'Several papers analyze metrics next to logs.', examples: [] }] as unknown[],
+    aliases: [
+      {
+        facet: 'sanitization_technique',
+        from: ['regex_rules'],
+        to: 'rules_regex',
+        rationale: 'Both name rule-based masking.',
+        examples: [{ paper: DRAIN_ID, value: null, quote: DRAIN_PAGES[0], page: 1 }]
+      }
+    ] as unknown[],
+    ...over
+  }
+}
+
+export function facetAgentResult(answer: object = facetAgentAnswer(), costUsd = 0.4): CompleteResult {
+  return { value: answer, costUsd, model: 'claude-sonnet-5' }
 }
