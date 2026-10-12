@@ -68,7 +68,18 @@ describe('BudgetGuard', () => {
   })
 
   it('reads limits from the project config', () => {
-    expect(limitsFromConfig(DEFAULT_LLM_CONFIG)).toEqual({ perOperationUsd: 0.5, perBatchUsd: 10, perMonthUsd: null, perFacetSuggestionUsd: 2 })
+    expect(limitsFromConfig(DEFAULT_LLM_CONFIG)).toEqual({ perOperationUsd: 0.5, perBatchUsd: 10, perMonthUsd: null, perFacetSuggestionUsd: 2, perChatMessageUsd: 0.5 })
+  })
+
+  it('caps a chat answer with its own cap, and refuses it over the monthly cap', async () => {
+    expect(operationCap({ perOperationUsd: 0.5, perBatchUsd: 10, perMonthUsd: null, perChatMessageUsd: 0.3 }, 'chat')).toBe(0.3)
+    expect(operationCap({ perOperationUsd: 0.5, perBatchUsd: 10, perMonthUsd: null }, 'chat')).toBe(0.5)
+    const g = new BudgetGuard(limits({ perChatMessageUsd: 0.3 }), async () => 0, 0.05, { chat: 0.1 })
+    expect(g.currentEstimate('chat')).toBe(0.1)
+    ;(await g.admit(undefined, 'chat')).settle(0.8)
+    expect(g.currentEstimate('chat')).toBe(0.3)
+    const capped = new BudgetGuard(limits({ perMonthUsd: 1 }), async () => 1, 0.05, { chat: 0.1 })
+    await expect(capped.admit(undefined, 'chat')).rejects.toMatchObject({ code: 'budget_exceeded' })
   })
 
   it('caps a facet suggestion run with its own cap, every other operation with the per-operation one', async () => {

@@ -7,6 +7,8 @@ export interface BudgetLimits {
   perMonthUsd: number | null
   /** One «Sugerir facetas» run (an agent run over the whole library); the per-operation cap when absent. */
   perFacetSuggestionUsd?: number
+  /** One chat answer; the per-operation cap when absent. */
+  perChatMessageUsd?: number
 }
 
 export interface Reservation {
@@ -21,13 +23,16 @@ export function limitsFromConfig(llm: LlmConfig): BudgetLimits {
     perOperationUsd: llm.budget.per_operation_usd,
     perBatchUsd: llm.budget.per_batch_usd,
     perMonthUsd: llm.budget.per_month_usd,
-    perFacetSuggestionUsd: llm.budget.per_facet_suggestion_usd
+    perFacetSuggestionUsd: llm.budget.per_facet_suggestion_usd,
+    perChatMessageUsd: llm.budget.per_chat_message_usd
   }
 }
 
 /** The most one call of `operation` may spend (its --max-budget-usd), which also bounds its learned estimate. */
 export function operationCap(limits: BudgetLimits, operation: CostOperation): number {
-  return operation === 'suggest_facets' ? (limits.perFacetSuggestionUsd ?? limits.perOperationUsd) : limits.perOperationUsd
+  if (operation === 'suggest_facets') return limits.perFacetSuggestionUsd ?? limits.perOperationUsd
+  if (operation === 'chat') return limits.perChatMessageUsd ?? limits.perOperationUsd
+  return limits.perOperationUsd
 }
 
 const fits = (spent: number, reserved: number, estimate: number, limit: number): boolean =>
