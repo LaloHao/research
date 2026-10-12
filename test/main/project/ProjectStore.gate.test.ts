@@ -73,6 +73,7 @@ describe('ProjectStore write gate', () => {
     'readSummary',
     'readExtraction',
     'readRelations',
+    'readFacetSuggestions',
     'trashDir',
     'trashExists',
     'listTrash',
