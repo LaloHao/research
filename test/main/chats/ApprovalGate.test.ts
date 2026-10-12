@@ -8,7 +8,8 @@ const request = {
   preview: { papers: [{ id: 'he2017drain', title: 'Drain' }], cost: null },
   request: null,
   risk: 'removes' as const,
-  pickPdf: false
+  pickPdf: false,
+  reason: 'risk' as const
 }
 const pdfRequest = { ...request, tool: 'attach_pdf' as const, args: { paper_id: 'he2017drain' }, risk: 'file' as const, pickPdf: true }
 const AT = new Date('2026-10-12T10:00:00.000Z')

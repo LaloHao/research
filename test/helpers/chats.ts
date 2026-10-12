@@ -1,9 +1,11 @@
 import { join } from 'node:path'
 import { IndexCache } from '../../src/main/cache/IndexCache'
+import type { ActionExecutor } from '../../src/main/chats/actionTypes'
 import { ChatService } from '../../src/main/chats/ChatService'
 import { BudgetGuard, limitsFromConfig } from '../../src/main/llm/BudgetGuard'
 import { CostLedger } from '../../src/main/llm/CostLedger'
 import { MapService } from '../../src/main/map/MapService'
+import { startActionsMcpServer } from '../../src/main/mcp/ActionsMcpServer'
 import { startLibraryMcpServer } from '../../src/main/mcp/LibraryMcpServer'
 import { libraryTools } from '../../src/main/mcp/libraryTools'
 import { ProjectStore } from '../../src/main/project/ProjectStore'
@@ -74,8 +76,13 @@ export async function waitFor(check: () => boolean, ms = 3000): Promise<void> {
   }
 }
 
-/** Drain and Loghub in the library, a chat service with a fixed clock, and the fake provider answering DRAIN_ANSWER. */
-export async function setupChats(opts: { responses?: ChatResponse[]; stream?: (u: ChatStreamUpdate) => void } = {}) {
+/**
+ * Drain and Loghub in the library, a chat service with a fixed clock, and the fake provider answering DRAIN_ANSWER;
+ * with `actions`, conversations whose switches are on get the real actions server over that executor.
+ */
+export async function setupChats(
+  opts: { responses?: ChatResponse[]; stream?: (u: ChatStreamUpdate) => void; actions?: ActionExecutor; approvalTimeoutMs?: number } = {}
+) {
   const store = await ProjectStore.create(await tmpDir(), 'Thesis')
   const cache = IndexCache.open(join(store.cacheDir, 'index.sqlite'))
   await seedPair(store, cache)
@@ -94,6 +101,9 @@ export async function setupChats(opts: { responses?: ChatResponse[]; stream?: (u
     ledger,
     machine: 'laptop',
     startTools: (o) => startLibraryMcpServer(libraryTools({ store, cache, map: new MapService({ store, cache }), embeddings: null }), o),
+    actions: opts.actions,
+    startActions: (o) => startActionsMcpServer(o),
+    approvalTimeoutMs: opts.approvalTimeoutMs,
     emit: () => counter.events++,
     stream: (u) => {
       updates.push(u)

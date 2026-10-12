@@ -1,5 +1,5 @@
 import type { ChatMessage } from '../../shared/chat'
-import { ACTION_READ_TOOLS, ACTION_TOOLS, MAX_REQUEST_QUOTE, SYNC_TOOLS, TOOL_RISK, type ActionReadTool, type ActionRisk, type ActionTool, type ChatTools } from '../../shared/chatActions'
+import { ACTION_READ_TOOLS, ACTION_TOOLS, MAX_REQUEST_QUOTE, SYNC_TOOLS, TOOL_RISK, type ActionReadTool, type ActionRisk, type ActionTool, type ApprovalReason, type ChatTools } from '../../shared/chatActions'
 import { clusterEnd } from '../../shared/textMatch'
 import { foldQuery, foldWithMap } from '../mcp/libraryTools'
 
@@ -71,7 +71,7 @@ export function quotedRequest(quote: unknown, latest: string | null): string | n
  * Why a call asks: its tool has a risk (or is unknown), the latest message did not ask for it in those words, or that
  * message already ran MAX_UNCONFIRMED_PER_MESSAGE actions without asking.
  */
-export type GateReason = 'risk' | 'not_requested' | 'limit'
+export type GateReason = ApprovalReason
 export type GateDecision = { ask: false; request: string } | { ask: true; request: string | null; reason: GateReason }
 
 /**

@@ -76,6 +76,13 @@ export const APPROVAL_TIMEOUT_MS = 5 * 60_000
 /** Longest quote of the user's request a call may carry (and a record keeps). */
 export const MAX_REQUEST_QUOTE = 500
 
+/**
+ * Why an approval card asks: the tool has a risk, the latest message did not ask for it in those words, or that message
+ * already ran the most actions allowed without asking.
+ */
+export const APPROVAL_REASONS = ['risk', 'not_requested', 'limit'] as const
+export type ApprovalReason = (typeof APPROVAL_REASONS)[number]
+
 /** A conversation's switches («Acciones», «Sincronizar con git»). */
 export interface ChatTools {
   actions: boolean
@@ -122,6 +129,8 @@ export interface PendingApproval {
   risk: ActionRisk | null
   /** attach_pdf: approving opens the file picker. */
   pickPdf: boolean
+  /** Why the app asks instead of running it. */
+  reason: ApprovalReason
   /** When it counts as denied. */
   expiresAt: string
 }

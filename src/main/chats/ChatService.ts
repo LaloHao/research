@@ -9,11 +9,13 @@ import {
   PAPER_KEY,
   questionIndex,
   undoneActions,
+  type ActionMessage,
   type AssistantMessage,
   type ChatConversation,
   type ChatFile,
   type ChatListQuery,
   type ChatMessage,
+  type ChatMeta,
   type ChatMessageView,
   type ChatScope,
   type ChatSendRequest,
@@ -23,6 +25,7 @@ import {
   type PaperState,
   type UserMessage
 } from '../../shared/chat'
+import { APPROVAL_TIMEOUT_MS, UNDO_TOOL, type ActionTool, type ChatTools, type PendingApproval } from '../../shared/chatActions'
 import { citationsToText, citedPapers } from '../../shared/chatCitations'
 import { LLM_MODELS, type LlmModel } from '../../shared/summary'
 import type { IndexCache } from '../cache/IndexCache'
@@ -31,13 +34,19 @@ import { toUserFacing, UserFacingError } from '../library/UserFacingError'
 import type { BudgetGuard, Reservation } from '../llm/BudgetGuard'
 import type { CostLedger } from '../llm/CostLedger'
 import { failedCallCost, type ChatResult, type LlmProvider } from '../llm/LlmProvider'
+import { RunClock } from '../llm/RunClock'
+import { ACTION_MAX_TOOL_CALLS, ACTIONS_SERVER_NAME, type ActionsMcpOptions } from '../mcp/ActionsMcpServer'
 import { MCP_SERVER_NAME, type LibraryMcpHandle, type LibraryMcpOptions } from '../mcp/LibraryMcpServer'
-import { foldQuery } from '../mcp/libraryTools'
+import { foldQuery, ToolError } from '../mcp/libraryTools'
 import { checkMessages, newChatId, parseChat, renderChat, STOPPED_MARK, titleFrom, totalCost } from '../project/chatFile'
 import { ConflictError, type ReadResult } from '../project/errors'
 import type { ProjectStore } from '../project/ProjectStore'
 import { AGENT_TIMEOUT_MS } from '../relations/RelationSuggester'
+import { InvalidEdit } from '../summary/merge'
 import { pagesFromChunks } from '../summary/paperText'
+import { enabledTools, gateAction, isReadTool, latestUserText, toolEnabled } from './actionPolicy'
+import type { ActionExecutor, ExecutedAction } from './actionTypes'
+import { ApprovalGate, type ApprovalAnswer } from './ApprovalGate'
 import { CHAT_MAX_TOOL_CALLS, chatInput, chatSystemPrompt, type PaperContext } from './chatPrompt'
 import { unverifiedCount, verifyCitations } from './citations'
 
@@ -58,6 +67,12 @@ export interface ChatServiceDeps {
   now?: () => Date
   /** Random hex for new ids; tests pass their own. */
   randomHex?: () => string
+  /** The actions a conversation can run when its switches are on; without it (and startActions) no actions server is started. */
+  actions?: ActionExecutor
+  /** Starts the actions MCP server for one answer (closed when the answer ends). */
+  startActions?: (opts: ActionsMcpOptions) => Promise<LibraryMcpHandle>
+  /** How long an approval waits for the user (5 minutes); tests pass less. */
+  approvalTimeoutMs?: number
 }
 
 /** One conversation as the index keeps it; `file` is null when the file cannot be read. */
@@ -78,6 +93,18 @@ interface Run {
   /** The last stream update sent for it. */
   seq: number
   done: Promise<void>
+  /** The answer's time limit, held while an action waits for the user. */
+  clock: RunClock
+  /** Calls to the actions server still running: their records are written before the answer. */
+  actionCalls: Set<Promise<unknown>>
+  /** The own text of the question being answered (the latest user message): the only text a request is quoted from. */
+  latest: string | null
+  /**
+   * Actions run without asking for this question, earlier attempts included. Counted in memory and raised in the same
+   * synchronous step as the gate's decision, so parallel calls (or a record that fails to write) never pass the cap.
+   * Until the answer has read its question it is not a whole number, which the gate takes as the cap reached.
+   */
+  unconfirmed: number
 }
 
 const SEARCH_CHARS = 200_000
@@ -107,6 +134,13 @@ const scopePaper = (e: Entry): string | null => (e.file && e.file.meta.scope !==
 
 /** A cost as the file writes it (4 decimals). */
 export const roundCost = (usd: number): number => Math.round(usd * 10000) / 10000
+
+/** How long the CLI waits for one call to the actions server: an approval waits up to 5 minutes and a job up to 1. */
+export const ACTION_TOOL_TIMEOUT_MS = 10 * 60_000
+const undoKey = (chatId: string, actionId: string): string => `${chatId}:${actionId}`
+/** A record keeps plain JSON (no undefined, no class instances), as the file's YAML reads it back. */
+const plain = (v: Record<string, unknown>): Record<string, unknown> => JSON.parse(JSON.stringify(v)) as Record<string, unknown>
+const DENIED_NOTE = 'The user did not approve this action. Do not try it again unless the user asks.'
 
 /**
  * The conversation exactly as `writeChat` will write it and a read will give it back: excerpts normalized (an excerpt
@@ -155,8 +189,15 @@ export class ChatService {
   /** Counts the app's own writes and deletions; `changedAt` holds the count at each conversation's last one. */
   private writes = 0
   private readonly changedAt = new Map<string, number>()
+  private readonly approvals: ApprovalGate
+  /** «Deshacer» of each executed action that has one, by `<chat id>:<action id>`; in memory only (gone after a restart). */
+  private readonly undos = new Map<string, () => Promise<void>>()
+  /** The last write queued for each conversation (see update). */
+  private readonly writing = new Map<string, Promise<unknown>>()
 
-  constructor(private readonly deps: ChatServiceDeps) {}
+  constructor(private readonly deps: ChatServiceDeps) {
+    this.approvals = new ApprovalGate({ timeoutMs: deps.approvalTimeoutMs ?? APPROVAL_TIMEOUT_MS, changed: (id) => this.approvalsChanged(id), now: deps.now })
+  }
 
   async reindex(): Promise<void> {
     const start = this.writes
@@ -208,7 +249,7 @@ export class ChatService {
     const undone = undoneActions(e.file.messages)
     const messages: ChatMessageView[] = e.file.messages.map((m) => {
       if (m.role === 'user') return m
-      if (m.role === 'action') return { ...m, undoable: false, undone: undone.has(m.id) }
+      if (m.role === 'action') return { ...m, undone: undone.has(m.id), undoable: m.state === 'executed' && !undone.has(m.id) && this.undos.has(undoKey(id, m.id)) }
       const citations = verifyCitations(m.text, sources)
       return { ...m, citations, unverified: unverifiedCount(citations) }
     })
@@ -218,7 +259,7 @@ export class ChatService {
       messages,
       partial: run ? { text: run.text, tools: run.tools, seq: run.seq } : null,
       canRetry: !this.busy(id) && questionIndex(e.file.messages) >= 0,
-      approvals: []
+      approvals: this.approvals.pending(id)
     }
   }
 
@@ -238,6 +279,48 @@ export class ChatService {
     await this.update(id, (f) => ({ ...f, meta: { ...f.meta, model } }))
   }
 
+  /** The conversation's switches; turning one off denies the waiting approvals of the tools it no longer offers. */
+  async setTools(id: string, patch: Partial<ChatTools>): Promise<void> {
+    for (const v of [patch.actions, patch.sync]) if (v !== undefined && typeof v !== 'boolean') throw new UserFacingError('invalid_edit')
+    const file = await this.update(id, (f) => ({
+      ...f,
+      meta: { ...f.meta, ...(patch.actions === undefined ? {} : { actions: patch.actions }), ...(patch.sync === undefined ? {} : { sync: patch.sync }) }
+    }))
+    const tools: ChatTools = { actions: file.meta.actions, sync: file.meta.sync }
+    this.approvals.denyWhere(id, (a) => !toolEnabled(a.tool, tools), 'disabled')
+  }
+
+  /** A pending approval of the conversation (the window opens the file picker before approving attach_pdf). */
+  approval(chatId: string, approvalId: string): PendingApproval | null {
+    return this.approvals.get(chatId, approvalId)
+  }
+
+  /** «Aprobar» / «Rechazar» on an approval card; only the window calls it, never a tool. */
+  decide(chatId: string, approvalId: string, answer: ApprovalAnswer): void {
+    const pending = this.approvals.get(chatId, approvalId)
+    if (!pending) throw new UserFacingError('approval_gone')
+    // attach_pdf runs only with the file the user picked in the app's own dialog.
+    if (answer.approve && pending.pickPdf && !answer.pdfPath) throw new UserFacingError('invalid_edit')
+    if (!this.approvals.decide(chatId, approvalId, answer)) throw new UserFacingError('approval_gone')
+  }
+
+  /** «Deshacer» of an executed action: once, recorded in the conversation; refused once its target changed since. */
+  async undo(chatId: string, actionId: string): Promise<void> {
+    const key = undoKey(chatId, actionId)
+    const undo = this.undos.get(key)
+    if (!undo) throw new UserFacingError('undo_unavailable')
+    // Taken before it runs, so a second click never undoes twice; a transient failure puts it back.
+    this.undos.delete(key)
+    try {
+      await undo()
+    } catch (error) {
+      if (error instanceof InvalidEdit) throw new UserFacingError('undo_unavailable', { cause: error })
+      this.undos.set(key, undo)
+      throw error
+    }
+    await this.record(chatId, { tool: UNDO_TOOL, state: 'executed', approval: 'user', request: null, args: { action: actionId }, result: {} }).catch(logged)
+  }
+
   /**
    * «Borrar»: only with `confirmed` (the user said yes to the UI's question), never while it answers, and only the
    * version on disk now (`chats/<id>.md`, a valid id; a concurrent change is a conflict). Unreadable files too.
@@ -249,6 +332,7 @@ export class ChatService {
     const read = await this.deps.store.readChat(id)
     if (read) await this.deps.store.deleteChat(id, read.hash)
     this.entries.delete(id)
+    for (const key of [...this.undos.keys()]) if (key.startsWith(`${id}:`)) this.undos.delete(key)
     this.changedAt.set(id, ++this.writes)
     this.deps.emit()
   }
@@ -313,7 +397,11 @@ export class ChatService {
 
   /** «Detener»: what arrived is saved as a stopped answer. */
   stop(id: string): void {
-    this.runs.get(id)?.controller.abort()
+    const run = this.runs.get(id)
+    if (!run) return
+    run.controller.abort()
+    // The abort already denies them; said again so nothing of this conversation keeps waiting.
+    this.approvals.denyWhere(id, () => true, 'stopped')
   }
 
   /** Resolves once no answer is being written. */
@@ -326,6 +414,7 @@ export class ChatService {
     this.closed = true
     while (this.preparing.size > 0) await Promise.allSettled([...this.preparing])
     for (const run of this.runs.values()) run.controller.abort()
+    this.approvals.denyAll('stopped')
     await this.idle()
   }
 
@@ -464,7 +553,22 @@ export class ChatService {
   }
 
   /** Read, change and write one conversation; read again and redo the change on a concurrent write (at most 3 times). */
-  private async update(id: string, change: (file: ChatFile) => ChatFile): Promise<ChatFile> {
+  private update(id: string, change: (file: ChatFile) => ChatFile): Promise<ChatFile> {
+    // One write at a time per conversation: parallel action records (and an undo's) would otherwise race on its hash.
+    const prior = this.writing.get(id) ?? Promise.resolve()
+    const work = prior.then(
+      () => this.updateNow(id, change),
+      () => this.updateNow(id, change)
+    )
+    const tail = work.catch(() => undefined)
+    this.writing.set(id, tail)
+    void tail.then(() => {
+      if (this.writing.get(id) === tail) this.writing.delete(id)
+    })
+    return work
+  }
+
+  private async updateNow(id: string, change: (file: ChatFile) => ChatFile): Promise<ChatFile> {
     for (let attempt = 1; ; attempt++) {
       const e = await this.fresh(id)
       if (!e.file) throw new UserFacingError('chat_invalid')
@@ -500,7 +604,17 @@ export class ChatService {
   }
 
   private start(id: string, reservation: Reservation): void {
-    const run: Run = { controller: new AbortController(), text: '', tools: 0, seq: streamSeq, done: Promise.resolve() }
+    const run: Run = {
+      controller: new AbortController(),
+      text: '',
+      tools: 0,
+      seq: streamSeq,
+      done: Promise.resolve(),
+      clock: new RunClock(),
+      actionCalls: new Set(),
+      latest: null,
+      unconfirmed: Number.NaN
+    }
     this.runs.set(id, run)
     run.done = this.answer(id, run, reservation).finally(() => this.runs.delete(id))
   }
@@ -513,6 +627,98 @@ export class ChatService {
     } catch (error) {
       logged(error)
     }
+  }
+
+  /** The switches an answer honours: none when the session gives no actions. */
+  private toolsOf(meta: ChatMeta): ChatTools {
+    const able = this.deps.actions !== undefined && this.deps.startActions !== undefined
+    return { actions: able && meta.actions, sync: able && meta.sync }
+  }
+
+  private approvalsChanged(id: string): void {
+    const run = this.runs.get(id)
+    if (run) this.push(id, run, { kind: 'approvals' })
+  }
+
+  /** One call to the actions server, tracked so the answer is written after every record of its actions. */
+  private callAction(id: string, run: Run, tool: string, args: Record<string, unknown>): Promise<unknown> {
+    const work = this.runAction(id, run, tool, args)
+    run.actionCalls.add(work)
+    const forget = (): void => void run.actionCalls.delete(work)
+    work.then(forget, forget)
+    return work
+  }
+
+  /**
+   * The app's rule for one call: the switch is checked again; reads run; anything else is prepared (a ToolError when it
+   * cannot be done), then runs on its own only when gateAction allows it, or after the user approves it in the
+   * conversation. Executed, denied and failed actions are recorded; Claude gets what happened.
+   */
+  private async runAction(id: string, run: Run, tool: string, args: Record<string, unknown>): Promise<unknown> {
+    const actions = this.deps.actions
+    if (!actions) throw new ToolError('Actions are not available.')
+    const file = (await this.fresh(id)).file
+    if (!file || !toolEnabled(tool, this.toolsOf(file.meta))) {
+      throw new ToolError('That tool is turned off in this conversation; the user can turn it on in the conversation header.')
+    }
+    if (run.controller.signal.aborted) throw new ToolError('The answer was stopped.')
+    if (isReadTool(tool)) return actions.read(tool, args)
+    const prepared = await actions.prepare(tool as ActionTool, args).catch((error: unknown) => {
+      throw error instanceof ToolError ? error : new ToolError(`That cannot be done: ${toUserFacing(error).code}.`)
+    })
+    // What runs must be the tool that was called (and whose switch was checked).
+    if (prepared.tool !== tool) throw new Error(`Prepared ${prepared.tool} for a call of ${tool}`)
+    const quote = typeof args.request_quote === 'string' ? args.request_quote : undefined
+    const gate = gateAction({ tool: prepared.tool, risk: prepared.risk, quote, latest: run.latest, unconfirmed: run.unconfirmed })
+    // Counted in the same step as the decision: no other call can see the count before this one raised it.
+    if (!gate.ask) run.unconfirmed++
+    const base = { tool: prepared.tool, request: gate.request, args: prepared.args }
+    let approval: 'request' | 'user' = 'request'
+    let pdfPath: string | undefined
+    if (gate.ask) {
+      const answer = await this.approvals.ask(
+        id,
+        { tool: prepared.tool, args: prepared.args, preview: prepared.preview, request: gate.request, risk: prepared.risk, pickPdf: prepared.pickPdf, reason: gate.reason },
+        run.controller.signal,
+        run.clock
+      )
+      if (answer.kind === 'denied') {
+        await this.record(id, { ...base, state: 'denied', approval: null, result: { reason: answer.reason } }).catch(logged)
+        return { status: 'denied', reason: answer.reason, note: DENIED_NOTE }
+      }
+      approval = 'user'
+      pdfPath = answer.pdfPath
+    }
+    let done: ExecutedAction
+    try {
+      done = await prepared.execute({ pdfPath })
+    } catch (error) {
+      const code = toUserFacing(error).code
+      await this.record(id, { ...base, state: 'failed', approval, result: { error: code } }).catch(logged)
+      return { status: 'failed', error: code }
+    }
+    const actionId = await this.record(id, { ...base, state: done.failed ? 'failed' : 'executed', approval, result: done.result }).catch((error: unknown) => {
+      logged(error)
+      return null
+    })
+    if (actionId && done.undo && !done.failed) this.undos.set(undoKey(id, actionId), done.undo)
+    return { status: done.failed ? 'failed' : 'done', ...done.result }
+  }
+
+  /** Appends an action's record to the conversation and returns its id (unique in the conversation). */
+  private async record(id: string, a: Omit<ActionMessage, 'role' | 'at' | 'id'>): Promise<string> {
+    const at = this.now().toISOString()
+    const args = plain(a.args)
+    const result = plain(a.result)
+    let actionId = ''
+    await this.update(id, (f) => {
+      const taken = new Set(f.messages.flatMap((m) => (m.role === 'action' ? [m.id] : [])))
+      do actionId = randomBytes(3).toString('hex')
+      while (taken.has(actionId))
+      const m: ActionMessage = { ...a, role: 'action', at, id: actionId, args, result }
+      return { ...f, messages: [...f.messages, m] }
+    })
+    return actionId
   }
 
   /**
@@ -543,26 +749,45 @@ export class ChatService {
         paper: await this.paperContext(meta.scope),
         history: messages.slice(0, asked),
         question: question.text,
-        excerpt: question.excerpt
+        excerpt: question.excerpt,
+        // Only what follows the question: the history above stops before it, so no record is shown twice.
+        actionsDone: messages.slice(asked + 1).filter((m): m is ActionMessage => m.role === 'action')
       })
+      run.latest = latestUserText(messages)
+      // Earlier attempts at this same question (a retry) count against the cap too.
+      run.unconfirmed = messages.slice(asked + 1).filter((m) => m.role === 'action' && m.approval === 'request').length
       run.controller.signal.throwIfAborted()
       const tools = await this.deps.startTools({ maxToolCalls: CHAT_MAX_TOOL_CALLS, markData: true }).catch((error: unknown) => {
         throw new UserFacingError('agent_tools_unavailable', { cause: error })
       })
+      const on = this.toolsOf(meta)
+      let actions: LibraryMcpHandle | null = null
       let result: ChatResult
       try {
+        if (on.actions || on.sync) {
+          actions = await this.deps.startActions!({ tools: enabledTools(on), maxToolCalls: ACTION_MAX_TOOL_CALLS, call: (tool, args) => this.callAction(id, run, tool, args) }).catch(
+            (error: unknown) => {
+              throw new UserFacingError('agent_tools_unavailable', { cause: error })
+            }
+          )
+        }
         run.controller.signal.throwIfAborted()
         result = await provider.chat(
           {
-            system: chatSystemPrompt(meta.scope),
+            system: chatSystemPrompt(meta.scope, on),
             input,
             model: meta.model,
             maxUsd: store.config.llm.budget.per_chat_message_usd,
-            servers: [{ name: MCP_SERVER_NAME, url: tools.url, token: tools.token }],
-            // The server enforces the tool budget; the spare turns let a refused call still end in an answer.
-            maxTurns: CHAT_MAX_TOOL_CALLS + 3,
+            servers: [
+              { name: MCP_SERVER_NAME, url: tools.url, token: tools.token },
+              ...(actions ? [{ name: ACTIONS_SERVER_NAME, url: actions.url, token: actions.token }] : [])
+            ],
+            // The servers enforce the tool budgets; the spare turns let a refused call still end in an answer.
+            maxTurns: CHAT_MAX_TOOL_CALLS + (actions ? ACTION_MAX_TOOL_CALLS : 0) + 3,
             signal: run.controller.signal,
-            timeoutMs: AGENT_TIMEOUT_MS
+            timeoutMs: AGENT_TIMEOUT_MS,
+            clock: run.clock,
+            ...(actions ? { toolTimeoutMs: ACTION_TOOL_TIMEOUT_MS } : {})
           },
           (event) => {
             if (event.kind === 'delta') run.text += event.text
@@ -573,6 +798,12 @@ export class ChatService {
         )
       } finally {
         await tools.close().catch(logged)
+        await actions?.close().catch(logged)
+        // An approval still waiting when the answer ended (the CLI gave up on the call) has nobody to tell: denied.
+        this.approvals.denyWhere(id, () => true, 'stopped')
+        // An action still running (its approval was just denied by «Detener», its record being written) ends first,
+        // so its record comes before the answer in the file.
+        await Promise.allSettled([...run.actionCalls])
       }
       spent = result.costUsd
       charged = true
