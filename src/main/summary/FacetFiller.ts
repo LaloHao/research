@@ -120,6 +120,8 @@ export class FacetFiller {
           })
         }
       }
+      // A fill cancelled (or whose paper went to the trash) while Claude answered writes nothing.
+      req.signal?.throwIfAborted()
       return { filled: await this.write(id, paper.value.title, form.form, Object.keys(extraction.facets), entries), costUsd: spent }
     } finally {
       reservation.settle(spent, { estimated })
@@ -141,6 +143,8 @@ export class FacetFiller {
    * form hash forward over them, so the paper stays up to date; summary.md's body is rendered again. Everything is
    * re-checked against the form as it is now: a paper that went stale meanwhile gets nothing, and a facet whose
    * definition changed (or that was removed) while Claude answered is left unfilled. Re-reads once on a concurrent edit.
+   * Once the classification is written the fill is done: if summary.md still conflicts on the second try, only its
+   * body lags, and the next edit or regeneration of the summary renders it again.
    */
   private async write(id: string, title: string, asked: ExtractionForm, keysBefore: string[], entries: Record<string, FacetEntry>): Promise<string[]> {
     const { store } = this.deps
@@ -168,6 +172,10 @@ export class FacetFiller {
         return filled
       } catch (error) {
         if (error instanceof ConflictError && attempt === 0) continue
+        if (error instanceof ConflictError && filled.length > 0) {
+          console.warn(`fill_facets ${id}: summary.md changed on disk, its body is rendered again on the next edit`)
+          return filled
+        }
         throw error
       }
     }

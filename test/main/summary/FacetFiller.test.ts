@@ -3,6 +3,7 @@ import { FacetFiller } from '../../../src/main/summary/FacetFiller'
 import { DEFAULT_EXTRACTION_FORM, formHashFor } from '../../../src/main/summary/extractionForm'
 import type { CompleteRequest, CompleteResult, LlmProvider } from '../../../src/main/llm/LlmProvider'
 import { editFacet, setFacetStatus } from '../../../src/main/summary/merge'
+import { ConflictError } from '../../../src/main/project/errors'
 import type { ExtractionForm, FacetDef } from '../../../src/shared/summary'
 import { fillOutputFor, llmOutputFor, setupSummaries } from '../../helpers/llm'
 
@@ -114,5 +115,40 @@ describe('FacetFiller', () => {
     await expect(filler.fill({ paperId: ID })).rejects.toMatchObject({ code: 'summary_outdated' })
     const after = await s.store.readExtraction(ID)
     expect(after?.ok && after.value).toEqual(before?.ok && before.value)
+  })
+  it('reports the fill as done when the classification was written but summary.md keeps conflicting', async () => {
+    const s = await setup()
+    const summaryBefore = await s.store.readSummary(ID)
+    let attempts = 0
+    s.store.writeSummary = async () => {
+      attempts++
+      throw new ConflictError('summary.md')
+    }
+    expect(await s.filler.fill({ paperId: ID })).toEqual({ filled: ['data_source'], costUsd: 0.01 })
+    expect(attempts).toBe(2)
+    const after = await s.store.readExtraction(ID)
+    if (!after?.ok) throw new Error('unreadable')
+    expect(after.value.facets.data_source).toMatchObject({ values: ['production_logs'], status: 'generated' })
+    expect(after.value.form_hash).toBe(formHashFor(WITH_SOURCE, Object.keys(after.value.facets)))
+    expect((await s.store.readSummary(ID))?.hash).toBe(summaryBefore?.hash)
+  })
+
+  it('writes nothing when the fill is cancelled while Claude answers', async () => {
+    const s = await setup()
+    const controller = new AbortController()
+    const provider: LlmProvider = {
+      complete: async (req: CompleteRequest) => {
+        const result = await s.provider.complete(req)
+        controller.abort()
+        return result
+      },
+      runAgent: (req) => s.provider.runAgent(req)
+    }
+    const filler = new FacetFiller({ store: s.store, cache: s.cache, provider, budget: s.budget, ledger: s.ledger })
+    const before = await s.store.readExtraction(ID)
+    await expect(filler.fill({ paperId: ID, signal: controller.signal })).rejects.toThrow()
+    const after = await s.store.readExtraction(ID)
+    expect(after?.ok && after.value).toEqual(before?.ok && before.value)
+    expect((await s.store.readCosts()).map((c) => c.operation)).toEqual(['summarize', 'fill_facets'])
   })
 })
