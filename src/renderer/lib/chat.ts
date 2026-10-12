@@ -134,6 +134,33 @@ export function excerptFromSelection(selected: string, paper: string, page: numb
   return normalizeExcerpt({ paper, page, quote })
 }
 
+/** The paper detail's chat state (open conversation and pending excerpt), tagged with the paper it belongs to. */
+export interface PaperChatState {
+  paper: string
+  chatId: string | null
+  excerpt: ChatExcerpt | null
+}
+
+/** What the paper shown sees of the state: nothing when it belongs to another paper. */
+export function paperChatOf(state: PaperChatState | null, shown: string): { chatId: string | null; excerpt: ChatExcerpt | null } {
+  return state && state.paper === shown ? { chatId: state.chatId, excerpt: state.excerpt } : { chatId: null, excerpt: null }
+}
+
+/**
+ * An update made on behalf of `from` while `shown` is displayed: ignored when they differ (a late answer of a paper the
+ * user left must not open its conversation, or clear an excerpt, in the next one); otherwise merged into the shown
+ * paper's state, which starts empty when the state belonged to another paper.
+ */
+export function updatePaperChat(
+  state: PaperChatState | null,
+  from: string,
+  shown: string,
+  patch: Partial<Pick<PaperChatState, 'chatId' | 'excerpt'>>
+): PaperChatState | null {
+  if (from !== shown) return state
+  return { paper: shown, ...paperChatOf(state, shown), ...patch }
+}
+
 /** A conversation's title; a copy the sync split off says which machine it came from. */
 export function chatTitle(t: TFunction, s: Pick<ChatSummary, 'title' | 'copyOf'>): string {
   if (!s.copyOf) return s.title

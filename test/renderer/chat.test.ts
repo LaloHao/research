@@ -8,6 +8,8 @@ import {
   composerAction,
   costText,
   excerptFromSelection,
+  paperChatOf,
+  updatePaperChat,
   hidePartialMarker,
   isNearBottom,
   liveFromPartial,
@@ -181,5 +183,28 @@ describe('auto-scroll', () => {
   it('follows the answer only when the reader is at the bottom', () => {
     expect(isNearBottom({ scrollTop: 560, scrollHeight: 1000, clientHeight: 400 })).toBe(true)
     expect(isNearBottom({ scrollTop: 300, scrollHeight: 1000, clientHeight: 400 })).toBe(false)
+  })
+})
+
+describe('a paper detail\'s chat state', () => {
+  const excerpt = { paper: 'a2020x', page: 1, quote: 'some text' }
+
+  it('belongs to its paper: another paper sees no conversation and no excerpt', () => {
+    const state = updatePaperChat(null, 'a2020x', 'a2020x', { chatId: 'c1', excerpt })
+    expect(paperChatOf(state, 'a2020x')).toEqual({ chatId: 'c1', excerpt })
+    expect(paperChatOf(state, 'b2021y')).toEqual({ chatId: null, excerpt: null })
+    expect(paperChatOf(null, 'a2020x')).toEqual({ chatId: null, excerpt: null })
+  })
+
+  it('ignores a late update from a paper no longer shown', () => {
+    const shownB = updatePaperChat(null, 'b2021y', 'b2021y', { excerpt: { ...excerpt, paper: 'b2021y' } })
+    // Paper A's first message resolves after the user moved to paper B.
+    expect(updatePaperChat(shownB, 'a2020x', 'b2021y', { chatId: 'c-a', excerpt: null })).toBe(shownB)
+  })
+
+  it('starts fresh when the shown paper changes, and merges updates for the same paper', () => {
+    const a = updatePaperChat(null, 'a2020x', 'a2020x', { chatId: 'c1', excerpt })
+    expect(updatePaperChat(a, 'b2021y', 'b2021y', { chatId: 'c2' })).toEqual({ paper: 'b2021y', chatId: 'c2', excerpt: null })
+    expect(updatePaperChat(a, 'a2020x', 'a2020x', { excerpt: null })).toEqual({ paper: 'a2020x', chatId: 'c1', excerpt: null })
   })
 })

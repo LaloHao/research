@@ -89,7 +89,7 @@ export function ContentView({
 }: {
   content: string
   focus: ContentFocus | null
-  onAsk?: (target: SelectionAskTarget) => void
+  onAsk?: (target: SelectionAskTarget) => boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
   const wrapRef = useRef<HTMLDivElement>(null)

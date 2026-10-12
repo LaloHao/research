@@ -65,6 +65,7 @@ describe('es.json covers every code the UI can receive', () => {
     'paper.tabs.relations',
     'paper.tabs.chat',
     'chat.ask_claude',
+    'chat.ask_claude_unquotable',
     'settings.budget_chat',
     'relations.external_one',
     'relations.external_other',

@@ -68,6 +68,7 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
   /** The reader is at the bottom of the messages: new text keeps them there. */
   const stick = useRef(true)
   const messagesRef = useRef<HTMLDivElement>(null)
+  const composerRef = useRef<HTMLTextAreaElement>(null)
   /** The id of the conversation this component's first message just created, until the prop catches up. */
   const createdId = useRef<string | null>(null)
   if (chatId !== null) createdId.current = null
@@ -146,6 +147,10 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
     }
   }
   useChatStream(handleUpdate)
+  // A quoted selection arrived («Preguntar a Claude»): the question about it is typed next.
+  useEffect(() => {
+    if (excerpt) composerRef.current?.focus()
+  }, [excerpt])
   useEffect(() => {
     const el = messagesRef.current
     if (el && stick.current) el.scrollTop = el.scrollHeight
@@ -393,6 +398,7 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
         <div className="chat-composer">
           {excerpt && <ExcerptChip excerpt={excerpt} onRemove={() => onExcerptChange(null)} />}
           <textarea
+            ref={composerRef}
             value={draft}
             rows={3}
             placeholder={t('chat.placeholder')}

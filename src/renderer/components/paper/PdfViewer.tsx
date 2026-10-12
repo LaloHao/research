@@ -11,6 +11,15 @@ export type PdfFocus = { page: number; quote: string }
 /** How far outside the visible area a page gets its selectable text layer ahead of being scrolled to. */
 const TEXT_LAYER_MARGIN = '1200px 0px'
 
+/** The nearest ancestor that scrolls (the root a look-ahead margin must apply to), or null for the viewport. */
+function scrollParent(el: HTMLElement): HTMLElement | null {
+  for (let node = el.parentElement; node; node = node.parentElement) {
+    const { overflowY } = getComputedStyle(node)
+    if (overflowY === 'auto' || overflowY === 'scroll') return node
+  }
+  return null
+}
+
 /**
  * Renders every page to a canvas, fitted to the panel width. The page named by `focus` also gets
  * a text layer with the matching spans highlighted and scrolled into view; `onFocusResult` reports
@@ -30,7 +39,7 @@ export function PdfViewer({
   data: Uint8Array
   focus?: PdfFocus | null
   onFocusResult?: (found: boolean) => void
-  onAsk?: (target: SelectionAskTarget) => void
+  onAsk?: (target: SelectionAskTarget) => boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
   const viewerRef = useRef<HTMLDivElement>(null)
@@ -80,7 +89,8 @@ export function PdfViewer({
               build?.()
             }
           },
-          { rootMargin: TEXT_LAYER_MARGIN }
+          // Rooted at the scrolling panel: against the viewport, the panel's clipping would cancel the margin.
+          { root: scrollParent(el), rootMargin: TEXT_LAYER_MARGIN }
         )
       : null
     void (async () => {

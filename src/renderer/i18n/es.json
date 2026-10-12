@@ -693,6 +693,7 @@
     "excerpt_no_page": "Fragmento de {{paper}}",
     "remove_excerpt": "Quitar fragmento",
     "ask_claude": "Preguntar a Claude",
+    "ask_claude_unquotable": "Esta selección no se puede citar: selecciona un poco más de texto.",
     "close_evidence": "Cerrar"
   },
   "trash": {

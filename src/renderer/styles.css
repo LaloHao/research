@@ -323,3 +323,4 @@ button.danger { color: var(--error); border-color: var(--error); }
 .paper-chat { display: grid; grid-template-columns: 240px minmax(0, 1fr); height: 100%; }
 .pdf-viewer, .content-view-wrap { position: relative; }
 .selection-ask { position: absolute; z-index: 5; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2); }
+.selection-ask-hint { margin: 0; padding: 4px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); }

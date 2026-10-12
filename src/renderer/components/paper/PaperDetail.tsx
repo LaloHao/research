@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { ChatExcerpt } from '../../../shared/chat'
 import type { PaperDetail as Detail } from '../../../shared/library'
 import { useEvent } from '../../hooks/useEvent'
-import { excerptFromSelection } from '../../lib/chat'
+import { excerptFromSelection, paperChatOf, updatePaperChat, type PaperChatState } from '../../lib/chat'
 import { errorText } from '../../lib/errorText'
 import { paperTabs, type Tab } from '../../lib/paperTabs'
 import { AttachPdfStatus, useAttachPdf } from './AttachPdf'
@@ -29,7 +29,7 @@ function PdfTab({
   id: string
   hasPdf: boolean
   focus: PdfFocus | null
-  onAsk: (target: SelectionAskTarget) => void
+  onAsk: (target: SelectionAskTarget) => boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [state, setState] = useState<PdfState>({ status: 'loading' })
@@ -95,7 +95,7 @@ function ContentTab({
   id: string
   content: string
   focus: ContentFocus | null
-  onAsk: (target: SelectionAskTarget) => void
+  onAsk: (target: SelectionAskTarget) => boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
   const attach = useAttachPdf(id, false)
@@ -139,17 +139,27 @@ export function PaperDetail({
   const contentFocusSeq = useRef(0)
   const [copied, setCopied] = useState(false)
   // The selection quoted in the paper's chat («Preguntar a Claude») and the conversation open there, kept while the
-  // user switches tabs.
-  const [excerpt, setExcerpt] = useState<ChatExcerpt | null>(null)
-  const [chatId, setChatId] = useState<string | null>(null)
+  // user switches tabs. Tagged with its paper: another paper sees none of it, and a late update from a paper the user
+  // left (its first message answered after the switch) is ignored.
+  const [chatState, setChatState] = useState<PaperChatState | null>(null)
+  const shownId = useRef(id)
+  shownId.current = id
+  const { chatId, excerpt } = paperChatOf(chatState, id)
+  const setChatId = useCallback((next: string | null) => setChatState((s) => updatePaperChat(s, id, shownId.current, { chatId: next })), [id])
+  const setExcerpt = useCallback(
+    (next: ChatExcerpt | null) => setChatState((s) => updatePaperChat(s, id, shownId.current, { excerpt: next })),
+    [id]
+  )
+  /** «Preguntar a Claude»: false when the selection cannot be quoted (the button then says so). */
   const ask = useCallback(
-    (target: SelectionAskTarget) => {
+    (target: SelectionAskTarget): boolean => {
       const next = excerptFromSelection(target.quote, id, target.page)
-      if (!next) return
+      if (!next) return false
       setExcerpt(next)
       setTab('chat')
+      return true
     },
-    [id]
+    [id, setExcerpt]
   )
 
   const refresh = useCallback(() => {
@@ -165,8 +175,6 @@ export function PaperDetail({
   useEffect(() => {
     setFocus(null)
     setContentFocus(null)
-    setExcerpt(null)
-    setChatId(null)
   }, [id])
   useEvent('library-changed', refresh)
   useEvent('jobs-changed', refresh)
