@@ -311,7 +311,7 @@ button.danger { color: var(--error); border-color: var(--error); }
 .chat-markdown p { margin: 6px 0; }
 .chat-actions { gap: 6px; margin-top: 4px; flex-wrap: wrap; }
 .cite-chip { font-size: 11px; padding: 0 6px; border-radius: 10px; border: none; background: var(--accent-soft); color: var(--accent); }
-.cite-chip:disabled { opacity: 1; cursor: default; }
+.cite-chip[aria-disabled='true'] { cursor: default; }
 .cite-not_found, .cite-paper_in_trash, .cite-unknown_paper { background: var(--warning-soft); color: var(--text); }
 .cite-pending { background: var(--border); color: var(--muted); }
 .warning-text { color: var(--warning); }

@@ -5,11 +5,56 @@ import { citationLabel, parseCitations } from '../../shared/chatCitations'
 /** Links to a citation chip: `#cite-<index of the marker in the answer>`. */
 export const CITE_HREF = '#cite-'
 
-/** The answer's Markdown with each marker as a link `[key, p. N](#cite-i)`, which the message view renders as a chip. */
+/** Inline code spans (a backtick run closed by a run of the same length) in a stretch of Markdown without fences. */
+function inlineCodeRanges(text: string, offset: number): [number, number][] {
+  const ranges: [number, number][] = []
+  const runs = [...text.matchAll(/`+/g)].map((m) => ({ at: m.index, length: m[0].length }))
+  for (let i = 0; i < runs.length; i++) {
+    const close = runs.findIndex((r, j) => j > i && r.length === runs[i].length)
+    if (close < 0) continue
+    ranges.push([offset + runs[i].at, offset + runs[close].at + runs[close].length])
+    i = close
+  }
+  return ranges
+}
+
+/** Where the Markdown has code (fenced blocks, to the end when unclosed, and inline spans): markers there stay text. */
+export function codeRanges(markdown: string): [number, number][] {
+  const ranges: [number, number][] = []
+  let fence: { char: string; length: number; start: number } | null = null
+  let plainStart = 0
+  let at = 0
+  for (const line of markdown.split('\n')) {
+    const end = at + line.length
+    const opener = /^ {0,3}(`{3,}|~{3,})/.exec(line)
+    if (fence) {
+      const closer = /^ {0,3}(`{3,}|~{3,})\s*$/.exec(line)
+      if (closer && closer[1][0] === fence.char && closer[1].length >= fence.length) {
+        ranges.push([fence.start, end])
+        fence = null
+        plainStart = end
+      }
+    } else if (opener) {
+      ranges.push(...inlineCodeRanges(markdown.slice(plainStart, at), plainStart))
+      fence = { char: opener[1][0], length: opener[1].length, start: at }
+    }
+    at = end + 1
+  }
+  if (fence) ranges.push([fence.start, markdown.length])
+  else ranges.push(...inlineCodeRanges(markdown.slice(plainStart), plainStart))
+  return ranges
+}
+
+/**
+ * The answer's Markdown with each marker as a link `[key, p. N](#cite-i)`, which the message view renders as a chip.
+ * Markers inside code stay as written but keep their number, so `i` still matches the answer's citations.
+ */
 export function withCitationLinks(markdown: string): string {
+  const code = codeRanges(markdown)
   let out = ''
   let at = 0
   parseCitations(markdown).forEach((m, i) => {
+    if (code.some(([start, end]) => m.start >= start && m.start < end)) return
     out += `${markdown.slice(at, m.start)}[${citationLabel(m)}](${CITE_HREF}${i})`
     at = m.end
   })
@@ -115,4 +160,40 @@ export function notePaperOptions(scopePaper: string | null, citations: ChatCitat
   const first = [...new Set([...(scopePaper ? [scopePaper] : []), ...citations.map((c) => c.paper)])].filter((id) => titles.has(id))
   const rest = rows.filter((r) => !first.includes(r.id)).sort((a, b) => a.title.localeCompare(b.title))
   return [...first.map((id) => ({ id, title: titles.get(id)!, suggested: true })), ...rest.map((r) => ({ id: r.id, title: r.title, suggested: false }))]
+}
+
+/** What a conversation does with a stream update. */
+export type StreamAction = 'ignore' | 'buffer' | 'resync' | 'apply'
+
+export interface StreamGate {
+  /** The conversation shown; null while it is new. */
+  chatId: string | null
+  /** A new conversation's first message is being sent: its id is not known yet. */
+  awaitingNew: boolean
+  /** The newest sequence number seen (updates and `open()` snapshots). */
+  seenSeq: number
+  /** An answer is shown as running. */
+  running: boolean
+}
+
+/**
+ * Only this conversation's updates, in order (sequence numbers rise across every answer of the session). The middle
+ * of an answer with nothing running asks for a snapshot instead of building text from a missing prefix; a new
+ * conversation keeps every update until its id is known, so a quick failure of its first answer is not lost.
+ */
+export function streamAction(g: StreamGate, u: ChatStreamUpdate): StreamAction {
+  if (g.chatId === null) return g.awaitingNew ? 'buffer' : 'ignore'
+  if (u.chatId !== g.chatId || u.seq <= g.seenSeq) return 'ignore'
+  if (!g.running && (u.kind === 'delta' || u.kind === 'turn' || u.kind === 'tool')) return 'resync'
+  return 'apply'
+}
+
+/** The buffered updates of the conversation just created, in order. */
+export function takeBuffered(buffered: ChatStreamUpdate[], chatId: string): ChatStreamUpdate[] {
+  return buffered.filter((u) => u.chatId === chatId).sort((a, b) => a.seq - b.seq)
+}
+
+/** The reader is at the bottom of the messages (within a few lines): new text scrolls into view. */
+export function isNearBottom(el: { scrollTop: number; scrollHeight: number; clientHeight: number }, slack = 48): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= slack
 }

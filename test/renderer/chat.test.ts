@@ -9,10 +9,13 @@ import {
   costText,
   excerptFromSelection,
   hidePartialMarker,
+  isNearBottom,
   liveFromPartial,
   notePaperOptions,
   paperFilterOptions,
   splitArchived,
+  streamAction,
+  takeBuffered,
   withCitationLinks,
   type LiveAnswer
 } from '../../src/renderer/lib/chat'
@@ -128,5 +131,48 @@ describe('lists and labels', () => {
       { id: 'c2020x', title: 'Gamma', suggested: true },
       { id: 'a2020x', title: 'Alpha', suggested: false }
     ])
+  })
+})
+
+describe('markers inside code', () => {
+  it('leaves markers in code spans and fenced blocks as written, keeping the chip numbering of the rest', () => {
+    const md = 'See `[[a|p. 1|"x"]]` and [[b|p. 2|"y"]].\n\n```\n[[c|p. 3|"z"]]\n```\n\nThen [[d|"w"]].'
+    expect(withCitationLinks(md)).toBe('See `[[a|p. 1|"x"]]` and [b, p. 2](#cite-1).\n\n```\n[[c|p. 3|"z"]]\n```\n\nThen [d](#cite-3).')
+  })
+
+  it('treats an unclosed fence as code to the end and an unmatched backtick as text', () => {
+    expect(withCitationLinks('`odd [[a|"x"]]')).toBe('`odd [a](#cite-0)')
+    expect(withCitationLinks('~~~\n[[a|"x"]]')).toBe('~~~\n[[a|"x"]]')
+    expect(withCitationLinks('``co`de [[a|"x"]]`` [[b|"y"]]')).toBe('``co`de [[a|"x"]]`` [b](#cite-1)')
+  })
+})
+
+describe('which stream updates a conversation takes', () => {
+  const gate = { chatId: 'c', awaitingNew: false, seenSeq: 5, running: true }
+
+  it('ignores other conversations and anything not newer than what it has seen', () => {
+    expect(streamAction(gate, { ...up(6, { kind: 'delta', text: 'x' }), chatId: 'other' })).toBe('ignore')
+    expect(streamAction(gate, up(5, { kind: 'delta', text: 'x' }))).toBe('ignore')
+    expect(streamAction(gate, up(6, { kind: 'delta', text: 'x' }))).toBe('apply')
+  })
+
+  it('asks for a snapshot when the middle of an answer arrives with nothing running', () => {
+    const idle = { ...gate, running: false }
+    for (const kind of ['delta', 'turn', 'tool']) expect(streamAction(idle, up(6, { kind, text: '', name: 'n' }))).toBe('resync')
+    for (const kind of ['start', 'done', 'stopped', 'error']) expect(streamAction(idle, up(6, { kind, error: 'e' }))).toBe('apply')
+  })
+
+  it('keeps the updates of a conversation being created until its id is known', () => {
+    expect(streamAction({ ...gate, chatId: null, awaitingNew: true }, up(1, { kind: 'error', error: 'e' }))).toBe('buffer')
+    expect(streamAction({ ...gate, chatId: null }, up(1, { kind: 'start' }))).toBe('ignore')
+    const buffered = [{ ...up(3, { kind: 'error', error: 'e' }), chatId: 'n' }, { ...up(2, { kind: 'start' }), chatId: 'n' }, up(1, { kind: 'start' })]
+    expect(takeBuffered(buffered, 'n').map((u) => u.seq)).toEqual([2, 3])
+  })
+})
+
+describe('auto-scroll', () => {
+  it('follows the answer only when the reader is at the bottom', () => {
+    expect(isNearBottom({ scrollTop: 560, scrollHeight: 1000, clientHeight: 400 })).toBe(true)
+    expect(isNearBottom({ scrollTop: 300, scrollHeight: 1000, clientHeight: 400 })).toBe(false)
   })
 })

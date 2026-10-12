@@ -222,6 +222,7 @@ describe('es.json covers every code the UI can receive', () => {
       'tools_other',
       'stopped',
       'stopped_empty',
+      'empty_answer',
       'unanswered',
       'answer_cost',
       'unverified_one',

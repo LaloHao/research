@@ -2,11 +2,22 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ActionResult } from '../../../shared/ipc'
 import type { PaperDetail } from '../../../shared/library'
-import type { ChatCitation, ChatConversation, ChatExcerpt, ChatScope } from '../../../shared/chat'
+import type { ChatCitation, ChatConversation, ChatExcerpt, ChatScope, ChatStreamUpdate } from '../../../shared/chat'
 import { LLM_MODELS, type LlmModel } from '../../../shared/summary'
 import { useChatStream } from '../../hooks/useChatStream'
 import { useEvent } from '../../hooks/useEvent'
-import { applyUpdate, chatTitle, composerAction, costText, hidePartialMarker, liveFromPartial, type LiveAnswer } from '../../lib/chat'
+import {
+  applyUpdate,
+  chatTitle,
+  composerAction,
+  costText,
+  hidePartialMarker,
+  isNearBottom,
+  liveFromPartial,
+  streamAction,
+  takeBuffered,
+  type LiveAnswer
+} from '../../lib/chat'
 import { errorText } from '../../lib/errorText'
 import { EvidencePanel, type Picked } from '../review/EvidencePanel'
 import { AnswerMarkdown, AnswerView, ExcerptChip, UserMessageView } from './ChatMessage'
@@ -25,7 +36,8 @@ interface ConversationProps {
   onDeleted: () => void
 }
 
-type ErrorState = { text: string; retry?: () => void }
+/** `retrySend`: a refused send; «Reintentar» sends what the composer holds now. */
+type ErrorState = { text: string; retrySend?: boolean }
 
 export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptChange, onCreated, onDeleted }: ConversationProps): React.JSX.Element {
   const { t } = useTranslation()
@@ -48,12 +60,23 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
   const runningRef = useRef(false)
   /** A snapshot was asked for because an update arrived mid-answer with nothing to apply it to. */
   const resyncing = useRef(false)
+  /** A new conversation's first message is being sent; its updates wait in `buffered` until its id is known. */
+  const awaitingNew = useRef(false)
+  const buffered = useRef<ChatStreamUpdate[]>([])
+  /** The user picked a model for the new conversation: the project's model no longer replaces it. */
+  const modelTouched = useRef(false)
+  /** The reader is at the bottom of the messages: new text keeps them there. */
+  const stick = useRef(true)
+  const messagesRef = useRef<HTMLDivElement>(null)
+  /** The id of the conversation this component's first message just created, until the prop catches up. */
+  const createdId = useRef<string | null>(null)
+  if (chatId !== null) createdId.current = null
   const idRef = useRef(chatId)
-  idRef.current = chatId
-  const endRef = useRef<HTMLDivElement>(null)
+  idRef.current = chatId ?? createdId.current
 
   const load = useCallback(() => {
     const token = ++loadSeq.current
+    const chatId = idRef.current
     if (!chatId) {
       resyncing.current = false
       setChat(null)
@@ -86,8 +109,8 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
         setLoadError(errorText(t, 'unknown'))
       }
     )
-  }, [chatId, t])
-  useEffect(load, [load])
+  }, [t])
+  useEffect(load, [chatId, load])
   useEvent('chats-changed', load)
   // Another project (or its settings): whatever was streaming belongs to the old state.
   useEvent('project-changed', () => {
@@ -97,15 +120,16 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
     load()
   })
   useEffect(() => {
-    if (!chatId) setModel(defaultModel)
+    if (!chatId && !modelTouched.current) setModel(defaultModel)
   }, [chatId, defaultModel])
-  useChatStream((u) => {
-    // Only this conversation's updates, in order: sequence numbers rise across every answer of the session.
-    if (u.chatId !== idRef.current || u.seq <= seenSeq.current) return
-    if (u.kind === 'start') {
-      runningRef.current = true
-    } else if (!runningRef.current && (u.kind === 'delta' || u.kind === 'turn' || u.kind === 'tool')) {
-      // Mid-answer with no snapshot yet (a conversation just created or opened): the snapshot brings the text so far.
+  const handleUpdate = (u: ChatStreamUpdate): void => {
+    const action = streamAction({ chatId: idRef.current, awaitingNew: awaitingNew.current, seenSeq: seenSeq.current, running: runningRef.current }, u)
+    if (action === 'ignore') return
+    if (action === 'buffer') {
+      buffered.current.push(u)
+      return
+    }
+    if (action === 'resync') {
       if (!resyncing.current) {
         resyncing.current = true
         load()
@@ -113,33 +137,44 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
       return
     }
     seenSeq.current = u.seq
+    if (u.kind === 'start') runningRef.current = true
     setLive((current) => applyUpdate(current, u))
     if (u.kind === 'done' || u.kind === 'stopped' || u.kind === 'error') {
       runningRef.current = false
       setStopping(false)
       load()
     }
-  })
-  useEffect(() => endRef.current?.scrollIntoView({ block: 'end' }), [chat?.messages.length, live?.text])
+  }
+  useChatStream(handleUpdate)
+  useEffect(() => {
+    const el = messagesRef.current
+    if (el && stick.current) el.scrollTop = el.scrollHeight
+  }, [chat?.messages.length, live?.text, live?.status])
 
   const running = live?.status === 'running'
   const summary = chat?.summary ?? null
-  const fail = (text: string, retry?: () => void): void => {
+  const fail = (text: string, retrySend?: boolean): void => {
     setPending(false)
-    setError({ text, retry })
+    setError({ text, retrySend })
   }
 
   /** A header action: one request at a time; the list and the conversation reload on chats-changed. */
-  const act = (action: () => Promise<ActionResult>, after?: () => void): void => {
+  const act = (action: () => Promise<ActionResult>, after?: () => void, undo?: () => void): void => {
     setPending(true)
     setError(null)
     action().then(
       (r) => {
         setPending(false)
-        if (!r.ok) return setError({ text: errorText(t, r.error) })
+        if (!r.ok) {
+          undo?.()
+          return setError({ text: errorText(t, r.error) })
+        }
         after?.()
       },
-      () => fail(errorText(t, 'unknown'))
+      () => {
+        undo?.()
+        fail(errorText(t, 'unknown'))
+      }
     )
   }
 
@@ -150,16 +185,38 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
     setError(null)
     // A failed answer's banner goes; the new answer's updates replace it.
     setLive((current) => (current?.status === 'running' ? current : null))
+    stick.current = true
+    const creating = chatId === null
+    if (creating) {
+      awaitingNew.current = true
+      buffered.current = []
+    }
+    const settleNew = (): ChatStreamUpdate[] => {
+      const pendingUpdates = buffered.current
+      awaitingNew.current = false
+      buffered.current = []
+      return pendingUpdates
+    }
     window.research.chats.send({ chatId, scope: summary?.scope ?? scope, model, text, excerpt }).then(
       (r) => {
-        if (!r.ok) return fail(errorText(t, r.error), send)
+        const pendingUpdates = creating ? settleNew() : []
+        if (!r.ok) return fail(errorText(t, r.error), true)
         setPending(false)
         setDraft('')
         onExcerptChange(null)
-        if (r.chatId !== chatId) onCreated(r.chatId)
-        else load()
+        if (creating) {
+          // The same component goes on showing the new conversation: its first answer's updates (a quick failure
+          // included) are applied here rather than lost to a remount.
+          createdId.current = r.chatId
+          idRef.current = r.chatId
+          takeBuffered(pendingUpdates, r.chatId).forEach(handleUpdate)
+          onCreated(r.chatId)
+        } else load()
       },
-      () => fail(errorText(t, 'unknown'), send)
+      () => {
+        if (creating) settleNew()
+        fail(errorText(t, 'unknown'), true)
+      }
     )
   }
 
@@ -182,8 +239,10 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
   }
 
   const changeModel = (next: LlmModel): void => {
+    const previous = model
+    modelTouched.current = true
     setModel(next)
-    if (chatId) act(() => window.research.chats.setModel(chatId, next))
+    if (chatId) act(() => window.research.chats.setModel(chatId, next), undefined, () => setModel(previous))
   }
 
   const openCitation = useCallback(
@@ -259,13 +318,14 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
             )}
           </div>
           {confirmDelete && summary && (
-            <div className="banner warning">
+            <div className="banner warning" role="alertdialog" aria-label={t('chat.delete')}>
               <span>{t('chat.delete_confirm', { title: chatTitle(t, summary) })}</span>
               {/* The only call that passes `confirmed`: the user answered the question above. */}
               <button className="small" disabled={pending || running} onClick={() => act(() => window.research.chats.remove(summary.id, true), onDeleted)}>
                 {t('chat.delete_yes')}
               </button>
-              <button className="small" onClick={() => setConfirmDelete(false)}>
+              {/* Focus lands on the safe choice: Enter on a freshly shown question never deletes. */}
+              <button className="small" autoFocus onClick={() => setConfirmDelete(false)}>
                 {t('chat.cancel')}
               </button>
             </div>
@@ -273,8 +333,18 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
           {summary?.paperState === 'trash' && <div className="banner warning">{t('chat.paper_in_trash_banner')}</div>}
           {summary?.paperState === 'missing' && <div className="banner warning">{t('chat.paper_missing_banner')}</div>}
         </header>
-        <div className="chat-messages">
-          {loadError && <div className="banner error">{loadError}</div>}
+        <div
+          className="chat-messages"
+          ref={messagesRef}
+          onScroll={(e) => {
+            stick.current = isNearBottom(e.currentTarget)
+          }}
+        >
+          {loadError && (
+            <div className="banner error" role="alert">
+              {loadError}
+            </div>
+          )}
           {!chatId && !live && <p className="muted">{t(scope === 'library' ? 'chat.intro_library' : 'chat.intro_paper')}</p>}
           {chat?.messages.map((m, i) =>
             m.role === 'user' ? (
@@ -286,6 +356,7 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
                 index={i}
                 message={m}
                 scopePaper={scopePaper}
+                scopePaperTitle={summary?.paperTitle ?? null}
                 savesToOwnPaper={savesToOwnPaper}
                 onOpenCitation={openCitation}
               />
@@ -293,7 +364,7 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
           )}
           {running && (
             <div className="chat-message assistant live">
-              <div className="chat-message-head muted small">
+              <div className="chat-message-head muted small" role="status">
                 {t('chat.thinking')}
                 {live.tools > 0 && <> · {t('chat.tools', { count: live.tools })}</>}
               </div>
@@ -301,7 +372,7 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
             </div>
           )}
           {showRetry && (
-            <div className="banner error">
+            <div className="banner error" role="alert">
               <span>{live?.error ? errorText(t, live.error) : t('chat.unanswered')}</span>
               <button className="small" disabled={pending} onClick={retry}>
                 {t('chat.retry')}
@@ -309,16 +380,15 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
             </div>
           )}
           {error && (
-            <div className="banner error">
+            <div className="banner error" role="alert">
               <span>{error.text}</span>
-              {error.retry && (
-                <button className="small" disabled={pending} onClick={error.retry}>
+              {error.retrySend && (
+                <button className="small" disabled={pending || running || !draft.trim()} onClick={send}>
                   {t('chat.retry')}
                 </button>
               )}
             </div>
           )}
-          <div ref={endRef} />
         </div>
         <div className="chat-composer">
           {excerpt && <ExcerptChip excerpt={excerpt} onRemove={() => onExcerptChange(null)} />}

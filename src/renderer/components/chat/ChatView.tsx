@@ -39,20 +39,32 @@ export function ChatView(): React.JSX.Element {
   useEvent('chats-changed', refresh)
   useEvent('project-changed', refresh)
 
+  /** Bumped when the user opens another conversation or a new one; a conversation created by its first message keeps its instance. */
+  const [session, setSession] = useState(0)
   const startNew = useCallback(() => {
     setSelected(null)
     setExcerpt(null)
+    setSession((n) => n + 1)
+  }, [])
+  const select = useCallback((id: string) => {
+    setSelected(id)
+    setExcerpt(null)
+    setSession((n) => n + 1)
   }, [])
   const papers = useMemo(() => paperFilterOptions(all), [all])
 
   return (
     <div className="chat-view">
       <div className="chat-side">
-        {error && <div className="banner error">{error}</div>}
+        {error && (
+          <div className="banner error" role="alert">
+            {error}
+          </div>
+        )}
         <ChatList
           list={list}
           selected={selected}
-          onSelect={setSelected}
+          onSelect={select}
           onNew={startNew}
           query={query}
           onQueryChange={setQuery}
@@ -62,9 +74,12 @@ export function ChatView(): React.JSX.Element {
           filtered={Boolean(query.trim() || paper) && all.length > 0}
         />
       </div>
-      {/* Keyed by the conversation: its draft, live answer and side panel never leak into another one. */}
+      {/*
+        Keyed by what the user opened: a draft, live answer or side panel never leaks into another conversation, and a
+        new one stays mounted while its first message creates it, so its first answer's updates are not lost.
+      */}
       <Conversation
-        key={selected ?? 'new'}
+        key={session}
         chatId={selected}
         scope="library"
         defaultModel={defaultModel}

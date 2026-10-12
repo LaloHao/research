@@ -666,6 +666,7 @@
     "tools_other": "consultó la biblioteca {{count}} veces",
     "stopped": "respuesta detenida",
     "stopped_empty": "Se detuvo antes de escribir nada.",
+    "empty_answer": "La respuesta llegó vacía.",
     "unanswered": "Esta pregunta quedó sin respuesta.",
     "answer_cost": "{{model}} · {{cost}}",
     "unverified_one": "{{count}} cita sin verificar",

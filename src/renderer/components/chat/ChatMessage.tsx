@@ -39,13 +39,14 @@ export function AnswerMarkdown({
         const c = citations?.[index]
         // A citation of a paper in the trash or unknown only shows its state.
         const openable = Boolean(c && onOpenCitation && (c.state === 'found' || c.state === 'not_found'))
+        // aria-disabled rather than disabled: a chip that cannot open stays focusable, so its quote can be read.
         return (
           <button
             type="button"
             className={citationClass(c)}
             title={c ? t('chat.quoted', { quote: c.quote }) : undefined}
-            disabled={!openable}
-            onClick={() => c && onOpenCitation?.(c)}
+            aria-disabled={!openable || undefined}
+            onClick={() => openable && c && onOpenCitation?.(c)}
           >
             {children}
             {c && c.state !== 'found' && <span className="cite-state"> · {t(`chat.citation.${c.state}`)}</span>}
@@ -98,6 +99,8 @@ interface AnswerViewProps {
   message: AssistantView
   /** The paper of a paper chat (null in the library chat): suggested first when the user picks where to save. */
   scopePaper: string | null
+  /** The scope paper's title while it is in the library. */
+  scopePaperTitle: string | null
   /** A paper chat whose paper is in the library: «Guardar en notas del paper» saves there without asking. */
   savesToOwnPaper: boolean
   onOpenCitation: (c: ChatCitation) => void
@@ -106,7 +109,7 @@ interface AnswerViewProps {
 type NoteOption = { id: string; title: string; suggested: boolean }
 
 /** One answer with its chips, cost and the three actions; none writes without a click. */
-export function AnswerView({ chatId, index, message, scopePaper, savesToOwnPaper, onOpenCitation }: AnswerViewProps): React.JSX.Element {
+export function AnswerView({ chatId, index, message, scopePaper, scopePaperTitle, savesToOwnPaper, onOpenCitation }: AnswerViewProps): React.JSX.Element {
   const { t } = useTranslation()
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
@@ -155,15 +158,15 @@ export function AnswerView({ chatId, index, message, scopePaper, savesToOwnPaper
     )
   }
   /** `picked`: the paper the user chose; without it a paper chat saves to its own paper. */
-  const save = (picked?: string): void => {
+  const save = (picked?: NoteOption): void => {
     setBusy(true)
     setError(null)
-    window.research.chats.saveToNotes(chatId, index, picked).then(
+    window.research.chats.saveToNotes(chatId, index, picked?.id).then(
       (r) => {
         if (!r.ok) return failed(r.error)
         setBusy(false)
         setOptions(null)
-        flash(t('chat.saved_notes', { paper: picked ?? scopePaper ?? '' }))
+        flash(t('chat.saved_notes', { paper: picked?.title ?? scopePaperTitle ?? scopePaper ?? '' }))
       },
       () => failed('unknown')
     )
@@ -192,7 +195,7 @@ export function AnswerView({ chatId, index, message, scopePaper, savesToOwnPaper
       {message.text ? (
         <AnswerMarkdown text={message.text} citations={message.citations} onOpenCitation={onOpenCitation} />
       ) : (
-        <p className="muted">{t('chat.stopped_empty')}</p>
+        <p className="muted">{t(message.stopped ? 'chat.stopped_empty' : 'chat.empty_answer')}</p>
       )}
       {message.unverified > 0 && <p className="small warning-text">{t('chat.unverified', { count: message.unverified })}</p>}
       <div className="row small chat-actions">
@@ -210,7 +213,9 @@ export function AnswerView({ chatId, index, message, scopePaper, savesToOwnPaper
         >
           {t('chat.copy_bibtex')}
         </button>
-        {notice && <span className="muted">{notice}</span>}
+        <span className="muted" role="status">
+          {notice}
+        </span>
       </div>
       {options && (
         <div className="row small chat-actions">
@@ -224,7 +229,7 @@ export function AnswerView({ chatId, index, message, scopePaper, savesToOwnPaper
               ))}
             </select>
           </label>
-          <button className="small primary" disabled={busy || !target} onClick={() => save(target)}>
+          <button className="small primary" disabled={busy || !target} onClick={() => save(options.find((o) => o.id === target))}>
             {t('chat.save_notes_confirm')}
           </button>
           <button className="small" onClick={() => setOptions(null)}>
@@ -232,7 +237,11 @@ export function AnswerView({ chatId, index, message, scopePaper, savesToOwnPaper
           </button>
         </div>
       )}
-      {error && <div className="banner error">{error}</div>}
+      {error && (
+        <div className="banner error" role="alert">
+          {error}
+        </div>
+      )}
     </div>
   )
 }
