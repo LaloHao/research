@@ -36,4 +36,13 @@ describe('FacetSuggestionsFileSchema', () => {
     expect(FacetSuggestionSchema.safeParse(aliasSuggestion({ from: [] })).success).toBe(false)
     expect(FacetSuggestionsFileSchema.safeParse({ schema_version: 2, suggestions: [] }).success).toBe(false)
   })
+
+  it('lets a decided suggestion keep its original id after an edit, but only of its own kind and facet', () => {
+    const edited = newFacetSuggestion({ id: 'new_facet__data_source', facet: { key: 'data_origin', type: 'text', description: 'd' } })
+    expect(FacetSuggestionSchema.safeParse(edited).success).toBe(false)
+    expect(FacetSuggestionSchema.safeParse({ ...edited, status: 'accepted' }).success).toBe(true)
+    expect(FacetSuggestionSchema.safeParse(newValueSuggestion({ id: 'new_value__data_type__metrics', value: 'x', status: 'rejected' })).success).toBe(true)
+    expect(FacetSuggestionSchema.safeParse(newValueSuggestion({ id: 'new_value__task__metrics', status: 'accepted' })).success).toBe(false)
+    expect(FacetSuggestionSchema.safeParse(aliasSuggestion({ id: 'new_value__sanitization_technique__x', status: 'accepted' })).success).toBe(false)
+  })
 })
