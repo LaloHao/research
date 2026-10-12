@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
+import { mergeDecisionsText, mergeProtocolText, mergeRecordsText, mergeSearchesText, mergeSuggestionsText } from '../../../src/main/mapping/mappingMerge'
 import { toYaml } from '../../../src/main/project/yamlFile'
 import { keepOurs, mergeCostsText, mergeFacetSuggestionsText, mergeProjectText, mergeRelationsText, mergerFor, mergeTrashedText } from '../../../src/main/sync/mergers'
 import type { FacetSuggestion } from '../../../src/shared/facetSuggestions'
@@ -24,6 +25,13 @@ describe('mergerFor', () => {
     for (const path of ['papers/he2017drain/summary.md', 'papers/he2017drain/notes.md', 'papers/x/relations.yaml', 'costs/../x.jsonl', 'notes.md']) {
       expect(mergerFor(path)).toBeNull()
     }
+    const dir = 'mappings/20261012-090000-a1b2'
+    expect(mergerFor(`${dir}/protocol.yaml`)).toBe(mergeProtocolText)
+    expect(mergerFor(`${dir}/searches.yaml`)).toBe(mergeSearchesText)
+    expect(mergerFor(`${dir}/records.yaml`)).toBe(mergeRecordsText)
+    expect(mergerFor(`${dir}/decisions.yaml`)).toBe(mergeDecisionsText)
+    expect(mergerFor(`${dir}/suggestions.yaml`)).toBe(mergeSuggestionsText)
+    for (const path of ['mappings/x/decisions.yaml', `${dir}/notes.yaml`, `${dir}/sub/decisions.yaml`]) expect(mergerFor(path)).toBeNull()
   })
 })
 

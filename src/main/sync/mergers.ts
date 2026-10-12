@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util'
 import { parse } from 'yaml'
 import { FacetSuggestionsFileSchema, type FacetSuggestion, type FacetSuggestionsFile, type LastRun } from '../../shared/facetSuggestions'
+import { mergeDecisionsText, mergeProtocolText, mergeRecordsText, mergeSearchesText, mergeSuggestionsText } from '../mapping/mappingMerge'
 import { TrashedFileSchema } from '../../shared/trash'
 import { RelationsFileSchema, type TypedRelation } from '../../shared/typedRelations'
 import { sortSuggestions } from '../project/facetSuggestionsFile'
@@ -224,7 +225,12 @@ const MERGERS: [RegExp, Merger][] = [
   [/^costs\/[A-Za-z0-9-]+\.jsonl$/, mergeCostsText],
   [/^project\.yaml$/, mergeProjectText],
   [/^\.trash\/[a-z][a-z0-9]*\/trashed\.yaml$/, mergeTrashedText],
-  [/^exports\/library\.bib$/, keepOurs]
+  [/^exports\/library\.bib$/, keepOurs],
+  [/^mappings\/[0-9]{8}-[0-9]{6}-[0-9a-f]{4}\/protocol\.yaml$/, mergeProtocolText],
+  [/^mappings\/[0-9]{8}-[0-9]{6}-[0-9a-f]{4}\/searches\.yaml$/, mergeSearchesText],
+  [/^mappings\/[0-9]{8}-[0-9]{6}-[0-9a-f]{4}\/records\.yaml$/, mergeRecordsText],
+  [/^mappings\/[0-9]{8}-[0-9]{6}-[0-9a-f]{4}\/decisions\.yaml$/, mergeDecisionsText],
+  [/^mappings\/[0-9]{8}-[0-9]{6}-[0-9a-f]{4}\/suggestions\.yaml$/, mergeSuggestionsText]
 ]
 
 /** The merger for a file at `relPath` inside the project folder; null: a conflict there is the user's decision. */

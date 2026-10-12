@@ -11,6 +11,7 @@ import type { ConflictChoice } from '../../../src/shared/sync'
 import type { TypedRelation } from '../../../src/shared/typedRelations'
 import { assistantMessage, CHAT_ID_A, chatFile, userMessage } from '../../helpers/chats'
 import { applyFiles, commitAll, trashOnDisk, twoMachines, type Machines } from '../../helpers/git'
+import { decision, hexId, protocolBody, protocolFile, record } from '../../helpers/mappings'
 import { typedRelation } from '../../helpers/relations'
 
 type Edit = (project: string, repoRoot: string) => Promise<void>
@@ -49,6 +50,40 @@ const trashed = (at: string): string => `schema_version: 1\ntrashed_at: '${at}'\
 const PAPER = 'schema_version: 1\nid: k\ntitle: Kernel paper\n'
 
 describe('planMerge', () => {
+  it('merges the decisions and records two machines added to a mapping, with no decision for the user', async () => {
+    const dir = 'mappings/20261012-090000-a1b2'
+    const d1 = decision()
+    const onA = decision({ id: hexId('d', 2), replaces: [d1.id], at: '2026-10-12T10:05:00.000Z' })
+    const onB = decision({ id: hexId('d', 3), record: hexId('r', 2), at: '2026-10-12T10:06:00.000Z' })
+    const r2 = record({ id: hexId('r', 2), title: 'Another work', identifiers: {}, added_at: '2026-10-12T10:00:00.000Z', updated_at: '2026-10-12T10:00:00.000Z' })
+    const yaml = (key: string, list: unknown[]): string => toYaml({ schema_version: 1, [key]: list })
+    const { plan, file } = await diverged(
+      { [`${dir}/decisions.yaml`]: yaml('decisions', [d1]), [`${dir}/records.yaml`]: yaml('records', [record()]) },
+      (p) => applyFiles(p, { [`${dir}/decisions.yaml`]: yaml('decisions', [d1, onA]), [`${dir}/records.yaml`]: yaml('records', [record(), r2]) }),
+      (p) => applyFiles(p, { [`${dir}/decisions.yaml`]: yaml('decisions', [d1, onB]), [`${dir}/records.yaml`]: yaml('records', [record({ paper_id: 'he2017drain', updated_at: '2026-10-12T11:00:00.000Z' })]) })
+    )
+    const tree = clean(await plan())
+    expect((parse((await file(tree, `${dir}/decisions.yaml`))!) as { decisions: { id: string }[] }).decisions.map((d) => d.id)).toEqual([d1.id, onA.id, onB.id])
+    const records = (parse((await file(tree, `${dir}/records.yaml`))!) as { records: { id: string; paper_id: string | null }[] }).records
+    expect(records.map((r) => [r.id, r.paper_id])).toEqual([
+      [hexId('r', 1), 'he2017drain'],
+      [hexId('r', 2), null]
+    ])
+  })
+
+  it('makes a protocol both machines changed differently the user’s decision', async () => {
+    const path = 'mappings/20261012-090000-a1b2/protocol.yaml'
+    const edited = (objective: string): string => toYaml(protocolFile({ updated_at: '2026-10-12T11:00:00.000Z' }, protocolBody({ objective })))
+    const { plan, file } = await diverged(
+      { [path]: toYaml(protocolFile()) },
+      (p) => applyFiles(p, { [path]: edited('From A.') }),
+      (p) => applyFiles(p, { [path]: edited('From B.') })
+    )
+    const pending = await plan()
+    expect(pending.kind === 'decisions' && pending.conflicts.map((c) => c.id)).toEqual([`file:${path}`])
+    expect((parse((await file(clean(await plan({ [`file:${path}`]: 'theirs' })), path))!) as { protocol: { objective: string } }).protocol.objective).toBe('From A.')
+  })
+
   it('keeps a conversation continued differently on both machines twice, and one deleted here but continued there', async () => {
     const base = renderChat(chatFile())
     const other = '20261011-110000-c3d4'
