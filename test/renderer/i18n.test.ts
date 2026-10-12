@@ -14,6 +14,7 @@ import { TRASH_PROBLEMS } from '../../src/shared/trash'
 import { CONFLICT_SIDES, SYNC_ERROR_CODES } from '../../src/shared/sync'
 import { SYNC_STATES } from '../../src/renderer/lib/sync'
 import { FACET_SUGGESTION_KINDS, SUGGESTION_VALIDITIES } from '../../src/shared/facetSuggestions'
+import { CITATION_STATES } from '../../src/shared/chat'
 
 const lookup = (path: string): unknown => path.split('.').reduce<unknown>((node, key) => (node as Record<string, unknown> | undefined)?.[key], es)
 const JOB_STATES: JobState[] = ['queued', 'running', 'done', 'failed', 'cancelled']
@@ -181,7 +182,66 @@ describe('es.json covers every code the UI can receive', () => {
     'facets.file.conflict',
     'facets.file.invalid',
     'settings.tabs.form_count',
-    ...['auto_suggest_facets', 'auto_suggest_facets_help', 'auto_suggest_facets_after', 'budget_facets'].map((k) => `settings.${k}`)
+    ...['auto_suggest_facets', 'auto_suggest_facets_help', 'auto_suggest_facets_after', 'budget_facets'].map((k) => `settings.${k}`),
+    ...CITATION_STATES.map((s) => `chat.citation.${s}`),
+    ...[
+      'new',
+      'search_placeholder',
+      'paper_filter_all',
+      'library_scope',
+      'archived_one',
+      'archived_other',
+      'empty',
+      'no_results',
+      'intro_library',
+      'intro_paper',
+      'copy_title',
+      'other_machine',
+      'problem',
+      'about_paper',
+      'paper_in_trash_banner',
+      'paper_missing_banner',
+      'model',
+      'total_cost',
+      'rename',
+      'rename_save',
+      'archive',
+      'unarchive',
+      'delete',
+      'delete_confirm',
+      'delete_yes',
+      'cancel',
+      'you',
+      'claude',
+      'placeholder',
+      'send',
+      'stop',
+      'retry',
+      'thinking',
+      'tools_one',
+      'tools_other',
+      'stopped',
+      'stopped_empty',
+      'unanswered',
+      'answer_cost',
+      'unverified_one',
+      'unverified_other',
+      'quoted',
+      'copy',
+      'copied',
+      'save_notes',
+      'save_notes_pick',
+      'save_notes_confirm',
+      'cited_option',
+      'saved_notes',
+      'copy_bibtex',
+      'copied_bibtex',
+      'no_citations',
+      'excerpt',
+      'excerpt_no_page',
+      'remove_excerpt',
+      'close_evidence'
+    ].map((k) => `chat.${k}`)
   ])('%s', (path) => {
     expect(typeof lookup(path)).toBe('string')
   })

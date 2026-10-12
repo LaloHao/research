@@ -6,6 +6,7 @@ import { railAction, syncIndicator } from '../lib/sync'
 const ITEMS: { view: View; icon: string }[] = [
   { view: 'library', icon: '📚' },
   { view: 'map', icon: '🕸' },
+  { view: 'chat', icon: '💬' },
   { view: 'trash', icon: '🗑' }
 ]
 
