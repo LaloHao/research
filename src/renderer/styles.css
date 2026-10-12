@@ -316,6 +316,14 @@ button.danger { color: var(--error); border-color: var(--error); }
 .cite-pending { background: var(--border); color: var(--muted); }
 .warning-text { color: var(--warning); }
 .chat-excerpt { margin: 0 0 6px; padding: 4px 8px; border-left: 3px solid var(--accent); display: flex; flex-direction: column; gap: 2px; }
+.chat-tool-switch { display: inline-flex; gap: 4px; align-items: center; }
+.chat-action { max-width: 760px; border-left: 3px solid var(--border); padding: 4px 10px; display: flex; flex-direction: column; gap: 2px; }
+.chat-action p { margin: 0; }
+.chat-action-denied, .chat-action-failed { border-left-color: var(--warning); }
+.chat-action-undone > p:first-of-type { text-decoration: line-through; }
+.chat-approval { max-width: 760px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent-soft); padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.chat-approval p, .chat-approval ul { margin: 0; }
+.chat-approval-warning { color: var(--warning); }
 .chat-composer { border-top: 1px solid var(--border); padding: 10px 20px; display: flex; flex-direction: column; gap: 6px; }
 .chat-composer textarea { width: 100%; resize: vertical; }
 .chat-evidence { width: 45%; flex-shrink: 0; border-left: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; overflow: auto; }

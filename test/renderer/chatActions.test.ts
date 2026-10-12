@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { TFunction } from 'i18next'
-import { actionKey, actionOutcome, actionText, approvalReason, costLines, minutesLeft } from '../../src/renderer/lib/chatActions'
+import { actionKey, actionOutcome, actionText, approvalReason, costLines, minutesLeft, switchHints } from '../../src/renderer/lib/chatActions'
 import type { ActionMessage } from '../../src/shared/chat'
 
 const t = ((key: string, options?: Record<string, unknown>) => (options ? `${key} ${JSON.stringify(options)}` : key)) as unknown as TFunction
@@ -79,5 +79,13 @@ describe('approval card texts', () => {
     expect(minutesLeft('2026-10-12T10:05:00.000Z', now)).toBe(5)
     expect(minutesLeft('2026-10-12T10:00:20.000Z', now)).toBe(1)
     expect(minutesLeft('2026-10-12T09:59:00.000Z', now)).toBe(1)
+  })
+})
+
+describe('switchHints', () => {
+  it('explains each switch that is on, in the order of the header', () => {
+    expect(switchHints(t, { actions: false, sync: false })).toEqual([])
+    expect(switchHints(t, { actions: true, sync: true })).toEqual(['chat.actions.switch_actions_hint', 'chat.actions.switch_sync_hint'])
+    expect(switchHints(t, { actions: false, sync: true })).toEqual(['chat.actions.switch_sync_hint'])
   })
 })

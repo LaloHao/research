@@ -1,6 +1,6 @@
 import type { TFunction } from 'i18next'
 import type { ActionMessage } from '../../shared/chat'
-import { ACTION_TOOLS, DENIAL_REASONS, UNDO_TOOL, type ActionCost, type ActionRisk, type PendingApproval } from '../../shared/chatActions'
+import { ACTION_TOOLS, DENIAL_REASONS, UNDO_TOOL, type ActionCost, type ActionRisk, type ChatTools, type PendingApproval } from '../../shared/chatActions'
 import { SYNC_ERROR_CODES } from '../../shared/sync'
 import { costText } from './chat'
 import { errorText } from './errorText'
@@ -83,4 +83,9 @@ export function costLines(t: TFunction, c: ActionCost): string[] {
 /** Whole minutes (at least 1) until a pending approval counts as denied. */
 export function minutesLeft(expiresAt: string, now: number): number {
   return Math.max(1, Math.ceil((Date.parse(expiresAt) - now) / 60_000))
+}
+
+/** What each switch that is on lets Claude do, in the order of the header. */
+export function switchHints(t: TFunction, tools: ChatTools): string[] {
+  return [...(tools.actions ? [t('chat.actions.switch_actions_hint')] : []), ...(tools.sync ? [t('chat.actions.switch_sync_hint')] : [])]
 }

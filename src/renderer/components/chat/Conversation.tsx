@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { ActionResult } from '../../../shared/ipc'
 import type { PaperDetail } from '../../../shared/library'
 import type { ChatCitation, ChatConversation, ChatExcerpt, ChatScope, ChatStreamUpdate } from '../../../shared/chat'
+import type { ChatTools } from '../../../shared/chatActions'
 import { LLM_MODELS, type LlmModel } from '../../../shared/summary'
 import { useChatStream } from '../../hooks/useChatStream'
 import { useEvent } from '../../hooks/useEvent'
@@ -18,8 +19,11 @@ import {
   takeBuffered,
   type LiveAnswer
 } from '../../lib/chat'
+import { switchHints } from '../../lib/chatActions'
 import { errorText } from '../../lib/errorText'
 import { EvidencePanel, type Picked } from '../review/EvidencePanel'
+import { ActionRecord } from './ActionRecord'
+import { ApprovalCard } from './ApprovalCard'
 import { AnswerMarkdown, AnswerView, ExcerptChip, UserMessageView } from './ChatMessage'
 
 interface ConversationProps {
@@ -46,6 +50,8 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
   const [live, setLive] = useState<LiveAnswer | null>(null)
   const [draft, setDraft] = useState('')
   const [model, setModel] = useState<LlmModel>(defaultModel)
+  /** «Acciones» and «Sincronizar con git»: a new conversation keeps them here until its first message. */
+  const [tools, setTools] = useState<ChatTools>({ actions: false, sync: false })
   const [pending, setPending] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [error, setError] = useState<ErrorState | null>(null)
@@ -92,6 +98,7 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
         setLoadError(null)
         setChat(r.chat)
         setModel(r.chat.summary.model)
+        setTools({ actions: r.chat.summary.actions, sync: r.chat.summary.sync })
         const partial = r.chat.partial
         if (partial) {
           seenSeq.current = Math.max(seenSeq.current, partial.seq)
@@ -140,6 +147,8 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
     seenSeq.current = u.seq
     if (u.kind === 'start') runningRef.current = true
     setLive((current) => applyUpdate(current, u))
+    // The pending approvals come with the snapshot.
+    if (u.kind === 'approvals') load()
     if (u.kind === 'done' || u.kind === 'stopped' || u.kind === 'error') {
       runningRef.current = false
       setStopping(false)
@@ -154,7 +163,7 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
   useEffect(() => {
     const el = messagesRef.current
     if (el && stick.current) el.scrollTop = el.scrollHeight
-  }, [chat?.messages.length, live?.text, live?.status])
+  }, [chat?.messages.length, chat?.approvals.length, live?.text, live?.status])
 
   const running = live?.status === 'running'
   const summary = chat?.summary ?? null
@@ -202,7 +211,7 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
       buffered.current = []
       return pendingUpdates
     }
-    window.research.chats.send({ chatId, scope: summary?.scope ?? scope, model, text, excerpt }).then(
+    window.research.chats.send({ chatId, scope: summary?.scope ?? scope, model, text, excerpt, actions: tools.actions, sync: tools.sync }).then(
       (r) => {
         const pendingUpdates = creating ? settleNew() : []
         if (!r.ok) return fail(errorText(t, r.error), true)
@@ -248,6 +257,16 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
     modelTouched.current = true
     setModel(next)
     if (chatId) act(() => window.research.chats.setModel(chatId, next), undefined, () => setModel(previous))
+  }
+
+  /**
+   * A switch, each on its own click: a new conversation keeps it until its first message; an existing one saves it now
+   * (reverted on failure). Turning one off while an answer runs is allowed: its pending approvals are denied.
+   */
+  const changeTools = (patch: Partial<ChatTools>): void => {
+    const previous = tools
+    setTools({ ...tools, ...patch })
+    if (chatId) act(() => window.research.chats.setTools(chatId, patch), undefined, () => setTools(previous))
   }
 
   const openCitation = useCallback(
@@ -305,6 +324,14 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
                 ))}
               </select>
             </label>
+            <label className="chat-tool-switch" title={t('chat.actions.switch_actions_hint')}>
+              <input type="checkbox" checked={tools.actions} disabled={pending} onChange={(e) => changeTools({ actions: e.target.checked })} />
+              {t('chat.actions.switch_actions')}
+            </label>
+            <label className="chat-tool-switch" title={t('chat.actions.switch_sync_hint')}>
+              <input type="checkbox" checked={tools.sync} disabled={pending} onChange={(e) => changeTools({ sync: e.target.checked })} />
+              {t('chat.actions.switch_sync')}
+            </label>
             {summary && (
               <>
                 <span className="muted">{t('chat.total_cost', { cost: costText(summary.costUsd) })}</span>
@@ -322,6 +349,11 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
               </>
             )}
           </div>
+          {switchHints(t, tools).map((hint) => (
+            <p key={hint} className="muted small">
+              {hint}
+            </p>
+          ))}
           {confirmDelete && summary && (
             <div className="banner warning" role="alertdialog" aria-label={t('chat.delete')}>
               <span>{t('chat.delete_confirm', { title: chatTitle(t, summary) })}</span>
@@ -365,8 +397,13 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
                 savesToOwnPaper={savesToOwnPaper}
                 onOpenCitation={openCitation}
               />
-            ) : null
+            ) : (
+              <ActionRecord key={i} chatId={chat.summary.id} message={m} />
+            )
           )}
+          {chat?.approvals.map((a) => (
+            <ApprovalCard key={a.id} chatId={chat.summary.id} approval={a} onSettled={load} />
+          ))}
           {running && (
             <div className="chat-message assistant live">
               <div className="chat-message-head muted small" role="status">
