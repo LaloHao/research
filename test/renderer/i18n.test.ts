@@ -15,6 +15,7 @@ import { CONFLICT_SIDES, SYNC_ERROR_CODES } from '../../src/shared/sync'
 import { SYNC_STATES } from '../../src/renderer/lib/sync'
 import { FACET_SUGGESTION_KINDS, SUGGESTION_VALIDITIES } from '../../src/shared/facetSuggestions'
 import { CITATION_STATES } from '../../src/shared/chat'
+import { ACTION_RISKS, ACTION_TOOLS, DENIAL_REASONS } from '../../src/shared/chatActions'
 
 const lookup = (path: string): unknown => path.split('.').reduce<unknown>((node, key) => (node as Record<string, unknown> | undefined)?.[key], es)
 const JOB_STATES: JobState[] = ['queued', 'running', 'done', 'failed', 'cancelled']
@@ -246,7 +247,43 @@ describe('es.json covers every code the UI can receive', () => {
       'excerpt_no_page',
       'remove_excerpt',
       'close_evidence'
-    ].map((k) => `chat.${k}`)
+    ].map((k) => `chat.${k}`),
+    ...ACTION_TOOLS.map((tool) => `chat.actions.tools.${tool}`),
+    ...['undo', 'unknown', 'resolve_proposed_value_accept', 'resolve_proposed_value_map', 'attach_pdf_replace', 'fill_facets_all', 'review_summary_all'].map((k) => `chat.actions.tools.${k}`),
+    ...['confirm', 'reject', 'back_to_suggested', 'change_type', 'reverse', 'accept', 'restore'].map((d) => `chat.actions.decisions.${d}`),
+    ...DENIAL_REASONS.map((r) => `chat.actions.denied.${r}`),
+    ...ACTION_RISKS.map((r) => `chat.actions.risk.${r}`),
+    ...['estimate_one', 'estimate_other', 'cap', 'caps', 'month', 'month_no_cap'].map((k) => `chat.actions.cost.${k}`),
+    ...['ours', 'theirs'].map((c) => `chat.actions.conflict_choice.${c}`),
+    ...[
+      'switch_actions',
+      'switch_actions_hint',
+      'switch_sync',
+      'switch_sync_hint',
+      'record_head',
+      'thesis',
+      'executed_request',
+      'executed_user',
+      'still_running',
+      'undone_by_you',
+      'undone',
+      'failed',
+      'undo',
+      'approval_title',
+      'not_requested',
+      'requested',
+      'limit',
+      'relations_deleted_one',
+      'relations_deleted_other',
+      'replaces_pdf',
+      'approve',
+      'deny',
+      'pick_pdf',
+      'expires_one',
+      'expires_other'
+    ].map((k) => `chat.actions.${k}`),
+    'chat.actions.review_status.verified',
+    'chat.actions.review_status.generated'
   ])('%s', (path) => {
     expect(typeof lookup(path)).toBe('string')
   })
