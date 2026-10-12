@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { agentArgs, ClaudeCliProvider, cliArgs, mcpConfig, parseCliOutput } from '../../../src/main/llm/ClaudeCliProvider'
+import { agentArgs, chatArgs, ClaudeCliProvider, cliArgs, mcpConfig, mcpConfigs, parseCliOutput, parseStreamLine } from '../../../src/main/llm/ClaudeCliProvider'
 import { failedCallCost, LlmError } from '../../../src/main/llm/LlmProvider'
+import type { ChatEvent } from '../../../src/main/llm/LlmProvider'
 import { toUserFacing } from '../../../src/main/library/UserFacingError'
 import { startLibraryMcpServer } from '../../../src/main/mcp/LibraryMcpServer'
 import { stubTools } from '../../helpers/mcp'
@@ -223,5 +224,140 @@ describe('ClaudeCliProvider.runAgent', () => {
     await expect(p.runAgent({ ...agentReq, timeoutMs: 300 })).rejects.toMatchObject({ code: 'llm_timeout', costUsd: 0.5, estimated: true })
     const call = JSON.parse((await readFile(log, 'utf8')).trim().split('\n')[0])
     expect(existsSync(call.args[call.args.indexOf('--mcp-config') + 1])).toBe(false)
+  })
+})
+
+const chatReq = { system: 'sys', input: 'question', model: 'sonnet', maxUsd: 0.5, servers: [mcp], maxTurns: 13 }
+
+describe('chatArgs', () => {
+  it('streams partial messages and allows only the given servers, with no tools, settings or saved session', () => {
+    const args = chatArgs({ ...chatReq, servers: [mcp, { name: 'actions', url: 'http://127.0.0.1:1/mcp', token: 't' }] }, '/tmp/c.json', { ...flags, maxTurns: true })
+    expect(args.slice(0, 3)).toEqual(['-p', '--output-format', 'stream-json'])
+    for (const flag of ['--verbose', '--include-partial-messages', '--strict-mcp-config', '--no-session-persistence']) expect(args).toContain(flag)
+    for (const [flag, value] of [
+      ['--tools', ''],
+      ['--mcp-config', '/tmp/c.json'],
+      ['--allowedTools', 'mcp__library__*,mcp__actions__*'],
+      ['--permission-mode', 'dontAsk'],
+      ['--setting-sources', ''],
+      ['--model', 'sonnet'],
+      ['--max-budget-usd', '0.5'],
+      ['--max-turns', '13'],
+      ['--system-prompt', 'sys']
+    ]) {
+      expect(args[args.indexOf(flag) + 1]).toBe(value)
+    }
+    expect(args).not.toContain('--json-schema')
+    expect(args.some((a) => a.includes('secret-token'))).toBe(false)
+    expect(mcpConfigs([mcp])).toEqual(mcpConfig(mcp))
+  })
+})
+
+describe('parseStreamLine', () => {
+  it('reads turns, tool calls, text and the result from the recorded stream, skipping the rest', async () => {
+    const lines = (await readFile(fileURLToPath(new URL('../../fixtures/llm/chat-stream.jsonl', import.meta.url)), 'utf8')).trim().split('\n')
+    const items = lines.map(parseStreamLine).filter((i) => i !== null)
+    expect(items.map((i) => (i.kind === 'result' ? { kind: 'result', cost: i.output.total_cost_usd } : i))).toEqual([
+      { kind: 'turn' },
+      { kind: 'tool', name: 'search_text' },
+      { kind: 'turn' },
+      { kind: 'delta', text: 'Drain parses ' },
+      { kind: 'delta', text: 'logs online.' },
+      { kind: 'assistant', text: 'Drain parses logs online.' },
+      { kind: 'result', cost: 0.0031 }
+    ])
+    expect(parseStreamLine('not json')).toBeNull()
+    expect(parseStreamLine('[1,2]')).toBeNull()
+  })
+})
+
+describe('ClaudeCliProvider.chat', () => {
+  /**
+   * `stopOnText`: aborted as soon as the first text arrives, like «Detener» while an answer streams. `throwOnEvent`: the
+   * listener throws on every event.
+   */
+  async function run(mode: string, extra: Record<string, string> = {}, opts: { timeoutMs?: number; stopOnText?: boolean; throwOnEvent?: boolean } = {}) {
+    const server = await startLibraryMcpServer(stubTools(), { maxToolCalls: 12, markData: true })
+    const { p, log } = await provider(mode, extra)
+    const events: ChatEvent[] = []
+    const ac = new AbortController()
+    try {
+      const result = await p
+        .chat({ ...chatReq, timeoutMs: opts.timeoutMs, signal: ac.signal, servers: [{ name: 'library', url: server.url, token: server.token }] }, (e) => {
+          events.push(e)
+          if (opts.stopOnText && e.kind === 'delta') ac.abort()
+          if (opts.throwOnEvent) throw new Error('listener broke')
+        })
+        .catch((e: unknown) => e)
+      return { result, events, log, calls: server.calls() }
+    } finally {
+      await server.close()
+    }
+  }
+
+  it('streams the answer, lets the model call the tools and returns the final text, cost and model', async () => {
+    const { result, events, log, calls } = await run('chat', { FAKE_CLAUDE_TOOL_CALLS: JSON.stringify([{ name: 'get_paper', arguments: { paper_id: 'he2017drain' } }]) })
+    expect(result).toEqual({ text: 'Drain parses logs online.', costUsd: 0.02, model: 'claude-sonnet-5' })
+    expect(events).toEqual([
+      { kind: 'turn' },
+      { kind: 'tool', name: 'get_paper' },
+      { kind: 'turn' },
+      { kind: 'delta', text: 'Drain parses ' },
+      { kind: 'delta', text: 'logs online.' }
+    ])
+    expect(calls).toEqual([{ name: 'get_paper', ok: true }])
+    const [call, tools] = (await readFile(log, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    expect(call.input).toBe('question')
+    expect(existsSync(call.args[call.args.indexOf('--mcp-config') + 1])).toBe(false)
+    expect(tools.toolResults[0].content[0].text.startsWith('<library_data>\n')).toBe(true)
+  })
+
+  it('maps an error result like the other runs, keeping its cost', async () => {
+    const { result } = await run('chat_quota')
+    expect(result).toMatchObject({ name: 'LlmError', code: 'llm_quota' })
+  })
+
+  it('stops when cancelled after text arrived, charging the cap as an estimate', async () => {
+    const { result, events } = await run('chat_hang', {}, { stopOnText: true })
+    expect(result).toMatchObject({ name: 'AbortError' })
+    expect(failedCallCost(result)).toEqual({ costUsd: 0.5, estimated: true })
+    // Nothing after the stop reaches the listener, even lines of the chunk being read.
+    expect(events.filter((e) => e.kind === 'delta')).toEqual([{ kind: 'delta', text: 'Drain parses ' }])
+  })
+
+  it('times out like an agent run', async () => {
+    const { result } = await run('chat_hang', {}, { timeoutMs: 300 })
+    expect(result).toMatchObject({ code: 'llm_timeout', costUsd: 0.5, estimated: true })
+  })
+
+  it('keeps streaming and returns the result and cost when the listener throws', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const { result, events } = await run('chat', {}, { throwOnEvent: true })
+      expect(result).toEqual({ text: 'Drain parses logs online.', costUsd: 0.02, model: 'claude-sonnet-5' })
+      expect(events).toEqual([{ kind: 'turn' }, { kind: 'delta', text: 'Drain parses ' }, { kind: 'delta', text: 'logs online.' }])
+      expect(logged).toHaveBeenCalledTimes(3)
+    } finally {
+      logged.mockRestore()
+    }
+  })
+
+  it('reads lines and UTF-8 characters split across chunks, and a last line with no newline', async () => {
+    const { result, events } = await run('chat_split', { FAKE_CLAUDE_DELTAS: JSON.stringify(['Café ', 'costó 5 €.']) })
+    expect(result).toEqual({ text: 'Café costó 5 €.', costUsd: 0.02, model: 'claude-sonnet-5' })
+    expect(events).toEqual([{ kind: 'turn' }, { kind: 'delta', text: 'Café ' }, { kind: 'delta', text: 'costó 5 €.' }])
+  })
+
+  it('charges the cap as an estimate when the CLI dies after streaming, never classifying the streamed text', async () => {
+    const { result } = await run('chat_cut', { FAKE_CLAUDE_DELTAS: JSON.stringify(['The rate limit and quota ', 'of the parser.']) })
+    expect(result).toMatchObject({ name: 'LlmError', code: 'llm_unavailable', costUsd: 0.5, estimated: true })
+  })
+
+  it('charges nothing when the CLI fails before streaming anything', async () => {
+    const { result } = await run('garbage')
+    expect(result).toMatchObject({ name: 'LlmError', code: 'llm_unavailable', costUsd: 0, estimated: false })
   })
 })

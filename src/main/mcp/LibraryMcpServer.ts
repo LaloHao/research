@@ -20,6 +20,8 @@ export interface LibraryMcpOptions {
   /** Tool calls allowed in this run; later calls get an error asking the model to answer. */
   maxToolCalls: number
   maxChars?: number
+  /** Wraps every answer in <library_data> tags; the chat's prompt names them as data, never instructions. */
+  markData?: boolean
 }
 
 export interface LibraryMcpHandle {
@@ -35,6 +37,17 @@ type Run = (name: string, fn: () => Promise<unknown>) => Promise<ToolResult>
 export function truncate(text: string, max = MAX_RESPONSE_CHARS): string {
   if (text.length <= max) return text
   return `${text.slice(0, max)}\n[truncated: ${text.length - max} more characters; ask for less: fewer pages, a narrower query, a lower limit]`
+}
+
+export const DATA_OPEN = '<library_data>'
+export const DATA_CLOSE = '</library_data>'
+
+/**
+ * A tool answer as tagged library data. Anything that could read as a closing tag (any case, spaces around the slash)
+ * gets its slash escaped, so it cannot end the block; `\/` is a valid JSON escape and the rest is left as it was.
+ */
+export function markAsData(text: string): string {
+  return `${DATA_OPEN}\n${text.replace(/<(\s*)\/(\s*)(library_data)/gi, '<$1\\/$2$3')}\n${DATA_CLOSE}`
 }
 
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: 'text', text: t }], ...(isError ? { isError: true } : {}) })
@@ -162,7 +175,8 @@ export async function startLibraryMcpServer(tools: LibraryTools, opts: LibraryMc
     try {
       const value = await fn()
       record.ok = true
-      return text(truncate(typeof value === 'string' ? value : JSON.stringify(value), maxChars))
+      const body = truncate(typeof value === 'string' ? value : JSON.stringify(value), maxChars)
+      return text(opts.markData ? markAsData(body) : body)
     } catch (error) {
       // Only a ToolError's message reaches the model; anything else (a broken model, a file error) stays opaque.
       return text(error instanceof ToolError ? error.message : 'The tool failed.', true)
