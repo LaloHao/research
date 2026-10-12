@@ -63,7 +63,10 @@ describe('FacetSuggestionService', () => {
 
   it('accepting a new facet adds it without making summaries stale, and undo takes it out again', async () => {
     const { s } = await suggested()
+    let projectEvents = 0
+    s.on('project', () => projectEvents++)
     const token = await s.facets.accept(FACET)
+    expect(projectEvents).toBe(1)
     const form = s.summaries.formInfo()
     expect(form.status === 'ok' && form.form.facets.map((f) => f.key)).toContain('data_source')
     expect(s.library.list().map((r) => [r.id, r.summary_status, r.unfilled_facets])).toEqual([
@@ -75,6 +78,7 @@ describe('FacetSuggestionService', () => {
     await s.facets.revert(token)
     const back = s.summaries.formInfo()
     expect(back.status === 'ok' && back.form.facets.some((f) => f.key === 'data_source')).toBe(false)
+    expect(projectEvents).toBe(2)
     expect(s.library.list().every((r) => r.unfilled_facets === 0)).toBe(true)
     expect((await s.facets.list()).pending).toBe(3)
     await expect(s.facets.revert(token)).rejects.toBeInstanceOf(InvalidEdit)
@@ -219,6 +223,61 @@ describe('FacetSuggestionService', () => {
     await expect(s.facets.revert(token)).rejects.toBeInstanceOf(InvalidEdit)
     await s.close()
   })
+
+  it('a decision whose file was written stays made even when reading the file back fails', async () => {
+    const { s } = await suggested()
+    const read = s.store.readFacetSuggestions.bind(s.store)
+    // Fails every second read: the one right after each write (the first read of a decision is its check).
+    let calls = 0
+    const flaky = Object.assign(s.store, {
+      readFacetSuggestions: () => (++calls % 2 === 0 ? Promise.reject(new Error('io error')) : read())
+    })
+    const token = await s.facets.accept(ALIAS)
+    const accepted = await s.store.readExtraction(LOGHUB_ID)
+    expect(accepted?.ok && accepted.value.facets.sanitization_technique).toMatchObject({ values: ['ner', 'rules_regex'] })
+    const form = s.summaries.formInfo()
+    expect(form.status === 'ok' && form.form.value_aliases).toEqual({ sanitization_technique: { regex_rules: 'rules_regex' } })
+    expect((await read())?.ok && (await read())).toMatchObject({ value: { suggestions: expect.arrayContaining([expect.objectContaining({ id: ALIAS, status: 'accepted' })]) } })
+
+    calls = 0
+    await s.facets.revert(token)
+    const back = s.summaries.formInfo()
+    expect(back.status === 'ok' && back.form.value_aliases).toEqual({})
+    expect((await read())?.ok && (await read())).toMatchObject({ value: { suggestions: expect.arrayContaining([expect.objectContaining({ id: ALIAS, status: 'suggested' })]) } })
+    delete (flaky as { readFacetSuggestions?: unknown }).readFacetSuggestions
+    expect(await s.facets.reindexIfChanged()).toBe(true)
+    expect(await statuses(s)).toContainEqual([ALIAS, 'suggested'])
+    await s.close()
+  })
+
+  it('an acceptance overtaken by a form saved meanwhile puts the papers back and keeps that form', async () => {
+    const { s } = await suggested()
+    const drain = await s.store.readExtraction(DRAIN_ID)
+    const loghub = await s.store.readExtraction(LOGHUB_ID)
+    const form = s.summaries.formInfo()
+    if (form.status !== 'ok') throw new Error('no form')
+    const edited = { ...form.form, facets: [...form.form.facets, { key: 'notes_by_hand', type: 'text' as const, description: 'Saved by the form editor' }] }
+    const write = s.store.writeExtraction.bind(s.store)
+    let saved = false
+    const racing = Object.assign(s.store, {
+      writeExtraction: async (...args: Parameters<typeof write>) => {
+        if (!saved) {
+          saved = true
+          await s.summaries.updateForm(edited)
+        }
+        return write(...args)
+      }
+    })
+    await expect(s.facets.accept(ALIAS)).rejects.toMatchObject({ code: 'suggestion_outdated' })
+    delete (racing as { writeExtraction?: unknown }).writeExtraction
+    expect((await s.store.readExtraction(DRAIN_ID))?.hash).toBe(drain?.hash)
+    expect((await s.store.readExtraction(LOGHUB_ID))?.hash).toBe(loghub?.hash)
+    const after = s.summaries.formInfo()
+    expect(after.status === 'ok' && after.form.facets.map((f) => f.key)).toContain('notes_by_hand')
+    expect(after.status === 'ok' && after.form.value_aliases).toEqual({})
+    expect(await statuses(s)).toContainEqual([ALIAS, 'suggested'])
+    await s.close()
+  })
 })
 
 describe('automatic facet suggestions', () => {
@@ -269,5 +328,44 @@ describe('automatic facet suggestions', () => {
     expect(runs(s).map((j) => j.state)).toEqual(['done', 'failed'])
     expect((await s.facets.list()).lastRun).toMatchObject({ ok: true, summarized: 2 })
     await s.close()
+  })
+
+  it('an automatic run cancelled while queued still counts for the day', async () => {
+    const clock = { now: new Date('2026-10-11T09:00:00.000Z') }
+    const s = await auto([facetAgentResult()], clock)
+    // Cancelled the moment it is queued, before the queue starts it.
+    const stop = s.queue.onChange(() => {
+      for (const j of runs(s)) if (j.state === 'queued') s.queue.cancel(j.id)
+    })
+    await summarize(s, DRAIN_ID)
+    await summarize(s, LOGHUB_ID)
+    stop()
+    expect(runs(s).map((j) => j.state)).toEqual(['cancelled'])
+    await summarize(s, DRAIN_ID, true)
+    expect(runs(s)).toHaveLength(1)
+    await s.close()
+  })
+
+  it('an automatic run aborted while running is recorded, so not even a reopened project runs it again that day', async () => {
+    const clock = { now: new Date('2026-10-11T09:00:00.000Z') }
+    const s = await auto([facetAgentResult()], clock)
+    const stop = s.queue.onChange(() => {
+      for (const j of runs(s)) if (j.state === 'running') s.queue.cancel(j.id)
+    })
+    await summarize(s, DRAIN_ID)
+    await summarize(s, LOGHUB_ID)
+    stop()
+    expect(runs(s).map((j) => j.state)).toEqual(['cancelled'])
+    expect((await s.facets.list()).lastRun).toMatchObject({ at: '2026-10-11T09:00:00.000Z', ok: false, summarized: 0 })
+    await summarize(s, DRAIN_ID, true)
+    expect(runs(s)).toHaveLength(1)
+    const root = s.store.root
+    await s.close()
+
+    const llm = new FakeLlmProvider([summary(llmOutputFor(DEFAULT_EXTRACTION_FORM))], [facetAgentResult()])
+    const again = await ProjectSession.open(root, { ...base, llm, now: () => clock.now })
+    await summarize(again, LOGHUB_ID, true)
+    expect(runs(again)).toHaveLength(1)
+    await again.close()
   })
 })

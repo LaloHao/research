@@ -47,6 +47,8 @@ export interface FacetSuggestionServiceDeps {
   /** The suggestions changed (the session's 'facets' event). */
   emit: () => void
   enqueue: (spec: JobSpec) => number
+  /** The saved form changed (an acceptance or its undo): project.yaml was rewritten. */
+  formChanged?: () => void
   now?: () => Date
 }
 
@@ -61,6 +63,11 @@ export class FacetSuggestionService {
   private readonly undo = new Map<string, Undo>()
   /** Decisions and writes of the file run one after another. */
   private queue: Promise<unknown> = Promise.resolve()
+  /**
+   * The UTC day the automatic trigger last queued a run: a run cancelled while still queued never reaches run(), so
+   * last_run alone would let the next summary queue it again the same day.
+   */
+  private autoDay: string | null = null
 
   constructor(private readonly deps: FacetSuggestionServiceDeps) {}
 
@@ -129,11 +136,12 @@ export class FacetSuggestionService {
       await this.mutateFile((f) => ({ ...replaceUnreviewed(f, result.suggestions), last_run: { at, ok: true, summarized, model: result.model } }))
       return { message: 'facets_suggested' }
     } catch (error) {
-      if (opts.signal?.aborted) throw error
-      // Recorded so the automatic trigger waits for the next day; the count of the last successful run stays.
+      // Recorded (also for a cancelled run: any run of the day counts) so the automatic trigger waits for the next day;
+      // the count of the last successful run stays.
       await this.mutateFile((f) => ({ ...f, last_run: { at, ok: false, summarized: f.last_run?.summarized ?? 0 } })).catch((e: unknown) =>
         console.error('facet-suggestions.yaml', e)
       )
+      if (opts.signal?.aborted) throw error
       throw toUserFacing(error)
     } finally {
       if (!opts.signal?.aborted) this.deps.emit()
@@ -143,7 +151,9 @@ export class FacetSuggestionService {
   /**
    * «Aceptar» (or «Editar y aceptar» with `edit`): changes the form, and the papers' proposals for values and aliases.
    * All or nothing: the papers and the form are changed first; if the suggestion file then cannot be written, they are
-   * put back, so a suggestion is never accepted without its form change, nor the other way round.
+   * put back, so a suggestion is never accepted without its form change, nor the other way round. If that put-back
+   * itself fails (it is hash-checked, so it never clobbers a newer change), the error is logged and the suggestion stays
+   * `suggested`; it then shows as no longer applicable and can be rejected.
    */
   accept(id: string, edit?: SuggestionEdit): Promise<string> {
     return this.decide(async (file) => {
@@ -199,7 +209,7 @@ export class FacetSuggestionService {
         const reverse = undo.kind === 'accept' ? await this.deps.summaries.undoFormChange(undo.formBefore, undo.formAfter, undo.changes) : null
         const restored: FacetSuggestion = { ...undo.before, updated_at: this.nowIso() }
         try {
-          await this.write({ ...file, suggestions: file.suggestions.map((s) => (s.id === restored.id ? restored : s)) }, hash)
+          await this.deps.store.writeFacetSuggestions({ ...file, suggestions: file.suggestions.map((s) => (s.id === restored.id ? restored : s)) }, hash)
         } catch (error) {
           if (undo.kind === 'accept' && reverse) {
             try {
@@ -215,6 +225,8 @@ export class FacetSuggestionService {
           }
           throw error
         }
+        // Written: a failing re-read must not undo the decision (the watcher reads the file again later).
+        await this.reindexLogged()
       })
     } catch (error) {
       if (error instanceof InvalidEdit) this.undo.delete(undoToken)
@@ -222,6 +234,7 @@ export class FacetSuggestionService {
     }
     this.undo.delete(undoToken)
     this.deps.emit()
+    if (undo.kind === 'accept') this.deps.formChanged?.()
   }
 
   /**
@@ -238,8 +251,9 @@ export class FacetSuggestionService {
     if (cache.hasActiveJobOfType('suggest_facets')) return
     const day = this.nowIso().slice(0, 10)
     const last = this.current.last_run
-    if (last && last.at.slice(0, 10) === day) return
+    if (this.autoDay === day || (last && last.at.slice(0, 10) === day)) return
     if (this.summarizedCount() - (last?.summarized ?? 0) < llm.auto_suggest_facets_after) return
+    this.autoDay = day
     // The day's automatic batch: its cap is shared with the automatic relation suggestions.
     await this.request({ auto: true, batchId: `auto-${day}` })
   }
@@ -259,14 +273,17 @@ export class FacetSuggestionService {
       const { file, hash } = await this.readFresh()
       const out = await fn(file)
       try {
-        await this.write({ ...file, suggestions: file.suggestions.map((s) => (s.id === out.after.id ? out.after : s)) }, hash)
+        await this.deps.store.writeFacetSuggestions({ ...file, suggestions: file.suggestions.map((s) => (s.id === out.after.id ? out.after : s)) }, hash)
       } catch (error) {
         if (out.rollback) await out.rollback().catch((e: unknown) => console.error('facet suggestion: could not take back a decision', e))
         throw error
       }
+      // Written: a failing re-read must not take the decision back (the watcher reads the file again later).
+      await this.reindexLogged()
       return out
     })
     this.deps.emit()
+    if (decided.undo.kind === 'accept') this.deps.formChanged?.()
     return this.remember(decided.undo)
   }
 
@@ -297,6 +314,10 @@ export class FacetSuggestionService {
       throw new UserFacingError('facet_suggestions_conflict')
     }
     return { file: read?.ok ? read.value : EMPTY_FACET_SUGGESTIONS, hash: read?.hash ?? null }
+  }
+
+  private async reindexLogged(): Promise<void> {
+    await this.reindex().catch((error: unknown) => console.error('facet-suggestions.yaml', error))
   }
 
   private async write(file: FacetSuggestionsFile, hash: string | null): Promise<void> {

@@ -219,6 +219,8 @@ export class ProjectSession {
       budget,
       emit: () => session.emit('facets'),
       enqueue: (spec) => queue.enqueue(spec),
+      // Accepting rewrites project.yaml: the form editor reloads without waiting for the watcher.
+      formChanged: () => session.emit('project'),
       now: opts.now
     })
     const session: ProjectSession = new ProjectSession(store, cache, http, library, queue, summaries, citations, similarity, map, relations, sync, facets)
