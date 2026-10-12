@@ -120,6 +120,10 @@ const api: ResearchApi = {
     remove: (id, confirmed) => ipcRenderer.invoke(IPC.chatsRemove, id, confirmed),
     saveToNotes: (id, index, paperId) => ipcRenderer.invoke(IPC.chatsSaveToNotes, id, index, paperId),
     bibtex: (id, index) => ipcRenderer.invoke(IPC.chatsBibtex, id, index),
+    setTools: (id, tools) => ipcRenderer.invoke(IPC.chatsSetTools, id, tools),
+    // `approve` is the user's click on the card; a PDF to attach is picked by the main process, never sent from here.
+    decide: (id, approvalId, approve) => ipcRenderer.invoke(IPC.chatsDecide, id, approvalId, approve),
+    undo: (id, actionId) => ipcRenderer.invoke(IPC.chatsUndo, id, actionId),
     onStream: (callback) => {
       const handler = (_e: Electron.IpcRendererEvent, update: ChatStreamUpdate): void => callback(update)
       ipcRenderer.on(CHAT_STREAM_CHANNEL, handler)

@@ -1,6 +1,6 @@
 import { isAbsolute, win32 } from 'node:path'
 import { z } from 'zod'
-import { CHAT_ID, MAX_CHAT_MESSAGE, MAX_CHAT_TITLE, MAX_EXCERPT, PAPER_KEY } from '../shared/chat'
+import { ACTION_ID, CHAT_ID, MAX_CHAT_MESSAGE, MAX_CHAT_TITLE, MAX_EXCERPT, PAPER_KEY } from '../shared/chat'
 import { SUGGESTION_ID } from '../shared/facetSuggestions'
 import { CANDIDATE_DIRECTIONS, OPENALEX_ID } from '../shared/relations'
 import { PDF_POLICIES } from '../shared/schemas'
@@ -14,6 +14,8 @@ const facetKeySchema = z.string().regex(/^[a-z][a-z0-9_]*$/)
 const chatIdSchema = z.string().max(100).regex(CHAT_ID)
 /** A paper key named by the chat (scope, excerpt, filter, notes target), with a bound on its length. */
 const chatPaperSchema = z.string().max(200).regex(PAPER_KEY)
+/** An approval or an action of a conversation: six lowercase hex characters. */
+const actionIdSchema = z.string().length(6).regex(ACTION_ID)
 const llmModelSchema = z.enum(LLM_MODELS)
 
 /** Validators for arguments arriving from the renderer: anything unexpected is rejected before it reaches the app. */
@@ -112,9 +114,22 @@ export const ipcArgs = {
     text: z.string().trim().min(1).max(MAX_CHAT_MESSAGE),
     excerpt: z
       .strictObject({ paper: chatPaperSchema, page: z.number().int().positive().nullable(), quote: z.string().trim().min(1).max(MAX_EXCERPT) })
-      .nullable()
+      .nullable(),
+    /** The switches of a new conversation; ignored for an existing one. */
+    actions: z.boolean().optional(),
+    sync: z.boolean().optional()
   }),
   chatModel: llmModelSchema,
+  /** A conversation's switches to change («Acciones», «Sincronizar con git»): at least one, only these two. */
+  chatTools: z
+    .strictObject({ actions: z.boolean().optional(), sync: z.boolean().optional() })
+    .refine((t) => t.actions !== undefined || t.sync !== undefined, 'no switch given'),
+  /** A pending approval of a conversation. */
+  approvalId: actionIdSchema,
+  /** «Aprobar» (true) or «Rechazar» (false): the user's click on the card, nothing else. */
+  approve: z.boolean(),
+  /** An action recorded in a conversation («Deshacer»). */
+  actionId: actionIdSchema,
   /** A message's position in a conversation. */
   messageIndex: z.number().int().min(0).max(100_000),
   /** «Guardar en notas del paper»: the paper the user picked; absent or null when they did not pick one. */

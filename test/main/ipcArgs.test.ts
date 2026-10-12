@@ -236,4 +236,25 @@ describe('typed relation arguments', () => {
     expect(arg(ipcArgs.notesPaper, 'he2017drain', 'paper')).toBe('he2017drain')
     for (const bad of ['He', '../x', 'a'.repeat(201), 3]) expect(() => arg(ipcArgs.notesPaper, bad, 'paper')).toThrow()
   })
+
+  it('accepts the chat switches, approval and action ids, and the switches of a new conversation', () => {
+    expect(arg(ipcArgs.chatTools, { actions: true }, 'tools')).toEqual({ actions: true })
+    expect(arg(ipcArgs.chatTools, { actions: false, sync: true }, 'tools')).toEqual({ actions: false, sync: true })
+    for (const bad of [{ actions: 'yes' }, { other: true }, { actions: 1 }, { sync: null }, {}, null, 'actions', [true]]) {
+      expect(() => arg(ipcArgs.chatTools, bad, 'tools')).toThrow()
+    }
+    expect(arg(ipcArgs.approvalId, 'a0b1c2', 'approval')).toBe('a0b1c2')
+    expect(arg(ipcArgs.actionId, 'a0b1c2', 'action')).toBe('a0b1c2')
+    for (const bad of ['', 'A0B1C2', 'a0b1c2d', 'a0b1c', '../x', 'a0b1c2\n', 7, null]) {
+      expect(() => arg(ipcArgs.approvalId, bad, 'approval')).toThrow()
+      expect(() => arg(ipcArgs.actionId, bad, 'action')).toThrow()
+    }
+    // The decision is a plain boolean (the user's click), never a string or a path.
+    expect(arg(ipcArgs.approve, true, 'approve')).toBe(true)
+    for (const bad of ['true', 1, null, undefined, { approve: true }, '/tmp/a.pdf']) expect(() => arg(ipcArgs.approve, bad, 'approve')).toThrow()
+    const send = { chatId: null, scope: 'library', model: 'sonnet', text: 'Hi', excerpt: null, actions: true, sync: false }
+    expect(arg(ipcArgs.chatSend, send, 'request')).toEqual(send)
+    expect(() => arg(ipcArgs.chatSend, { ...send, actions: 1 }, 'request')).toThrow()
+    expect(() => arg(ipcArgs.chatSend, { ...send, sync: 'on' }, 'request')).toThrow()
+  })
 })

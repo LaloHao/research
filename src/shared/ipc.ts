@@ -1,4 +1,5 @@
 import type { ChatConversation, ChatListQuery, ChatSendRequest, ChatStreamUpdate, ChatSummary } from './chat'
+import type { ChatTools } from './chatActions'
 import type { FacetSuggestionList, FacetSuggestPlan, SuggestionEdit } from './facetSuggestions'
 import type { JobRecord } from './jobs'
 import type { PaperDetail, PaperRow, UserErrorCode } from './library'
@@ -111,6 +112,9 @@ export const IPC = {
   chatsRemove: 'chats:remove',
   chatsSaveToNotes: 'chats:save-to-notes',
   chatsBibtex: 'chats:bibtex',
+  chatsSetTools: 'chats:set-tools',
+  chatsDecide: 'chats:decide',
+  chatsUndo: 'chats:undo',
   exportSave: 'export:save',
   syncStatus: 'sync:status',
   syncRun: 'sync:run',
@@ -330,6 +334,12 @@ export interface ResearchApi {
     saveToNotes(id: string, index: number, paperId?: string): Promise<ActionResult>
     /** «Copiar BibTeX de las citas» of answer `index`. */
     bibtex(id: string, index: number): Promise<TextResult>
+    /** The conversation's switches («Acciones», «Sincronizar con git»). */
+    setTools(id: string, tools: Partial<ChatTools>): Promise<ActionResult>
+    /** «Aprobar» or «Rechazar» on an approval card; approving attach_pdf first asks for the file in the app's dialog. */
+    decide(id: string, approvalId: string, approve: boolean): Promise<ActionResult>
+    /** «Deshacer» of an action of the conversation. */
+    undo(id: string, actionId: string): Promise<ActionResult>
     /** Answers as they stream; `seq` orders them against `open()`'s `partial`. */
     onStream(callback: (update: ChatStreamUpdate) => void): () => void
   }

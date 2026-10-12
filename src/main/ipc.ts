@@ -21,6 +21,7 @@ import {
   type TextResult
 } from '../shared/ipc'
 import type { AppController } from './AppController'
+import { WindowDecisions } from './chats/windowDecisions'
 import { arg, ipcArgs } from './ipcArgs'
 import { toUserFacing } from './library/UserFacingError'
 import { RELATIONS_FILE } from './project/relationsFile'
@@ -38,6 +39,13 @@ async function actionResult(action: () => Promise<unknown>): Promise<ActionResul
 
 async function pickFolder(window: BrowserWindow | null, create: boolean): Promise<string | null> {
   const options: Electron.OpenDialogOptions = { properties: create ? ['openDirectory', 'createDirectory'] : ['openDirectory'] }
+  const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
+  return result.canceled ? null : (result.filePaths[0] ?? null)
+}
+
+/** The native PDF picker of «Adjuntar PDF», also used when the user approves a chat's attach_pdf. */
+async function choosePdf(window: BrowserWindow | null): Promise<string | null> {
+  const options: Electron.OpenDialogOptions = { properties: ['openFile'], filters: [{ name: 'PDF', extensions: ['pdf'] }] }
   const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
   return result.canceled ? null : (result.filePaths[0] ?? null)
 }
@@ -85,12 +93,7 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
       replace: arg(ipcArgs.flag, replace, 'replace')
     })
   })
-  ipcMain.handle(IPC.libraryChoosePdf, async (): Promise<string | null> => {
-    const window = getWindow()
-    const options: Electron.OpenDialogOptions = { properties: ['openFile'], filters: [{ name: 'PDF', extensions: ['pdf'] }] }
-    const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
-    return result.canceled ? null : (result.filePaths[0] ?? null)
-  })
+  ipcMain.handle(IPC.libraryChoosePdf, (): Promise<string | null> => choosePdf(getWindow()))
   ipcMain.handle(IPC.libraryUpdateMetadata, (_e, paperId: unknown, input: unknown) => {
     app.requireSession().queue.enqueue({
       type: 'update_metadata',
@@ -390,6 +393,7 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
 
   // Chat over the library (read-only tools; answers stream on CHAT_STREAM_CHANNEL). Every call is tracked so closing
   // the project waits for it before the cache closes.
+  const decisions = new WindowDecisions(() => choosePdf(getWindow()))
   const chats = <T>(work: (session: ReturnType<AppController['requireSession']>) => Promise<T>): Promise<T> => {
     const session = app.requireSession()
     return session.track(work(session))
@@ -455,6 +459,28 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     } catch (error) {
       return { ok: false, error: toUserFacing(error).code }
     }
+  })
+
+  // «Acciones» / «Sincronizar con git»: turning one off also denies the waiting approvals of its tools.
+  ipcMain.handle(IPC.chatsSetTools, (_e, rawId: unknown, rawTools: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    const tools = arg(ipcArgs.chatTools, rawTools, 'tools')
+    return actionResult(() => chats((s) => s.chats.setTools(id, tools)))
+  })
+  // «Aprobar» / «Rechazar»: `approve` is the user's click on the card. attach_pdf's file is picked here, in the app's
+  // own dialog on its window: never a path from the model or the window. The dialog's wait is not tracked (closing the
+  // project denies the approval; deciding it afterwards reports it gone).
+  ipcMain.handle(IPC.chatsDecide, (_e, rawId: unknown, rawApproval: unknown, rawApprove: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    const approvalId = arg(ipcArgs.approvalId, rawApproval, 'approval')
+    const approve = arg(ipcArgs.approve, rawApprove, 'approve')
+    return actionResult(() => decisions.decide(app.requireSession().chats, id, approvalId, approve))
+  })
+  // «Deshacer»: tracked, so closing the project waits for the undo before the cache closes.
+  ipcMain.handle(IPC.chatsUndo, (_e, rawId: unknown, rawAction: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.chatId, rawId, 'id')
+    const actionId = arg(ipcArgs.actionId, rawAction, 'action')
+    return actionResult(() => chats((s) => s.chats.undo(id, actionId)))
   })
 
   // A file the user chose to save (a chart, the graph, CSV data), wherever they picked; never written into the project on our own.

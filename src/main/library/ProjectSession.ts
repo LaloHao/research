@@ -6,6 +6,7 @@ import type { PaperDetail } from '../../shared/library'
 import type { ReviewItem } from '../../shared/summary'
 import type { DeletePlan, RestoreOutcome, TrashEntry, TrashOutcome, TrashTarget } from '../../shared/trash'
 import { IndexCache } from '../cache/IndexCache'
+import { ChatActions } from '../chats/ChatActions'
 import { ChatService } from '../chats/ChatService'
 import { CitationService } from '../citations/CitationService'
 import { OpenAlexCitations } from '../citations/OpenAlexCitations'
@@ -21,6 +22,7 @@ import { ClaudeCliProvider } from '../llm/ClaudeCliProvider'
 import { CostLedger } from '../llm/CostLedger'
 import type { LlmProvider } from '../llm/LlmProvider'
 import { MapService } from '../map/MapService'
+import { startActionsMcpServer } from '../mcp/ActionsMcpServer'
 import { startLibraryMcpServer } from '../mcp/LibraryMcpServer'
 import { libraryTools } from '../mcp/libraryTools'
 import { ProjectStore } from '../project/ProjectStore'
@@ -229,6 +231,24 @@ export class ProjectSession {
       formChanged: () => session.emit('project'),
       now: opts.now
     })
+    // The chat's actions go through the same services as the UI's buttons, and the session's own trash operations
+    // (tracked, so closing the project waits for them; they update the neighbours and hold off the automatic sync).
+    const chatActions = new ChatActions({
+      store,
+      cache,
+      listTrash: () => session.listTrash(),
+      deletePlan: (target) => session.deletePlan(target),
+      queue,
+      summaries,
+      relations,
+      facets,
+      sync,
+      estimate: (operation) => budget.currentEstimate(operation),
+      trash: (ids) => session.trash(ids),
+      restore: (ids, o) => session.restore(ids, o),
+      deleteForever: (ids) => session.deleteForever(ids),
+      now: opts.now
+    })
     const chats = new ChatService({
       store,
       cache,
@@ -237,6 +257,9 @@ export class ProjectSession {
       ledger,
       // A fresh read-only MCP server per answer, closed when the answer ends.
       startTools: (o) => startLibraryMcpServer(libraryTools({ store, cache, map, embeddings: opts.embeddings ?? null }), o),
+      // Offered only to an answer of a conversation whose switches are on; a fresh server per answer, closed when it ends.
+      actions: chatActions,
+      startActions: (o) => startActionsMcpServer(o),
       machine: machineName(opts.machineName ?? hostname()),
       emit: () => session.emit('chats'),
       stream: (u) => session.emitStream(u),
