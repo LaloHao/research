@@ -28,6 +28,8 @@ export function chatMeta(over: Partial<ChatMeta> = {}): ChatMeta {
     updated_at: CHAT_AT,
     archived: false,
     cost_usd: 0,
+    actions: false,
+    sync: false,
     updated_on: 'laptop',
     ...over
   }

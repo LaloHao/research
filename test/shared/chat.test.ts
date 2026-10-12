@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { CHAT_ID, ChatMessageSchema, ChatMetaSchema, ChatScopeSchema, normalizeExcerpt } from '../../src/shared/chat'
+import { ACTION_READ_TOOLS, ACTION_TOOLS, SYNC_TOOLS, TOOL_RISK } from '../../src/shared/chatActions'
 
 const AT = '2026-10-11T12:00:00.000Z'
 const meta = { schema_version: 1, id: '20261011-120000-a1b2', title: 'What does Drain do?', scope: 'library', model: 'sonnet', created_at: AT, updated_at: AT }
@@ -13,7 +14,7 @@ describe('chat ids', () => {
 
 describe('ChatMetaSchema', () => {
   it('fills archived and cost, and keeps keys a later version adds', () => {
-    expect(ChatMetaSchema.parse({ ...meta, later: 1 })).toEqual({ ...meta, archived: false, cost_usd: 0, later: 1 })
+    expect(ChatMetaSchema.parse({ ...meta, later: 1 })).toEqual({ ...meta, archived: false, cost_usd: 0, actions: false, sync: false, later: 1 })
     expect(ChatMetaSchema.parse({ ...meta, scope: { paper: 'he2017drain' }, copy_of: { id: '20261011-110000-ffff', machine: null } })).toMatchObject({
       scope: { paper: 'he2017drain' },
       copy_of: { id: '20261011-110000-ffff', machine: null }
@@ -62,5 +63,33 @@ describe('ChatMessageSchema', () => {
   it('normalizes an excerpt to what its marker reads back', () => {
     expect(normalizeExcerpt({ paper: 'he2017drain', page: 3, quote: ' two  spaces\n' })).toEqual({ paper: 'he2017drain', page: 3, quote: 'two spaces' })
     expect(normalizeExcerpt({ paper: 'he2017drain', page: 3, quote: '  ' })).toBeNull()
+  })
+})
+
+describe('conversation switches', () => {
+  it('are off by default, kept when set, and refused when not booleans', () => {
+    expect(ChatMetaSchema.parse(meta)).toMatchObject({ actions: false, sync: false })
+    expect(ChatMetaSchema.parse({ ...meta, actions: true, sync: true })).toMatchObject({ actions: true, sync: true })
+    expect(ChatMetaSchema.safeParse({ ...meta, actions: 'yes' }).success).toBe(false)
+  })
+})
+
+describe('action tools', () => {
+  it('give every write tool a risk; only reversible free tools have none; the sync tools are their own group', () => {
+    expect(Object.keys(TOOL_RISK).sort()).toEqual([...ACTION_TOOLS].sort())
+    expect(ACTION_TOOLS.filter((t) => TOOL_RISK[t] === null)).toEqual([
+      'add_paper',
+      'write_note',
+      'decide_relation',
+      'review_summary',
+      'edit_summary',
+      'resolve_proposed_value',
+      'decide_facet_suggestion',
+      'restore_papers'
+    ])
+    expect([TOOL_RISK.summarize, TOOL_RISK.trash_papers, TOOL_RISK.delete_forever, TOOL_RISK.sync_now, TOOL_RISK.attach_pdf]).toEqual(['spends', 'removes', 'removes', 'sync', 'file'])
+    const all: readonly string[] = [...ACTION_TOOLS, ...ACTION_READ_TOOLS]
+    expect(SYNC_TOOLS.every((t) => all.includes(t))).toBe(true)
+    expect(new Set(all).size).toBe(all.length)
   })
 })
