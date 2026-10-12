@@ -73,5 +73,10 @@ describe('action tool inputs', () => {
     expect(z.object(ACTION_INPUTS.write_note).safeParse({ paper_id: 'he2017drain', text: 'x', request_quote: 'q'.repeat(501) }).success).toBe(false)
     expect(z.object(ACTION_INPUTS.decide_relation).safeParse({ relation_id: 'he2017drain__zhu2020loghub__extends', decision: 'confirm' }).success).toBe(true)
     expect(z.object(ACTION_INPUTS.resolve_sync_conflicts).safeParse({ choices: [{ id: 'file:project.yaml', choice: 'mine' }] }).success).toBe(false)
+    const conflicts = (id: string) => z.object(ACTION_INPUTS.resolve_sync_conflicts).safeParse({ choices: [{ id, choice: 'ours' }] }).success
+    expect(conflicts('file:project.yaml')).toBe(true)
+    expect(conflicts('paper:he2017drain')).toBe(true)
+    expect(conflicts('../etc/passwd')).toBe(false)
+    expect(conflicts('paper:../etc')).toBe(false)
   })
 })
