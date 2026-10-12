@@ -1,32 +1,54 @@
-import { isSuggestionName, type FacetSuggestion, type FacetSuggestionsFile, type SuggestionEdit, type SuggestionValidity } from '../../shared/facetSuggestions'
+import { isSuggestionName, suggestionId, type FacetSuggestion, type FacetSuggestionsFile, type SuggestionEdit, type SuggestionValidity } from '../../shared/facetSuggestions'
 import { FacetDefSchema, type ExtractionFile, type ExtractionForm, type FacetDef, type FacetEntry } from '../../shared/summary'
 import { addAlias, addFacetValue, entryFitsFacet, InvalidEdit } from '../summary/merge'
 import type { FacetOverview } from './facetOverview'
 
-/** A new run replaces only the suggestions still waiting for review; a decided id is never brought back. */
+/**
+ * A new run replaces only the suggestions still waiting for review; a decided id is never brought back. A decided
+ * suggestion the user edited also blocks the id of its edited proposal, so the user's own version does not come back
+ * as a new suggestion.
+ */
 export function replaceUnreviewed(file: FacetSuggestionsFile, fresh: FacetSuggestion[]): FacetSuggestionsFile {
   const kept = file.suggestions.filter((s) => s.status !== 'suggested')
-  const decided = new Set(kept.map((s) => s.id))
+  const decided = new Set(kept.flatMap((s) => [s.id, suggestionId(s)]))
   return { ...file, suggestions: [...kept, ...fresh.filter((s) => !decided.has(s.id))] }
 }
 
-function choiceFacet(form: ExtractionForm, key: string): { def: FacetDef | undefined; values: string[] | null } {
+type ChoiceDef = Extract<FacetDef, { values: string[] }>
+
+function choiceFacet(form: ExtractionForm, key: string): { def: FacetDef | undefined; choice: ChoiceDef | null } {
   const def = form.facets.find((f) => f.key === key)
-  return { def, values: def && 'values' in def ? def.values : null }
+  return { def, choice: def && 'values' in def ? def : null }
+}
+
+/** Whether `value` is already known to the facet: allowed, or the source of an alias. */
+function knownValue(form: ExtractionForm, def: ChoiceDef, value: string): boolean {
+  return def.values.includes(value) || form.value_aliases[def.key]?.[value] !== undefined
+}
+
+/** The alias's sources accepting it would still map: never an allowed value, never one the form already aliases. */
+function aliasSources(s: Extract<FacetSuggestion, { kind: 'alias' }>, form: ExtractionForm, def: ChoiceDef): string[] {
+  return s.from.filter((v) => !knownValue(form, def, v))
 }
 
 /** Whether accepting `s` as it is still makes sense with the current form and the proposals papers hold now. */
 export function suggestionValidity(s: FacetSuggestion, form: ExtractionForm, overview: FacetOverview): SuggestionValidity {
   if (s.kind === 'new_facet') return form.facets.some((f) => f.key === s.facet.key) ? 'facet_exists' : 'ok'
-  const { def, values } = choiceFacet(form, s.facet)
+  const { def, choice } = choiceFacet(form, s.facet)
   if (!def) return 'facet_missing'
-  if (!values) return 'not_a_choice'
-  if (s.kind === 'new_value') return values.includes(s.value) ? 'value_exists' : 'ok'
+  if (!choice) return 'not_a_choice'
+  if (s.kind === 'new_value') return knownValue(form, choice, s.value) ? 'value_exists' : 'ok'
+  // A target that is itself aliased away would make a chain (and the value both allowed and aliased).
+  if (form.value_aliases[s.facet]?.[s.to] !== undefined) return 'value_exists'
   const proposed = new Set(overview.facets.find((u) => u.key === s.facet)?.proposed.map((p) => p.value) ?? [])
-  return s.from.some((v) => proposed.has(v)) ? 'ok' : 'source_gone'
+  return aliasSources(s, form, choice).some((v) => proposed.has(v)) ? 'ok' : 'source_gone'
 }
 
-/** «Editar y aceptar»: the user's version of the proposal; the id stays, so the suggestion is still the same one. */
+/**
+ * «Editar y aceptar»: the user's version of the proposal. The id stays, so the suggestion is still the same one (the
+ * schema lets a decided suggestion keep it; see FacetSuggestionSchema), even though it no longer matches the edited
+ * proposal; replaceUnreviewed blocks both ids.
+ */
 export function withEdit(s: FacetSuggestion, edit: SuggestionEdit | undefined): FacetSuggestion {
   if (!edit) return s
   if (edit.kind === 'new_facet' && s.kind === 'new_facet') {
@@ -71,21 +93,22 @@ export interface Acceptance {
   rewrite: ((e: ExtractionFile) => ExtractionFile | null) | null
 }
 
-/** What accepting `s` (already checked with suggestionValidity) does to the form and to the papers. */
+/**
+ * What accepting `s` (already checked with suggestionValidity) does to the form and to the papers. An alias maps only
+ * the sources that are neither allowed nor already aliased: an alias the user set is never overwritten. Throws
+ * InvalidEdit when a value or alias's facet is gone or is not a choice.
+ */
 export function acceptance(s: FacetSuggestion, form: ExtractionForm): Acceptance {
-  switch (s.kind) {
-    case 'new_facet':
-      return { form: { ...form, facets: [...form.facets, s.facet] }, rewrite: null }
-    case 'new_value': {
-      const next = addFacetValue(form, s.facet, s.value)
-      const def = next.facets.find((f) => f.key === s.facet)!
-      return { form: next, rewrite: (e) => reassignProposals(e, def, [s.value], s.value) }
-    }
-    case 'alias': {
-      let next = addFacetValue(form, s.facet, s.to)
-      for (const from of s.from) next = addAlias(next, s.facet, from, s.to)
-      const def = next.facets.find((f) => f.key === s.facet)!
-      return { form: next, rewrite: (e) => reassignProposals(e, def, s.from, s.to) }
-    }
+  if (s.kind === 'new_facet') return { form: { ...form, facets: [...form.facets, s.facet] }, rewrite: null }
+  const { choice } = choiceFacet(form, s.facet)
+  if (!choice) throw new InvalidEdit(`Facet ${s.facet} is not a choice facet`)
+  if (s.kind === 'new_value') {
+    const def: ChoiceDef = { ...choice, values: choice.values.includes(s.value) ? choice.values : [...choice.values, s.value] }
+    return { form: addFacetValue(form, s.facet, s.value), rewrite: (e) => reassignProposals(e, def, [s.value], s.value) }
   }
+  const sources = aliasSources(s, form, choice)
+  let next = addFacetValue(form, s.facet, s.to)
+  for (const from of sources) next = addAlias(next, s.facet, from, s.to)
+  const def: ChoiceDef = { ...choice, values: choice.values.includes(s.to) ? choice.values : [...choice.values, s.to] }
+  return { form: next, rewrite: sources.length ? (e) => reassignProposals(e, def, sources, s.to) : null }
 }

@@ -3,7 +3,8 @@ import type { FacetOverview } from '../../../src/main/facets/facetOverview'
 import { acceptance, reassignProposals, replaceUnreviewed, suggestionValidity, withEdit } from '../../../src/main/facets/facetSuggestionMerge'
 import { DEFAULT_EXTRACTION_FORM } from '../../../src/main/summary/extractionForm'
 import { InvalidEdit } from '../../../src/main/summary/merge'
-import type { ExtractionFile, FacetDef, FacetEntry } from '../../../src/shared/summary'
+import { FacetSuggestionSchema, FacetSuggestionsFileSchema, type FacetSuggestion, type SuggestionEdit } from '../../../src/shared/facetSuggestions'
+import type { ExtractionFile, ExtractionForm, FacetDef, FacetEntry } from '../../../src/shared/summary'
 import { aliasSuggestion, newFacetSuggestion, newValueSuggestion } from '../../helpers/facets'
 
 const FORM = DEFAULT_EXTRACTION_FORM
@@ -100,5 +101,70 @@ describe('reassignProposals', () => {
     expect(reassignProposals(ext({}), technique, ['regexes'], 'rules_regex')).toBeNull()
     // An entry of another type (the facet was recreated) is a different facet: untouched.
     expect(reassignProposals(ext({ sanitization_technique: entry({ text: 'x', proposed: ['regexes'] }) }), technique, ['regexes'], 'rules_regex')).toBeNull()
+  })
+})
+
+describe('fix round 1', () => {
+  const withAliases = (value_aliases: ExtractionForm['value_aliases']): ExtractionForm => ({ ...FORM, value_aliases })
+
+  it('an edited suggestion keeps its id and is still a valid stored decision, for every kind', () => {
+    const cases: [FacetSuggestion, SuggestionEdit][] = [
+      [newFacetSuggestion(), { kind: 'new_facet', facet: { key: 'data_origin', type: 'text', description: 'Origin' } }],
+      [newValueSuggestion(), { kind: 'new_value', value: 'system_metrics' }],
+      [aliasSuggestion(), { kind: 'alias', to: 'regex' }]
+    ]
+    for (const [s, edit] of cases) {
+      const edited = withEdit(s, edit)
+      expect(edited.id).toBe(s.id)
+      acceptance(edited, FORM)
+      const stored = FacetSuggestionSchema.parse({ ...edited, status: 'accepted' })
+      expect(stored).toMatchObject({ id: s.id, status: 'accepted' })
+      expect(FacetSuggestionsFileSchema.parse({ schema_version: 1, suggestions: [stored] }).suggestions).toHaveLength(1)
+    }
+  })
+
+  it('a later run does not bring back the edited proposal of a decided suggestion under its own id', () => {
+    const decided = { ...withEdit(newFacetSuggestion(), { kind: 'new_facet', facet: { key: 'data_origin', type: 'text', description: 'Origin' } }), status: 'accepted' as const }
+    const next = replaceUnreviewed({ schema_version: 1, suggestions: [decided] }, [newFacetSuggestion({ facet: { key: 'data_origin', type: 'text', description: 'd' } })])
+    expect(next.suggestions).toEqual([decided])
+  })
+
+  it('an alias never overwrites an alias the user set, nor aliases an allowed value away', () => {
+    const form = withAliases({ sanitization_technique: { regex_rules: 'ner' } })
+    const a = acceptance(aliasSuggestion({ from: ['regex_rules', 'regexes', 'none'], to: 'regex_masking' }), form)
+    expect(a.form.value_aliases).toEqual({ sanitization_technique: { regex_rules: 'ner', regexes: 'regex_masking' } })
+    const rewritten = a.rewrite?.(ext({ sanitization_technique: entry({ values: [], proposed: ['regex_rules', 'regexes'] }) }))
+    expect(rewritten?.facets.sanitization_technique).toMatchObject({ values: ['regex_masking'], proposed: ['regex_rules'] })
+    expect(a.rewrite?.(ext({ sanitization_technique: entry({ values: [], proposed: ['regex_rules'] }) }))).toBeNull()
+  })
+
+  it('an alias whose every source is already allowed or aliased no longer applies', () => {
+    expect(suggestionValidity(aliasSuggestion({ from: ['regex_rules'] }), withAliases({ sanitization_technique: { regex_rules: 'ner' } }), overview())).toBe('source_gone')
+    expect(suggestionValidity(aliasSuggestion({ from: ['regex_rules', 'ner'], to: 'regex_masking' }), FORM, overview(['ner']))).toBe('source_gone')
+  })
+
+  it('a new value or alias target that is already an alias source is not added again', () => {
+    expect(suggestionValidity(newValueSuggestion({ value: 'metric' }), withAliases({ data_type: { metric: 'logs' } }), overview())).toBe('value_exists')
+    expect(suggestionValidity(aliasSuggestion({ to: 'regex' }), withAliases({ sanitization_technique: { regex: 'rules_regex' } }), overview())).toBe('value_exists')
+  })
+
+  it('accepting a value or alias for a facet that is gone or not a choice throws instead of crashing later', () => {
+    expect(() => acceptance(newValueSuggestion({ facet: 'gone' }), FORM)).toThrow(InvalidEdit)
+    expect(() => acceptance(aliasSuggestion({ facet: 'traceability' }), FORM)).toThrow(InvalidEdit)
+  })
+
+  it('reassignProposals: no duplicate target, two sources on a single facet, edited entries byte-identical', () => {
+    expect(reassignProposals(ext({ sanitization_technique: entry({ values: ['rules_regex'], proposed: ['regexes'] }) }), technique, ['regexes'], 'rules_regex')?.facets.sanitization_technique).toMatchObject({
+      values: ['rules_regex'],
+      proposed: []
+    })
+    expect(reassignProposals(ext({ llm_usage: entry({ value: null, proposed: ['api', 'openai', 'other'] }) }), llmUsage, ['api', 'openai'], 'cloud_api')?.facets.llm_usage).toMatchObject({
+      value: 'cloud_api',
+      proposed: ['other']
+    })
+    const edited = ext({ sanitization_technique: entry({ values: ['ner'], proposed: ['regexes'], status: 'edited' }) })
+    const before = structuredClone(edited)
+    expect(reassignProposals(edited, technique, ['regexes'], 'rules_regex')).toBeNull()
+    expect(edited).toEqual(before)
   })
 })

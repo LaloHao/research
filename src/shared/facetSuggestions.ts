@@ -32,6 +32,15 @@ export function suggestionId(s: IdParts): string {
   }
 }
 
+/**
+ * The part of the id an edit cannot change: the kind, plus the facet for a value or an alias. «Editar y aceptar» keeps
+ * the id while changing the key, value or target it was built from, so a decided suggestion only has to keep this prefix;
+ * a suggestion still waiting for review must match its id exactly.
+ */
+function idPrefix(s: { kind: FacetSuggestionKind; facet: unknown }): string {
+  return s.kind === 'new_facet' ? 'new_facet__' : `${s.kind}__${String(s.facet)}__`
+}
+
 export const SuggestionExampleSchema = z.object({
   paper: paperKey,
   /** The value this paper would get; null for an alias. */
@@ -61,7 +70,7 @@ export const FacetSuggestionSchema = z
     z.looseObject({ ...common, kind: z.literal('new_value'), facet: key, value: key }),
     z.looseObject({ ...common, kind: z.literal('alias'), facet: key, from: z.array(key).min(1), to: key })
   ])
-  .refine((s) => s.id === suggestionId(s), { message: 'id does not match the suggestion', path: ['id'] })
+  .refine((s) => (s.status === 'suggested' ? s.id === suggestionId(s) : s.id.startsWith(idPrefix(s))), { message: 'id does not match the suggestion', path: ['id'] })
 export type FacetSuggestion = z.infer<typeof FacetSuggestionSchema>
 
 export const LastRunSchema = z.object({
