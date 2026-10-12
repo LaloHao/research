@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { mkdirSync, rmSync } from 'node:fs'
 import { mkdir, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import { atomicWrite } from '../../../src/main/project/atomicWrite'
 import { join } from 'node:path'
@@ -61,6 +62,46 @@ describe('watchProject', () => {
     expect(changes).toBe(0)
     await atomicWrite(join(root, 'facet-suggestions.yaml'), 'schema_version: 1\nsuggestions: []\n')
     await waitFor(() => changes > 0)
+    stop()
+  })
+
+  it('reports conversations written, replaced and removed in chats/, even when the folder appears later', async () => {
+    const root = await tmpDir()
+    let changes = 0
+    const stop = watchProject(root, { onPaper: () => undefined, onConfig: () => undefined, onChats: () => changes++ }, 50)
+    await new Promise((r) => setTimeout(r, 100))
+    await mkdir(join(root, 'chats'))
+    await waitFor(() => changes > 0)
+    await new Promise((r) => setTimeout(r, 150))
+    for (const change of [
+      () => atomicWrite(join(root, 'chats/20261011-120000-a1b2.md'), 'a'),
+      () => atomicWrite(join(root, 'chats/20261011-120000-a1b2.md'), 'b'),
+      () => unlink(join(root, 'chats/20261011-120000-a1b2.md'))
+    ]) {
+      const before = changes
+      await change()
+      await waitFor(() => changes > before)
+      await new Promise((r) => setTimeout(r, 150))
+    }
+    const before = changes
+    await rm(join(root, 'chats'), { recursive: true })
+    await waitFor(() => changes > before)
+    stop()
+  })
+
+  it('keeps reporting conversations after chats/ is removed and recreated at once', async () => {
+    const root = await tmpDir()
+    await mkdir(join(root, 'chats'))
+    let changes = 0
+    const stop = watchProject(root, { onPaper: () => undefined, onConfig: () => undefined, onChats: () => changes++ }, 50)
+    await new Promise((r) => setTimeout(r, 100))
+    rmSync(join(root, 'chats'), { recursive: true })
+    mkdirSync(join(root, 'chats'))
+    await waitFor(() => changes > 0)
+    await new Promise((r) => setTimeout(r, 200))
+    const before = changes
+    await atomicWrite(join(root, 'chats/20261011-120000-a1b2.md'), 'a')
+    await waitFor(() => changes > before)
     stop()
   })
 })

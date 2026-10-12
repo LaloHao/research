@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { citationMarker, parseCitations } from './chatCitations'
 import { LLM_MODELS, type LlmModel } from './summary'
 
 /** `<UTC yyyymmdd>-<hhmmss>-<4 hex>`, plus `-<6 hex>` for each copy the git sync split off. */
@@ -62,6 +63,50 @@ export interface AssistantMessage {
 }
 
 export type ChatMessage = UserMessage | AssistantMessage
+
+/**
+ * The excerpt as its citation marker reads back (whitespace collapsed, `"]]` and `[[` broken up), or null when the
+ * marker would not read back at all (bad key or page, empty or too long a quote). Store excerpts in this form.
+ */
+export function normalizeExcerpt(e: ChatExcerpt): ChatExcerpt | null {
+  const marker = citationMarker(e)
+  const cited = parseCitations(marker)
+  if (cited.length !== 1 || cited[0].start !== 0 || cited[0].end !== marker.length) return null
+  return { paper: cited[0].paper, page: cited[0].page, quote: cited[0].quote }
+}
+
+/** A message's time in its heading: an ISO string, which never has whitespace. */
+export const MESSAGE_AT = /^\S+$/
+/**
+ * A model id in an answer's heading: no whitespace (so no ` · `), not a cost (`$…`). The file writer also refuses the
+ * heading's stopped mark (`STOPPED_MARK` in `chatFile.ts`) as a model id.
+ */
+export const MESSAGE_MODEL = /^[^\s$]\S*$/
+/** Costs are written with 4 decimals; a billion dollars is far beyond any real answer. */
+export const MAX_MESSAGE_COST = 1e9
+
+const ExcerptSchema = z
+  .object({ paper: z.string(), page: z.number().nullable(), quote: z.string() })
+  .refine((e) => {
+    const n = normalizeExcerpt(e)
+    return n !== null && n.paper === e.paper && n.page === e.page && n.quote === e.quote
+  }, 'The excerpt would not read back the same from its citation marker')
+
+/**
+ * A message the conversation file can write and read back unchanged (its text aside, which the format normalizes
+ * with `cleanMessageText`). Every message is checked before a write: a bad heading field would merge or split messages.
+ */
+export const ChatMessageSchema = z.discriminatedUnion('role', [
+  z.object({ role: z.literal('user'), at: z.string().regex(MESSAGE_AT), text: z.string(), excerpt: ExcerptSchema.nullable() }),
+  z.object({
+    role: z.literal('assistant'),
+    at: z.string().regex(MESSAGE_AT),
+    model: z.string().regex(MESSAGE_MODEL),
+    costUsd: z.number().min(0).lt(MAX_MESSAGE_COST),
+    stopped: z.boolean(),
+    text: z.string()
+  })
+])
 
 export interface ChatFile {
   meta: ChatMeta

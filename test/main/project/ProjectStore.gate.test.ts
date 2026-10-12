@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ProjectStore } from '../../../src/main/project/ProjectStore'
+import { CHAT_ID_A, chatFile } from '../../helpers/chats'
 import { samplePaper } from '../../helpers/papers'
 import { tmpDir } from '../../helpers/tmp'
 
@@ -34,6 +35,35 @@ describe('ProjectStore write gate', () => {
     expect(done.sort()).toEqual(['config', 'cost', 'notes', 'relations'])
     expect(await readdir(join(store.root, 'costs'))).toEqual([`${DEVICE}.jsonl`])
     expect(existsSync(join(store.root, 'relations.yaml'))).toBe(true)
+  })
+
+  it('holds conversation writes while the sync has the folder', async () => {
+    const store = await ProjectStore.create(await tmpDir(), 'Thesis')
+    const hash = await store.writeChat(chatFile(), null)
+    let release!: () => void
+    const held = new Promise<void>((r) => (release = r))
+    const sync = store.exclusive(() => held)
+    const done: string[] = []
+    const write = store.writeChat(chatFile(undefined, { title: 'Renamed' }), hash).then((next) => {
+      done.push('write')
+      return next
+    })
+    await tick()
+    expect(done).toEqual([])
+    release()
+    await sync
+    const next = await write
+    expect(await store.readChat(CHAT_ID_A)).toMatchObject({ ok: true, value: { meta: { title: 'Renamed' } } })
+    const held2 = new Promise<void>((r) => (release = r))
+    const sync2 = store.exclusive(() => held2)
+    const removal = store.deleteChat(CHAT_ID_A, next).then(() => done.push('delete'))
+    await tick()
+    expect(done).toEqual(['write'])
+    expect(await store.listChatIds()).toEqual([CHAT_ID_A])
+    release()
+    await sync2
+    await removal
+    expect(await store.listChatIds()).toEqual([])
   })
 
   it('lets the sync in once the writes already running are done', async () => {
@@ -74,6 +104,9 @@ describe('ProjectStore write gate', () => {
     'readExtraction',
     'readRelations',
     'readFacetSuggestions',
+    'listChatIds',
+    'chatPath',
+    'readChat',
     'trashDir',
     'trashExists',
     'listTrash',

@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { appendFile, mkdir, readdir, readFile, rename, rm, rmdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PaperSchema, ProjectConfigSchema, type Paper, type ProjectConfig } from '../../shared/schemas'
+import { CHAT_ID, ChatMetaSchema, type ChatFile } from '../../shared/chat'
 import { parse } from 'yaml'
 import { SnowballSchema, type Snowball } from '../../shared/relations'
 import {
@@ -19,6 +20,7 @@ import { RelationsFileSchema, type RelationsFile } from '../../shared/typedRelat
 import { FacetSuggestionsFileSchema, type FacetSuggestionsFile } from '../../shared/facetSuggestions'
 import { atomicWrite, MOVE_RETRYABLE, moveDir, sha256 } from './atomicWrite'
 import { renderLibraryBib } from '../export/BibExporter'
+import { CHATS_DIR, chatFileName, checkMessages, isChatFileName, parseChat, renderChat, totalCost } from './chatFile'
 import { ConflictError, ProjectError, type ReadResult } from './errors'
 import { FACET_SUGGESTIONS_FILE, sortSuggestions } from './facetSuggestionsFile'
 import { gitattributesLines, gitignoreLines, withManagedBlock } from './gitFiles'
@@ -65,6 +67,8 @@ export class ProjectStore {
     'writeRelations',
     'resolveRelationsConflict',
     'writeFacetSuggestions',
+    'writeChat',
+    'deleteChat',
     'updateConfig',
     'trashPaper',
     'restorePaper',
@@ -310,6 +314,52 @@ export class ProjectStore {
   async writeFacetSuggestions(file: FacetSuggestionsFile, expectedHash: string | null): Promise<string> {
     const valid = FacetSuggestionsFileSchema.parse({ ...file, suggestions: sortSuggestions(file.suggestions) })
     return this.writeChecked(join(this.root, FACET_SUGGESTIONS_FILE), toYaml(valid), expectedHash, { refuseConflictMarkers: true })
+  }
+
+  /** Conversation ids in chats/ (files named `<id>.md`), sorted. */
+  async listChatIds(): Promise<string[]> {
+    const names = await readdir(join(this.root, CHATS_DIR)).catch(() => [] as string[])
+    return names
+      .filter(isChatFileName)
+      .map((name) => name.slice(0, -3))
+      .sort()
+  }
+
+  chatPath(id: string): string {
+    if (!CHAT_ID.test(id)) throw new Error(`Invalid chat id: ${id}`)
+    return join(this.root, CHATS_DIR, chatFileName(id))
+  }
+
+  /** chats/<id>.md; null when it does not exist. A frontmatter id that is not the file's own reads as invalid. */
+  async readChat(id: string): Promise<ReadResult<ChatFile> | null> {
+    const text = await readOptional(this.chatPath(id))
+    if (text === null) return null
+    const result = parseChat(text)
+    if (result.ok && result.value.meta.id !== id) {
+      return { ok: false, hash: result.hash, problem: { kind: 'invalid_schema', message: `id ${result.value.meta.id} does not match file ${id}` } }
+    }
+    return result
+  }
+
+  /**
+   * One file per conversation, so two machines rarely touch the same one. A file with conflict markers is never
+   * overwritten, even with its hash: one machine's messages would be lost. Every message is checked first (a bad one
+   * throws and nothing is written), and `cost_usd` is always recomputed from the answers. The hash returned is that of
+   * the rendered file, whose message texts are normalized (`cleanMessageText`).
+   */
+  async writeChat(file: ChatFile, expectedHash: string | null): Promise<string> {
+    const messages = checkMessages(file.messages)
+    const meta = ChatMetaSchema.parse({ ...file.meta, cost_usd: totalCost(messages) })
+    return this.writeChecked(this.chatPath(meta.id), renderChat({ meta, messages }), expectedHash, { refuseConflictMarkers: true })
+  }
+
+  /** «Borrar»: only the version read (`expectedHash`); git history keeps it. Nothing to do when it is already gone. */
+  async deleteChat(id: string, expectedHash: string): Promise<void> {
+    const path = this.chatPath(id)
+    const current = await readOptional(path)
+    if (current === null) return
+    if (sha256(current) !== expectedHash) throw new ConflictError(path)
+    await rm(path, { force: true })
   }
 
   trashDir(id: string): string {
