@@ -40,7 +40,7 @@ export function LibraryView({
   const [facetIds, setFacetIds] = useState<{ ids: Set<string> | null; key: string }>({ ids: null, key: facetKey([]) })
   const [citationsNotice, setCitationsNotice] = useState<{ error: boolean; text: string } | null>(null)
   const [updatingCitations, setUpdatingCitations] = useState(false)
-  const [relationsConfirm, setRelationsConfirm] = useState<{ ids: string[] | undefined; plan: RelationPlan } | null>(null)
+  const [relationsConfirm, setRelationsConfirm] = useState<{ ids: string[] | undefined; plan: RelationPlan; visibleKey: string } | null>(null)
   const [relationsBusy, setRelationsBusy] = useState(false)
   const [relationsNotice, setRelationsNotice] = useState<{ error: boolean; text: string } | null>(null)
   const [removeConfirm, setRemoveConfirm] = useState<string[] | null>(null)
@@ -51,6 +51,7 @@ export function LibraryView({
   const [fillNotice, setFillNotice] = useState<{ error: boolean; text: string } | null>(null)
   // Bumped when the visible papers change: a plan asked for the previous list must not open a confirmation.
   const fillRequest = useRef(0)
+  const relationsRequest = useRef(0)
   const undo = useTrashUndo()
   const showUndo = undo.show
 
@@ -140,6 +141,8 @@ export function LibraryView({
     setRemoveConfirm(null)
     setFillConfirm(null)
     fillRequest.current++
+    setRelationsConfirm(null)
+    relationsRequest.current++
     // Old notices go when the visible papers change, except the list a batch removal just left.
     if (visibleKey !== keepNoticeFor.current) setRemoveNotice(null)
     keepNoticeFor.current = null
@@ -162,19 +165,23 @@ export function LibraryView({
 
   /** With a search or filter active, only the visible papers; otherwise every paper with candidates its last analysis did not see. */
   const planRelations = (): void => {
-    if (relationsBusy) return
+    if (relationsBusy || !removeReady) return
     const ids = anyFilter ? visibleRows.map((row) => row.id) : undefined
+    const token = ++relationsRequest.current
+    const plannedFor = visibleKey
     setRelationsBusy(true)
     setRelationsNotice(null)
     setRelationsConfirm(null)
     window.research.relations.plan(ids).then(
       (plan) => {
         setRelationsBusy(false)
+        if (token !== relationsRequest.current) return
         if (plan.count === 0) setRelationsNotice({ error: false, text: t('library.relations_none') })
-        else setRelationsConfirm({ ids, plan })
+        else setRelationsConfirm({ ids, plan, visibleKey: plannedFor })
       },
       () => {
         setRelationsBusy(false)
+        if (token !== relationsRequest.current) return
         setRelationsNotice({ error: true, text: errorText(t, 'unknown') })
       }
     )
@@ -182,6 +189,10 @@ export function LibraryView({
 
   const runRelations = (): void => {
     if (!relationsConfirm || relationsBusy) return
+    if (!batchConfirmHolds(relationsConfirm, { visibleKey, ready: removeReady })) {
+      setRelationsConfirm(null)
+      return
+    }
     setRelationsBusy(true)
     window.research.relations.suggestBatch(relationsConfirm.ids).then(
       (r) => {
@@ -282,7 +293,7 @@ export function LibraryView({
           </button>
           <button
             className="small"
-            disabled={relationsBusy}
+            disabled={relationsBusy || !removeReady}
             onClick={planRelations}
             title={t(anyFilter ? 'library.suggest_relations_filtered' : 'library.suggest_relations_all')}
           >

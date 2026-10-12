@@ -61,8 +61,9 @@ export function batchRemoveReady(state: { query: string; rowsQuery: string | nul
 }
 
 /**
- * A confirmed library batch («Llenar facetas nuevas») is queued only while the visible papers are still the ones it was
- * confirmed for (`visibleKey`: their ids joined) and the rows match the current search and filters (`batchRemoveReady`).
+ * A confirmed library batch («Llenar facetas nuevas», «Sugerir relaciones») is queued only while the visible papers are
+ * still the ones it was confirmed for (`visibleKey`: their ids joined) and the rows match the current search and filters
+ * (`batchRemoveReady`).
  */
 export function batchConfirmHolds(confirm: { visibleKey: string } | null, state: { visibleKey: string; ready: boolean }): boolean {
   return !!confirm && state.ready && confirm.visibleKey === state.visibleKey
