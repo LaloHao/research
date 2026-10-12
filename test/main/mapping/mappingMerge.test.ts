@@ -129,6 +129,21 @@ describe('records.yaml', () => {
     expect(merged.records[0]).toMatchObject({ merged_into: hexId('r', 1), duplicate_of: null })
   })
 
+  it('a record both machines created: what only one side has survives, null or absent never wins', () => {
+    const older = { ...record({ abstract: 'Has it.', updated_at: '2026-10-12T10:00:00.000Z' }), extra_a: 1 }
+    const newer = { ...record({ abstract: null, venue: 'Newer venue', updated_at: '2026-10-12T11:00:00.000Z' }), extra_b: 2 }
+    for (const [ours, theirs] of [
+      [older, newer],
+      [newer, older]
+    ]) {
+      const merged = read<{ records: Record<string, unknown>[] }>(mergeRecordsText({ base: null, ours: recordsText([ours]), theirs: recordsText([theirs]) }))
+      expect(merged.records[0]).toMatchObject({ abstract: 'Has it.', venue: 'Newer venue', extra_a: 1, extra_b: 2, updated_at: '2026-10-12T11:00:00.000Z' })
+    }
+    expect(mergeRecordsText({ base: null, ours: recordsText([older]), theirs: recordsText([newer]) })).toBe(
+      mergeRecordsText({ base: null, ours: recordsText([newer]), theirs: recordsText([older]) })
+    )
+  })
+
   it('gives the same file whichever machine merges, even with equal clocks', () => {
     const base = record()
     const a = { ...base, abstract: 'A.', extra_a: 1, updated_at: LATE }

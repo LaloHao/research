@@ -168,7 +168,8 @@ const RECORD_LINKS = ['paper_id', 'merged_into'] as const
 /**
  * A record both machines have, merged field by field against the base (none when both created it): a field one side
  * changed takes that side's value whatever the clocks say; a field both changed differently takes the newer record's
- * (the newer `updated_at`, then a stable order). `sources` and `distinct_from` are joined, a library link or merge is
+ * (the newer `updated_at`, then a stable order), except that where the base had no value (or there is no base) a
+ * value only one side has is never replaced by the other's absence or null. `sources` and `distinct_from` are joined, a library link or merge is
  * kept from either side, and `updated_at` is the latest. A pending duplicate that the merged record already resolved
  * («Son distintos» or «Es el mismo» on either machine) is cleared.
  */
@@ -184,7 +185,7 @@ function pickRecord(base: MappingRecord | undefined, o: MappingRecord, t: Mappin
     else if (key === 'updated_at') value = newer.updated_at
     else if (isDeepStrictEqual(x, y) || (base && isDeepStrictEqual(y, b))) value = x
     else if (base && isDeepStrictEqual(x, b)) value = y
-    else if ((RECORD_LINKS as readonly string[]).includes(key) && (x === null || y === null)) value = x ?? y
+    else if ((b === undefined || b === null || (RECORD_LINKS as readonly string[]).includes(key)) && (x == null || y == null)) value = x ?? y
     else value = newer === o ? x : y
     if (value !== undefined) out[key] = value
   }
