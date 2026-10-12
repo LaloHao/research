@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { citationMarker, parseCitations } from './chatCitations'
+import type { PendingApproval } from './chatActions'
 import { LLM_MODELS, type LlmModel } from './summary'
 
 /** `<UTC yyyymmdd>-<hhmmss>-<4 hex>`, plus `-<6 hex>` for each copy the git sync split off. */
@@ -30,6 +31,10 @@ export const ChatMetaSchema = z.looseObject({
   archived: z.boolean().default(false),
   /** Sum of the answers' costs (recomputed on every write). */
   cost_usd: z.number().min(0).default(0),
+  /** «Acciones»: the actions server is offered to Claude in this conversation (off by default). */
+  actions: z.boolean().default(false),
+  /** «Sincronizar con git»: the sync tools are offered (off by default, independent of «Acciones»). */
+  sync: z.boolean().default(false),
   /** The machine that wrote the file last; names the copy when the sync has to split the conversation. */
   updated_on: z.string().optional(),
   /** Only on a conversation the sync split off: the original's id and the machine this version came from. */
@@ -139,6 +144,9 @@ export interface ChatSummary {
   /** Where the scope paper is; null for a library chat. */
   paperState: PaperState | null
   archived: boolean
+  /** The conversation's switches. */
+  actions: boolean
+  sync: boolean
   model: LlmModel
   updatedAt: string
   costUsd: number
@@ -165,6 +173,8 @@ export interface ChatConversation {
   partial: ChatPartial | null
   /** The last message is an unanswered question (a failed or interrupted answer) and nothing is running. */
   canRetry: boolean
+  /** Actions of the running answer waiting for «Aprobar» or «Rechazar». */
+  approvals: PendingApproval[]
 }
 
 export interface ChatListQuery {
@@ -181,6 +191,9 @@ export interface ChatSendRequest {
   model: LlmModel
   text: string
   excerpt: ChatExcerpt | null
+  /** The switches of a new conversation (ignored for an existing one, whose switches change with setTools). */
+  actions?: boolean
+  sync?: boolean
 }
 
 export type ChatStreamEvent =
@@ -189,6 +202,8 @@ export type ChatStreamEvent =
   /** A new turn of the model (after a tool call): the visible text starts over. */
   | { kind: 'turn' }
   | { kind: 'tool'; name: string }
+  /** The pending approvals of the running answer changed: the window reads them again. */
+  | { kind: 'approvals' }
   | { kind: 'done' }
   | { kind: 'stopped' }
   | { kind: 'error'; error: string }

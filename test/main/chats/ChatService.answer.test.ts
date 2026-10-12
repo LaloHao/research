@@ -235,4 +235,18 @@ describe('ChatService answers', () => {
     expect(provider.chatCalls[0].input).toContain('its text is not available')
     expect((await chats.open(id)).messages[1]).toMatchObject({ role: 'assistant', text: DRAIN_ANSWER })
   })
+
+  it('a new conversation keeps the switches of its first message; both are off by default', async () => {
+    const { chats } = await setupChats()
+    const off = await chats.send(ask('Q'))
+    await chats.idle()
+    const on = await chats.send({ ...ask('Q2'), actions: true, sync: true })
+    await chats.idle()
+    expect((await chats.open(off)).summary).toMatchObject({ actions: false, sync: false })
+    expect(await chats.open(on)).toMatchObject({ summary: { actions: true, sync: true }, approvals: [] })
+    // Only the first message sets them; later ones go through setTools.
+    await chats.send({ ...ask('Q3', off), actions: true })
+    await chats.idle()
+    expect((await chats.open(off)).summary.actions).toBe(false)
+  })
 })

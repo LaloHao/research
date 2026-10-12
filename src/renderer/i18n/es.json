@@ -276,6 +276,8 @@
     "chat_invalid": "El archivo de esta conversación en chats/ tiene un error o un conflicto de git; corrígelo o bórralo a mano.",
     "paper_not_in_library": "Ese paper ya no está en la biblioteca.",
     "chat_message_budget": "La respuesta llegó a su tope por mensaje y se detuvo. Sube «Tope por mensaje de chat (USD est.)» en Ajustes → Claude o reintenta con otro modelo.",
+    "approval_gone": "Esa aprobación ya no está pendiente: la respuesta terminó, se detuvo o pasó el tiempo.",
+    "undo_unavailable": "Esa acción ya no se puede deshacer: cambió desde entonces, ya se deshizo o la app se cerró después.",
     "unknown": "Ocurrió un error inesperado."
   },
   "paper": {

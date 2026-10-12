@@ -32,6 +32,8 @@ const summary = (over: Partial<ChatSummary>): ChatSummary => ({
   paperTitle: null,
   paperState: null,
   archived: false,
+  actions: false,
+  sync: false,
   model: 'sonnet',
   updatedAt: '2026-10-11T12:00:00.000Z',
   costUsd: 0,
@@ -80,6 +82,15 @@ describe('the answer as it streams', () => {
     expect(liveFromPartial({ text: 'ab', tools: 0, seq: 8 }, arrived)).toBe(arrived)
     expect(liveFromPartial({ text: 'abcd', tools: 1, seq: 10 }, arrived)).toEqual({ text: 'abcd', tools: 1, seq: 10, status: 'running', error: null })
     expect(liveFromPartial({ text: 'x', tools: 0, seq: 3 }, null)).toMatchObject({ text: 'x', seq: 3 })
+  })
+})
+
+describe('approvals updates', () => {
+  it('an approvals update keeps the answer and only moves its sequence; with nothing running it asks for a snapshot', () => {
+    const live = applyUpdate(applyUpdate(null, { chatId: 'c', seq: 1, kind: 'start' }), { chatId: 'c', seq: 2, kind: 'delta', text: 'Hi' })
+    expect(applyUpdate(live, { chatId: 'c', seq: 3, kind: 'approvals' })).toMatchObject({ text: 'Hi', seq: 3, status: 'running' })
+    expect(streamAction({ chatId: 'c', awaitingNew: false, seenSeq: 0, running: false }, { chatId: 'c', seq: 1, kind: 'approvals' })).toBe('resync')
+    expect(streamAction({ chatId: 'c', awaitingNew: false, seenSeq: 0, running: true }, { chatId: 'c', seq: 1, kind: 'approvals' })).toBe('apply')
   })
 })
 

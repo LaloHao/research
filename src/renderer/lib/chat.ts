@@ -108,6 +108,8 @@ export function applyUpdate(live: LiveAnswer | null, u: ChatStreamUpdate): LiveA
       return { ...base, seq: u.seq, text: '' }
     case 'tool':
       return { ...base, seq: u.seq, tools: base.tools + 1 }
+    case 'approvals':
+      return { ...base, seq: u.seq }
     case 'done':
       return { ...base, seq: u.seq, status: 'done' }
     case 'stopped':
@@ -216,7 +218,7 @@ export interface StreamGate {
 export function streamAction(g: StreamGate, u: ChatStreamUpdate): StreamAction {
   if (g.chatId === null) return g.awaitingNew ? 'buffer' : 'ignore'
   if (u.chatId !== g.chatId || u.seq <= g.seenSeq) return 'ignore'
-  if (!g.running && (u.kind === 'delta' || u.kind === 'turn' || u.kind === 'tool')) return 'resync'
+  if (!g.running && (u.kind === 'delta' || u.kind === 'turn' || u.kind === 'tool' || u.kind === 'approvals')) return 'resync'
   return 'apply'
 }
 

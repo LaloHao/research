@@ -212,7 +212,8 @@ export class ChatService {
       summary: this.summary(e),
       messages,
       partial: run ? { text: run.text, tools: run.tools, seq: run.seq } : null,
-      canRetry: !this.busy(id) && e.file.messages.at(-1)?.role === 'user'
+      canRetry: !this.busy(id) && e.file.messages.at(-1)?.role === 'user',
+      approvals: []
     }
   }
 
@@ -396,7 +397,7 @@ export class ChatService {
 
   private summary(e: Entry): ChatSummary {
     if (!e.file) {
-      return { id: e.id, title: e.id, scope: 'library', paperTitle: null, paperState: null, archived: false, model: 'sonnet', updatedAt: '', costUsd: 0, messages: 0, copyOf: null, problem: true }
+      return { id: e.id, title: e.id, scope: 'library', paperTitle: null, paperState: null, archived: false, actions: false, sync: false, model: 'sonnet', updatedAt: '', costUsd: 0, messages: 0, copyOf: null, problem: true }
     }
     const { meta, messages } = e.file
     const paper = scopePaper(e)
@@ -408,6 +409,8 @@ export class ChatService {
       paperTitle: paper && state === 'library' ? (this.deps.cache.getPaper(paper)?.title ?? null) : null,
       paperState: state,
       archived: meta.archived,
+      actions: meta.actions,
+      sync: meta.sync,
       model: meta.model,
       updatedAt: meta.updated_at,
       costUsd: meta.cost_usd,
@@ -481,6 +484,8 @@ export class ChatService {
         updated_at: message.at,
         archived: false,
         cost_usd: 0,
+        actions: req.actions === true,
+        sync: req.sync === true,
         updated_on: this.deps.machine
       },
       messages: [message]
