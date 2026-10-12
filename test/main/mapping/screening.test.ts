@@ -1,0 +1,172 @@
+import { describe, expect, it } from 'vitest'
+import {
+  conflictsOf,
+  decisionHeads,
+  duplicatePairs,
+  headsOf,
+  matchesFilter,
+  phaseView,
+  recordRows,
+  screeningCounts,
+  undoDecision,
+  type MappingContent
+} from '../../../src/main/mapping/screening'
+import type { Decision } from '../../../src/shared/mapping'
+import { AT, decision, hexId, protocolFile, record, search, suggestion } from '../../helpers/mappings'
+
+const R1 = hexId('r', 1)
+const R2 = hexId('r', 2)
+const d = (n: number, over: Partial<Decision> = {}): Decision => decision({ id: hexId('d', n), at: `2026-10-12T10:0${n}:00.000Z`, ...over })
+const content = (over: Partial<MappingContent> = {}): MappingContent => ({
+  protocol: protocolFile(),
+  searches: [search()],
+  records: [record()],
+  decisions: [],
+  suggestions: [],
+  ...over
+})
+
+describe('decision heads and phase views', () => {
+  it('takes the latest decision of each record and phase as current', () => {
+    const heads = decisionHeads([d(1), d(2, { decision: 'exclude', criterion: 'E1', replaces: [hexId('d', 1)] })])
+    expect(phaseView(headsOf(heads, R1, 'title_abstract'), 1)).toEqual({
+      state: 'exclude',
+      criterion: 'E1',
+      decisionId: hexId('d', 2),
+      by: 'user',
+      at: '2026-10-12T10:02:00.000Z',
+      protocolVersion: 1,
+      outdated: false,
+      options: []
+    })
+    expect(phaseView(headsOf(heads, R1, 'full_text'), 1).state).toBe('pending')
+  })
+
+  it('shows a conflict when two machines replaced the same decision differently, but not when they agree', () => {
+    const first = d(1)
+    const a = d(2, { decision: 'exclude', criterion: 'E1', replaces: [first.id], machine: 'machine-a' })
+    const b = d(3, { decision: 'uncertain', replaces: [first.id], machine: 'machine-b' })
+    const view = phaseView(headsOf(decisionHeads([first, a, b]), R1, 'title_abstract'), 1)
+    expect(view).toMatchObject({ state: 'conflict', decisionId: null })
+    expect(view.options.map((o) => [o.decisionId, o.machine])).toEqual([
+      [a.id, 'machine-a'],
+      [b.id, 'machine-b']
+    ])
+    const same = d(3, { decision: 'exclude', criterion: 'E1', replaces: [first.id], machine: 'machine-b' })
+    expect(phaseView(headsOf(decisionHeads([first, a, same]), R1, 'title_abstract'), 1)).toMatchObject({ state: 'exclude', decisionId: same.id })
+  })
+
+  it('clears a conflict once a decision replaces both heads, and keeps reviewers apart', () => {
+    const first = d(1)
+    const a = d(2, { decision: 'exclude', criterion: 'E1', replaces: [first.id], machine: 'machine-a' })
+    const b = d(3, { decision: 'uncertain', replaces: [first.id], machine: 'machine-b' })
+    const resolved = d(4, { decision: 'uncertain', replaces: [a.id, b.id] })
+    const heads = decisionHeads([first, a, b, resolved])
+    expect(headsOf(heads, R1, 'title_abstract').map((h) => h.id)).toEqual([resolved.id])
+    expect(phaseView(headsOf(heads, R1, 'title_abstract'), 1)).toMatchObject({ state: 'uncertain', decisionId: resolved.id })
+    const second = d(5, { reviewer: 'second', decision: 'exclude', criterion: 'E2' })
+    const both = decisionHeads([first, second])
+    expect(headsOf(both, R1, 'title_abstract').map((h) => h.id)).toEqual([first.id])
+    expect(headsOf(both, R1, 'title_abstract', 'second').map((h) => h.id)).toEqual([second.id])
+  })
+
+  it('reads «none» as pending and marks a decision made with an earlier protocol', () => {
+    expect(phaseView([d(1, { decision: 'none' })], 1).state).toBe('pending')
+    expect(phaseView([d(1)], 2)).toMatchObject({ state: 'include', outdated: true, protocolVersion: 1 })
+  })
+})
+
+describe('recordRows', () => {
+  it('builds rows with their column, states, latest suggestion and labels', () => {
+    const snow = search({ id: hexId('s', 2), kind: 'snowball', database: 'OpenAlex' })
+    const rows = recordRows(
+      content({
+        searches: [search(), snow],
+        records: [
+          record({ authors: [{ family: 'He', given: 'Pinjia' }, { family: 'Zhu', given: 'Jieming' }] }),
+          record({ id: R2, title: 'Other', identifiers: {}, sources: [snow.id], added_at: '2026-10-12T09:30:00.000Z' })
+        ],
+        decisions: [d(1)],
+        suggestions: [suggestion({ id: hexId('g', 1), at: AT }), suggestion({ id: hexId('g', 2), at: '2026-10-12T09:45:00.000Z', decision: 'exclude', criterion: 'E1' })]
+      })
+    )
+    expect(rows.map((r) => [r.id, r.column, r.active])).toEqual([
+      [R1, 'databases', true],
+      [R2, 'other', true]
+    ])
+    expect(rows[0]).toMatchObject({ authors_label: 'He & Zhu', authors: 'Pinjia He, Jieming Zhu', doi: '10.1109/icws.2017.13', title_abstract: { state: 'include' } })
+    expect(rows[0].suggestions.title_abstract).toMatchObject({ id: hexId('g', 2), decision: 'exclude', outdated: false })
+    expect(rows[1].suggestions).toEqual({ title_abstract: null, full_text: null })
+  })
+
+  it('leaves out of the screening a record merged into another, or brought only by discarded searches', () => {
+    const rows = recordRows(
+      content({
+        searches: [search({ discarded: { at: AT, reason: 'Wrong string.', machine: 'machine-a' } })],
+        records: [record(), record({ id: R2, merged_into: R1 })]
+      })
+    )
+    expect(rows.map((r) => r.active)).toEqual([false, false])
+  })
+})
+
+describe('queues and lists', () => {
+  const rows = recordRows(
+    content({
+      records: [
+        record(),
+        record({ id: R2, title: 'Waiting duplicate', identifiers: {}, duplicate_of: { record: R1, reason: 'same_title' } }),
+        record({ id: hexId('r', 3), title: 'Third', identifiers: {} })
+      ],
+      decisions: [d(1), d(2, { record: hexId('r', 3), decision: 'exclude', criterion: 'E2' })]
+    })
+  )
+
+  it('filters by phase and state; full text only takes records included on title and abstract; a waiting duplicate shows only under «all»', () => {
+    expect(rows.filter((r) => matchesFilter(r, 'title_abstract', 'pending')).map((r) => r.id)).toEqual([])
+    expect(rows.filter((r) => matchesFilter(r, 'title_abstract', 'all')).map((r) => r.id)).toEqual([R1, R2, hexId('r', 3)])
+    expect(rows.filter((r) => matchesFilter(r, 'full_text', 'pending')).map((r) => r.id)).toEqual([R1])
+    expect(rows.filter((r) => matchesFilter(r, 'full_text', 'all')).map((r) => r.id)).toEqual([R1])
+  })
+
+  it('counts states per phase, and lists the waiting duplicates', () => {
+    const counts = screeningCounts(rows)
+    expect(counts.title_abstract).toMatchObject({ pending: 1, include: 1, exclude: 1 })
+    expect(counts.full_text).toMatchObject({ pending: 1, include: 0 })
+    expect(duplicatePairs(rows)).toEqual([
+      {
+        record: { id: R2, title: 'Waiting duplicate', authors_label: 'He', year: 2017, venue: 'ICWS', doi: null },
+        other: { id: R1, title: record().title, authors_label: 'He', year: 2017, venue: 'ICWS', doi: '10.1109/icws.2017.13' },
+        reason: 'same_title'
+      }
+    ])
+  })
+
+  it('lists the conflicts with their options', () => {
+    const first = d(1)
+    const conflicted = recordRows(content({ decisions: [first, d(2, { decision: 'exclude', criterion: 'E1', replaces: [first.id] }), d(3, { replaces: [first.id], decision: 'uncertain' })] }))
+    expect(conflictsOf(conflicted)).toEqual([{ record: expect.objectContaining({ id: R1 }), phase: 'title_abstract', options: [expect.objectContaining({ decisionId: hexId('d', 2) }), expect.objectContaining({ decisionId: hexId('d', 3) })] }])
+  })
+})
+
+describe('undoDecision', () => {
+  const ctx = { id: hexId('d', 9), at: '2026-10-12T11:00:00.000Z', machine: 'machine-a' }
+
+  it('restores the decision the undone one replaced, or none', () => {
+    const first = d(1)
+    const second = d(2, { decision: 'exclude', criterion: 'E1', replaces: [first.id] })
+    expect(undoDecision([first, second], second.id, ctx)).toMatchObject({ id: ctx.id, decision: 'include', criterion: null, replaces: [second.id], undoes: second.id, at: ctx.at })
+    expect(undoDecision([first], first.id, ctx)).toMatchObject({ decision: 'none', criterion: null, replaces: [first.id], undoes: first.id })
+  })
+
+  it('refuses a decision that is no longer current, an unknown one and a conflict resolution', () => {
+    const first = d(1)
+    const second = d(2, { replaces: [first.id], decision: 'uncertain' })
+    expect(undoDecision([first, second], first.id, ctx)).toBeNull()
+    expect(undoDecision([first], hexId('d', 7), ctx)).toBeNull()
+    const a = d(2, { replaces: [first.id], decision: 'exclude', criterion: 'E1' })
+    const b = d(3, { replaces: [first.id], decision: 'uncertain' })
+    const resolved = d(4, { replaces: [a.id, b.id], decision: 'uncertain' })
+    expect(undoDecision([first, a, b, resolved], resolved.id, ctx)).toBeNull()
+  })
+})
