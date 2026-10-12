@@ -19,8 +19,10 @@ export function ActionRecord({ chatId, message }: { chatId: string; message: Act
     // The conversation reloads on chats-changed once the undo is recorded; the button goes with `undoable`.
     window.research.chats.undo(chatId, message.id).then(
       (r) => {
+        // Done: the button stays disabled until the reload takes it away with `undoable`.
+        if (r.ok) return
         setBusy(false)
-        if (!r.ok) setError(errorText(t, r.error))
+        setError(errorText(t, r.error))
       },
       () => {
         setBusy(false)

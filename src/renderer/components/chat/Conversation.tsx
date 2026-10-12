@@ -325,11 +325,11 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
               </select>
             </label>
             <label className="chat-tool-switch" title={t('chat.actions.switch_actions_hint')}>
-              <input type="checkbox" checked={tools.actions} disabled={pending} onChange={(e) => changeTools({ actions: e.target.checked })} />
+              <input type="checkbox" checked={tools.actions} disabled={pending || (chatId !== null && !summary)} onChange={(e) => changeTools({ actions: e.target.checked })} />
               {t('chat.actions.switch_actions')}
             </label>
             <label className="chat-tool-switch" title={t('chat.actions.switch_sync_hint')}>
-              <input type="checkbox" checked={tools.sync} disabled={pending} onChange={(e) => changeTools({ sync: e.target.checked })} />
+              <input type="checkbox" checked={tools.sync} disabled={pending || (chatId !== null && !summary)} onChange={(e) => changeTools({ sync: e.target.checked })} />
               {t('chat.actions.switch_sync')}
             </label>
             {summary && (
@@ -402,7 +402,7 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
             )
           )}
           {chat?.approvals.map((a) => (
-            <ApprovalCard key={a.id} chatId={chat.summary.id} approval={a} onSettled={load} />
+            <ApprovalCard key={a.id} chatId={chat.summary.id} approval={a} onSettled={load} onGone={(text) => setError({ text })} />
           ))}
           {running && (
             <div className="chat-message assistant live">

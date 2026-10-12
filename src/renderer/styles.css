@@ -322,6 +322,7 @@ button.danger { color: var(--error); border-color: var(--error); }
 .chat-action-denied, .chat-action-failed { border-left-color: var(--warning); }
 .chat-action-undone > p:first-of-type { text-decoration: line-through; }
 .chat-approval { max-width: 760px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent-soft); padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.chat-approval-details { display: flex; flex-direction: column; gap: 4px; }
 .chat-approval p, .chat-approval ul { margin: 0; }
 .chat-approval-warning { color: var(--warning); }
 .chat-composer { border-top: 1px solid var(--border); padding: 10px 20px; display: flex; flex-direction: column; gap: 6px; }
