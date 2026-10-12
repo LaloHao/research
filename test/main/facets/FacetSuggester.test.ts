@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
 import { IndexCache } from '../../../src/main/cache/IndexCache'
 import { FacetSuggester } from '../../../src/main/facets/FacetSuggester'
@@ -6,7 +6,7 @@ import { BudgetGuard, limitsFromConfig } from '../../../src/main/llm/BudgetGuard
 import { CostLedger } from '../../../src/main/llm/CostLedger'
 import { LlmError, type AgentRequest } from '../../../src/main/llm/LlmProvider'
 import { MapService } from '../../../src/main/map/MapService'
-import { startLibraryMcpServer } from '../../../src/main/mcp/LibraryMcpServer'
+import { startLibraryMcpServer, type LibraryMcpHandle, type LibraryMcpOptions } from '../../../src/main/mcp/LibraryMcpServer'
 import { libraryTools } from '../../../src/main/mcp/libraryTools'
 import { ProjectStore } from '../../../src/main/project/ProjectStore'
 import { DEFAULT_EXTRACTION_FORM } from '../../../src/main/summary/extractionForm'
@@ -21,7 +21,7 @@ import { tmpDir } from '../../helpers/tmp'
 const DEVICE = '11111111-1111-1111-1111-111111111111'
 
 /** Drain and Loghub with the default form and a thesis; Loghub's classification proposes regex_rules. */
-async function setup(agent: AgentResponse[], opts: { form?: boolean } = {}) {
+async function setup(agent: AgentResponse[], opts: { form?: boolean; startTools?: (o: LibraryMcpOptions) => Promise<LibraryMcpHandle> } = {}) {
   const store = await ProjectStore.create(await tmpDir(), 'Thesis')
   const cache = IndexCache.open(join(store.cacheDir, 'index.sqlite'))
   await seedPair(store, cache)
@@ -35,16 +35,23 @@ async function setup(agent: AgentResponse[], opts: { form?: boolean } = {}) {
   const ledger = new CostLedger(store, DEVICE, () => new Date(NOW))
   const budget = new BudgetGuard(() => limitsFromConfig(store.config.llm), () => ledger.monthTotal(), 0.05, { suggest_facets: 0.5 })
   const map = new MapService({ store, cache })
+  const servers: LibraryMcpHandle[] = []
   const suggester = new FacetSuggester({
     store,
     cache,
     provider,
     budget,
     ledger,
-    startTools: (o) => startLibraryMcpServer(libraryTools({ store, cache, map, embeddings: null }), o),
+    startTools:
+      opts.startTools ??
+      (async (o) => {
+        const server = await startLibraryMcpServer(libraryTools({ store, cache, map, embeddings: null }), o)
+        servers.push(server)
+        return server
+      }),
     now: () => new Date(NOW)
   })
-  return { store, cache, provider, budget, suggester }
+  return { store, cache, provider, budget, ledger, suggester, servers }
 }
 
 describe('FacetSuggester', () => {
@@ -119,5 +126,46 @@ describe('FacetSuggester', () => {
       ['suggest_facets', 0.3, false],
       ['suggest_facets', 2, true]
     ])
+  })
+
+  it('records a cancelled run at the per-run cap, marked as estimated, with its batch, without raising the estimate', async () => {
+    const aborted = Object.assign(new DOMException('The operation was aborted.', 'AbortError'), { costUsd: 2, estimated: true })
+    const { suggester, store, budget } = await setup([aborted])
+    await expect(suggester.suggest({ existing: [], batchId: 'b' })).rejects.toMatchObject({ name: 'AbortError' })
+    expect((await store.readCosts()).map((c) => [c.cost_usd, c.estimated, c.operation, c.batch_id, c.paper_id])).toEqual([[2, true, 'suggest_facets', 'b', '']])
+    expect(budget.currentEstimate('suggest_facets')).toBe(0.5)
+  })
+
+  it('reports agent_tools_unavailable before spending when the tool server cannot start', async () => {
+    const { suggester, provider, budget, store } = await setup([facetAgentResult()], {
+      startTools: async () => {
+        throw new Error('EADDRINUSE')
+      }
+    })
+    await expect(suggester.suggest({ existing: [] })).rejects.toMatchObject({ code: 'agent_tools_unavailable' })
+    expect(provider.agentCalls).toHaveLength(0)
+    expect(budget.currentEstimate('suggest_facets')).toBe(0.5)
+    expect(await store.readCosts()).toEqual([])
+  })
+
+  it('closes the tool server when the agent fails', async () => {
+    const { suggester, servers } = await setup([new LlmError('llm_quota')])
+    await expect(suggester.suggest({ existing: [] })).rejects.toMatchObject({ code: 'llm_quota' })
+    expect(servers).toHaveLength(1)
+    await expect(fetch(servers[0].url, { method: 'POST' })).rejects.toMatchObject({ cause: { code: 'ECONNREFUSED' } })
+  })
+
+  it('learns its estimate from a real run', async () => {
+    const { suggester, budget } = await setup([facetAgentResult(undefined, 1.2)])
+    await suggester.suggest({ existing: [] })
+    expect(budget.currentEstimate('suggest_facets')).toBe(1.2)
+  })
+
+  it('keeps the original error when the cost log cannot be written for a cut-off run', async () => {
+    const { suggester, ledger, budget } = await setup([new LlmError('llm_timeout', 2, { estimated: true })])
+    vi.spyOn(ledger, 'append').mockRejectedValue(new Error('disk full'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(suggester.suggest({ existing: [] })).rejects.toMatchObject({ code: 'llm_timeout' })
+    expect(budget.currentEstimate('suggest_facets')).toBe(0.5)
   })
 })

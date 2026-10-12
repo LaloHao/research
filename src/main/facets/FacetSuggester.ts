@@ -100,7 +100,10 @@ export class FacetSuggester {
         if (charge.costUsd > 0) {
           spent += charge.costUsd
           estimated = charge.estimated
-          await ledger.append({ paperId: '', batchId: req.batchId, model, costUsd: charge.costUsd, operation: 'suggest_facets', estimated: charge.estimated })
+          // A cost log that cannot be written must not hide why the run failed (the budget still counts it on settle).
+          await ledger
+            .append({ paperId: '', batchId: req.batchId, model, costUsd: charge.costUsd, operation: 'suggest_facets', estimated: charge.estimated })
+            .catch((logError: unknown) => console.error('suggest_facets: could not log the cost of a failed run', logError))
         }
         throw error
       } finally {
