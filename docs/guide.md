@@ -143,6 +143,8 @@ The app syncs the project folder with a git repository: it commits your changes,
 
 ## Paper detail
 
+![Paper detail on the PDF tab](images/paper-pdf.png)
+
 Selecting a paper opens its tabs (only the ones that apply):
 
 They appear in this order: Resumen, Contenido, PDF, Texto, Relaciones, Chat, Notas.
@@ -162,6 +164,8 @@ The Texto tab shows one page at a time, with «Página N de M» (Page N of M), �
 Above the detail: the citation key (with a button to copy it), the link to the original DOI or URL, «Mostrar en carpeta» (Show in folder) (opens `papers/<key>/` in the file explorer), and the indexed-text status (indexing, text indexed, PDF without text/scanned, no text, extraction error).
 
 ## Summaries with Claude
+
+![Library with a paper's summary: each field with its quote, page and review state](images/library-summary.png)
 
 A summary (`summary.md`) has these fields: tl;dr, problem, contribution, method, evaluation, results, limitations (stated and inferred), future work, and research type (solution proposal, validation, evaluation, experience, philosophical, or opinion). Along with the summary, the app generates a classification (`extraction.yaml`) according to the project's form facets, and, if the thesis has a defined topic, that paper's relation to the thesis. If the project doesn't have an extraction form yet, summarizing creates the default form first (see "Form" under Settings) automatically.
 
@@ -228,6 +232,8 @@ The direct-citation reason shows both papers' citation keys. The 10 most similar
 
 ## Typed relations
 
+![Typed relation suggested by Claude, with quotes from both papers](images/paper-relations.png)
+
 Claude can suggest how a paper relates to others in your library:
 
 - **Extiende** (Extends): builds directly on the other one (extends, improves or generalizes it).
@@ -279,6 +285,8 @@ While the form editor has unsaved changes, nothing can be accepted or edited and
 **Costs.** Each run is logged in `costs/` as `suggest_facets` (with no paper) and each fill as `fill_facets`.
 
 ## Chat with Claude
+
+![Chat about a paper, with verified citations](images/chat.png)
 
 You can talk with Claude about your library in two places:
 
@@ -342,11 +350,15 @@ The **«Mapeos»** (Mappings) view (📋 in the side rail) holds the project's s
 - **«Desde la biblioteca»** (From the library): you tick papers of your library and they come in as records linked to them; it costs nothing and needs no confirmation.
 - **Snowballing**: from the studies included on full text that are papers of your library, backward (their OpenAlex references), forward (the works citing them) or both, capped at 2000 works per iteration. It costs no money; it runs only if you confirm. Each iteration is logged with its number (how many snowball searches this mapping already had, plus one) and the records it started from.
 
+![Searches tab: OpenAlex search form, import, library and snowballing](images/mapping-searches.png)
+
 **The log's figures.** Each search shows up to three figures, for example «791 recibidos · OpenAlex informa 787 · 782 registros distintos» (791 received · OpenAlex reports 787 · 782 distinct records): the rows that arrived («leídos», read, for an import or the library), the total OpenAlex reported (OpenAlex searches only; for snowballing, the works found), and the distinct records the mapping holds from that search now. They can differ: OpenAlex's total is approximate, and paging through the results can repeat a work, which joins the record already there; records later merged with «Es el mismo» stop counting too. Hovering the figures explains this.
 
 **«Completar búsqueda»** (Complete search): an OpenAlex search the cap cut short has this button. After a short confirmation, it runs the same string with the same filters and field again, with the cap at 5000. When that search finishes and brings back every record the old one had, it replaces it: the old one is discarded and shows «Completada con la búsqueda del <fecha>» (Completed by the search of <date>), the records you already had keep their decisions (they just gain the new search as a source), and PRISMA counts the new search only. If some of the old search's records didn't come back (OpenAlex's index changed in between), discarding it would take them out of the screening, so both searches stay live: Activity says how many records didn't come back and how many of them had decisions, and the old search shows that it was already completed and is no longer offered for completion. If the new search fails, the old one stays as it was. While a completion is queued or running, the button waits. When OpenAlex reported more than 5000 results, the button is disabled: refine the string instead.
 
 Searches are never deleted: «Descartar» (Discard) asks for a reason and marks the search as discarded; it never disappears from the log, but the records only it brought leave the screening and the PRISMA diagram. If `searches.yaml` is edited by hand and left with a count lower than the records that really name it as a source, the search flags this in the log and the PRISMA diagram warns that its counts don't add up.
+
+![Search log with the exact strings, filters, figures and discarded searches](images/mapping-search-log.png)
 
 **Records and deduplication.** Results are not papers: they are light records (title, authors, year, venue, abstract, DOI, arXiv or OpenAlex id). On entry, a record joins an existing one on its own only when they share an identifier with none of the others in conflict (for instance, the same DOI, even given as a URL); with no identifier in conflict, it also joins on its own when the normalized title is equal, the year is equal and known, and both have authors with the same first author's family name (or, with no authors on either side, when title, year, venue and first author match exactly, or neither has authors at all: an exact re-import). Outside those cases the app never joins two records on its own: it asks you. They show as **possible duplicates** («Posibles duplicados») in «Cribado»: identifiers that conflict with each other (a preprint and its published version), the same title and year without the first author matching or without authors on one side, or near-identical titles (word similarity of at least 0.9) a year apart at most. «Es el mismo» (it's the same) keeps the record that was already there and adds the sources and missing fields of the one just flagged (and its screening decisions, when the kept record doesn't already have the same one); «Son distintos» (they're different) keeps them apart for good, on both sides of the pair. Until you answer, the newly arrived record of the pair stays out of the screening queue and the PRISMA diagram. A pair the sync joined because two machines gave different ids to the same identifier shows with the reason «Mismo identificador (llegó por la sincronización)» (same identifier, arrived through sync). A record that already is a paper of your library is linked to it.
 
@@ -356,7 +368,11 @@ Searches are never deleted: «Descartar» (Discard) asks for a reason and marks 
 - **Adding to the library**: records included on title and abstract move to the full-text phase. Those that are not yet a paper of your library offer «Agregar N a la biblioteca» (add N to the library, all) or «Agregar a la biblioteca» (one), and ask for your confirmation before running; if «Resumir automáticamente al agregar» is on, the confirmation says what the summaries will cost. They are added with the usual ingest (metadata, BibTeX and the open-access PDF when there is one); next to the record you see the paper's detail, with its PDF and «Adjuntar PDF» (attach PDF) if it's missing, or you mark «No se pudo conseguir» if you won't get it.
 - **Conflicts**: if you decided the same record differently on two machines before syncing, it shows under «Decisiones distintas en dos equipos» (different decisions on two machines) with each option, its machine and date; «Quedarme con esta» (keep this one) makes it the current one.
 
+![Title and abstract screening, record by record with shortcuts](images/mapping-screening.png)
+
 **«PRISMA».** The PRISMA 2020 flow diagram is computed from the search log and the current decisions and updates itself: records identified per source, duplicates removed, screened and excluded on title and abstract, sought for retrieval and not retrieved, assessed and excluded per criterion, and included. Database searches (OpenAlex and imports) go in one column; snowballing and papers taken from the library go under «Otros métodos» (other methods); records still undecided (or marked «Dudoso», uncertain, or in conflict between two machines) are noted in each box as «sin decidir o dudosos» (undecided or uncertain), and a discarded search stops counting. «Exportar SVG» and «Exportar PNG» save it wherever you choose with the usual save dialog.
+
+![PRISMA 2020 flow diagram computed from the log](images/mapping-prisma.png)
 
 **In the files.** Each mapping lives in `mappings/<id>/`: `protocol.yaml` (the protocol and its versions), `searches.yaml` (the search log, only ever added to), `records.yaml` (the records with their sources), `decisions.yaml` (the decisions, only ever added to) and `suggestions.yaml` (Claude's suggestions, only ever added to). They sync with git, and the app merges on its own what it can: a search, decision or suggestion added on one machine is never lost, and a record changed on only one machine is kept as is. When the **protocol** is edited on both machines at once and the two edits change its body differently, the app can't merge them on its own: `protocol.yaml` shows up as one of the conflicted files under «Sincronización», where you choose which version stays, the same as with any other file it can't merge; the version you don't pick isn't lost, it stays in git's history. If a mapping's file can't be read (for instance, with conflict markers added by hand), the mapping's list says so until it's fixed.
 
@@ -367,6 +383,10 @@ The **Mapa** (Map) view (side rail) has three tabs:
 - **Grafo** (Graph): one node per paper (larger the more citations it has in OpenAlex) and two kinds of edges: citations (solid arrow) and similarity (dashed, thicker the more alike). Hover a dashed edge to see its reasons; click a node to open its detail on the side. Controls: **«Lente»** (Lens) «Área» (Field; colored by the facet you pick; a paper with several values takes the one most frequent in the library) or «Tesis» (Thesis; colored by the 1–5 relevance of the thesis relation, gray without one); show or hide citations and similarity; «Umbral de similitud» (Similarity threshold); «Aplicar los filtros de la biblioteca» (Apply the library's filters; uses the papers visible the last time you opened the library); «Exportar PNG» (Export PNG; the graph exports to PNG only). Typed relations are drawn with one color per type: solid when confirmed, dotted when suggested, with an arrow except for the types without direction. The «Relaciones:» (Relations:) row has one switch per type and «Ocultar sugeridas» (Hide suggested); hovering a relation shows its type.
 - **Gráficas** (Charts): «Barras por valor» (Bars per value), «Burbujas faceta × faceta» (Facet × facet bubbles; empty cells show as gaps) and «Papers por año» (Papers per year). With «Solo revisadas» (Reviewed only) off, every facet value counts and unreviewed ones are drawn fainter; on, only verified or edited ones. Entries that no longer fit their facet's current type don't count. Clicking a bar or bubble opens the library filtered. They export to SVG, PNG and CSV.
 - **Candidatos** (Candidates): see "Citations and candidates".
+
+![Map: graph of papers with citations, similarity and typed relations](images/map-graph.png)
+
+![Map: bars per facet value](images/map-charts.png)
 
 ## Settings
 

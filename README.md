@@ -4,6 +4,21 @@
 
 A personal desktop app for thesis research: a paper library with BibTeX, full-text search, Claude-generated summaries, citations from OpenAlex, similar papers, a map of the field, typed relations and facet suggestions by Claude, chat with Claude over the library with verified citations and actions from the chat behind the app's confirmation rules, a versioned trash to remove and restore papers, git sync between machines from the app, systematic mappings with a protocol, a search log, screening with Claude's suggestions and a PRISMA diagram, and, in a later stage, a second reviewer, quality assessment and mapping reports.
 
+## Screenshots
+
+The interface is in Spanish.
+
+![Library with a paper's summary: each field with its quote, page and review state](docs/images/library-summary.png)
+
+| | |
+|---|---|
+| ![Typed relation suggested by Claude](docs/images/paper-relations.png) | ![Chat about a paper with verified citations](docs/images/chat.png) |
+| Typed relations suggested by Claude, with quotes from both papers | Chat over the library, every claim cited and checked |
+| ![Map of the field](docs/images/map-graph.png) | ![Search log of a systematic mapping](docs/images/mapping-search-log.png) |
+| Map: citations, similarity and typed relations | Systematic mapping: the search log with exact strings and figures |
+| ![Screening](docs/images/mapping-screening.png) | ![PRISMA 2020 diagram](docs/images/mapping-prisma.png) |
+| Screening record by record, with Claude's suggestions | PRISMA 2020 diagram computed from the log |
+
 ## Requirements
 
 - Node.js 24 or later and pnpm (`corepack enable`)
