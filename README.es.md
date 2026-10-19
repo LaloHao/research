@@ -4,6 +4,19 @@
 
 App de escritorio personal para la investigación de una tesis: biblioteca de papers con BibTeX, búsqueda de texto completo, resúmenes con Claude, citas desde OpenAlex, papers similares, un mapa del área, relaciones tipadas y facetas sugeridas por Claude, chat con Claude sobre la biblioteca con citas verificadas y acciones desde el chat con las reglas de confirmación de la app, una papelera versionada para quitar y restaurar papers, sincronización entre equipos con git desde la app, mapeos sistemáticos con protocolo, búsquedas registradas, cribado con sugerencias de Claude y diagrama PRISMA y, en una etapa siguiente, segundo revisor, evaluación de calidad y reporte de los mapeos.
 
+## Capturas
+
+![Biblioteca con el resumen de un paper: cada campo con su cita, página y estado de revisión](docs/images/library-summary.png)
+
+| | |
+|---|---|
+| ![Relación tipada sugerida por Claude](docs/images/paper-relations.png) | ![Chat sobre un paper con citas verificadas](docs/images/chat.png) |
+| Relaciones tipadas sugeridas por Claude, con citas de los dos papers | Chat sobre la biblioteca, cada afirmación citada y verificada |
+| ![Mapa del área](docs/images/map-graph.png) | ![Registro de búsquedas de un mapeo sistemático](docs/images/mapping-search-log.png) |
+| Mapa: citas, similitud y relaciones tipadas | Mapeo sistemático: registro de búsquedas con las cadenas exactas y sus cifras |
+| ![Cribado](docs/images/mapping-screening.png) | ![Diagrama PRISMA 2020](docs/images/mapping-prisma.png) |
+| Cribado registro por registro, con sugerencias de Claude | Diagrama PRISMA 2020 calculado del registro |
+
 ## Requisitos
 
 - Node.js 24 o superior y pnpm (`corepack enable`)

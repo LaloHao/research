@@ -143,6 +143,8 @@ La app sincroniza la carpeta del proyecto con un repositorio git: guarda tus cam
 
 ## Detalle del paper
 
+![Detalle del paper en la pestaña PDF](images/paper-pdf.png)
+
 Al seleccionar un paper se abren sus pestañas (solo las que apliquen):
 
 Aparecen en este orden: Resumen, Contenido, PDF, Texto, Relaciones, Chat, Notas.
@@ -162,6 +164,8 @@ La pestaña Texto muestra una página a la vez, con «Página N de M», «Anteri
 Arriba del detalle: la clave de cita (con botón para copiarla), el enlace al DOI o la URL original, «Mostrar en carpeta» (abre `papers/<clave>/` en el explorador de archivos) y el estado del texto indexado (indexando, texto indexado, PDF sin texto/escaneado, sin texto, error al extraer).
 
 ## Resúmenes con Claude
+
+![Biblioteca con el resumen de un paper: cada campo con su cita, página y estado de revisión](images/library-summary.png)
 
 Un resumen (`summary.md`) tiene estos campos: en pocas palabras, problema, contribución, método, evaluación, resultados, limitaciones (declaradas e inferidas), trabajo futuro y tipo de investigación (propuesta de solución, validación, evaluación, experiencia, filosófico u opinión). Junto con el resumen se genera una clasificación (`extraction.yaml`) según las facetas del formulario del proyecto, y, si la tesis tiene tema definido, la relación de ese paper con la tesis. Si el proyecto todavía no tiene formulario de extracción, resumir crea primero el formulario por defecto (ver «Formulario» en Ajustes) automáticamente.
 
@@ -228,6 +232,8 @@ La razón de cita directa muestra las claves de cita de ambos papers (las de la 
 
 ## Relaciones tipadas
 
+![Relación tipada sugerida por Claude, con citas de los dos papers](images/paper-relations.png)
+
 Claude puede sugerir cómo se relaciona un paper con otros de tu biblioteca:
 
 - **Extiende**: construye directamente sobre el otro (lo extiende, mejora o generaliza).
@@ -279,6 +285,8 @@ Mientras tengas cambios sin guardar en el editor del formulario no se puede acep
 **Costos.** Cada ejecución se registra en `costs/` como `suggest_facets` (sin paper) y cada llenado como `fill_facets`.
 
 ## Chat con Claude
+
+![Chat sobre un paper, con citas verificadas](images/chat.png)
 
 Puedes conversar con Claude sobre tu biblioteca en dos lugares:
 
@@ -342,11 +350,15 @@ La vista **Mapeos** (📋 en la barra lateral) guarda los mapeos sistemáticos d
 - **Desde la biblioteca**: marcas papers de tu biblioteca y entran como registros vinculados a ellos; no cuesta nada ni necesita confirmación.
 - **Snowballing**: desde los estudios incluidos a texto completo que son papers de tu biblioteca, hacia atrás (sus referencias en OpenAlex), hacia adelante (los trabajos que los citan) o en ambas direcciones, con un tope de 2000 trabajos por iteración. No cuesta dinero; solo corre si confirmas. Cada iteración queda en el registro con su número (las veces que ya hiciste snowballing en este mapeo, más uno) y los registros de los que partió.
 
+![Pestaña Búsquedas: formulario de OpenAlex, importación, biblioteca y snowballing](images/mapping-searches.png)
+
 **Las cifras del registro.** Cada búsqueda muestra hasta tres cifras, por ejemplo «791 recibidos · OpenAlex informa 787 · 782 registros distintos»: las filas que llegaron («leídos» en una importación o desde la biblioteca), el total que informó OpenAlex (solo en búsquedas de OpenAlex; en el snowballing, los trabajos encontrados) y los registros distintos que el mapeo tiene hoy de esa búsqueda. Pueden diferir: el total de OpenAlex es aproximado, y al paginar los resultados puede repetirse un trabajo, que se junta con el registro que ya estaba; los registros que luego unes con «Es el mismo» también dejan de contar. Al pasar el puntero sobre las cifras se explica.
 
 **Completar búsqueda**: una búsqueda de OpenAlex que el tope dejó corta tiene este botón. Tras una confirmación breve, vuelve a correr la misma cadena con los mismos filtros y el mismo campo, con el tope en 5000. Cuando esa búsqueda termina y trae todos los registros que tenía la anterior, la reemplaza: la anterior queda descartada y muestra «Completada con la búsqueda del <fecha>», los registros que ya tenías conservan sus decisiones (solo suman la búsqueda nueva como fuente) y PRISMA cuenta solo la búsqueda nueva. Si algunos registros de la anterior no volvieron (el índice de OpenAlex cambió entre tanto), descartarla los sacaría del cribado, así que las dos quedan vigentes: Actividad dice cuántos registros no volvieron y cuántos de ellos tenían decisiones, y la anterior muestra que ya se completó y deja de ofrecer «Completar búsqueda». Si la búsqueda nueva falla, la anterior queda como estaba. Mientras una compleción está en cola o en curso, el botón espera. Si OpenAlex informó más de 5000 resultados, el botón queda desactivado: afina la cadena en su lugar.
 
 Las búsquedas nunca se borran: «Descartar» pide un motivo y la marca como descartada; nunca desaparece del registro, pero los registros que solo ella trajo salen del cribado y del diagrama PRISMA. Si alguien edita `searches.yaml` a mano y deja una cuenta de resultados menor que los registros que de verdad la tienen como fuente, la búsqueda lo señala en el registro y el diagrama PRISMA avisa que sus cuentas no cuadran.
+
+![Registro de búsquedas con las cadenas exactas, filtros, cifras y búsquedas descartadas](images/mapping-search-log.png)
 
 **Registros y deduplicación.** Los resultados no son papers: son registros ligeros (título, autores, año, venue, resumen, DOI, arXiv u OpenAlex). Al entrar, un registro se une solo a otro ya existente cuando comparten un identificador sin que ningún otro identificador choque entre ellos (por ejemplo, el mismo DOI, aunque uno lo tenga como URL); si no hay identificadores en conflicto, también se une solo cuando el título normalizado es igual, el año es igual y conocido, y ambos tienen autores con el mismo apellido del primero (o, sin identificadores en ninguno de los dos, cuando título, año, venue y primer autor coinciden exactamente, o cuando ninguno de los dos tiene autores: una reimportación exacta). Fuera de esos casos, la app nunca une dos registros por su cuenta: te pregunta. Quedan como **posibles duplicados** en «Cribado»: identificadores que chocan entre sí (un preprint y su versión publicada), el mismo título y año sin que el primer autor coincida o sin autores en alguno de los dos, o títulos casi iguales (similitud de palabras de al menos 0.9) con un año de diferencia como máximo. «Es el mismo» conserva el registro que ya estaba y le suma las fuentes y los datos que le falten del otro (y sus decisiones de cribado, si el otro no tenía ya una igual); «Son distintos» los separa para siempre, en ambos sentidos. Mientras no respondas, el registro recién llegado del par queda fuera de la cola de cribado y del diagrama PRISMA. Un par que la sincronización unió porque dos equipos le dieron ids distintos al mismo identificador aparece con el motivo «Mismo identificador (llegó por la sincronización)». Un registro que ya es un paper de tu biblioteca queda vinculado a él.
 
@@ -356,7 +368,11 @@ Las búsquedas nunca se borran: «Descartar» pide un motivo y la marca como des
 - **Agregar a la biblioteca**: los registros incluidos en título y resumen pasan a la fase de texto completo. Los que todavía no son un paper de tu biblioteca ofrecen «Agregar N a la biblioteca» (todos) o «Agregar a la biblioteca» (uno), y piden tu confirmación antes de correr; si tienes activado «Resumir automáticamente al agregar», la confirmación dice cuánto costarán los resúmenes. Se agregan con la ingesta de siempre (metadatos, BibTeX y el PDF de acceso abierto si existe); junto al registro ves el detalle del paper, con su PDF y «Adjuntar PDF» si falta, o marcas «No se pudo conseguir» si no vas a conseguirlo.
 - **Conflictos**: si decidiste el mismo registro de forma distinta en dos equipos antes de sincronizar, aparece en «Decisiones distintas en dos equipos» con cada opción, su equipo y su fecha; «Quedarme con esta» la deja como la vigente.
 
+![Cribado por título y resumen, registro por registro con atajos](images/mapping-screening.png)
+
 **PRISMA.** El diagrama de flujo PRISMA 2020 se calcula del registro de búsquedas y de las decisiones vigentes y se actualiza solo: registros identificados por fuente, duplicados quitados, cribados y excluidos en título y resumen, buscados a texto completo y no conseguidos, evaluados y excluidos por criterio, e incluidos. Las búsquedas en bases de datos (OpenAlex e importaciones) van en una columna, snowballing y los papers tomados de la biblioteca en «Otros métodos»; los registros aún sin decidir (o marcados «Dudoso», o en conflicto entre dos equipos) se indican en cada caja como «sin decidir o dudosos», y una búsqueda descartada deja de contar. «Exportar SVG» y «Exportar PNG» lo guardan donde elijas con el diálogo de siempre.
+
+![Diagrama de flujo PRISMA 2020 calculado del registro](images/mapping-prisma.png)
 
 **En los archivos.** Cada mapeo vive en `mappings/<id>/`: `protocol.yaml` (el protocolo y sus versiones), `searches.yaml` (el registro de búsquedas, que solo se agrega), `records.yaml` (los registros con sus fuentes), `decisions.yaml` (las decisiones, que solo se agregan) y `suggestions.yaml` (las sugerencias de Claude, que solo se agregan). Se sincronizan con git y la app mezcla sola lo que puede: una búsqueda, decisión o sugerencia nueva en un equipo nunca se pierde, y un registro cambiado solo en un equipo se conserva tal cual. Cuando el **protocolo** se edita en los dos equipos a la vez y las dos ediciones cambian su cuerpo de forma distinta, la app no puede mezclarlas sola: aparece como uno de los archivos en conflicto de «Sincronización», donde eliges qué versión se queda, igual que con cualquier otro archivo que no sabe mezclar; la versión que no elijas no se pierde, queda en el historial de git. Si un archivo del mapeo no se puede leer (por ejemplo, con marcadores de conflicto de git puestos a mano), el mapeo lo indica en la lista hasta que se corrija.
 
@@ -367,6 +383,10 @@ La vista **Mapa** (barra lateral) tiene tres pestañas:
 - **Grafo**: un nodo por paper (más grande cuantas más citas tiene en OpenAlex) y dos tipos de aristas: citas (flecha sólida) y similitud (punteada, más gruesa cuanto más parecidos). Pasa el cursor por una arista punteada para ver sus razones; haz clic en un nodo para abrir su detalle al costado. Controles: **Lente** «Área» (color por la faceta que elijas; un paper con varios valores toma el más frecuente en la biblioteca) o «Tesis» (color por la relevancia 1–5 de la relación con la tesis; gris sin relación); mostrar u ocultar citas y similitud; «Umbral de similitud»; «Aplicar los filtros de la biblioteca» (usa los papers visibles la última vez que abriste la biblioteca); «Exportar PNG» (el grafo solo se exporta a PNG). Las relaciones tipadas se dibujan con un color por tipo: sólidas las confirmadas, punteadas las sugeridas, con flecha salvo en los tipos sin dirección. La fila «Relaciones:» tiene un interruptor por tipo y «Ocultar sugeridas»; al pasar el cursor por una relación se ve su tipo.
 - **Gráficas**: «Barras por valor», «Burbujas faceta × faceta» (las celdas vacías se ven como huecos) y «Papers por año». Con «Solo revisadas» apagado cuentan todas las facetas y lo no revisado se dibuja más tenue; encendido, solo las verificadas o editadas. Las entradas que ya no encajan con el tipo actual de su faceta no cuentan. Un clic en una barra o burbuja abre la biblioteca filtrada. Se exportan a SVG, PNG y CSV.
 - **Candidatos**: ver «Citas y candidatos».
+
+![Mapa: grafo de papers con citas, similitud y relaciones tipadas](images/map-graph.png)
+
+![Mapa: barras por valor de faceta](images/map-charts.png)
 
 ## Ajustes
 
