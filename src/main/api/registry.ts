@@ -6,6 +6,7 @@ import type { IndexCache } from '../cache/IndexCache'
 import { operationPlan, runCappedOperation, type CappedDeps } from '../llm/cappedOperation'
 import type { LibraryTools } from '../mcp/libraryTools'
 import type { ProjectStore } from '../project/ProjectStore'
+import type { DraftService } from '../writing/DraftService'
 import type { WritingService } from '../writing/WritingService'
 
 /**
@@ -18,6 +19,8 @@ export interface ApiContext {
   /** The read-only library tools of the chat and the agent runs (src/main/mcp). */
   library: LibraryTools
   writing: Pick<WritingService, 'bibFromText' | 'bibFromFile' | 'outlineData' | 'library' | 'citeCheckPlan' | 'citeCheck' | 'proposeOutline' | 'reviewStyle'>
+  /** «Borrador»: drafts written by Claude, saved in the project (drafts/). */
+  drafts: Pick<DraftService, 'run' | 'finished' | 'open'>
   /** Budget, ledger and caps, for `operationPlan` and `runCappedOperation`. */
   capped: CappedDeps
   /** Focuses the app's window and shows the paper at that page, the quote highlighted. */
@@ -68,7 +71,7 @@ export interface CostlyResult {
  * - by default the registry wraps `run` in `runCappedOperation` (admitted against the monthly cap, `maxUsd` its own
  *   cap, charged to the ledger as `cost.kind`): for a tool that makes one provider call itself;
  * - with `selfCapped`, `run` calls a service method that already goes through `runCappedOperation` (the app's own
- *   «Redacción» operations: WritingService.citeCheck, proposeOutline, reviewStyle), so the registry does not wrap it
+ *   «Redacción» operations: WritingService.citeCheck, proposeOutline, reviewStyle, DraftService.run), so the registry does not wrap it
  *   again and `maxUsd` is null. Wrapping it would admit and charge the same call twice.
  *
  * `run` validates its model output itself (the services do), as the app's own operations do.

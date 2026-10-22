@@ -33,6 +33,8 @@ async function project() {
     cache,
     library: libraryTools({ store, cache, map: new MapService({ store, cache }), embeddings: null }),
     writing: new WritingService({ store, cache, includedPapers: () => [] }),
+    // No draft tool is called here (claudeTools.test.ts has them).
+    drafts: {} as ApiContext['drafts'],
     capped: { budget, ledger, limits },
     openInApp: (r) => void opened.push(r)
   }

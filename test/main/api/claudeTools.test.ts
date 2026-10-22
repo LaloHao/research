@@ -10,8 +10,11 @@ import { MapService } from '../../../src/main/map/MapService'
 import { libraryTools } from '../../../src/main/mcp/libraryTools'
 import { ProjectStore } from '../../../src/main/project/ProjectStore'
 import { CiteChecker } from '../../../src/main/writing/CiteChecker'
+import { DraftService } from '../../../src/main/writing/DraftService'
+import { startLibraryMcpServer } from '../../../src/main/mcp/LibraryMcpServer'
+import { scopeLibraryTools } from '../../../src/main/mcp/scopedTools'
 import { WritingService } from '../../../src/main/writing/WritingService'
-import { FakeLlmProvider } from '../../helpers/llm'
+import { chatAnswer, FakeLlmProvider, type ChatResponse } from '../../helpers/llm'
 import { DRAIN_ID, LOGHUB_ID, seedPair } from '../../helpers/pair'
 import { sampleThesis } from '../../helpers/summaries'
 import { tmpDir } from '../../helpers/tmp'
@@ -33,7 +36,7 @@ function echo(verdict: string, costUsd = 0.05): (req: CompleteRequest) => Comple
   })
 }
 
-async function project(responses: Respond[]) {
+async function project(responses: Respond[], chats: ChatResponse[] = []) {
   const store = await ProjectStore.create(await tmpDir(), 'Thesis')
   const cache = IndexCache.open(join(store.cacheDir, 'index.sqlite'))
   await seedPair(store, cache)
@@ -46,17 +49,30 @@ async function project(responses: Respond[]) {
   const ledger = new CostLedger(store, 'test-device')
   const limits = () => limitsFromConfig(store.config.llm)
   const budget = new BudgetGuard(limits, () => ledger.monthTotal(), 0.05, { cite_check: 0.2, outline: 0.1, style: 0.1 })
-  const provider = new FakeLlmProvider(responses)
+  const provider = new FakeLlmProvider(responses, [], chats)
+  const map = new MapService({ store, cache })
+  const drafts = new DraftService({
+    store,
+    cache,
+    provider,
+    budget,
+    ledger,
+    machine: 'laptop',
+    startTools: (o, papers) => startLibraryMcpServer(scopeLibraryTools(libraryTools({ store, cache, map, embeddings: null }), papers), o),
+    emit: () => undefined,
+    stream: () => undefined
+  })
   const checker = new CiteChecker({ store, cache, provider, budget, ledger, limits, embedder: async () => null })
   const ctx: ApiContext = {
     store,
     cache,
     library: libraryTools({ store, cache, map: new MapService({ store, cache }), embeddings: null }),
     writing: new WritingService({ store, cache, includedPapers: () => [], llm: { provider, budget, ledger }, checker }),
+    drafts,
     capped: { budget, ledger, limits },
     openInApp: () => undefined
   }
-  return { store, provider, ledger, ctx }
+  return { store, provider, ledger, ctx, drafts }
 }
 
 const servers: LocalApiServerHandle[] = []
@@ -145,6 +161,30 @@ describe('local API: costly tools of «Redacción»', () => {
     expect([...text].slice(2, 16).join('')).toBe('Drain are fast')
     expect(out.dropped.protected).toBe(1)
     expect(await costs(store)).toEqual([['style', 0.02]])
+  })
+
+  it('draft: creates a draft, waits for it and answers its text converted, charged once', async () => {
+    const text = `Online parsers exist [[${DRAIN_ID}|p. 1|"Drain parses log messages online"]]. Everyone agrees [[sin cita]]. Loghub too [[${LOGHUB_ID}|p. 1|"Loghub is a large collection of system log datasets"]].`
+    const { store, provider, ctx, drafts } = await project([], [chatAnswer(text, 0.12)])
+    const server = await serve(ctx)
+    const args = { title: 'Log parsing', purpose: 'Compare online parsers.', keys: [DRAIN_ID], length: 'short', format: 'latex' }
+    expect(await ok(server, 'draft', args)).toMatchObject({ confirmation_required: true, operation: 'draft', papers: 1, length: 'short' })
+    expect(provider.chatCalls).toHaveLength(0)
+
+    const out = await ok(server, 'draft', { ...args, confirmed: true })
+    expect(out).toMatchObject({ title: 'Log parsing', format: 'latex', stopped: false, unverified: 0, outside: 1, uncited: 1, costUsd: 0.12 })
+    expect(out.text).toContain(`\\cite[p.~1]{${DRAIN_ID}}`)
+    expect(out.text).toContain('[SIN CITA]')
+    expect(drafts.list().map((d) => d.id)).toEqual([out.draft_id])
+    expect(await costs(store)).toEqual([['draft', 0.12]])
+  })
+
+  it('draft: a run that fails after it started answers its error code', async () => {
+    const { ctx } = await project([], [new Error('boom')])
+    const server = await serve(ctx)
+    const out = await call(server, 'draft', { title: 'T', keys: [DRAIN_ID], confirmed: true })
+    expect(out.isError).toBe(true)
+    expect(out.text).toMatch(/^[a-z_]+: /)
   })
 
   it('stays refused while Settings does not allow costly operations', async () => {

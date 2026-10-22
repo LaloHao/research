@@ -74,6 +74,8 @@ interface Run {
   seq: number
   done: Promise<void>
   log: AgentRunLog | null
+  /** How the version ended, once `done`: stopped, or the error code the stream reported. */
+  outcome?: { stopped: boolean; error: string | null }
 }
 
 const SEARCH_CHARS = 200_000
@@ -195,6 +197,17 @@ export class DraftService {
    */
   run(input: DraftInput, draftId: string | null): Promise<string> {
     return this.track(this.runNow(input, draftId))
+  }
+
+  /**
+   * For a caller that waits for the whole version (the local API): resolves once the run of `id` ends, with how it
+   * ended (the window follows the stream instead). A draft not being written resolves at once, as finished.
+   */
+  async finished(id: string): Promise<{ stopped: boolean; error: string | null }> {
+    const run = this.runs.get(id)
+    if (!run) return { stopped: false, error: null }
+    await run.done
+    return run.outcome ?? { stopped: false, error: null }
   }
 
   /** «Detener»: what arrived is kept as a stopped version. */
@@ -385,6 +398,7 @@ export class DraftService {
       if (!text) throw new LlmError('llm_invalid_output', 0)
       await this.appendVersion(id, { at: this.now().toISOString(), model: answerModel(result.model), cost_usd: result.costUsd, stopped: false }, text)
       run.log?.end({ costUsd: result.costUsd, turns: result.turns })
+      run.outcome = { stopped: false, error: null }
       this.push(id, run, { kind: 'done' })
     } catch (error) {
       if (!begun) throw error
@@ -394,11 +408,13 @@ export class DraftService {
       if (run.controller.signal.aborted) {
         const text = run.text.trim()
         if (text) await this.appendVersion(id, { at: this.now().toISOString(), model: answerModel(input.model), cost_usd: charge.costUsd, stopped: true }, text).catch(logged)
+        run.outcome = { stopped: true, error: null }
         this.push(id, run, { kind: 'stopped' })
       } else {
         const code = toUserFacing(error).code
         // The CLI's cap here is the per-draft one, which has its own setting.
-        this.push(id, run, { kind: 'error', error: code === 'operation_budget' ? 'draft_budget' : code })
+        run.outcome = { stopped: false, error: code === 'operation_budget' ? 'draft_budget' : code }
+        this.push(id, run, { kind: 'error', error: run.outcome.error! })
       }
     }
   }

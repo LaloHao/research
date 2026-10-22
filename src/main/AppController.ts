@@ -206,6 +206,7 @@ export class AppController {
       cache: session.cache,
       library: libraryTools({ store: session.store, cache: session.cache, map: session.map, embeddings: this.sessionDefaults.embeddings ?? null }),
       writing: session.writing,
+      drafts: session.drafts,
       capped: session.capped,
       openInApp: host.openInApp
     }

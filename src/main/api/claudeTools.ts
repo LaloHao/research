@@ -1,12 +1,16 @@
 import { z } from 'zod'
+import { PAPER_KEY } from '../../shared/chat'
+import type { UserErrorCode } from '../../shared/library'
 import { LLM_MODELS, type LlmModel } from '../../shared/summary'
 import { MAX_CHECK_CHARS } from '../../shared/writing/api'
+import { detectFormat, type CiteFormat } from '../../shared/writing/citations'
 import { entryOutcome } from '../../shared/writing/citeCheck'
 import { LATEX_OUTPUT_COMMANDS } from '../../shared/writing/convert'
+import { DRAFT_LENGTHS, exportDraft, MAX_DRAFT_PAPERS, MAX_DRAFT_PURPOSE, MAX_DRAFT_TITLE } from '../../shared/writing/draft'
 import { renderProposedOutline } from '../../shared/writing/outlineProposal'
 import { MAX_STYLE_CHARS, STYLE_FOCUSES } from '../../shared/writing/style'
-import { detectFormat, type CiteFormat } from '../../shared/writing/citations'
-import { costlyTool, type ApiContext, type ApiTool } from './registry'
+import { UserFacingError } from '../library/UserFacingError'
+import { ApiError, costlyTool, type ApiContext, type ApiTool } from './registry'
 import { codePointOffsets, format, OUTLINE_INPUT, OUTLINE_LABELS, outlineChoice } from './writingTools'
 
 const model = z.enum(LLM_MODELS).optional().describe("sonnet, haiku or opus; the project's model when missing")
@@ -19,6 +23,56 @@ const formatOf = (args: { text: string; format?: CiteFormat }): CiteFormat => ar
  * Offsets in their answers count characters (code points), like `check_citations_local`'s.
  */
 export const CLAUDE_API_TOOLS: ApiTool[] = [
+  costlyTool({
+    name: 'draft',
+    description:
+      "«Borrador»: Claude writes a section from the chosen papers (read-only tools limited to them), every claim cited with a quote and page the app checks. Creates a new draft in the project (drafts/) and answers when it is written, which can take minutes: its id and its text in Org, LaTeX or Markdown with the counts of unverified citations, citations outside the selection and claims marked without a citation. Costs Claude quota: without confirmed it answers the plan.",
+    input: {
+      title: z.string().trim().min(1).max(MAX_DRAFT_TITLE),
+      purpose: z.string().max(MAX_DRAFT_PURPOSE).optional(),
+      rq: z.string().regex(/^RQ[1-9][0-9]*$/).optional().describe('A research question of the thesis, e.g. RQ1'),
+      keys: z.array(z.string().regex(PAPER_KEY)).min(1).max(MAX_DRAFT_PAPERS).describe('The papers it may cite'),
+      length: z.enum(DRAFT_LENGTHS).optional().describe('short (~300 words), medium (~700, default) or long (~1500)'),
+      model,
+      format: format.optional().describe('org (default), latex or markdown'),
+      latex_command: z.enum(LATEX_OUTPUT_COMMANDS).optional(),
+      quotes: z.boolean().optional().describe("Keep each citation's verbatim quote as a comment")
+    },
+    cost: {
+      kind: 'draft',
+      model: modelOf,
+      // DraftService.run admits and charges the version under the draft cap.
+      selfCapped: true,
+      plan: async (_ctx, args) => ({ papers: new Set(args.keys).size, length: args.length ?? 'medium' })
+    },
+    async run(ctx, args) {
+      const id = await ctx.drafts.run(
+        { title: args.title, purpose: args.purpose ?? '', rq: args.rq ?? null, papers: args.keys, length: args.length ?? 'medium', model: modelOf(ctx, args) },
+        null
+      )
+      const outcome = await ctx.drafts.finished(id)
+      const view = await ctx.drafts.open(id)
+      const version = view.versions.at(-1)
+      if (!version) {
+        if (outcome.error) throw new UserFacingError(outcome.error as UserErrorCode)
+        throw new ApiError('failed', 'The draft has no text.')
+      }
+      const fmt = args.format ?? 'org'
+      const exported = exportDraft(version.text, version.check, { format: fmt, latexCommand: args.latex_command, quotes: args.quotes })
+      return {
+        draft_id: id,
+        title: view.summary.title,
+        format: fmt,
+        text: exported.text,
+        stopped: version.stopped,
+        unverified: version.check.unverified,
+        outside: version.check.outside,
+        uncited: version.check.uncited,
+        costUsd: version.costUsd,
+        model: version.model
+      }
+    }
+  }),
   costlyTool({
     name: 'cite_check',
     description:
