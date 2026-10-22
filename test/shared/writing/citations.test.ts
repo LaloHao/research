@@ -232,3 +232,14 @@ describe('resolution against the library', () => {
     expect(citedKeys(parseCitations('[@b] [@a; @b]', 'markdown'))).toEqual(['b', 'a'])
   })
 })
+
+describe('long texts', () => {
+  it('parses a chapter-sized text with thousands of citations quickly', () => {
+    const text = Array.from({ length: 5000 }, (_, i) => `Claim number ${i} holds \\cite[p.~${i + 1}]{key${i % 50}}. Another sentence here.`).join('\n')
+    const started = performance.now()
+    const cs = parseCitations(text, 'latex')
+    expect(cs).toHaveLength(5000)
+    expect(cs[4999].sentence.text).toBe('Claim number 4999 holds \\cite[p.~5000]{key49}.')
+    expect(performance.now() - started).toBeLessThan(2000)
+  })
+})

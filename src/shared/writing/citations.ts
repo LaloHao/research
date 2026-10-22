@@ -427,9 +427,22 @@ export function parseCitations(text: string, format: CiteFormat = detectFormat(t
   for (const c of citations) for (let i = c.start; i < c.end; i++) if (units[i] !== '\n') units[i] = 'x'
   const spans = sentenceSpans(units.join(''))
   return citations.map((c) => {
-    const span = spans.find((s) => s.start <= c.start && c.start < s.end) ?? { start: c.start, end: c.end }
+    const span = spanAt(spans, c.start) ?? { start: c.start, end: c.end }
     return { ...c, sentence: { ...span, text: text.slice(span.start, span.end).replace(/\s+/g, ' ') } }
   })
+}
+
+/** The span (sorted, disjoint) that contains `offset`, by binary search: a long file has thousands of sentences. */
+function spanAt(spans: { start: number; end: number }[], offset: number): { start: number; end: number } | null {
+  let lo = 0
+  let hi = spans.length - 1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (spans[mid].end <= offset) lo = mid + 1
+    else if (spans[mid].start > offset) hi = mid - 1
+    else return spans[mid]
+  }
+  return null
 }
 
 /** The keys cited, each once, in order of first appearance. */
