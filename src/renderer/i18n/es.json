@@ -1,6 +1,6 @@
 {
   "app": { "loading": "Cargando…" },
-  "rail": { "library": "Biblioteca", "map": "Mapa", "mappings": "Mapeos", "chat": "Chat", "trash": "Papelera", "sync": "Sincronización", "settings": "Ajustes" },
+  "rail": { "library": "Biblioteca", "map": "Mapa", "mappings": "Mapeos", "chat": "Chat", "trash": "Papelera", "writing": "Redacción", "sync": "Sincronización", "settings": "Ajustes" },
   "welcome": {
     "title": "Asistente de investigación",
     "subtitle": "Crea un proyecto nuevo o abre una carpeta de proyecto existente.",
@@ -63,6 +63,11 @@
     "auto_suggest_facets_after": "Papers resumidos nuevos para sugerir",
     "budget_facets": "Tope por sugerencia de facetas (USD est.)",
     "budget_chat": "Tope por mensaje de chat (USD est.)",
+    "budget_draft": "Tope por borrador (USD est.)",
+    "budget_cite_check": "Tope por verificación de citas (USD est.)",
+    "budget_outline": "Tope por esquema (USD est.)",
+    "budget_style": "Tope por revisión de estilo (USD est.)",
+    "budget_writing_help": "Para las funciones de Claude de «Redacción»: cada borrador, verificación de citas, propuesta de esquema o revisión de estilo se detiene al llegar a su tope.",
     "budget_operation": "Tope por paper (USD est.)",
     "budget_batch": "Tope por lote (USD est.)",
     "budget_month": "Tope mensual (USD est., vacío = sin tope)",
@@ -292,6 +297,8 @@
     "mapping_not_found": "Ese mapeo ya no existe en el proyecto.",
     "mapping_invalid": "Un archivo del mapeo no se puede leer (marcadores de conflicto de git o formato inválido). Sincroniza o corrígelo a mano.",
     "import_unreadable": "No encontré registros en ese archivo. Usa una exportación BibTeX, RIS o CSV (Scopus, IEEE Xplore, ACM Digital Library, Web of Science).",
+    "writing_file_unreadable": "No pude leer ese archivo. Elige un .tex, .md u .org de texto.",
+    "writing_file_too_large": "El archivo es demasiado grande (más de 2 MB).",
     "criterion_required": "Elige un criterio del protocolo: uno de exclusión para excluir; uno de inclusión, o ninguno, para incluir.",
     "not_eligible": "Ese registro no está en esa fase: a texto completo solo se criban los incluidos en título y resumen, y «No se pudo conseguir» es solo de texto completo.",
     "nothing_to_snowball": "Todavía no hay estudios incluidos a texto completo desde los cuales hacer snowballing.",

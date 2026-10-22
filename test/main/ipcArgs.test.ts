@@ -203,6 +203,10 @@ describe('typed relation arguments', () => {
   it('accepts chat ids, titles, queries, messages and the per-message cap, nothing else', () => {
     expect(arg(ipcArgs.llmPatch, { budget: { per_chat_message_usd: 0.2 } }, 'patch')).toEqual({ budget: { per_chat_message_usd: 0.2 } })
     expect(() => arg(ipcArgs.llmPatch, { budget: { per_chat_message_usd: 0 } }, 'patch')).toThrow()
+    expect(arg(ipcArgs.llmPatch, { budget: { per_draft_usd: 2, per_cite_check_usd: 1, per_outline_usd: 0.3, per_style_usd: 0.2 } }, 'patch')).toEqual({
+      budget: { per_draft_usd: 2, per_cite_check_usd: 1, per_outline_usd: 0.3, per_style_usd: 0.2 }
+    })
+    expect(() => arg(ipcArgs.llmPatch, { budget: { per_style_usd: -1 } }, 'patch')).toThrow()
     expect(arg(ipcArgs.chatId, '20261011-120000-a1b2-0f9e8d', 'id')).toBe('20261011-120000-a1b2-0f9e8d')
     for (const bad of ['', '../x', '20261011-120000-A1B2', `20261011-120000-a1b2${'-0f9e8d'.repeat(9)}`, 7, null]) {
       expect(() => arg(ipcArgs.chatId, bad, 'id')).toThrow()

@@ -92,6 +92,8 @@ export const USER_ERROR_CODES = [
   'search_too_large',
   'search_completion_pending',
   'request_rejected',
+  'writing_file_unreadable',
+  'writing_file_too_large',
   'access_denied',
   'rate_limited',
   'server_error',

@@ -5,7 +5,16 @@ import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
 import { parseCap, parseCount, parseUsd, type NumberIssue, type Parsed } from '../../lib/numberField'
 
-type NumericField = 'perOperation' | 'perBatch' | 'perMonth' | 'maxInput' | 'perFacets' | 'perChat' | 'facetsAfter'
+type NumericField = 'perOperation' | 'perBatch' | 'perMonth' | 'maxInput' | 'perFacets' | 'perChat' | 'facetsAfter' | WritingCap
+
+/** «Redacción»'s caps: the field, its budget key and its label. */
+const WRITING_CAPS = [
+  { field: 'perDraft', key: 'per_draft_usd', label: 'settings.budget_draft' },
+  { field: 'perCiteCheck', key: 'per_cite_check_usd', label: 'settings.budget_cite_check' },
+  { field: 'perOutline', key: 'per_outline_usd', label: 'settings.budget_outline' },
+  { field: 'perStyle', key: 'per_style_usd', label: 'settings.budget_style' }
+] as const
+type WritingCap = (typeof WRITING_CAPS)[number]['field']
 
 export function ClaudeSection(): React.JSX.Element {
   const { t } = useTranslation()
@@ -16,6 +25,7 @@ export function ClaudeSection(): React.JSX.Element {
   const [facetsAfter, setFacetsAfter] = useState('')
   const [perFacets, setPerFacets] = useState('')
   const [perChat, setPerChat] = useState('')
+  const [writingCaps, setWritingCaps] = useState<Record<WritingCap, string>>({ perDraft: '', perCiteCheck: '', perOutline: '', perStyle: '' })
   const [perOperation, setPerOperation] = useState('')
   const [perBatch, setPerBatch] = useState('')
   const [perMonth, setPerMonth] = useState('')
@@ -34,6 +44,12 @@ export function ClaudeSection(): React.JSX.Element {
       setFacetsAfter(String(config.auto_suggest_facets_after))
       setPerFacets(String(config.budget.per_facet_suggestion_usd))
       setPerChat(String(config.budget.per_chat_message_usd))
+      setWritingCaps({
+        perDraft: String(config.budget.per_draft_usd),
+        perCiteCheck: String(config.budget.per_cite_check_usd),
+        perOutline: String(config.budget.per_outline_usd),
+        perStyle: String(config.budget.per_style_usd)
+      })
       setPerOperation(String(config.budget.per_operation_usd))
       setPerBatch(String(config.budget.per_batch_usd))
       setPerMonth(config.budget.per_month_usd === null ? '' : String(config.budget.per_month_usd))
@@ -181,6 +197,18 @@ export function ClaudeSection(): React.JSX.Element {
         onChange={(v) => edit('perChat', setPerChat, v)}
         onBlur={() => commit('perChat', parseUsd(perChat), (value) => saveBudget({ per_chat_message_usd: value }))}
       />
+      {WRITING_CAPS.map((cap) => (
+        <NumberField
+          key={cap.field}
+          id={`budget-${cap.field}`}
+          label={t(cap.label)}
+          value={writingCaps[cap.field]}
+          issue={issues[cap.field]}
+          onChange={(v) => edit(cap.field, (value) => setWritingCaps((current) => ({ ...current, [cap.field]: value })), v)}
+          onBlur={() => commit(cap.field, parseUsd(writingCaps[cap.field]), (value) => saveBudget({ [cap.key]: value }))}
+        />
+      ))}
+      <small className="muted">{t('settings.budget_writing_help')}</small>
       <NumberField
         id="max-input"
         label={t('settings.max_input')}

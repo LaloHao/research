@@ -94,7 +94,11 @@ export const ipcArgs = {
         per_batch_usd: z.number().positive().optional(),
         per_month_usd: z.number().positive().nullable().optional(),
         per_facet_suggestion_usd: z.number().positive().optional(),
-        per_chat_message_usd: z.number().positive().optional()
+        per_chat_message_usd: z.number().positive().optional(),
+        per_draft_usd: z.number().positive().optional(),
+        per_cite_check_usd: z.number().positive().optional(),
+        per_outline_usd: z.number().positive().optional(),
+        per_style_usd: z.number().positive().optional()
       })
       .optional()
   }),

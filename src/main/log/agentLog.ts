@@ -12,7 +12,7 @@ import { appLog, type LogFields } from './appLog'
  * length of any text. Never a prompt, an answer, a query, a quote, a note or any paper text.
  */
 
-export type AgentKind = 'relations' | 'facets' | 'screening' | 'chat'
+export type AgentKind = 'relations' | 'facets' | 'screening' | 'chat' | 'draft' | 'cite_check'
 
 export interface AgentStart {
   kind: AgentKind
