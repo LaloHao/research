@@ -38,6 +38,19 @@ describe('mergeDraftText', () => {
     expect(merged.meta).toMatchObject({ archived: false, updated_on: 'desktop' })
   })
 
+  it('merges the form field by field when both have the same versions', () => {
+    const base = draftFile(['First.'], { purpose: 'Old purpose.', rq: null, papers: ['he2017drain'] }, [V1])
+    const ours = draftFile(['First.'], { purpose: 'Compare online parsers.', rq: null, papers: ['he2017drain'], updated_at: '2026-10-22T15:00:00.000Z' }, [V1])
+    const theirs = draftFile(
+      ['First.'],
+      { purpose: 'Old purpose.', rq: 'RQ1', papers: ['he2017drain', 'zhu2020loghub'], length: 'long', updated_at: '2026-10-22T14:00:00.000Z', updated_on: 'desktop' },
+      [V1]
+    )
+    const merged = mergeDraftText({ base: text(base), ours: text(ours), theirs: text(theirs) })!
+    expect(merged.copy).toBeNull()
+    expect(read(merged.text).meta).toMatchObject({ purpose: 'Compare online parsers.', rq: 'RQ1', papers: ['he2017drain', 'zhu2020loghub'], length: 'long' })
+  })
+
   it('keeps both when the current version was edited differently, theirs as a copy named after its machine', () => {
     const ours = draftFile(['First, edited here.'], { updated_at: '2026-10-22T13:00:00.000Z' }, [{ ...V1, edited_at: '2026-10-22T13:00:00.000Z' }])
     const theirs = draftFile(['First, edited there.'], { updated_at: '2026-10-22T13:10:00.000Z', updated_on: 'desktop' }, [{ ...V1, edited_at: '2026-10-22T13:10:00.000Z' }])

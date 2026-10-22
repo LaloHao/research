@@ -22,13 +22,19 @@ const instant = (s: string): number => {
 const versionsOf = (f: DraftFile): unknown[] => f.meta.versions.map((v, i) => ({ ...v, text: f.texts[i] }))
 const isPrefix = (short: unknown[], long: unknown[]): boolean => short.length <= long.length && short.every((v, i) => isDeepStrictEqual(v, long[i]))
 
+/** The draft's form: what its next version is written from. */
+const FORM_FIELDS = ['purpose', 'rq', 'papers', 'length', 'model'] as const
+type PickedField = 'title' | 'archived' | (typeof FORM_FIELDS)[number]
+
 /**
  * The longer side's frontmatter (a new version was written from its form), with the title and «archivado» taken field
- * by field: changed on one machine only → that machine's value; on both → the newest `updated_at`'s.
+ * by field: changed on one machine only → that machine's value; on both → the newest `updated_at`'s. With the same
+ * versions on both sides (no new version on either), the form (purpose, research question, papers, length, model) is
+ * taken field by field the same way, since either machine may have changed it.
  */
-function mergeMeta(base: DraftMeta | null, longer: DraftMeta, ours: DraftMeta, theirs: DraftMeta): DraftMeta {
+function mergeMeta(base: DraftMeta | null, longer: DraftMeta, ours: DraftMeta, theirs: DraftMeta, sameVersions: boolean): DraftMeta {
   const newer = instant(theirs.updated_at) > instant(ours.updated_at) ? theirs : ours
-  const pick = <K extends 'title' | 'archived'>(key: K): DraftMeta[K] => {
+  const pick = <K extends PickedField>(key: K): DraftMeta[K] => {
     if (base) {
       const oursChanged = !isDeepStrictEqual(ours[key], base[key])
       const theirsChanged = !isDeepStrictEqual(theirs[key], base[key])
@@ -37,7 +43,8 @@ function mergeMeta(base: DraftMeta | null, longer: DraftMeta, ours: DraftMeta, t
     }
     return newer[key]
   }
-  const meta: DraftMeta = { ...theirs, ...ours, ...longer, title: pick('title'), archived: pick('archived'), updated_at: newer.updated_at }
+  const form = sameVersions ? Object.fromEntries(FORM_FIELDS.map((key) => [key, pick(key)])) : {}
+  const meta: DraftMeta = { ...theirs, ...ours, ...longer, ...form, title: pick('title'), archived: pick('archived'), updated_at: newer.updated_at }
   if (newer.updated_on === undefined) delete meta.updated_on
   else meta.updated_on = newer.updated_on
   return meta
@@ -57,7 +64,8 @@ function renderChecked(file: DraftFile): string | null {
 
 /**
  * drafts/<id>.md changed on both machines. When one side only added versions after what the other has (or neither
- * changed a version), the draft merges: the longer side, and the title and «archivado» field by field. Otherwise (the
+ * changed a version), the draft merges: the longer side, and the title and «archivado» field by field (the form too
+ * when neither added a version). Otherwise (the
  * same version edited differently, or different versions written) both are kept: ours at its path, theirs as
  * `<id>-<6 hex of its text>` marked `copy_of`, which the list shows as «(copia de <equipo>)». Null when a side cannot be
  * read (conflict markers, invalid frontmatter, a frontmatter id that is not `fileId`): the user decides.
@@ -73,7 +81,7 @@ export function mergeDraftText({ base, ours, theirs }: MergeInput, fileId?: stri
   const tv = versionsOf(t.value)
   if (isPrefix(ov, tv) || isPrefix(tv, ov)) {
     const longer = ov.length >= tv.length ? o.value : t.value
-    const text = renderChecked({ meta: mergeMeta(baseMeta, longer.meta, o.value.meta, t.value.meta), texts: longer.texts })
+    const text = renderChecked({ meta: mergeMeta(baseMeta, longer.meta, o.value.meta, t.value.meta, ov.length === tv.length), texts: longer.texts })
     return text === null ? null : { text, copy: null }
   }
   const id = `${t.value.meta.id}-${sha256(theirs).slice(0, 6)}`
