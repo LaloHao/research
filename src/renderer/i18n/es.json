@@ -1314,8 +1314,50 @@
     },
     "style": {
       "title": "Revisión de estilo",
-      "intro": "Claude revisa la claridad, la concisión, el registro académico, la ortografía y la coherencia de un texto que pegues, sin tocar citas, matemáticas ni comandos LaTeX. Tú aceptas o rechazas cada sugerencia.",
-      "run": "Revisar estilo"
+      "intro": "Claude revisa la claridad, la concisión, el registro académico, la ortografía y la coherencia de un texto que pegues, sin tocar citas, matemáticas ni comandos LaTeX. Tú aceptas o rechazas cada sugerencia. Nada se guarda en el proyecto.",
+      "run": "Revisar estilo",
+      "running": "Claude está revisando el texto…",
+      "chars": "{{length}} / {{max}} caracteres",
+      "text_label": "Texto a revisar",
+      "placeholder": "Pega aquí un párrafo, una sección o un capítulo…",
+      "too_long": "El texto supera los {{max}} caracteres: revísalo por partes.",
+      "focus": "Revisar",
+      "focuses": {
+        "clarity": "Claridad",
+        "concision": "Concisión",
+        "register": "Registro académico",
+        "grammar": "Ortografía y gramática",
+        "coherence": "Coherencia entre párrafos"
+      },
+      "no_focus": "Elige al menos un aspecto.",
+      "text_changed": "Editaste el texto después de la revisión: las sugerencias se aplican al texto revisado.",
+      "summary_one": "{{count}} sugerencia",
+      "summary_other": "{{count}} sugerencias",
+      "dropped_one": "{{count}} descartada",
+      "dropped_other": "{{count}} descartadas",
+      "drop_reasons": {
+        "not_found": "{{count}} no aparecen tal cual en el texto",
+        "ambiguous": "{{count}} ambiguas (el fragmento aparece varias veces)",
+        "protected": "{{count}} tocaban citas, matemáticas o comandos",
+        "overlap": "{{count}} se solapaban con otra",
+        "unchanged": "{{count}} sin cambios"
+      },
+      "accept": "Aceptar",
+      "reject": "Rechazar",
+      "accept_all": "Aceptar todas",
+      "reset": "Deshacer decisiones",
+      "decisions": {
+        "accepted": "Aceptada",
+        "rejected": "Rechazada"
+      },
+      "view": "Vista",
+      "views": {
+        "diff": "Cambios",
+        "final": "Texto final"
+      },
+      "diff_label": "Texto con los cambios",
+      "final_label": "Texto final",
+      "copy_final": "Copiar texto final"
     },
     "check": {
       "intro": "Pega un texto en Org, LaTeX o Markdown: ves cada cita con su oración y qué claves no se pueden verificar. Este paso es local y gratis.",
@@ -1428,7 +1470,35 @@
       "output_label": "Esquema exportado",
       "claude_title": "Proponer redacción del esquema",
       "claude_intro": "Claude propondrá títulos de sección, el orden, una frase de apertura por sección y por qué importa cada hueco para la tesis, con citas verificadas.",
-      "claude_run": "Proponer redacción del esquema"
+      "claude_run": "Proponer redacción del esquema",
+      "claude_again": "Proponer de nuevo",
+      "claude_running": "Claude está escribiendo la propuesta…",
+      "claude_empty": "Arma primero un esquema con papers.",
+      "claude_outdated": "Cambiaste las opciones del esquema: esta propuesta es del esquema anterior. Propón de nuevo para el actual.",
+      "claude_citations_one": "{{count}} cita",
+      "claude_citations_other": "{{count}} citas",
+      "claude_unverified_one": "{{count}} sin verificar",
+      "claude_unverified_other": "{{count}} sin verificar",
+      "claude_quotes": "Incluir las frases textuales como comentario",
+      "claude_output_label": "Propuesta exportada",
+      "proposal_file_name": "esquema-propuesta"
+    },
+    "claude": {
+      "loading_plan": "Calculando el costo…",
+      "confirm_label": "Confirmar el costo",
+      "model": "Modelo",
+      "estimate": "Costo estimado: {{cost}}",
+      "cap_draft": "Tope por borrador: ${{cap}}",
+      "cap_cite_check": "Tope por verificación de citas: ${{cap}}",
+      "cap_outline": "Tope por esquema: ${{cap}}",
+      "cap_style": "Tope por revisión de estilo: ${{cap}}",
+      "month": "Gastado este mes: ${{spent}} de ${{cap}}",
+      "month_no_cap": "Gastado este mes: ${{spent}} (sin tope mensual)",
+      "month_reached": "Llegaste al tope mensual: súbelo en Ajustes → Claude para continuar.",
+      "confirm": "Confirmar",
+      "cancel": "Cancelar",
+      "retry": "Reintentar",
+      "cost": "Costó {{cost}}"
     }
   }
 }

@@ -9,7 +9,8 @@ import { LLM_MODELS, RESEARCH_TYPES, SUMMARY_FIELD_KEYS } from '../../src/shared
 import type { CardStatus } from '../../src/renderer/lib/summaryView'
 import { SUMMARY_FILTERS } from '../../src/renderer/lib/badges'
 import { MAP_TABS, MAPPING_TABS, VIEWS, WRITING_TABS } from '../../src/renderer/lib/navigation'
-import { SKIP_REASONS } from '../../src/shared/writing/api'
+import { SKIP_REASONS, WRITING_PLAN_KINDS } from '../../src/shared/writing/api'
+import { STYLE_DROP_REASONS, STYLE_FOCUSES } from '../../src/shared/writing/style'
 import { BIB_FIELDS_CHECKED, BIB_ORDERS } from '../../src/shared/writing/bibtex'
 import { CITE_FORMATS, KEY_STATES } from '../../src/shared/writing/citations'
 import { DUPLICATE_REASONS, OPENALEX_TYPES, PHASE_STATES, PHASES, QUEUE_FILTERS, SNOWBALL_DIRECTIONS } from '../../src/shared/mapping'
@@ -312,6 +313,12 @@ describe('es.json covers every code the UI can receive', () => {
     ...SKIP_REASONS.map((r) => `writing.bibtex.skip_reasons.${r}`),
     ...BIB_ORDERS.map((o) => `writing.bibtex.orders.${o}`),
     ...BIB_FIELDS_CHECKED.map((f) => `writing.bibtex.fields.${f}`),
+    ...WRITING_PLAN_KINDS.map((k) => `writing.claude.cap_${k}`),
+    ...STYLE_FOCUSES.map((f) => `writing.style.focuses.${f}`),
+    ...STYLE_DROP_REASONS.map((r) => `writing.style.drop_reasons.${r}`),
+    ...['accepted', 'rejected'].map((d) => `writing.style.decisions.${d}`),
+    ...['summary', 'dropped'].flatMap((k) => [`writing.style.${k}_one`, `writing.style.${k}_other`]),
+    ...['claude_citations', 'claude_unverified'].flatMap((k) => [`writing.outline.${k}_one`, `writing.outline.${k}_other`]),
     ...['budget_draft', 'budget_cite_check', 'budget_outline', 'budget_style', 'budget_writing_help'].map((k) => `settings.${k}`)
   ])('%s', (path) => {
     expect(typeof lookup(path)).toBe('string')
