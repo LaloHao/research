@@ -40,6 +40,7 @@ import { SummaryService } from '../summary/SummaryService'
 import { SyncScheduler } from '../sync/SyncScheduler'
 import { machineName } from '../sync/messages'
 import { SyncService } from '../sync/SyncService'
+import { CiteChecker } from '../writing/CiteChecker'
 import { WritingService } from '../writing/WritingService'
 import { DEFAULT_DEVICE_ID, LibraryService } from './LibraryService'
 
@@ -310,7 +311,20 @@ export class ProjectSession {
       cancelBatch: (batchId) => queue.cancelBatch(batchId),
       pauseMs: opts.citationPauseMs
     })
-    const writing = new WritingService({ store, cache, includedPapers: (id) => mappings.includedPapers(id) })
+    const writing = new WritingService({
+      store,
+      cache,
+      includedPapers: (id) => mappings.includedPapers(id),
+      checker: new CiteChecker({
+        store,
+        cache,
+        provider: llm,
+        budget,
+        ledger,
+        limits: () => limitsFromConfig(store.config.llm),
+        embedder: async () => (opts.embeddings ? opts.embeddings.embedder() : null)
+      })
+    })
     const session: ProjectSession = new ProjectSession(store, cache, http, library, queue, summaries, citations, similarity, map, relations, sync, facets, chats, mappings, writing)
     await library.reindexAll()
     await relations.reindex()
@@ -521,8 +535,8 @@ export class ProjectSession {
     // in a process group of its own that would outlive the app, so a fetch or push is cut short; a local step, which may
     // hold the store's write gate, is let finish) and the queue (running jobs abort and stay queued for next time).
     // Awaiting the scheduler on its own first would wait for that fetch or push to end by itself.
-    // Running answers stop too, saved as stopped (sends in progress finish first), before the cache closes.
-    await Promise.all([this.scheduler?.stop(), this.sync.close(), this.queue.stop(), this.chats.close()])
+    // Running answers stop too, saved as stopped (sends in progress finish first), and a running citation check, before the cache closes.
+    await Promise.all([this.scheduler?.stop(), this.sync.close(), this.queue.stop(), this.chats.close(), this.writing.close()])
     while (this.inFlight.size > 0) await Promise.allSettled([...this.inFlight])
     this.cache.close()
   }

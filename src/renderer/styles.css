@@ -420,3 +420,18 @@ button.danger { color: var(--error); border-color: var(--error); }
 .writing-gap { color: var(--warning); font-size: 12px; margin: 4px 0; }
 .writing-export { display: flex; flex-direction: column; gap: 8px; }
 .writing-claude { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 8px; }
+.writing-check-result { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.writing-checked-text { font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 8px 12px; max-height: 320px; overflow: auto; }
+.writing-cite { font: inherit; padding: 0 2px; border: none; border-radius: 3px; cursor: pointer; color: inherit; }
+.cite-outcome-supports { background: var(--accent-soft); }
+.cite-outcome-partial { background: var(--warning-soft); }
+.cite-outcome-does_not_support, .cite-outcome-not_found { background: var(--error-soft); }
+.cite-outcome-not_found, .cite-outcome-no_evidence { outline: 1px dashed var(--muted); outline-offset: -1px; }
+.cite-outcome-no_evidence { background: var(--warning-soft); }
+.cite-outcome-unverified { background: var(--border); }
+.writing-check-sentences { margin: 0; padding-left: 24px; display: flex; flex-direction: column; gap: 10px; }
+.writing-check-sentences > li:focus { outline: 2px solid var(--accent-soft); outline-offset: 2px; }
+.writing-check-sentence ul { margin: 4px 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 4px; }
+.writing-check-sentence p { margin: 2px 0 0; }
+.writing-check-quote { margin: 2px 0 0; padding-left: 8px; border-left: 2px solid var(--border); font-size: 12px; }
+.writing-evidence { position: fixed; top: 0; right: 0; bottom: 0; width: 45%; z-index: 20; background: var(--surface); border-left: 1px solid var(--border); display: flex; flex-direction: column; overflow: auto; box-shadow: -4px 0 16px rgb(0 0 0 / 0.15); }

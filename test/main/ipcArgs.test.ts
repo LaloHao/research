@@ -351,4 +351,17 @@ describe('typed relation arguments', () => {
     expect(arg(ipcArgs.outlineScope, { kind: 'library' }, 'scope')).toEqual({ kind: 'library' })
     for (const bad of [{ kind: 'papers', ids: ['../x'] }, { kind: 'mapping', mappingId: '../x' }, { kind: 'all' }]) expect(() => arg(ipcArgs.outlineScope, bad, 'scope')).toThrow()
   })
+  it('checks «Verificar con Claude»’s request: a bounded text, a known format and model, nothing else', () => {
+    expect(arg(ipcArgs.citeCheckRequest, { text: '\\cite{a}', format: 'latex', model: 'haiku' }, 'request')).toEqual({ text: '\\cite{a}', format: 'latex', model: 'haiku' })
+    expect(arg(ipcArgs.citeCheckRequest, { text: 'x', format: 'org' }, 'request')).toEqual({ text: 'x', format: 'org' })
+    for (const bad of [
+      { text: 'x'.repeat(30_001), format: 'org' },
+      { text: 'x', format: 'docx' },
+      { text: 'x', format: 'org', model: 'gpt' },
+      { text: 'x', format: 'org', maxUsd: 9 }
+    ])
+      expect(() => arg(ipcArgs.citeCheckRequest, bad, 'request')).toThrow()
+    expect(() => arg(ipcArgs.checkText, 'x'.repeat(30_001), 'text')).toThrow()
+    expect(() => arg(ipcArgs.citeFormat, 'tex', 'format')).toThrow()
+  })
 })

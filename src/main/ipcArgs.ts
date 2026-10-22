@@ -27,7 +27,7 @@ import { PDF_POLICIES } from '../shared/schemas'
 import { AUTO_SYNC_MINUTES, CLOSE_DECISIONS, CONFLICT_CHOICES, CONFLICT_ID, CONFLICT_VERSION, isRemoteUrl } from '../shared/sync'
 import { AUTO_SUGGEST_FACETS_AFTER_MAX, ExtractionFormSchema, FacetDefSchema, LLM_MODELS, ThesisContextSchema } from '../shared/summary'
 import { MAX_JUSTIFICATION, RELATION_ID, RELATION_STATUSES, RELATION_TYPES } from '../shared/typedRelations'
-import { MAX_BIB_TEXT_CHARS } from '../shared/writing/api'
+import { MAX_BIB_TEXT_CHARS, MAX_CHECK_CHARS } from '../shared/writing/api'
 import { CITE_FORMATS } from '../shared/writing/citations'
 
 const paperIdSchema = z.string().regex(/^[a-z][a-z0-9]*$/)
@@ -245,6 +245,10 @@ export const ipcArgs = {
     z.strictObject({ kind: z.literal('text'), text: z.string().max(MAX_BIB_TEXT_CHARS), format: z.enum(CITE_FORMATS) }),
     z.strictObject({ kind: z.literal('file'), token: z.uuid() })
   ]),
+  /** «Verificar citas»: the pasted text (bounded) and its format. */
+  checkText: z.string().max(MAX_CHECK_CHARS),
+  citeFormat: z.enum(CITE_FORMATS),
+  citeCheckRequest: z.strictObject({ text: z.string().max(MAX_CHECK_CHARS), format: z.enum(CITE_FORMATS), model: llmModelSchema.optional() }),
   outlineScope: z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('library') }),
     z.strictObject({ kind: z.literal('papers'), ids: z.array(paperIdSchema).max(20_000) }),
