@@ -11,6 +11,7 @@ import type { DeletePlanResult, RestoreOutcome, TrashOutcome } from '../shared/t
 import type { ChapterBibResult, OutlineDataResult } from '../shared/writing/api'
 import type { OutlineProposalResult } from '../shared/writing/outlineProposal'
 import type { StyleReviewResult } from '../shared/writing/style'
+import type { CiteCheckPlanResult, CiteCheckRunResult } from '../shared/writing/citeCheck'
 import {
   IPC,
   type ActionResult,
@@ -775,6 +776,31 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
       return { ok: false, error: toUserFacing(error).message }
     }
   })
+
+  // «Verificar con Claude»: the plan is free; the check takes `confirmed` (the click on the cost confirmation), is
+  // tracked so closing the project waits for it (closing also stops it), and comes back whole, stopped or cut short.
+  ipcMain.handle(IPC.writingCheckPlan, async (_e, rawText: unknown, rawFormat: unknown): Promise<CiteCheckPlanResult> => {
+    const text = arg(ipcArgs.checkText, rawText, 'text')
+    const format = arg(ipcArgs.citeFormat, rawFormat, 'format')
+    try {
+      const session = app.requireSession()
+      return { ok: true, plan: await session.track(session.writing.citeCheckPlan(text, format)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+  ipcMain.handle(IPC.writingCheck, async (_e, rawReq: unknown, rawConfirmed: unknown): Promise<CiteCheckRunResult> => {
+    const req = arg(ipcArgs.citeCheckRequest, rawReq, 'request')
+    arg(ipcArgs.confirmed, rawConfirmed, 'confirmed')
+    try {
+      const session = app.requireSession()
+      return { ok: true, result: await session.track(session.writing.windowCheck(req)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+  ipcMain.handle(IPC.writingCheckProgress, () => app.requireSession().writing.checkProgress())
+  ipcMain.handle(IPC.writingCheckStop, (): void => app.requireSession().writing.stopCheck())
 
   // A file the user chose to save (a chart, the graph, CSV data, a .bib or an outline), wherever they picked; never written into the project on our own.
   ipcMain.handle(IPC.exportSave, async (_e, rawName: unknown, rawData: unknown): Promise<SaveResult> => {

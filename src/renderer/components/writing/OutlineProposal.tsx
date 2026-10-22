@@ -85,21 +85,20 @@ export function OutlineProposal({
     <div className="writing-claude">
       <h3>{t('writing.outline.claude_title')}</h3>
       <p className="muted small">{t('writing.outline.claude_intro')}</p>
-      {phase.kind === 'confirm' ? (
-        <ClaudeConfirm kind="outline" onConfirm={run} onCancel={() => setPhase({ kind: 'idle' })} />
-      ) : (
-        <div className="row">
-          <button disabled={empty || phase.kind === 'running'} onClick={() => setPhase({ kind: 'confirm' })}>
-            {result ? t('writing.outline.claude_again') : t('writing.outline.claude_run')}
-          </button>
-          {phase.kind === 'running' && (
-            <span className="muted small" role="status">
-              {t('writing.outline.claude_running')}
-            </span>
-          )}
-          {empty && <span className="muted small">{t('writing.outline.claude_empty')}</span>}
-        </div>
+      {phase.kind === 'confirm' && (
+        <ClaudeConfirm kind="outline" title={t('writing.outline.claude_title')} onConfirm={run} onCancel={() => setPhase({ kind: 'idle' })} />
       )}
+      <div className="row">
+        <button disabled={empty || phase.kind === 'running'} onClick={() => setPhase({ kind: 'confirm' })}>
+          {result ? t('writing.outline.claude_again') : t('writing.outline.claude_run')}
+        </button>
+        {phase.kind === 'running' && (
+          <span className="muted small" role="status">
+            {t('writing.outline.claude_running')}
+          </span>
+        )}
+        {empty && <span className="muted small">{t('writing.outline.claude_empty')}</span>}
+      </div>
       {phase.kind === 'error' && (
         <div className="banner error" role="alert">
           {phase.message}

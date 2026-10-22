@@ -27,7 +27,7 @@ import { PDF_POLICIES } from '../shared/schemas'
 import { AUTO_SYNC_MINUTES, CLOSE_DECISIONS, CONFLICT_CHOICES, CONFLICT_ID, CONFLICT_VERSION, isRemoteUrl } from '../shared/sync'
 import { AUTO_SUGGEST_FACETS_AFTER_MAX, ExtractionFormSchema, FacetDefSchema, LLM_MODELS, ThesisContextSchema } from '../shared/summary'
 import { MAX_JUSTIFICATION, RELATION_ID, RELATION_STATUSES, RELATION_TYPES } from '../shared/typedRelations'
-import { MAX_BIB_TEXT_CHARS, WRITING_PLAN_KINDS } from '../shared/writing/api'
+import { MAX_BIB_TEXT_CHARS, MAX_CHECK_CHARS, WRITING_PLAN_KINDS } from '../shared/writing/api'
 import { CITE_FORMATS } from '../shared/writing/citations'
 import { MAX_STYLE_CHARS, STYLE_FOCUSES } from '../shared/writing/style'
 
@@ -251,6 +251,10 @@ export const ipcArgs = {
     z.strictObject({ kind: z.literal('text'), text: z.string().max(MAX_BIB_TEXT_CHARS), format: z.enum(CITE_FORMATS) }),
     z.strictObject({ kind: z.literal('file'), token: z.uuid() })
   ]),
+  /** «Verificar citas»: the pasted text (bounded) and its format. */
+  checkText: z.string().max(MAX_CHECK_CHARS),
+  citeFormat: z.enum(CITE_FORMATS),
+  citeCheckRequest: z.strictObject({ text: z.string().max(MAX_CHECK_CHARS), format: z.enum(CITE_FORMATS), model: llmModelSchema.optional() }),
   outlineScope: outlineScopeSchema,
   writingPlanKind: z.enum(WRITING_PLAN_KINDS),
   /** «Proponer redacción del esquema»: the outline's choices (main builds it again), never the outline itself. */

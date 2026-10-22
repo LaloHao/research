@@ -1,5 +1,6 @@
 import { PAPER_KEY, type PaperState } from '../../shared/chat'
 import { SUMMARY_TEXT_FIELDS, type Evidence } from '../../shared/summary'
+import type { CiteCheckPlan, CiteCheckProgress, CiteCheckRequest, CiteCheckResult } from '../../shared/writing/citeCheck'
 import type { ChapterBib, OutlineData, OutlineScope, WritingLibrary, WritingPlanKind, WritingRunPlan } from '../../shared/writing/api'
 import { chapterBibReport, type BibLibraryPaper } from '../../shared/writing/bibtex'
 import { citedKeys, parseCitations, type CiteFormat } from '../../shared/writing/citations'
@@ -27,6 +28,7 @@ import { startAgentRun, type AgentKind } from '../log/agentLog'
 import type { ProjectStore } from '../project/ProjectStore'
 import { loadForm } from '../summary/extractionForm'
 import { pagesFromChunks, type PageText } from '../summary/paperText'
+import type { CiteChecker } from './CiteChecker'
 import { readWithIncludes } from './includes'
 import { outlineInput, outlineSystemPrompt, type OutlinePaperData } from './outlinePrompt'
 import { completeChecked } from './structuredCall'
@@ -39,22 +41,79 @@ export interface WritingDeps {
   includedPapers: (mappingId: string) => string[]
   /** Claude, for the operations that use it (absent: they refuse with llm_unavailable). */
   llm?: { provider: LlmProvider; budget: BudgetGuard; ledger: CostLedger }
+  /** «Verificar con Claude»; absent where no Claude is wired (tests of the reads). */
+  checker?: CiteChecker
 }
 
 /** The evidence fields whose quotes the outline proposal sends, in order (the one-liner's first). */
 const QUOTE_FIELDS = ['tldr', 'contribution', 'results', ...SUMMARY_TEXT_FIELDS] as const
 
 /**
- * The writing view's reads: which keys the library knows, the chapter .bib, and the outline's data. Read-only: nothing
- * here writes to the project (drafts, when they come, go through ProjectStore like every other write).
+ * The writing view's reads (which keys the library knows, the chapter .bib, the outline's data) and its Claude
+ * operations (citation check, outline proposal, style review). Nothing here writes to the project (drafts, when they
+ * come, go through ProjectStore like every other write).
  *
- * A later Claude-powered tab (cost kinds `draft`, `cite_check`, `outline`, `style`) runs one confirmed, capped
- * operation the way the chat and the suggesters do: a plan IPC answers `operationPlan(deps, kind)` (estimate, that kind's
- * cap, the month), the renderer asks, the run IPC checks `ipcArgs.confirmed` and wraps the provider call in
- * `runCappedOperation` (both in ../llm/cappedOperation.ts), which admits, caps, logs the cost and settles.
+ * Each Claude operation is confirmed and capped the way the chat and the suggesters are: `plan(kind)` answers
+ * `operationPlan` (estimate, that kind's cap, the month) plus the default model (the citation check has its own
+ * text-dependent plan of the same shape), the renderer asks, the run IPC checks `ipcArgs.confirmed` and the call goes
+ * through `runCappedOperation` (../llm/cappedOperation.ts), which admits, caps, logs the cost and settles.
  */
 export class WritingService {
+  /** The window's running citation check: one at a time, stopped by «Detener» or when the project closes. */
+  private check: { controller: AbortController; progress: CiteCheckProgress | null; done: Promise<unknown> } | null = null
+  private closed = false
+
   constructor(private readonly deps: WritingDeps) {}
+
+  private checker(): CiteChecker {
+    if (!this.deps.checker || this.closed) throw new UserFacingError('llm_unavailable')
+    return this.deps.checker
+  }
+
+  /** What «Verificar con Claude» would check and cost, for the confirmation. */
+  citeCheckPlan(text: string, format: CiteFormat): Promise<CiteCheckPlan> {
+    return this.checker().plan(text, format)
+  }
+
+  /**
+   * One citation check of `text`, for any caller (the window, or a local API): the structured result, never written
+   * anywhere. The caller has confirmed the cost; `signal` stops it (the result then says `stopped`).
+   */
+  citeCheck(req: CiteCheckRequest, opts: { signal?: AbortSignal; onProgress?: (p: CiteCheckProgress) => void } = {}): Promise<CiteCheckResult> {
+    return this.checker().run({ ...req, ...opts })
+  }
+
+  /** The window's check: a new one stops the previous one; its progress is polled with `checkProgress`. */
+  async windowCheck(req: CiteCheckRequest): Promise<CiteCheckResult> {
+    this.check?.controller.abort()
+    const controller = new AbortController()
+    const entry: NonNullable<WritingService['check']> = { controller, progress: null, done: Promise.resolve() }
+    this.check = entry
+    const run = this.citeCheck(req, { signal: controller.signal, onProgress: (p) => (entry.progress = p) })
+    entry.done = run.catch(() => undefined)
+    try {
+      return await run
+    } finally {
+      if (this.check === entry) this.check = null
+    }
+  }
+
+  checkProgress(): CiteCheckProgress | null {
+    return this.check?.progress ?? null
+  }
+
+  /** «Detener»: the batches answered so far are kept. */
+  stopCheck(): void {
+    this.check?.controller.abort()
+  }
+
+  /** The project closes: the running check stops. */
+  async close(): Promise<void> {
+    this.closed = true
+    const running = this.check
+    running?.controller.abort()
+    await running?.done
+  }
 
   library(): WritingLibrary {
     const { cache } = this.deps
@@ -131,7 +190,7 @@ export class WritingService {
 
   private capped(): CappedDeps & { provider: LlmProvider } {
     const llm = this.deps.llm
-    if (!llm) throw new UserFacingError('llm_unavailable')
+    if (!llm || this.closed) throw new UserFacingError('llm_unavailable')
     return { ...llm, limits: () => limitsFromConfig(this.deps.store.config.llm) }
   }
 

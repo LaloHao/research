@@ -1,79 +1,104 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LLM_MODELS, type LlmModel } from '../../../shared/summary'
 import type { WritingPlanKind, WritingRunPlan } from '../../../shared/writing/api'
 import { errorText } from '../../lib/errorText'
-import { approxUsd } from '../../lib/mappings'
+import { trapTab } from '../../lib/focusTrap'
+import { writingPlanLines } from '../../lib/writing'
 
 /**
- * The cost confirmation of a Claude operation of «Redacción»: the model (the configured one by default), the learned
- * estimate, the operation's own cap and the month's spending. Nothing runs until «Confirmar».
+ * The cost confirmation of every Claude operation of «Redacción», as a dialog: the model (the project's by default),
+ * what the run would cost (the learned estimate, the operation's own cap, the month's spending) and «Confirmar».
+ * Nothing runs until that click. With `plan` the caller already asked for the numbers (a check whose cost depends on
+ * the text); otherwise the dialog asks `writing.plan(kind)` itself. `lines` replaces the default description.
  */
 export function ClaudeConfirm({
   kind,
+  title,
+  plan: given,
+  lines,
+  confirmLabel,
+  canRun = true,
   onConfirm,
   onCancel
 }: {
   kind: WritingPlanKind
+  title: string
+  plan?: WritingRunPlan
+  lines?: string[]
+  confirmLabel?: string
+  canRun?: boolean
   onConfirm: (model: LlmModel) => void
   onCancel: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const [plan, setPlan] = useState<WritingRunPlan | null>(null)
+  const titleId = useId()
+  const [fetched, setFetched] = useState<WritingRunPlan | null>(null)
   const [model, setModel] = useState<LlmModel | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const plan = given ?? fetched
 
   useEffect(() => {
+    if (given) return
     let live = true
     window.research.writing.plan(kind).then(
-      (p) => {
-        if (!live) return
-        setPlan(p)
-        setModel((m) => m ?? p.model)
-      },
+      (p) => live && setFetched(p),
       (e: unknown) => live && setError(errorText(t, e instanceof Error ? e.message : 'unknown'))
     )
     return () => {
       live = false
     }
-  }, [kind, t])
+  }, [given, kind, t])
 
-  if (error) {
-    return (
-      <div className="banner error" role="alert">
-        {error}
-      </div>
-    )
-  }
-  if (!plan || !model) return <p className="muted small">{t('writing.claude.loading_plan')}</p>
-  const overMonth = plan.monthCapUsd !== null && plan.monthSpentUsd >= plan.monthCapUsd
+  const chosen = model ?? plan?.model ?? null
+  const overMonth = plan !== null && plan.monthCapUsd !== null && plan.monthSpentUsd >= plan.monthCapUsd
   return (
-    <div className="writing-confirm banner" role="group" aria-label={t('writing.claude.confirm_label')}>
-      <label className="row">
-        <span>{t('writing.claude.model')}</span>
-        <select value={model} onChange={(e) => setModel(e.target.value as LlmModel)}>
-          {LLM_MODELS.map((m) => (
-            <option key={m} value={m}>
-              {t(`settings.models.${m}`)}
-            </option>
-          ))}
-        </select>
-      </label>
-      <ul className="small">
-        <li>{t('writing.claude.estimate', { cost: approxUsd(plan.estimateUsd) })}</li>
-        <li>{t(`writing.claude.cap_${kind}`, { cap: plan.capUsd.toFixed(2) })}</li>
-        <li>
-          {plan.monthCapUsd === null
-            ? t('writing.claude.month_no_cap', { spent: plan.monthSpentUsd.toFixed(2) })
-            : t('writing.claude.month', { spent: plan.monthSpentUsd.toFixed(2), cap: plan.monthCapUsd.toFixed(2) })}
-        </li>
-      </ul>
-      {overMonth && <p className="warning-text small">{t('writing.claude.month_reached')}</p>}
-      <div className="row">
-        <button className="primary" disabled={overMonth} onClick={() => onConfirm(model)}>
-          {t('writing.claude.confirm')}
-        </button>
-        <button onClick={onCancel}>{t('writing.claude.cancel')}</button>
+    <div className="modal-backdrop">
+      <div
+        className="modal writing-confirm"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            e.preventDefault()
+            onCancel()
+          } else trapTab(e)
+        }}
+      >
+        <h3 id={titleId}>{title}</h3>
+        {error && (
+          <div className="banner error" role="alert">
+            {error}
+          </div>
+        )}
+        {!plan && !error && <p className="muted small">{t('writing.claude.loading_plan')}</p>}
+        {plan && chosen && (
+          <>
+            <label className="row">
+              <span>{t('writing.claude.model')}</span>
+              <select value={chosen} onChange={(e) => setModel(e.target.value as LlmModel)}>
+                {LLM_MODELS.map((m) => (
+                  <option key={m} value={m}>
+                    {t(`settings.models.${m}`)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {(lines ?? writingPlanLines(t, kind, plan)).map((line) => (
+              <p key={line}>{line}</p>
+            ))}
+            {overMonth && <p className="warning-text small">{t('writing.claude.month_reached')}</p>}
+          </>
+        )}
+        <div className="row">
+          <button autoFocus onClick={onCancel}>
+            {t('writing.claude.cancel')}
+          </button>
+          <button className="primary" disabled={!plan || !chosen || overMonth || !canRun} onClick={() => chosen && onConfirm(chosen)}>
+            {confirmLabel ?? t('writing.claude.confirm')}
+          </button>
+        </div>
       </div>
     </div>
   )

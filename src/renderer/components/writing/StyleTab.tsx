@@ -102,21 +102,20 @@ export function StyleTab(): React.JSX.Element {
           </label>
         ))}
       </fieldset>
-      {phase.kind === 'confirm' ? (
-        <ClaudeConfirm kind="style" onConfirm={run} onCancel={() => setPhase({ kind: 'idle' })} />
-      ) : (
-        <div className="row">
-          <button className="primary" disabled={!canRun} onClick={() => setPhase({ kind: 'confirm' })}>
-            {t('writing.style.run')}
-          </button>
-          {phase.kind === 'running' && (
-            <span className="muted small" role="status">
-              {t('writing.style.running')}
-            </span>
-          )}
-          {focus.length === 0 && <span className="muted small">{t('writing.style.no_focus')}</span>}
-        </div>
+      {phase.kind === 'confirm' && (
+        <ClaudeConfirm kind="style" title={t('writing.style.title')} onConfirm={run} onCancel={() => setPhase({ kind: 'idle' })} />
       )}
+      <div className="row">
+        <button className="primary" disabled={!canRun} onClick={() => setPhase({ kind: 'confirm' })}>
+          {t('writing.style.run')}
+        </button>
+        {phase.kind === 'running' && (
+          <span className="muted small" role="status">
+            {t('writing.style.running')}
+          </span>
+        )}
+        {focus.length === 0 && <span className="muted small">{t('writing.style.no_focus')}</span>}
+      </div>
       {phase.kind === 'error' && (
         <div className="banner error" role="alert">
           {phase.message}
