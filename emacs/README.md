@@ -29,11 +29,17 @@ without the token or with a foreign `Host`/`Origin` header. With no project open
 | `research-find-passage` | `C-c r f` | Full-text search. In the results: `RET` inserts the quote with its citation and page at point, `o` opens the paper in the app, `n`/`p` move, `q` quits. |
 | `research-open-citation-at-point` | `C-c r a` | Open the cited paper in the app, at the citation's page (`[cite:@key p. 12]`, `\cite[p.~12]{key}`, `[@key, p. 12]`). |
 
-Commands that use Claude (they spend quota) are ready for when the app offers them through the API:
-`research-draft` (`d`), `research-check-citations-with-claude` (`v`), `research-propose-outline` (`p`) and
-`research-style-review` (`s`). Each one first asks the app for the estimated cost (and the caps and the month's
-spending), shows it with `yes-or-no-p`, and runs only if you confirm. They also need **Permitir operaciones con costo
-desde la API** in the app's settings (off by default).
+Commands that use Claude (they spend quota). Each one first asks the app for the estimated cost (and the caps and the
+month's spending), shows it with `yes-or-no-p`, and runs only if you confirm. They also need **Permitir operaciones con
+costo desde la API** in the app's settings (off by default). They are the app's own «Redacción» operations, with the
+same checks and caps.
+
+| Command | Key | What it does |
+| --- | --- | --- |
+| `research-check-citations-with-claude` | `C-c r v` | For the buffer (or region): whether each cited paper supports its sentence, as Flymake diagnostics on each citation with the paper's quote and page. Error: does not support, or its quote was not found in the paper; warning: partial support, or no passage found; note: supports (or could not be checked, with the reason). |
+| `research-propose-outline` | `C-c r p` | Insert the outline with Claude's headings, order, openings and gap sentences; citations the app could not verify are marked in the text. `C-u` asks for the outline's choices. |
+| `research-style-review` | `C-c r s` | Style suggestions for the buffer (or region), walked like `query-replace`: each one highlighted, `y` apply, `n` skip, `!` apply this and the rest, `q` stop. Applied at the end, from the last one; refused if the text changed while waiting. Suggestions never touch citations, math or LaTeX commands. |
+| `research-draft` | `C-c r d` | Not available yet: the app's «Borrador» is still being built (the command says so). |
 
 Errors from the app are shown in Spanish, like the app (no project open, the API is off, wrong token, unknown key…).
 

@@ -273,7 +273,20 @@ With a prefix argument REFRESH, ask the app for the papers again."
 ;;;; Checking citations (Flymake)
 
 (defvar-local research--diagnostics nil
-  "The last check's diagnostics: (BEG-MARKER END-MARKER TYPE TEXT).")
+  "The last local check's diagnostics: (BEG-MARKER END-MARKER TYPE TEXT).")
+
+(defvar-local research--claude-diagnostics nil
+  "The last check with Claude's diagnostics: (BEG-MARKER END-MARKER TYPE TEXT).")
+
+(defun research--markers (diagnostics)
+  "DIAGNOSTICS (BEG END TYPE TEXT) with markers instead of positions."
+  (mapcar (lambda (d) (list (copy-marker (nth 0 d)) (copy-marker (nth 1 d)) (nth 2 d) (nth 3 d))) diagnostics))
+
+(defun research--flymake-refresh ()
+  "Show the stored diagnostics with Flymake."
+  (when (require 'flymake nil t)
+    (add-hook 'flymake-diagnostic-functions #'research-flymake nil t)
+    (if flymake-mode (flymake-start) (flymake-mode 1))))
 
 (defun research--diagnostic-list (report base)
   "Diagnostics of a `check_citations_local' REPORT whose text starts at BASE."
@@ -293,9 +306,9 @@ With a prefix argument REFRESH, ask the app for the papers again."
     (nreverse out)))
 
 (defun research-flymake (report-fn &rest _)
-  "Flymake backend: report the last `research-check-citations' to REPORT-FN."
+  "Flymake backend: report the last checks (local and with Claude) to REPORT-FN."
   (funcall report-fn
-           (cl-loop for (beg end type text) in research--diagnostics
+           (cl-loop for (beg end type text) in (append research--diagnostics research--claude-diagnostics)
                     when (and (marker-buffer beg) (< beg end))
                     collect (flymake-make-diagnostic (current-buffer) (marker-position beg)
                                                      (marker-position end) type text))))
@@ -312,12 +325,8 @@ Unknown, trashed, duplicated and not-indexed keys show as Flymake diagnostics."
                                   `((text . ,(buffer-substring-no-properties beg end))
                                     (format . ,(symbol-name (research--format))))))
            (diagnostics (research--diagnostic-list report beg)))
-      (setq research--diagnostics
-            (mapcar (lambda (d) (list (copy-marker (nth 0 d)) (copy-marker (nth 1 d)) (nth 2 d) (nth 3 d)))
-                    diagnostics))
-      (when (require 'flymake nil t)
-        (add-hook 'flymake-diagnostic-functions #'research-flymake nil t)
-        (if flymake-mode (flymake-start) (flymake-mode 1)))
+      (setq research--diagnostics (research--markers diagnostics))
+      (research--flymake-refresh)
       (message "%d citas: %d desconocidas, %d en la papelera, %d sin texto, %d repetidas"
                (length (alist-get 'citations report)) (length (alist-get 'unknown report))
                (length (alist-get 'trashed report)) (length (alist-get 'no_text report))
@@ -377,6 +386,20 @@ ask where.  Then offers to use it as the Org `#+bibliography:' and in
 
 ;;;; Outline
 
+(defun research--outline-args (ask)
+  "The outline's arguments in the buffer's format.
+When ASK, prompt for the choices."
+  (let ((args `((format . ,(symbol-name (research--format))))))
+    (when ask
+      (let ((facet (read-string "Faceta principal (vacío: la primera del formulario): "))
+            (secondary (read-string "Faceta secundaria (vacío: ninguna): "))
+            (rq (read-string "Pregunta de investigación, p. ej. RQ1 (vacío: ninguna): ")))
+        (unless (string-empty-p facet) (push `(facet . ,facet) args))
+        (unless (string-empty-p secondary) (push `(secondary . ,secondary) args))
+        (unless (string-empty-p rq) (push `(rq . ,(upcase rq)) args))
+        (when (y-or-n-p "¿Solo valores revisados?") (push '(reviewed_only . t) args))))
+    args))
+
 ;;;###autoload
 (defun research-insert-outline (&optional ask)
   "Insert the app's state-of-the-art outline in the buffer's format.
@@ -385,15 +408,7 @@ With ASK (a prefix argument), ask for the facets, the research question
 and whether to count only reviewed values."
   (interactive "P")
   (research--with-errors
-    (let ((args `((format . ,(symbol-name (research--format))))))
-      (when ask
-        (let ((facet (read-string "Faceta principal (vacío: la primera del formulario): "))
-              (secondary (read-string "Faceta secundaria (vacío: ninguna): "))
-              (rq (read-string "Pregunta de investigación, p. ej. RQ1 (vacío: ninguna): ")))
-          (unless (string-empty-p facet) (push `(facet . ,facet) args))
-          (unless (string-empty-p secondary) (push `(secondary . ,secondary) args))
-          (unless (string-empty-p rq) (push `(rq . ,(upcase rq)) args))
-          (when (y-or-n-p "¿Solo valores revisados?") (push '(reviewed_only . t) args))))
+    (let ((args (research--outline-args ask)))
       (let ((answer (research-call "outline" args)))
         (insert (alist-get 'text answer))
         answer))))
@@ -632,35 +647,155 @@ Shows the estimated cost and asks before running."
 ;;;###autoload
 (defun research-check-citations-with-claude (&optional beg end)
   "Ask Claude, through the app, whether the cited papers support each sentence.
-The region (BEG..END) or the buffer.  Shows the estimated cost and asks first."
+The region (BEG..END) or the buffer.  Shows the estimated cost and asks
+first; the verdicts show as Flymake diagnostics with the paper's quote and
+page: an error when the paper does not support the sentence or its quote
+was not found, a warning for partial support or no passage found, a note
+when it supports it."
   (interactive (if (use-region-p) (list (region-beginning) (region-end))))
   (research--with-errors
-    (research--show-answer
-     (research-call-with-cost "cite_check" `((text . ,(buffer-substring-no-properties (or beg (point-min)) (or end (point-max))))
-                                             (format . ,(symbol-name (research--format)))))
-     "*research cite check*")))
+    (let* ((beg (or beg (point-min)))
+           (end (or end (point-max)))
+           (answer (research-call-with-cost
+                    "cite_check" `((text . ,(buffer-substring-no-properties beg end))
+                                   (format . ,(symbol-name (research--format)))))))
+      (if (null answer)
+          (message "Cancelado")
+        (setq research--claude-diagnostics (research--markers (research--verdict-diagnostics answer beg)))
+        (research--flymake-refresh)
+        (let ((counts (alist-get 'counts answer)))
+          (message "Claude: %d respaldan, %d en parte, %d no respaldan, %d sin pasaje, %d sin verificar%s (US$%.2f)"
+                   (or (alist-get 'supports counts) 0) (or (alist-get 'partial counts) 0)
+                   (or (alist-get 'does_not_support counts) 0) (or (alist-get 'not_found counts) 0)
+                   (or (alist-get 'unverified counts) 0)
+                   (cond ((alist-get 'error answer) (format "; se detuvo: %s" (alist-get 'error answer)))
+                         ((alist-get 'stopped answer) "; se detuvo")
+                         (t ""))
+                   (or (alist-get 'costUsd answer) 0)))
+        answer))))
+
+(defconst research--outcomes
+  '(("supports" :note "respalda")
+    ("partial" :warning "respalda en parte")
+    ("does_not_support" :error "no respalda")
+    ("not_found" :warning "no se encontró un pasaje que lo respalde")
+    ("no_evidence" :error "evidencia no encontrada en el paper")
+    ("unverified" :note "sin verificar"))
+  "Each outcome of the check with Claude: its Flymake type and its words.")
+
+(defconst research--unverified-reasons
+  '(("unknown" . "no está en la biblioteca") ("trashed" . "está en la papelera")
+    ("no_text" . "sin texto indexado") ("not_checked" . "no se alcanzó a verificar")
+    ("no_answer" . "Claude no respondió") ("invalid_output" . "respuesta no válida"))
+  "Why a pair was not verified.")
+
+(defun research--verdict-diagnostics (answer base)
+  "Diagnostics (BEG END TYPE TEXT) of a `cite_check' ANSWER.
+Its text starts at BASE.  Each key's diagnostic covers its citation (the
+sentence when none names it)."
+  (let (out)
+    (dolist (sentence (alist-get 'sentences answer))
+      (dolist (entry (alist-get 'entries sentence))
+        (let* ((key (alist-get 'key entry))
+               (citation (cl-find-if (lambda (c) (member key (alist-get 'keys c))) (alist-get 'citations sentence)))
+               (span (or citation sentence))
+               (outcome (assoc (alist-get 'outcome entry) research--outcomes))
+               (quote (alist-get 'quote entry))
+               (page (alist-get 'page entry))
+               (note (alist-get 'note entry))
+               (reason (cdr (assoc (alist-get 'reason entry) research--unverified-reasons))))
+          (push (list (+ base (alist-get 'start span)) (+ base (alist-get 'end span))
+                      (or (nth 1 outcome) :note)
+                      (concat key ": " (or (nth 2 outcome) "sin verificar")
+                              (if reason (format " (%s)" reason) "")
+                              (if quote (format " — «%s»%s" quote (if page (format ", p. %s" page) "")) "")
+                              (if note (format ". %s" note) "")))
+                out))))
+    (nreverse out)))
 
 ;;;###autoload
-(defun research-propose-outline ()
-  "Ask Claude, through the app, to propose the outline's wording.
-Shows the estimated cost and asks first."
-  (interactive)
+(defun research-propose-outline (&optional ask)
+  "Insert the outline with Claude's proposed wording, through the app.
+Headings, order, an opening per section and a sentence per gap, every
+citation checked by the app.  With ASK (a prefix argument), ask for the
+outline's choices as `research-insert-outline' does.  Shows the estimated
+cost and asks first."
+  (interactive "P")
   (research--with-errors
-    (research--show-answer
-     (research-call-with-cost "outline_proposal" `((format . ,(symbol-name (research--format)))))
-     "*research outline proposal*")))
+    (let ((answer (research-call-with-cost "outline_proposal" (research--outline-args ask))))
+      (if (null answer)
+          (message "Cancelado")
+        (insert (alist-get 'text answer))
+        (let ((unverified (or (alist-get 'unverified answer) 0)))
+          (message "Propuesta insertada%s (US$%.2f)"
+                   (if (> unverified 0) (format "; %d citas sin verificar (marcadas en el texto)" unverified) "")
+                   (or (alist-get 'costUsd answer) 0)))
+        answer))))
+
+(defface research-style-suggestion '((t :inherit query-replace))
+  "Face of the style suggestion being asked about.")
+
+(defun research--style-decide (suggestions base)
+  "Ask about each of SUGGESTIONS (in text order) whose text starts at BASE.
+Returns the accepted ones.  y accepts, n skips, ! accepts this and the
+rest, q stops (keeping what was accepted)."
+  (let (accepted all overlay)
+    (unwind-protect
+        (catch 'done
+          (dolist (s suggestions)
+            (let ((beg (+ base (alist-get 'start s)))
+                  (end (+ base (alist-get 'end s))))
+              (if all
+                  (push s accepted)
+                (when overlay (delete-overlay overlay))
+                (setq overlay (make-overlay beg end))
+                (overlay-put overlay 'face 'research-style-suggestion)
+                (goto-char beg)
+                (pcase (read-char-choice
+                        (format "«%s» → «%s» (%s: %s) ¿Aplicar? (y/n/!/q) "
+                                (alist-get 'original s) (alist-get 'suggestion s)
+                                (alist-get 'category s) (alist-get 'reason s))
+                        '(?y ?n ?! ?q))
+                  (?y (push s accepted))
+                  (?! (push s accepted) (setq all t))
+                  (?q (throw 'done nil)))))))
+      (when overlay (delete-overlay overlay)))
+    (nreverse accepted)))
 
 ;;;###autoload
 (defun research-style-review (&optional beg end)
-  "Ask Claude, through the app, for style suggestions.
-On the region (BEG..END) or the buffer.
-Shows the estimated cost and asks first."
+  "Review the style of the region (BEG..END) or the buffer with Claude.
+Through the app.  Walks the suggestions like `query-replace' (y, n, !, q),
+then applies the accepted ones.  Refuses when the text changed since the
+request.  Shows the estimated cost and asks first."
   (interactive (if (use-region-p) (list (region-beginning) (region-end))))
   (research--with-errors
-    (research--show-answer
-     (research-call-with-cost "style" `((text . ,(buffer-substring-no-properties (or beg (point-min)) (or end (point-max))))
-                                        (format . ,(symbol-name (research--format)))))
-     "*research style*")))
+    (let* ((beg (copy-marker (or beg (point-min))))
+           (end (copy-marker (or end (point-max)) t))
+           (text (buffer-substring-no-properties beg end))
+           (tick (buffer-chars-modified-tick))
+           (answer (research-call-with-cost "style" `((text . ,text) (format . ,(symbol-name (research--format))))))
+           (suggestions (sort (copy-sequence (alist-get 'suggestions answer))
+                              (lambda (a b) (< (alist-get 'start a) (alist-get 'start b))))))
+      (cond
+       ((null answer) (message "Cancelado"))
+       ((or (/= tick (buffer-chars-modified-tick))
+            (not (equal text (buffer-substring-no-properties beg end))))
+        (user-error "El texto cambió desde que se pidió la revisión: vuelve a pedirla"))
+       ((null suggestions) (message "Sin sugerencias de estilo"))
+       (t
+        (let ((accepted (save-excursion (research--style-decide suggestions (marker-position beg)))))
+          ;; From the end, so the offsets of the earlier ones stay valid.
+          (dolist (s (reverse accepted))
+            (let ((from (+ beg (alist-get 'start s)))
+                  (to (+ beg (alist-get 'end s))))
+              (when (equal (buffer-substring-no-properties from to) (alist-get 'original s))
+                (save-excursion
+                  (goto-char from)
+                  (delete-region from to)
+                  (insert (alist-get 'suggestion s))))))
+          (message "%d de %d sugerencias aplicadas" (length accepted) (length suggestions)))))
+      answer)))
 
 ;;;; Minor mode
 
@@ -695,7 +830,8 @@ Shows the estimated cost and asks first."
   :keymap research-mode-map
   (unless research-mode
     (remove-hook 'flymake-diagnostic-functions #'research-flymake t)
-    (setq research--diagnostics nil)))
+    (setq research--diagnostics nil
+          research--claude-diagnostics nil)))
 
 (provide 'research)
 ;;; research.el ends here

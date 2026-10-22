@@ -314,6 +314,106 @@ HANDLER returns (STATUS . BODY); `research-test--result' builds one."
       (let ((err (should-error (research-style-review) :type 'user-error)))
         (should (string-match-p "Ajustes → Aplicación → API local" (cadr err)))))))
 
+;;;; Claude through the app
+
+(defun research-test--costly (tool answer &optional on-run)
+  "A handler for costly TOOL: the plan without `confirmed', ANSWER with it.
+ON-RUN, when given, runs before answering the confirmed call."
+  (lambda (name args)
+    (should (equal name tool))
+    (if (alist-get 'confirmed args)
+        (progn (when on-run (funcall on-run args)) (research-test--result answer))
+      (research-test--result '((confirmation_required . t) (operation . "x") (model . "sonnet")
+                               (estimate_usd . 0.2) (cap_usd . 1) (month_spent_usd . 0) (month_cap_usd . :null))))))
+
+(ert-deftest research-test-check-with-claude-shows-verdicts-in-flymake ()
+  (let* ((text "😀 Fast [cite:@a2020x;@b2021y]. Other [cite:@c2022z].")
+         (c1 (string-search "[cite:@a2020x" text))
+         (c2 (string-search "[cite:@c2022z" text))
+         (answer
+          `((format . "org") (counts . ((supports . 1) (partial . 1) (does_not_support . 0) (not_found . 0) (unverified . 1)))
+            (stopped . :false) (error . :null) (costUsd . 0.07)
+            (sentences . [((start . 0) (end . ,(+ c1 22)) (text . "s1")
+                           (citations . [((start . ,c1) (end . ,(+ c1 22)) (keys . ["a2020x" "b2021y"]))])
+                           (entries . [((key . "a2020x") (outcome . "supports") (quote . "fast parser") (page . 3) (note . "Matches."))
+                                       ((key . "b2021y") (outcome . "no_evidence") (quote . "invented") (page . :null) (note . :null))]))
+                          ((start . ,(+ c1 23)) (end . ,(length text)) (text . "s2")
+                           (citations . [((start . ,c2) (end . ,(+ c2 14)) (keys . ["c2022z"]))])
+                           (entries . [((key . "c2022z") (outcome . "partial") (quote . "somewhat") (page . 7) (note . :null))]))]))))
+    (research-test--with-app (research-test--costly "cite_check" answer)
+      (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) t)))
+        (with-temp-buffer
+          (org-mode)
+          (insert "Intro.\n" text)
+          (research-check-citations-with-claude (+ (point-min) 7) (point-max))
+          (should (equal (mapcar (lambda (d) (list (buffer-substring (nth 0 d) (nth 1 d)) (nth 2 d) (nth 3 d)))
+                                 research--claude-diagnostics)
+                         '(("[cite:@a2020x;@b2021y]" :note "a2020x: respalda — «fast parser», p. 3. Matches.")
+                           ("[cite:@a2020x;@b2021y]" :error "b2021y: evidencia no encontrada en el paper — «invented»")
+                           ("[cite:@c2022z]" :warning "c2022z: respalda en parte — «somewhat», p. 7"))))
+          (let (reported)
+            (research-flymake (lambda (diags) (setq reported diags)))
+            (should (= (length reported) 3))))))))
+
+(ert-deftest research-test-check-with-claude-declined-runs-nothing ()
+  (research-test--with-app (research-test--costly "cite_check" '((sentences . [])))
+    (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) nil)))
+      (with-temp-buffer
+        (insert "x [cite:@a2020x].")
+        (research-check-citations-with-claude)
+        (should (null research--claude-diagnostics))
+        (should (= (length research-test--requests) 1))))))
+
+(ert-deftest research-test-propose-outline-inserts-the-proposal ()
+  (research-test--with-app
+      (research-test--costly "outline_proposal" '((format . "latex") (text . "\\section{Parsing logs}\n") (unverified . 1) (costUsd . 0.03))
+                             (lambda (args) (should (equal (alist-get 'format args) "latex"))))
+    (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) t)))
+      (with-temp-buffer
+        (latex-mode)
+        (research-propose-outline)
+        (should (equal (buffer-string) "\\section{Parsing logs}\n"))))))
+
+(defconst research-test--style-text "Drain are fast. It parse logs. Third one here.")
+
+(defun research-test--style-answer ()
+  "Three suggestions for `research-test--style-text', at character offsets."
+  (let ((text research-test--style-text))
+    (vconcat
+     (mapcar (lambda (o)
+               `((id . 0) (start . ,(string-search (car o) text)) (end . ,(+ (string-search (car o) text) (length (car o))))
+                 (original . ,(car o)) (suggestion . ,(cdr o)) (reason . "Better.") (category . "grammar")))
+             '(("It parse logs" . "It parses logs") ("Drain are fast" . "Drain is fast") ("Third one" . "The third one"))))))
+
+(defun research-test--style-run (keys &optional on-run)
+  "Run the style review answering KEYS; return the buffer text.
+ON-RUN runs in the buffer before the confirmed call answers."
+  (let (buffer)
+    (research-test--with-app
+        (research-test--costly "style" `((suggestions . ,(research-test--style-answer)) (dropped . ((protected . 1))) (costUsd . 0.02))
+                               (and on-run (lambda (_) (with-current-buffer buffer (funcall on-run)))))
+      (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) t))
+                ((symbol-function 'read-char-choice) (lambda (prompt _) (should (string-match-p "→" prompt)) (pop keys))))
+        (with-temp-buffer
+          (setq buffer (current-buffer))
+          (insert research-test--style-text)
+          (research-style-review)
+          (should-not (overlays-in (point-min) (point-max)))
+          (buffer-string))))))
+
+(ert-deftest research-test-style-review-walks-suggestions-like-query-replace ()
+  ;; In text order: Drain are fast (y), It parse logs (n), Third one (y).
+  (should (equal (research-test--style-run (list ?y ?n ?y)) "Drain is fast. It parse logs. The third one here."))
+  ;; ! accepts this one and the rest.
+  (should (equal (research-test--style-run (list ?n ?!)) "Drain are fast. It parses logs. The third one here."))
+  ;; q stops, keeping what was accepted.
+  (should (equal (research-test--style-run (list ?y ?q)) "Drain is fast. It parse logs. Third one here.")))
+
+(ert-deftest research-test-style-review-refuses-when-the-buffer-changed ()
+  (let ((err (should-error (research-test--style-run (list ?y ?y ?y) (lambda () (goto-char (point-min)) (insert "New. ")))
+                           :type 'user-error)))
+    (should (string-match-p "cambió" (cadr err)))))
+
 ;;;; Minor mode
 
 (ert-deftest research-test-mode-binds-the-commands ()
