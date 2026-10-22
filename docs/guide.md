@@ -403,6 +403,39 @@ The **Redacción** (Writing) view (✍️ in the side rail) helps you write the 
 
 Coming next (with Claude, under their own caps in Settings → Claude): «Borrador», a section written by Claude from the papers you pick with every claim cited and checked; «Verificar con Claude» (Check with Claude), whether each cited paper supports its sentence; «Proponer redacción del esquema» (Propose the outline's wording); and «Estilo», style suggestions you accept or reject. Their buttons are already there, disabled, with «Disponible pronto» (Coming soon).
 
+### From Emacs (local API)
+
+The app can lend these tools to your editor. In **Settings → App → «API local»** turn on **«Activar la API local»** (Enable the local API): the app then runs a small server (MCP over HTTP) that answers only on this computer (`127.0.0.1`, port 47823 by default, which you can change) and only to requests carrying its token. The first time, the app generates the token and writes it with the address to `api.json` in its data folder (on Linux `~/.config/research/api.json`, readable by your user only); «Copiar token» (Copy token) copies it and «Regenerar token» (Regenerate token) replaces it (the old one stops working at once). It is off by default; while no project is open, every tool answers that you need to open one.
+
+What it offers: the same read-only library tools the chat uses (search the text, read pages, a paper's data and summary…), plus the papers you can cite (for completion), the local citation check of a text, the `.bib` of a text or of a file (by its full path, following its includes only inside its folder, as «BibTeX» does), the outline (as «Esquema» builds it, in Org, LaTeX or Markdown), a full-text passage search, and «abrir en la app» (open in the app): the app comes to the front with the paper at that page and the quote highlighted. All of these are free and change nothing in the project. The tools that would use Claude are refused unless you also turn on **«Permitir operaciones con costo desde la API»** (Allow operations with cost from the API, off by default); even then each one first answers its estimated cost, caps and the month's spending, and runs only when called again with the confirmation.
+
+**Emacs.** The repository's `emacs/research.el` (no dependencies, Emacs 29+) uses this API in Org, LaTeX and Markdown buffers with `research-mode`: `research-insert-citation` (complete a paper, insert `[cite:@key]`, `\cite{key}` or `[@key]`), `research-check-citations` (unknown, trashed, repeated and not-indexed keys as Flymake diagnostics), `research-bibtex-for-file` (the `.bib` next to the file; offers to add `#+bibliography:` and to add it to `citar-bibliography`), `research-insert-outline`, `research-find-passage` (RET inserts the quote with its citation and page; `o` opens it in the app) and `research-open-citation-at-point`. The commands with Claude (`research-draft`, `research-check-citations-with-claude`, `research-propose-outline`, `research-style-review`) always show the estimate and ask before running. With Doom Emacs, add to `packages.el`:
+
+```elisp
+(package! research :recipe (:local-repo "~/dev/lalohao/research/emacs" :files ("research.el")))
+```
+
+and to `config.el`:
+
+```elisp
+(use-package! research
+  :hook ((org-mode latex-mode LaTeX-mode markdown-mode) . research-mode)
+  :init (setq research-keymap-prefix nil))
+
+(map! :after research
+      :map (org-mode-map latex-mode-map LaTeX-mode-map markdown-mode-map)
+      :localleader
+      (:prefix ("r" . "research")
+       "c" #'research-insert-citation
+       "k" #'research-check-citations
+       "b" #'research-bibtex-for-file
+       "o" #'research-insert-outline
+       "f" #'research-find-passage
+       "a" #'research-open-citation-at-point))
+```
+
+then `doom sync`. `emacs/README.md` has every command, option and key.
+
 ## Settings
 
 Settings are organized in tabs.
@@ -484,6 +517,7 @@ Below the editor is the «Sugerencias de Claude» (Claude's suggestions) section
 - **Clave de API de OpenAlex** (OpenAlex API key): optional and free. Without a key OpenAlex allows about 1000 requests a day; with one, more. Stored on this machine only and sent only to OpenAlex.
 - **Modelos locales** (Local models): the content-similarity model (multilingual-e5-small, about 470 MB) runs on your machine. Shows whether it's downloaded and how much space it takes, with «Descargar» (Download; progress shows in Activity) and «Borrar» (Delete). It's stored in the app's data folder, never in the project, so each machine downloads it once. The download runs as a job of the open project (one must be open); if you close the project or the app midway, it resumes the next time you open that project. «Borrar» (Delete) cancels the similarity computations still queued.
 - **Sincronizar automáticamente** (Sync automatically) and **Cada (minutos)** (Every (minutes)): the automatic git sync (see "Syncing with git"), when the project opens and every 5 to 120 minutes (10 by default). It's a per-device setting, not stored in `project.yaml`.
+- **«API local»** (Local API): lets an editor on this computer (Emacs, with `emacs/research.el`) use the writing tools; off by default, with its port, «Copiar token», «Regenerar token» and «Permitir operaciones con costo desde la API». See "From Emacs (local API)" under "Writing".
 - **«Abrir carpeta de registros»** (Open log folder): opens the folder of the app's log, `main.log`, in your file manager (see "Common problems").
 - **Cerrar proyecto** (Close project): returns to the welcome screen to create or open another project.
 

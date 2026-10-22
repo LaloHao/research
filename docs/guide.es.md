@@ -403,6 +403,39 @@ La vista **Redacción** (✍️ en la barra lateral) ayuda a escribir la tesis c
 
 Lo que viene (con Claude, con su propio tope en Ajustes → Claude): «Borrador», una sección escrita por Claude a partir de los papers que elijas con cada afirmación citada y verificada; «Verificar con Claude», si cada paper citado respalda su oración; «Proponer redacción del esquema»; y «Estilo», sugerencias de estilo que aceptas o rechazas. Sus botones ya están, desactivados, con «Disponible pronto».
 
+### Desde Emacs (API local)
+
+La app puede prestarle estas herramientas a tu editor. En **Ajustes → Aplicación → «API local»** activa **«Activar la API local»**: la app levanta un servidor pequeño (MCP sobre HTTP) que solo responde en este equipo (`127.0.0.1`, puerto 47823 por defecto, que puedes cambiar) y solo a peticiones con su token. La primera vez, la app genera el token y lo escribe con la dirección en `api.json`, en su carpeta de datos (en Linux `~/.config/research/api.json`, que solo tu usuario puede leer); «Copiar token» lo copia y «Regenerar token» lo reemplaza (el anterior deja de funcionar al instante). Viene desactivada; mientras no haya un proyecto abierto, cada herramienta responde que abras uno.
+
+Lo que ofrece: las mismas herramientas de solo lectura de la biblioteca que usa el chat (buscar en el texto, leer páginas, los datos y el resumen de un paper…), y además los papers que puedes citar (para completar), la verificación local de las citas de un texto, el `.bib` de un texto o de un archivo (por su ruta completa, siguiendo sus inclusiones solo dentro de su carpeta, como «BibTeX»), el esquema (como lo arma «Esquema», en Org, LaTeX o Markdown), una búsqueda de pasajes en el texto completo y «abrir en la app»: la app pasa al frente con el paper en esa página y la cita resaltada. Todo esto es gratis y no cambia nada del proyecto. Las herramientas que usarían Claude se rechazan salvo que actives también **«Permitir operaciones con costo desde la API»** (desactivado por defecto); aun así, cada una responde primero su costo estimado, los topes y el gasto del mes, y solo corre cuando se la vuelve a llamar con la confirmación.
+
+**Emacs.** El paquete `emacs/research.el` del repositorio (sin dependencias, Emacs 29+) usa esta API en búferes Org, LaTeX y Markdown con `research-mode`: `research-insert-citation` (completa un paper e inserta `[cite:@clave]`, `\cite{clave}` o `[@clave]`), `research-check-citations` (claves desconocidas, en la papelera, repetidas o sin texto indexado como diagnósticos de Flymake), `research-bibtex-for-file` (el `.bib` junto al archivo; ofrece agregar `#+bibliography:` y sumarlo a `citar-bibliography`), `research-insert-outline`, `research-find-passage` (RET inserta la cita textual con su cita y página; `o` la abre en la app) y `research-open-citation-at-point`. Los comandos con Claude (`research-draft`, `research-check-citations-with-claude`, `research-propose-outline`, `research-style-review`) siempre muestran la estimación y preguntan antes de correr. Con Doom Emacs, agrega a `packages.el`:
+
+```elisp
+(package! research :recipe (:local-repo "~/dev/lalohao/research/emacs" :files ("research.el")))
+```
+
+y a `config.el`:
+
+```elisp
+(use-package! research
+  :hook ((org-mode latex-mode LaTeX-mode markdown-mode) . research-mode)
+  :init (setq research-keymap-prefix nil))
+
+(map! :after research
+      :map (org-mode-map latex-mode-map LaTeX-mode-map markdown-mode-map)
+      :localleader
+      (:prefix ("r" . "research")
+       "c" #'research-insert-citation
+       "k" #'research-check-citations
+       "b" #'research-bibtex-for-file
+       "o" #'research-insert-outline
+       "f" #'research-find-passage
+       "a" #'research-open-citation-at-point))
+```
+
+y luego `doom sync`. `emacs/README.md` (en inglés) tiene todos los comandos, opciones y teclas.
+
 ## Ajustes
 
 Los ajustes se organizan en pestañas, navegables con ←/→/Inicio/Fin; la app recuerda la última pestaña abierta. La mayoría de los campos se guardan solos al salir de ellos (de inmediato en selectores y casillas) y muestran «Guardado»; el editor del formulario de extracción es la excepción — ahí los cambios quedan pendientes hasta tocar «Guardar cambios» (ver «Formulario» abajo).
@@ -482,6 +515,7 @@ Debajo del editor está la sección «Sugerencias de Claude» (ver «Facetas sug
 - **Clave de API de OpenAlex**: opcional y gratuita. Sin clave, OpenAlex permite unas 1000 consultas al día; con ella, más. Se guarda solo en este equipo y solo se envía a OpenAlex.
 - **Modelos locales**: el modelo de similitud de contenido (multilingual-e5-small, unos 470 MB) corre en tu equipo. Muestra si está descargado y cuánto ocupa, con «Descargar» (el avance se ve en Actividad) y «Borrar». Se guarda en la carpeta de datos de la app, nunca en el proyecto, así que cada equipo lo descarga una vez. La descarga corre como un trabajo del proyecto abierto (hace falta tener uno abierto); si cierras el proyecto o la app a mitad de camino, se retoma la próxima vez que abras ese proyecto. «Borrar» cancela los cálculos de similitud que estaban en cola.
 - **Sincronizar automáticamente** y **Cada (minutos)**: la sincronización automática con git (ver «Sincronizar con git»), al abrir el proyecto y cada 5 a 120 minutos (10 por defecto). Es un ajuste de este equipo; no se guarda en `project.yaml`.
+- **API local**: deja que un editor de este equipo (Emacs, con `emacs/research.el`) use las herramientas de redacción; viene desactivada, con su puerto, «Copiar token», «Regenerar token» y «Permitir operaciones con costo desde la API». Ver «Desde Emacs (API local)» en «Redacción».
 - **Abrir carpeta de registros**: abre en tu explorador de archivos la carpeta del registro de la app, `main.log` (ver «Problemas comunes»).
 - **Cerrar proyecto**: vuelve a la pantalla de bienvenida para crear o abrir otro proyecto.
 
