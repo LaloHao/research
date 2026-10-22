@@ -95,6 +95,7 @@ describe('IPC argument validation', () => {
     expect(arg(ipcArgs.facetFilters, [{ facet: 'task', value: 'log_parsing' }], 'f')).toHaveLength(1)
     expect(() => arg(ipcArgs.facetFilters, [{ facet: 'Task', value: 'x' }], 'f')).toThrow()
     expect(arg(ipcArgs.exportName, 'bars-task.svg', 'name')).toBe('bars-task.svg')
+    for (const name of ['chapter.bib', 'outline.tex', 'outline.md', 'outline.org']) expect(arg(ipcArgs.exportName, name, 'name')).toBe(name)
     for (const bad of ['../x.png', 'a/b.png', 'x.exe', '']) expect(() => arg(ipcArgs.exportName, bad, 'name')).toThrow()
     expect(arg(ipcArgs.exportData, new Uint8Array([1]), 'data')).toEqual(new Uint8Array([1]))
     expect(arg(ipcArgs.exportData, 'a,b\n', 'data')).toBe('a,b\n')
@@ -332,5 +333,22 @@ describe('typed relation arguments', () => {
   it('takes a costly mapping request only with the confirmation of the user\'s click', () => {
     expect(arg(ipcArgs.confirmed, true, 'confirmed')).toBe(true)
     for (const bad of [false, 'true', 1, null, undefined]) expect(() => arg(ipcArgs.confirmed, bad, 'confirmed')).toThrow()
+  })
+
+  it('checks «Redacción»’s sources and scopes: a bounded text or a file token, never a path', () => {
+    expect(arg(ipcArgs.writingSource, { kind: 'text', text: '\\cite{a}', format: 'latex' }, 'source')).toEqual({ kind: 'text', text: '\\cite{a}', format: 'latex' })
+    const token = '123e4567-e89b-42d3-a456-426614174000'
+    expect(arg(ipcArgs.writingSource, { kind: 'file', token }, 'source')).toEqual({ kind: 'file', token })
+    for (const bad of [
+      { kind: 'file', path: '/etc/passwd' },
+      { kind: 'file', token: '../x' },
+      { kind: 'text', text: 'x', format: 'docx' },
+      { kind: 'text', text: 'x'.repeat(2_000_001), format: 'org' },
+      { kind: 'text', text: 'x', format: 'org', extra: 1 }
+    ])
+      expect(() => arg(ipcArgs.writingSource, bad, 'source')).toThrow()
+    expect(arg(ipcArgs.outlineScope, { kind: 'papers', ids: ['he2017drain'] }, 'scope')).toEqual({ kind: 'papers', ids: ['he2017drain'] })
+    expect(arg(ipcArgs.outlineScope, { kind: 'library' }, 'scope')).toEqual({ kind: 'library' })
+    for (const bad of [{ kind: 'papers', ids: ['../x'] }, { kind: 'mapping', mappingId: '../x' }, { kind: 'all' }]) expect(() => arg(ipcArgs.outlineScope, bad, 'scope')).toThrow()
   })
 })

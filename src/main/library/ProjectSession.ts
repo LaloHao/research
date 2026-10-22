@@ -40,6 +40,7 @@ import { SummaryService } from '../summary/SummaryService'
 import { SyncScheduler } from '../sync/SyncScheduler'
 import { machineName } from '../sync/messages'
 import { SyncService } from '../sync/SyncService'
+import { WritingService } from '../writing/WritingService'
 import { DEFAULT_DEVICE_ID, LibraryService } from './LibraryService'
 
 /** The per-device automatic sync settings, read at every tick. */
@@ -103,7 +104,8 @@ export class ProjectSession {
     readonly sync: SyncService,
     readonly facets: FacetSuggestionService,
     readonly chats: ChatService,
-    readonly mappings: MappingService
+    readonly mappings: MappingService,
+    readonly writing: WritingService
   ) {}
 
   static async create(root: string, name: string, opts: SessionOptions): Promise<ProjectSession> {
@@ -308,7 +310,8 @@ export class ProjectSession {
       cancelBatch: (batchId) => queue.cancelBatch(batchId),
       pauseMs: opts.citationPauseMs
     })
-    const session: ProjectSession = new ProjectSession(store, cache, http, library, queue, summaries, citations, similarity, map, relations, sync, facets, chats, mappings)
+    const writing = new WritingService({ store, cache, includedPapers: (id) => mappings.includedPapers(id) })
+    const session: ProjectSession = new ProjectSession(store, cache, http, library, queue, summaries, citations, similarity, map, relations, sync, facets, chats, mappings, writing)
     await library.reindexAll()
     await relations.reindex()
     await facets.reindex()

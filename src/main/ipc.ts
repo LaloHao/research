@@ -3,10 +3,12 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
+import type { UserErrorCode } from '../shared/library'
 import type { OpenAlexCount } from '../shared/mapping'
 import type { CountResult } from '../shared/relations'
 import type { FormImpact } from '../shared/summary'
 import type { DeletePlanResult, RestoreOutcome, TrashOutcome } from '../shared/trash'
+import type { ChapterBibResult, OutlineDataResult } from '../shared/writing/api'
 import {
   IPC,
   type ActionResult,
@@ -72,12 +74,24 @@ async function chooseExport(window: BrowserWindow | null): Promise<string | null
   return result.canceled ? null : (result.filePaths[0] ?? null)
 }
 
+/** The picker of «BibTeX» in «Redacción»: a LaTeX, Markdown or Org text. */
+async function chooseWritingFile(window: BrowserWindow | null): Promise<string | null> {
+  const options: Electron.OpenDialogOptions = {
+    properties: ['openFile'],
+    filters: [{ name: 'LaTeX, Markdown, Org', extensions: ['tex', 'ltx', 'md', 'markdown', 'qmd', 'rmd', 'org', 'txt'] }]
+  }
+  const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
+  return result.canceled ? null : (result.filePaths[0] ?? null)
+}
+
 /**
- * The export files the dialog of «Importar» returned, by the token handed to the window: the path never comes from the
+ * The files a dialog returned («Importar», «BibTeX»), by the token handed to the window: the path never comes from the
  * window. A token is used once; only the latest few are kept.
  */
 class ImportChoices {
   private readonly paths = new Map<string, string>()
+
+  constructor(private readonly unknownToken: UserErrorCode = 'import_unreadable') {}
 
   add(path: string): ImportChoice {
     const token = randomUUID()
@@ -88,7 +102,7 @@ class ImportChoices {
 
   take(token: string): string {
     const path = this.paths.get(token)
-    if (path === undefined) throw new UserFacingError('import_unreadable')
+    if (path === undefined) throw new UserFacingError(this.unknownToken)
     this.paths.delete(token)
     return path
   }
@@ -711,7 +725,34 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     return actionResult(() => chats((s) => s.chats.undo(id, actionId)))
   })
 
-  // A file the user chose to save (a chart, the graph, CSV data), wherever they picked; never written into the project on our own.
+  // «Redacción»: reads only (the .bib, the outline's data). Tracked, so closing the project waits for them.
+  const writingFiles = new ImportChoices('writing_file_unreadable')
+  ipcMain.handle(IPC.writingLibrary, () => app.requireSession().writing.library())
+  ipcMain.handle(IPC.writingChooseFile, async (): Promise<ImportChoice | null> => {
+    const path = await chooseWritingFile(getWindow())
+    return path === null ? null : writingFiles.add(path)
+  })
+  ipcMain.handle(IPC.writingBibtex, async (_e, rawSource: unknown): Promise<ChapterBibResult> => {
+    const source = arg(ipcArgs.writingSource, rawSource, 'source')
+    try {
+      const session = app.requireSession()
+      const bib = source.kind === 'text' ? session.writing.bibFromText(source.text, source.format) : session.writing.bibFromFile(writingFiles.take(source.token))
+      return { ok: true, bib: await session.track(bib) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+  ipcMain.handle(IPC.writingOutlineData, async (_e, rawScope: unknown): Promise<OutlineDataResult> => {
+    const scope = arg(ipcArgs.outlineScope, rawScope, 'scope')
+    try {
+      const session = app.requireSession()
+      return { ok: true, data: await session.track(session.writing.outlineData(scope)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+
+  // A file the user chose to save (a chart, the graph, CSV data, a .bib or an outline), wherever they picked; never written into the project on our own.
   ipcMain.handle(IPC.exportSave, async (_e, rawName: unknown, rawData: unknown): Promise<SaveResult> => {
     const name = arg(ipcArgs.exportName, rawName, 'name')
     const data = arg(ipcArgs.exportData, rawData, 'data')

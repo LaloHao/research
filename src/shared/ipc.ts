@@ -37,6 +37,7 @@ import type { ExtractionForm, FormImpact, FormInfo, LlmConfig, LlmModel, ReviewI
 import type { CloseDecision, ConflictDecision, ConflictDiff, ConflictItem, SyncResult, SyncStatus } from './sync'
 import type { DeletePlanResult, RestoreOutcome, TrashEntry, TrashOutcome, TrashTarget } from './trash'
 import type { PaperRelations, RelationPlan, RelationsFileState, RelationStatus, RelationType } from './typedRelations'
+import type { ChapterBibResult, OutlineDataResult, OutlineScope, WritingLibrary, WritingSource } from './writing/api'
 
 export const IPC = {
   settingsGet: 'settings:get',
@@ -153,6 +154,10 @@ export const IPC = {
   mappingsIngestPlan: 'mappings:ingest-plan',
   mappingsIngest: 'mappings:ingest',
   exportSave: 'export:save',
+  writingLibrary: 'writing:library',
+  writingChooseFile: 'writing:choose-file',
+  writingBibtex: 'writing:bibtex',
+  writingOutlineData: 'writing:outline-data',
   syncStatus: 'sync:status',
   syncRun: 'sync:run',
   syncConflicts: 'sync:conflicts',
@@ -216,7 +221,7 @@ export type ActionResult = { ok: true } | { ok: false; error: string }
 export type RunBatchResult = { ok: true; batchId: string; count: number } | { ok: false; error: string }
 export type MappingCreateResult = { ok: true; id: string } | { ok: false; error: string }
 export type MappingOpenResult = { ok: true; mapping: MappingView } | { ok: false; error: string }
-/** An export file picked in the app's dialog: the window sees its name and hands back only the token. */
+/** A file picked in the app's dialog (an export to import, a text for «BibTeX»): the window sees its name and hands back only the token. */
 export interface ImportChoice {
   token: string
   name: string
@@ -445,6 +450,20 @@ export interface ResearchApi {
   exports: {
     /** Asks where to save, then writes the file there. */
     save(defaultName: string, data: string | Uint8Array): Promise<SaveResult>
+  }
+  /** «Redacción»: reads only; nothing here writes to the project. */
+  writing: {
+    /** The keys a text may cite: library papers (and whether their text is indexed) and trashed ones. */
+    library(): Promise<WritingLibrary>
+    /**
+     * Asks for a .tex, .md or .org file in the app's dialog; null when the user cancels. The path stays in the main
+     * process: `bibtex` names the file by the token, once.
+     */
+    chooseFile(): Promise<ImportChoice | null>
+    /** «BibTeX»: the cited entries of pasted text, or of the chosen file and what it includes inside its folder. */
+    bibtex(source: WritingSource): Promise<ChapterBibResult>
+    /** «Esquema»: the facets, papers and confirmed relations of the chosen set. */
+    outlineData(scope: OutlineScope): Promise<OutlineDataResult>
   }
   sync: {
     status(): Promise<SyncStatus>

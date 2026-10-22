@@ -158,6 +158,13 @@ const api: ResearchApi = {
   exports: {
     save: (defaultName, data) => ipcRenderer.invoke(IPC.exportSave, defaultName, data)
   },
+  writing: {
+    library: () => ipcRenderer.invoke(IPC.writingLibrary),
+    // The file is picked by the main process; the window only gets its name and a token.
+    chooseFile: () => ipcRenderer.invoke(IPC.writingChooseFile),
+    bibtex: (source) => ipcRenderer.invoke(IPC.writingBibtex, source),
+    outlineData: (scope) => ipcRenderer.invoke(IPC.writingOutlineData, scope)
+  },
   sync: {
     status: () => ipcRenderer.invoke(IPC.syncStatus),
     run: () => ipcRenderer.invoke(IPC.syncRun),

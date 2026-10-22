@@ -27,6 +27,8 @@ import { PDF_POLICIES } from '../shared/schemas'
 import { AUTO_SYNC_MINUTES, CLOSE_DECISIONS, CONFLICT_CHOICES, CONFLICT_ID, CONFLICT_VERSION, isRemoteUrl } from '../shared/sync'
 import { AUTO_SUGGEST_FACETS_AFTER_MAX, ExtractionFormSchema, FacetDefSchema, LLM_MODELS, ThesisContextSchema } from '../shared/summary'
 import { MAX_JUSTIFICATION, RELATION_ID, RELATION_STATUSES, RELATION_TYPES } from '../shared/typedRelations'
+import { MAX_BIB_TEXT_CHARS } from '../shared/writing/api'
+import { CITE_FORMATS } from '../shared/writing/citations'
 
 const paperIdSchema = z.string().regex(/^[a-z][a-z0-9]*$/)
 const facetKeySchema = z.string().regex(/^[a-z][a-z0-9_]*$/)
@@ -121,7 +123,7 @@ export const ipcArgs = {
   ]),
   facetFilters: z.array(z.strictObject({ facet: facetKeySchema, value: z.string().min(1) })).max(4),
   /** A bare file name for the save dialog's default: never a path. */
-  exportName: z.string().regex(/^[\w.-]{1,100}\.(png|svg|csv)$/),
+  exportName: z.string().regex(/^[\w.-]{1,100}\.(png|svg|csv|bib|tex|md|org)$/),
   exportData: z.union([z.string(), z.custom<Uint8Array>((v) => v instanceof Uint8Array)]),
   relationId: z.string().regex(RELATION_ID),
   relationStatus: z.enum(RELATION_STATUSES),
@@ -237,7 +239,17 @@ export const ipcArgs = {
   /** «Agregar a la biblioteca» for one record (its ids) or all (undefined). */
   mappingRecordScope: z.array(recordIdSchema).min(1).max(MAX_PLAN_RECORDS).optional(),
   /** A request that costs money or the OpenAlex budget: only `true`, what the window sends on the user's confirming click. */
-  confirmed: z.literal(true)
+  confirmed: z.literal(true),
+  /** «BibTeX»'s source: pasted text (bounded), or the token of the file the main process's dialog picked. */
+  writingSource: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('text'), text: z.string().max(MAX_BIB_TEXT_CHARS), format: z.enum(CITE_FORMATS) }),
+    z.strictObject({ kind: z.literal('file'), token: z.uuid() })
+  ]),
+  outlineScope: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('library') }),
+    z.strictObject({ kind: z.literal('papers'), ids: z.array(paperIdSchema).max(20_000) }),
+    z.strictObject({ kind: z.literal('mapping'), mappingId: z.string().regex(MAPPING_ID) })
+  ])
 }
 
 export class InvalidIpcArgument extends Error {
