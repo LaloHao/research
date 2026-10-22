@@ -4,6 +4,7 @@ import type { MappingSummary } from '../../../shared/mapping'
 import type { ThesisContext } from '../../../shared/summary'
 import type { OutlineData, OutlineScope } from '../../../shared/writing/api'
 import { buildOutline, renderOutline, type Outline, type OutlineEntry, type OutlineLabels } from '../../../shared/writing/outline'
+import type { OutlineRequest } from '../../../shared/writing/outlineProposal'
 import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
 import { FILE_EXTENSIONS, type WritingPrefs } from '../../lib/writing'
@@ -79,6 +80,12 @@ export function OutlineTab({
   }, [data, facet, secondary])
 
   const question = thesis?.research_questions.find((q) => q.id === questionId) ?? null
+  // What «Proponer redacción del esquema» sends: the main process builds the same outline again from it.
+  const request = useMemo(
+    (): Omit<OutlineRequest, 'model'> | null =>
+      scope && facet ? { scope, facet, secondary: secondary && secondary !== facet ? secondary : null, onlyReviewed, questionId: question?.id ?? null } : null,
+    [scope, facet, secondary, onlyReviewed, question]
+  )
   const outline = useMemo((): Outline | null => {
     const main = data?.facets.find((f) => f.key === facet)
     if (!data || !main) return null
@@ -213,7 +220,7 @@ export function OutlineTab({
           </div>
         </>
       )}
-      <OutlineProposal outline={outline} format={prefs.format} />
+      <OutlineProposal outline={outline} format={prefs.format} latexCommand={prefs.latexCommand} request={request} labels={labels} />
     </section>
   )
 }

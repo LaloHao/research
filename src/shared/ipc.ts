@@ -38,7 +38,11 @@ import type { ExtractionForm, FormImpact, FormInfo, LlmConfig, LlmModel, ReviewI
 import type { CloseDecision, ConflictDecision, ConflictDiff, ConflictItem, SyncResult, SyncStatus } from './sync'
 import type { DeletePlanResult, RestoreOutcome, TrashEntry, TrashOutcome, TrashTarget } from './trash'
 import type { PaperRelations, RelationPlan, RelationsFileState, RelationStatus, RelationType } from './typedRelations'
-import type { ChapterBibResult, OutlineDataResult, OutlineScope, WritingLibrary, WritingSource } from './writing/api'
+import type { ChapterBibResult, OutlineDataResult, OutlineScope, WritingLibrary, WritingPlanKind, WritingRunPlan, WritingSource } from './writing/api'
+import type { CiteCheckPlanResult, CiteCheckProgress, CiteCheckRequest, CiteCheckRunResult } from './writing/citeCheck'
+import type { CiteFormat } from './writing/citations'
+import type { OutlineProposalResult, OutlineRequest } from './writing/outlineProposal'
+import type { StyleRequest, StyleReviewResult } from './writing/style'
 
 export const IPC = {
   settingsGet: 'settings:get',
@@ -159,6 +163,13 @@ export const IPC = {
   writingChooseFile: 'writing:choose-file',
   writingBibtex: 'writing:bibtex',
   writingOutlineData: 'writing:outline-data',
+  writingCheckPlan: 'writing:check-plan',
+  writingCheck: 'writing:check',
+  writingCheckProgress: 'writing:check-progress',
+  writingCheckStop: 'writing:check-stop',
+  writingPlan: 'writing:plan',
+  writingProposeOutline: 'writing:propose-outline',
+  writingReviewStyle: 'writing:review-style',
   syncStatus: 'sync:status',
   syncRun: 'sync:run',
   syncConflicts: 'sync:conflicts',
@@ -471,6 +482,20 @@ export interface ResearchApi {
     bibtex(source: WritingSource): Promise<ChapterBibResult>
     /** «Esquema»: the facets, papers and confirmed relations of the chosen set. */
     outlineData(scope: OutlineScope): Promise<OutlineDataResult>
+    /** A Claude operation's cost confirmation: its estimate, its cap, the month and the default model. */
+    plan(kind: WritingPlanKind): Promise<WritingRunPlan>
+    /** What «Verificar con Claude» would check in this text and cost (the shape of `plan`, plus the text's counts). */
+    checkPlan(text: string, format: CiteFormat): Promise<CiteCheckPlanResult>
+    /** After the confirmation (`confirmed` is that click): checks each sentence's cited papers; a new check stops the running one. */
+    check(req: CiteCheckRequest, confirmed: true): Promise<CiteCheckRunResult>
+    /** The running check's calls done, or null when none runs. */
+    checkProgress(): Promise<CiteCheckProgress | null>
+    /** «Detener»: what was checked so far comes back as the check's result. */
+    checkStop(): Promise<void>
+    /** «Proponer redacción del esquema», after the confirmation: the outline is built again in the main process. */
+    proposeOutline(req: OutlineRequest, confirmed: true): Promise<OutlineProposalResult>
+    /** «Revisar estilo», after the confirmation: the checked suggestions (nothing is saved). */
+    reviewStyle(req: StyleRequest, confirmed: true): Promise<StyleReviewResult>
   }
   sync: {
     status(): Promise<SyncStatus>

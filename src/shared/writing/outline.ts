@@ -174,15 +174,33 @@ export const DEFAULT_OUTLINE_LABELS: OutlineLabels = {
     `Outline by ${facet}${secondary ? ` / ${secondary}` : ''}${question ? `; research question ${question.id}: ${question.text}` : ''}`
 }
 
+/**
+ * What «Proponer redacción del esquema» adds to the export: its order of the main values, its headings, and paragraphs
+ * already written in the output format (citations converted, LaTeX escaped) after a heading or a gap.
+ */
+export interface OutlineDecorations {
+  /** Main values in the order to write them; values it leaves out keep their relative order after them. */
+  order?: string[]
+  /** A heading instead of the value's label (`sub`: the secondary value of a subsection; `value` null: «Sin clasificar»); plain text. */
+  title?: (value: string | null, sub: string | null) => string | null
+  /** The paragraph after a heading (`value` null: «Sin clasificar»). */
+  opening?: (value: string | null, sub: string | null) => string | null
+  /** The paragraph after a gap's comment (`secondary` null: a main value without papers). */
+  gapNote?: (value: string, secondary: string | null) => string | null
+}
+
 export interface OutlineExportOptions {
   format: CiteFormat
   labels?: OutlineLabels
+  decorations?: OutlineDecorations
 }
 
 /** The outline as headings (`\section`/`\subsection`, `#`/`##`, `*`/`**`), one item per paper and the gaps as comments. */
 export function renderOutline(outline: Outline, opts: OutlineExportOptions): string {
   const labels = opts.labels ?? DEFAULT_OUTLINE_LABELS
   const { format } = opts
+  const deco = opts.decorations ?? {}
+  const paragraph = (p: string | null | undefined): string[] => (p && p.trim() ? ['', p.trim(), ''] : [])
   const text = (s: string): string => (format === 'latex' ? escapeLatex(s) : s.replace(/\s+/g, ' ').trim())
   const cite = (key: string): string => formatCitation({ key, page: null }, format)
   const gap = (s: string): string => commentLine(`HUECO: ${s}`, format)
@@ -203,21 +221,26 @@ export function renderOutline(outline: Outline, opts: OutlineExportOptions): str
     return format === 'latex' ? ['\\begin{itemize}', ...items, '\\end{itemize}'] : items
   }
   const blocks: string[] = [commentLine(labels.header(outline.facet, outline.secondary, outline.question), format)]
-  // Sections in the order of the facet's values, the empty ones as gaps where their section would be.
+  // Sections in the order of the facet's values (or the decorations'), the empty ones as gaps where their section would be.
   const sectionsByValue = new Map(outline.sections.map((s) => [s.value, s]))
-  for (const value of outline.values) {
+  const order = deco.order ? [...new Set(deco.order.filter((v) => outline.values.includes(v)))] : []
+  for (const value of [...order, ...outline.values.filter((v) => !order.includes(v))]) {
     const section = sectionsByValue.get(value)
     if (!section) {
-      blocks.push(gap(labels.gapValue(labels.value(outline.facet, value))))
+      blocks.push([gap(labels.gapValue(labels.value(outline.facet, value))), ...paragraph(deco.gapNote?.(value, null))].join('\n').trimEnd())
       continue
     }
-    const lines = [heading(1, labels.value(outline.facet, value)), ...list(section.papers)]
-    for (const sub of section.subsections) lines.push('', heading(2, labels.value(outline.secondary!, sub.value)), ...list(sub.papers))
-    for (const c of outline.gaps.combinations.filter((c) => c.value === value)) {
-      lines.push(gap(labels.gapCombination(labels.value(outline.facet, c.value), labels.value(outline.secondary!, c.secondary))))
+    const lines = [heading(1, deco.title?.(value, null) || labels.value(outline.facet, value)), ...paragraph(deco.opening?.(value, null)), ...list(section.papers)]
+    for (const sub of section.subsections) {
+      lines.push('', heading(2, deco.title?.(value, sub.value) || labels.value(outline.secondary!, sub.value)), ...paragraph(deco.opening?.(value, sub.value)), ...list(sub.papers))
     }
-    blocks.push(lines.join('\n'))
+    for (const c of outline.gaps.combinations.filter((c) => c.value === value)) {
+      lines.push(gap(labels.gapCombination(labels.value(outline.facet, c.value), labels.value(outline.secondary!, c.secondary))), ...paragraph(deco.gapNote?.(c.value, c.secondary)))
+    }
+    blocks.push(lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd())
   }
-  if (outline.unclassified.length > 0) blocks.push([heading(1, labels.unclassified), ...list(outline.unclassified)].join('\n'))
+  if (outline.unclassified.length > 0) {
+    blocks.push([heading(1, deco.title?.(null, null) || labels.unclassified), ...paragraph(deco.opening?.(null, null)), ...list(outline.unclassified)].join('\n').trimEnd())
+  }
   return `${blocks.join('\n\n')}\n`
 }

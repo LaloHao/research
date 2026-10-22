@@ -1,6 +1,8 @@
-import type { WritingLibrary } from '../../shared/writing/api'
+import type { TFunction } from 'i18next'
+import type { WritingLibrary, WritingPlanKind, WritingRunPlan } from '../../shared/writing/api'
 import { CITE_FORMATS, type CiteFormat, type KeyIndex } from '../../shared/writing/citations'
 import { LATEX_OUTPUT_COMMANDS, type LatexOutputCommand } from '../../shared/writing/convert'
+import { approxUsd } from './mappings'
 
 /** «Redacción»'s output choice, remembered per project in this window's storage. */
 export interface WritingPrefs {
@@ -45,4 +47,15 @@ export const FILE_EXTENSIONS: Record<CiteFormat, string> = { latex: 'tex', markd
 export function exportFileName(base: string, extension: string): string {
   const stem = base.replace(/\.[^.]*$/, '').replace(/[^\w.-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '').slice(0, 80)
   return `${stem || 'export'}.${extension}`
+}
+
+/** A Claude operation's confirmation lines: its estimate, its own cap and the month's spending. */
+export function writingPlanLines(t: TFunction, kind: WritingPlanKind, plan: WritingRunPlan): string[] {
+  return [
+    t('writing.claude.estimate', { cost: approxUsd(plan.estimateUsd) }),
+    t(`writing.claude.cap_${kind}`, { cap: plan.capUsd.toFixed(2) }),
+    plan.monthCapUsd === null
+      ? t('writing.claude.month_no_cap', { spent: plan.monthSpentUsd.toFixed(2) })
+      : t('writing.claude.month', { spent: plan.monthSpentUsd.toFixed(2), cap: plan.monthCapUsd.toFixed(2) })
+  ]
 }

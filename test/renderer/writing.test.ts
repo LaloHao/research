@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_WRITING_PREFS, exportFileName, keyIndexOf, loadWritingPrefs, saveWritingPrefs } from '../../src/renderer/lib/writing'
+import { DEFAULT_WRITING_PREFS, exportFileName, keyIndexOf, loadWritingPrefs, saveWritingPrefs, writingPlanLines } from '../../src/renderer/lib/writing'
 
 function memoryStorage(): Pick<Storage, 'getItem' | 'setItem'> & { data: Map<string, string> } {
   const data = new Map<string, string>()
@@ -49,5 +49,19 @@ describe('exportFileName', () => {
     expect(exportFileName('thesis.org', 'bib')).toBe('thesis.bib')
     expect(exportFileName('', 'org')).toBe('export.org')
     expect(exportFileName('../../etc/passwd', 'bib')).toMatch(/^[\w.-]{1,100}\.bib$/)
+  })
+})
+
+describe('writingPlanLines', () => {
+  const t = ((key: string, values?: Record<string, unknown>) => `${key} ${JSON.stringify(values ?? {})}`) as unknown as Parameters<typeof writingPlanLines>[0]
+
+  it('names the estimate, the kind’s cap and the month, with or without a monthly cap', () => {
+    const plan = { estimateUsd: 0.12, capUsd: 0.5, monthSpentUsd: 3, monthCapUsd: 10, model: 'sonnet' as const }
+    expect(writingPlanLines(t, 'style', plan)).toEqual([
+      'writing.claude.estimate {"cost":"~$0.12"}',
+      'writing.claude.cap_style {"cap":"0.50"}',
+      'writing.claude.month {"spent":"3.00","cap":"10.00"}'
+    ])
+    expect(writingPlanLines(t, 'outline', { ...plan, monthCapUsd: null })[2]).toBe('writing.claude.month_no_cap {"spent":"3.00"}')
   })
 })

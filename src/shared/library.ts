@@ -94,6 +94,8 @@ export const USER_ERROR_CODES = [
   'request_rejected',
   'writing_file_unreadable',
   'writing_file_too_large',
+  'outline_too_large',
+  'cite_check_budget',
   'access_denied',
   'rate_limited',
   'server_error',
