@@ -1,5 +1,5 @@
 import { PAPER_KEY, type PaperState } from '../../shared/chat'
-import { SUMMARY_TEXT_FIELDS, type Evidence } from '../../shared/summary'
+import { SUMMARY_TEXT_FIELDS, thesisLanguage, type Evidence } from '../../shared/summary'
 import type { CiteCheckPlan, CiteCheckProgress, CiteCheckRequest, CiteCheckResult } from '../../shared/writing/citeCheck'
 import type { ChapterBib, OutlineData, OutlineScope, WritingLibrary, WritingPlanKind, WritingRunPlan } from '../../shared/writing/api'
 import { chapterBibReport, type BibLibraryPaper } from '../../shared/writing/bibtex'
@@ -235,7 +235,7 @@ export class WritingService {
         completeChecked(
           deps.provider,
           {
-            system: outlineSystemPrompt(store.config.content_language),
+            system: outlineSystemPrompt(thesisLanguage(store.config.thesis)),
             input: outlineInput(store.config.thesis, outline, targets, papers),
             schema: outlineProposalSchema(),
             model,
@@ -270,7 +270,7 @@ export class WritingService {
       runCappedOperation(deps, { kind: 'style', model }, (maxUsd) =>
         completeChecked(
           deps.provider,
-          { system: styleSystemPrompt(focus, req.format, store.config.content_language), input: styleInput(req.text), schema: styleSchema(), model, signal },
+          { system: styleSystemPrompt(focus, req.format, thesisLanguage(store.config.thesis)), input: styleInput(req.text), schema: styleSchema(), model, signal },
           maxUsd,
           (raw) => {
             const parsed = parseStyleOutput(raw)

@@ -107,7 +107,7 @@ describe('AppController and the local API', () => {
     const sink = new MemorySink()
     appLog.setSink(sink)
     const dir = await tmpDir()
-    const c = new AppController(join(dir, 'settings.json'), () => undefined, { watch: false, autoSync: null }, () => undefined, { dir, openInApp: () => undefined })
+    const c = new AppController(join(dir, 'settings.json'), () => undefined, { watch: false, autoSync: null }, () => undefined, () => undefined, { dir, openInApp: () => undefined })
     try {
       await c.init()
       expect(c.apiStatus()).toMatchObject({ enabled: false, running: false, allowCostly: false })

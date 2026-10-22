@@ -1,13 +1,22 @@
 import type { ChatCitation, PaperState } from '../../shared/chat'
 import { parseCitations } from '../../shared/chatCitations'
+import type { IndexCache } from '../cache/IndexCache'
 import { locateQuote } from '../summary/evidence'
-import type { PageText } from '../summary/paperText'
+import { pagesFromChunks, type PageText } from '../summary/paperText'
 
 export interface CitationSources {
   /** Where a cited key is: a library paper (its text can be checked), in the trash, or nowhere. */
   paperState(id: string): PaperState
   /** The indexed text of a library paper, page by page. */
   pages(id: string): PageText[]
+}
+
+/** Where a key is and its text, as the index knows them now. */
+export function indexSources(cache: IndexCache): CitationSources {
+  return {
+    paperState: (id) => (cache.getPaper(id) ? 'library' : cache.isTrashed(id) ? 'trash' : 'missing'),
+    pages: (id) => pagesFromChunks(cache.chunksFor(id))
+  }
 }
 
 /** Each marker of an answer checked against the cited paper's text, with the normalization of the summaries' evidence. */

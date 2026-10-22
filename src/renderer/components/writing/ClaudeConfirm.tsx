@@ -19,6 +19,7 @@ export function ClaudeConfirm({
   lines,
   confirmLabel,
   canRun = true,
+  model: initialModel,
   onConfirm,
   onCancel
 }: {
@@ -28,6 +29,8 @@ export function ClaudeConfirm({
   lines?: string[]
   confirmLabel?: string
   canRun?: boolean
+  /** The model selected at first (a draft's own); the plan's (the project's) otherwise. */
+  model?: LlmModel
   onConfirm: (model: LlmModel) => void
   onCancel: () => void
 }): React.JSX.Element {
@@ -50,7 +53,7 @@ export function ClaudeConfirm({
     }
   }, [given, kind, t])
 
-  const chosen = model ?? plan?.model ?? null
+  const chosen = model ?? (plan ? (initialModel ?? plan.model) : null)
   const overMonth = plan !== null && plan.monthCapUsd !== null && plan.monthSpentUsd >= plan.monthCapUsd
   return (
     <div className="modal-backdrop">

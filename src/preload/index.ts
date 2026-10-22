@@ -1,7 +1,8 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { ChatStreamUpdate } from '../shared/chat'
-import { API_OPEN_PAPER_CHANNEL, CHAT_STREAM_CHANNEL, eventChannel, IPC, type ResearchApi } from '../shared/ipc'
+import { API_OPEN_PAPER_CHANNEL, CHAT_STREAM_CHANNEL, DRAFT_STREAM_CHANNEL, eventChannel, IPC, type ResearchApi } from '../shared/ipc'
 import type { ApiOpenPaper } from '../shared/localApi'
+import type { DraftStreamUpdate } from '../shared/writing/draft'
 
 const api: ResearchApi = {
   settings: {
@@ -172,6 +173,23 @@ const api: ResearchApi = {
     plan: (kind) => ipcRenderer.invoke(IPC.writingPlan, kind),
     proposeOutline: (req, confirmed) => ipcRenderer.invoke(IPC.writingProposeOutline, req, confirmed),
     reviewStyle: (req, confirmed) => ipcRenderer.invoke(IPC.writingReviewStyle, req, confirmed)
+  },
+  drafts: {
+    list: (query) => ipcRenderer.invoke(IPC.draftsList, query),
+    open: (id) => ipcRenderer.invoke(IPC.draftsOpen, id),
+    // `confirmed` comes from the window's cost confirmation, never assumed here.
+    run: (input, draftId, confirmed) => ipcRenderer.invoke(IPC.draftsRun, input, draftId, confirmed),
+    stop: (id) => ipcRenderer.invoke(IPC.draftsStop, id),
+    edit: (id, text) => ipcRenderer.invoke(IPC.draftsEdit, id, text),
+    rename: (id, title) => ipcRenderer.invoke(IPC.draftsRename, id, title),
+    archive: (id, archived) => ipcRenderer.invoke(IPC.draftsArchive, id, archived),
+    // `confirmed` comes from the window's confirmation, never assumed here.
+    remove: (id, confirmed) => ipcRenderer.invoke(IPC.draftsRemove, id, confirmed),
+    onStream: (callback) => {
+      const handler = (_e: Electron.IpcRendererEvent, update: DraftStreamUpdate): void => callback(update)
+      ipcRenderer.on(DRAFT_STREAM_CHANNEL, handler)
+      return () => ipcRenderer.removeListener(DRAFT_STREAM_CHANNEL, handler)
+    }
   },
   sync: {
     status: () => ipcRenderer.invoke(IPC.syncStatus),

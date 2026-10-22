@@ -44,12 +44,12 @@ import { ConflictError, type ReadResult } from '../project/errors'
 import type { ProjectStore } from '../project/ProjectStore'
 import { AGENT_TIMEOUT_MS } from '../relations/RelationSuggester'
 import { InvalidEdit } from '../summary/merge'
-import { pagesFromChunks } from '../summary/paperText'
 import { enabledTools, gateAction, isReadTool, latestUserText, toolEnabled } from './actionPolicy'
 import type { ActionExecutor, ExecutedAction } from './actionTypes'
 import { ApprovalGate, type ApprovalAnswer } from './ApprovalGate'
 import { CHAT_MAX_TOOL_CALLS, chatInput, chatSystemPrompt, type PaperContext } from './chatPrompt'
-import { unverifiedCount, verifyCitations } from './citations'
+import { indexSources, unverifiedCount, verifyCitations } from './citations'
+import { readPaperContext } from './paperContext'
 
 export interface ChatServiceDeps {
   store: ProjectStore
@@ -253,7 +253,7 @@ export class ChatService {
   async open(id: string): Promise<ChatConversation> {
     const e = await this.fresh(id)
     if (!e.file) throw new UserFacingError('chat_invalid')
-    const sources = { paperState: (p: string) => this.paperState(p), pages: (p: string) => pagesFromChunks(this.deps.cache.chunksFor(p)) }
+    const sources = indexSources(this.deps.cache)
     const undone = undoneActions(e.file.messages)
     const messages: ChatMessageView[] = e.file.messages.map((m) => {
       if (m.role === 'user') return m
@@ -391,8 +391,7 @@ export class ChatService {
 
   /** Where a paper is, as the index knows it. */
   paperState(id: string): PaperState {
-    if (this.deps.cache.getPaper(id)) return 'library'
-    return this.deps.cache.isTrashed(id) ? 'trash' : 'missing'
+    return indexSources(this.deps.cache).paperState(id)
   }
 
   /**
@@ -917,20 +916,6 @@ export class ChatService {
 
   /** The paper of a paper chat, while it is in the library: metadata and its summary's main fields. */
   private async paperContext(scope: ChatScope): Promise<PaperContext | null> {
-    if (scope === 'library' || !this.deps.store.paperExists(scope.paper)) return null
-    // Trashed meanwhile or unreadable: the answer goes on without it.
-    const read = await this.deps.store.readPaper(scope.paper).catch(() => null)
-    if (!read?.ok) return null
-    const p = read.value
-    const summary = await this.deps.store.readSummary(p.id).catch(() => null)
-    return {
-      id: p.id,
-      title: p.title,
-      authors: p.authors.map((a) => (a.given ? `${a.given} ${a.family}` : a.family)).join(', '),
-      year: p.year ?? null,
-      venue: p.venue ?? null,
-      abstract: p.abstract ?? null,
-      summary: summary?.ok ? Object.fromEntries(PAPER_SUMMARY_FIELDS.map((k) => [k, String(summary.value.fields[k].value ?? '')])) : null
-    }
+    return scope === 'library' ? null : readPaperContext(this.deps.store, scope.paper, PAPER_SUMMARY_FIELDS)
   }
 }

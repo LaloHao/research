@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ChatStreamUpdate } from '../shared/chat'
+import type { DraftStreamUpdate } from '../shared/writing/draft'
 import type { ProjectInfo, ResearchEvent } from '../shared/ipc'
 import type { ApiOpenPaper, LocalApiStatus } from '../shared/localApi'
 import type { ModelInfo } from '../shared/relations'
@@ -34,6 +35,8 @@ export class AppController {
     private readonly sessionDefaults: Omit<SessionOptions, 'contactEmail' | 'openalexApiKey'> = {},
     /** Chat answers as they stream, for the window. */
     private readonly emitChatStream: (update: ChatStreamUpdate) => void = () => undefined,
+    /** Drafts as they stream, for the window. */
+    private readonly emitDraftStream: (update: DraftStreamUpdate) => void = () => undefined,
     /** The local API (Settings → Aplicación → «API local»); none in tests that don't need it. */
     apiHost: ApiHost | null = null
   ) {
@@ -236,7 +239,9 @@ export class AppController {
     session.on('facets', () => this.emit('facets-changed'))
     session.on('chats', () => this.emit('chats-changed'))
     session.on('mappings', () => this.emit('mappings-changed'))
+    session.on('drafts', () => this.emit('drafts-changed'))
     session.onChatStream((u) => this.emitChatStream(u))
+    session.onDraftStream((u) => this.emitDraftStream(u))
     this.emit('project-changed')
     // The first automatic sync may already be running (it starts as the session opens, before these listeners).
     this.emit('sync-changed')

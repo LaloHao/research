@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, session, shell, type IpcMainEvent } from 'electron'
 import { join } from 'node:path'
 import { CHAT_STREAM_CHANNEL } from '../shared/chat'
-import { API_OPEN_PAPER_CHANNEL, eventChannel, IPC } from '../shared/ipc'
+import { API_OPEN_PAPER_CHANNEL, DRAFT_STREAM_CHANNEL, eventChannel, IPC } from '../shared/ipc'
 import type { CloseDecision } from '../shared/sync'
 import { AppController } from './AppController'
 import { confirmClose, createQuitFlow, once } from './closeFlow'
@@ -46,6 +46,10 @@ const controller = new AppController(
   (update) => {
     // An answer may still be stopping while the window goes away.
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(CHAT_STREAM_CHANNEL, update)
+  },
+  (update) => {
+    // A draft may still be stopping while the window goes away.
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(DRAFT_STREAM_CHANNEL, update)
   },
   {
     // api.json lives with the app's data (on Linux ~/.config/research/api.json, where the Emacs package looks).
