@@ -310,7 +310,7 @@ export class ProjectSession {
       cancelBatch: (batchId) => queue.cancelBatch(batchId),
       pauseMs: opts.citationPauseMs
     })
-    const writing = new WritingService({ store, cache, includedPapers: (id) => mappings.includedPapers(id) })
+    const writing = new WritingService({ store, cache, includedPapers: (id) => mappings.includedPapers(id), llm: { provider: llm, budget, ledger } })
     const session: ProjectSession = new ProjectSession(store, cache, http, library, queue, summaries, citations, similarity, map, relations, sync, facets, chats, mappings, writing)
     await library.reindexAll()
     await relations.reindex()

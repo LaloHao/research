@@ -299,6 +299,7 @@
     "import_unreadable": "No encontré registros en ese archivo. Usa una exportación BibTeX, RIS o CSV (Scopus, IEEE Xplore, ACM Digital Library, Web of Science).",
     "writing_file_unreadable": "No pude leer ese archivo. Elige un .tex, .md u .org de texto.",
     "writing_file_too_large": "El archivo es demasiado grande (más de 2 MB).",
+    "outline_too_large": "El esquema tiene demasiados papers para proponer su redacción (más de {{max}}): acota el conjunto con un filtro o un mapeo.",
     "criterion_required": "Elige un criterio del protocolo: uno de exclusión para excluir; uno de inclusión, o ninguno, para incluir.",
     "not_eligible": "Ese registro no está en esa fase: a texto completo solo se criban los incluidos en título y resumen, y «No se pudo conseguir» es solo de texto completo.",
     "nothing_to_snowball": "Todavía no hay estudios incluidos a texto completo desde los cuales hacer snowballing.",
