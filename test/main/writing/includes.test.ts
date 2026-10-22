@@ -1,7 +1,7 @@
 import { mkdir, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { readWithIncludes } from '../../../src/main/writing/includes'
+import { readCapped, readWithIncludes } from '../../../src/main/writing/includes'
 import { tmpDir } from '../../helpers/tmp'
 
 async function tree(files: Record<string, string>): Promise<string> {
@@ -90,5 +90,15 @@ describe('readWithIncludes', () => {
     expect(read.skipped).toEqual([{ from: 'main.tex', path: 'big', reason: 'too_large' }])
     await expect(readWithIncludes(join(root, 'big.tex'), { maxDepth: 8, maxFiles: 10, maxFileBytes: 100, maxTotalBytes: 1000 })).rejects.toThrow('writing_file_too_large')
     await expect(readWithIncludes(join(root, 'nope.tex'))).rejects.toThrow('writing_file_unreadable')
+  })
+
+  it('bounds what it reads, not what a stat said: the cap applies to the bytes read and to the total', async () => {
+    const root = await tree({ 'exact.tex': 'x'.repeat(100), 'over.tex': 'x'.repeat(101), 'main.tex': '\\input{a}\\input{b}', 'a.tex': 'y'.repeat(60), 'b.tex': 'z'.repeat(60) })
+    expect((await readCapped(join(root, 'exact.tex'), 100))?.length).toBe(100)
+    expect(await readCapped(join(root, 'over.tex'), 100)).toBeNull()
+    // The second include would pass the total (16 + 60 + 60 > 130).
+    const read = await readWithIncludes(join(root, 'main.tex'), { maxDepth: 8, maxFiles: 10, maxFileBytes: 100, maxTotalBytes: 130 })
+    expect(read.files.map((f) => f.path)).toEqual(['main.tex', 'a.tex'])
+    expect(read.skipped).toEqual([{ from: 'main.tex', path: 'b', reason: 'too_large' }])
   })
 })

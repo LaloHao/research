@@ -1,4 +1,4 @@
-import { lstat, readFile, realpath, stat } from 'node:fs/promises'
+import { lstat, open, realpath, stat } from 'node:fs/promises'
 import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { UserFacingError } from '../library/UserFacingError'
 import type { SkipReason } from '../../shared/writing/api'
@@ -59,11 +59,12 @@ export async function readWithIncludes(file: string, limits = INCLUDE_LIMITS): P
   let total = 0
 
   const visit = async (path: string, depth: number, stack: string[]): Promise<void> => {
-    const size = (await stat(path)).size
-    if (size > limits.maxFileBytes || total + size > limits.maxTotalBytes) throw new SkipError('too_large')
-    total += size
+    // Bounded by what is actually read (a file can grow between a stat and the read).
+    const bytes = await readCapped(path, Math.min(limits.maxFileBytes, limits.maxTotalBytes - total))
+    if (bytes === null) throw new SkipError('too_large')
+    total += bytes.length
     seen.add(path)
-    const text = await readFile(path, 'utf8')
+    const text = bytes.toString('utf8')
     const format = formatOfPath(path, text)
     const citations = parseCitations(text, format)
     const record = { path: shown(root, path), format, citations: citations.length }
@@ -133,6 +134,23 @@ export async function readWithIncludes(file: string, limits = INCLUDE_LIMITS): P
     throw new UserFacingError('writing_file_unreadable', { cause: error })
   }
   return out
+}
+
+/** The file's bytes, or null when it has more than `cap` (never reading more than `cap` + 1 of them). */
+export async function readCapped(path: string, cap: number): Promise<Buffer | null> {
+  const handle = await open(path, 'r')
+  try {
+    const buffer = Buffer.alloc(Math.max(0, cap) + 1)
+    let length = 0
+    while (length < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length)
+      if (bytesRead === 0) break
+      length += bytesRead
+    }
+    return length > cap ? null : buffer.subarray(0, length)
+  } finally {
+    await handle.close()
+  }
 }
 
 class SkipError extends Error {
