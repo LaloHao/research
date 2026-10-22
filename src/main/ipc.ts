@@ -10,6 +10,9 @@ import type { FormImpact } from '../shared/summary'
 import type { DeletePlanResult, RestoreOutcome, TrashOutcome } from '../shared/trash'
 import type { ChapterBibResult, OutlineDataResult } from '../shared/writing/api'
 import type { DraftEditResult, DraftOpenResult, DraftRunResult } from '../shared/writing/draft'
+import type { OutlineProposalResult } from '../shared/writing/outlineProposal'
+import type { StyleReviewResult } from '../shared/writing/style'
+import type { CiteCheckPlanResult, CiteCheckRunResult } from '../shared/writing/citeCheck'
 import {
   IPC,
   type ActionResult,
@@ -752,6 +755,53 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
       return { ok: false, error: toUserFacing(error).message }
     }
   })
+  // The Claude operations: the plan for the confirmation, then the run with the user's confirming click.
+  ipcMain.handle(IPC.writingPlan, (_e, rawKind: unknown) => app.requireSession().writing.plan(arg(ipcArgs.writingPlanKind, rawKind, 'kind')))
+  ipcMain.handle(IPC.writingProposeOutline, async (_e, rawReq: unknown, rawConfirmed: unknown): Promise<OutlineProposalResult> => {
+    const req = arg(ipcArgs.outlineRequest, rawReq, 'request')
+    arg(ipcArgs.confirmed, rawConfirmed, 'confirmed')
+    try {
+      const session = app.requireSession()
+      return { ok: true, run: await session.track(session.writing.proposeOutline(req)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+  ipcMain.handle(IPC.writingReviewStyle, async (_e, rawReq: unknown, rawConfirmed: unknown): Promise<StyleReviewResult> => {
+    const req = arg(ipcArgs.styleRequest, rawReq, 'request')
+    arg(ipcArgs.confirmed, rawConfirmed, 'confirmed')
+    try {
+      const session = app.requireSession()
+      return { ok: true, run: await session.track(session.writing.reviewStyle(req)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+
+  // «Verificar con Claude»: the plan is free; the check takes `confirmed` (the click on the cost confirmation), is
+  // tracked so closing the project waits for it (closing also stops it), and comes back whole, stopped or cut short.
+  ipcMain.handle(IPC.writingCheckPlan, async (_e, rawText: unknown, rawFormat: unknown): Promise<CiteCheckPlanResult> => {
+    const text = arg(ipcArgs.checkText, rawText, 'text')
+    const format = arg(ipcArgs.citeFormat, rawFormat, 'format')
+    try {
+      const session = app.requireSession()
+      return { ok: true, plan: await session.track(session.writing.citeCheckPlan(text, format)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+  ipcMain.handle(IPC.writingCheck, async (_e, rawReq: unknown, rawConfirmed: unknown): Promise<CiteCheckRunResult> => {
+    const req = arg(ipcArgs.citeCheckRequest, rawReq, 'request')
+    arg(ipcArgs.confirmed, rawConfirmed, 'confirmed')
+    try {
+      const session = app.requireSession()
+      return { ok: true, result: await session.track(session.writing.windowCheck(req)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+  ipcMain.handle(IPC.writingCheckProgress, () => app.requireSession().writing.checkProgress())
+  ipcMain.handle(IPC.writingCheckStop, (): void => app.requireSession().writing.stopCheck())
 
   // «Borrador»: drafts/ through the session's DraftService; versions stream on DRAFT_STREAM_CHANNEL. Tracked, so closing
   // the project waits for them.
@@ -768,7 +818,6 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
       return { ok: false, error: toUserFacing(error).message }
     }
   })
-  ipcMain.handle(IPC.draftsPlan, () => drafts((s) => s.drafts.plan()))
   // «Redactar» / «Regenerar» in the cost confirmation: `confirmed` is that click.
   ipcMain.handle(IPC.draftsRun, async (_e, rawInput: unknown, rawId: unknown, rawConfirmed: unknown): Promise<DraftRunResult> => {
     const input = arg(ipcArgs.draftInput, rawInput, 'input')

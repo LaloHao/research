@@ -29,6 +29,7 @@ import { ScreeningSuggester } from '../mapping/ScreeningSuggester'
 import { startActionsMcpServer } from '../mcp/ActionsMcpServer'
 import { startLibraryMcpServer } from '../mcp/LibraryMcpServer'
 import { libraryTools } from '../mcp/libraryTools'
+import { scopeLibraryTools } from '../mcp/scopedTools'
 import { ProjectStore } from '../project/ProjectStore'
 import { PAPER_FOLDER, watchProject } from '../project/watcher'
 import { interleaveReview } from '../relations/relationMerge'
@@ -42,6 +43,7 @@ import { SyncScheduler } from '../sync/SyncScheduler'
 import { machineName } from '../sync/messages'
 import { SyncService } from '../sync/SyncService'
 import { DraftService } from '../writing/DraftService'
+import { CiteChecker } from '../writing/CiteChecker'
 import { WritingService } from '../writing/WritingService'
 import { DEFAULT_DEVICE_ID, LibraryService } from './LibraryService'
 
@@ -314,15 +316,29 @@ export class ProjectSession {
       cancelBatch: (batchId) => queue.cancelBatch(batchId),
       pauseMs: opts.citationPauseMs
     })
-    const writing = new WritingService({ store, cache, includedPapers: (id) => mappings.includedPapers(id) })
+    const writing = new WritingService({
+      store,
+      cache,
+      includedPapers: (id) => mappings.includedPapers(id),
+      llm: { provider: llm, budget, ledger },
+      checker: new CiteChecker({
+        store,
+        cache,
+        provider: llm,
+        budget,
+        ledger,
+        limits: () => limitsFromConfig(store.config.llm),
+        embedder: async () => (opts.embeddings ? opts.embeddings.embedder() : null)
+      })
+    })
     const drafts = new DraftService({
       store,
       cache,
       provider: llm,
       budget,
       ledger,
-      // A fresh read-only MCP server per version, closed when it ends.
-      startTools: (o) => startLibraryMcpServer(libraryTools({ store, cache, map, embeddings: opts.embeddings ?? null }), o),
+      // A fresh read-only MCP server per version, its tools limited to the chosen papers, closed when it ends.
+      startTools: (o, papers) => startLibraryMcpServer(scopeLibraryTools(libraryTools({ store, cache, map, embeddings: opts.embeddings ?? null }), papers), o),
       machine: machineName(opts.machineName ?? hostname()),
       emit: () => session.emit('drafts'),
       stream: (u) => session.emitDraftStream(u),
@@ -555,8 +571,8 @@ export class ProjectSession {
     // in a process group of its own that would outlive the app, so a fetch or push is cut short; a local step, which may
     // hold the store's write gate, is let finish) and the queue (running jobs abort and stay queued for next time).
     // Awaiting the scheduler on its own first would wait for that fetch or push to end by itself.
-    // Running answers and drafts stop too, saved as stopped (sends in progress finish first), before the cache closes.
-    await Promise.all([this.scheduler?.stop(), this.sync.close(), this.queue.stop(), this.chats.close(), this.drafts.close()])
+    // Running answers and drafts stop too, saved as stopped (sends in progress finish first), and a running citation check, before the cache closes.
+    await Promise.all([this.scheduler?.stop(), this.sync.close(), this.queue.stop(), this.chats.close(), this.writing.close(), this.drafts.close()])
     while (this.inFlight.size > 0) await Promise.allSettled([...this.inFlight])
     this.cache.close()
   }

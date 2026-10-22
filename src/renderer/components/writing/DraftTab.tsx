@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { MappingSummary } from '../../../shared/mapping'
 import type { PaperDetail } from '../../../shared/library'
-import { LLM_MODELS, type LlmModel, type ThesisContext } from '../../../shared/summary'
-import type { WritingLibrary, WritingPlan } from '../../../shared/writing/api'
+import type { LlmModel, ThesisContext } from '../../../shared/summary'
+import type { WritingLibrary } from '../../../shared/writing/api'
 import {
   DRAFT_LENGTHS,
   DRAFT_WORDS,
@@ -21,11 +21,12 @@ import { useEvent } from '../../hooks/useEvent'
 import { useProjectModel } from '../../hooks/useProjectModel'
 import { citationLabel } from '../../../shared/chatCitations'
 import { costText, hidePartialMarker } from '../../lib/chat'
-import { applyDraftUpdate, draftFileName, draftPapers, draftTitle, liveFromPartial, planLines, type LiveDraft } from '../../lib/drafts'
+import { applyDraftUpdate, draftFileName, draftPapers, draftTitle, liveFromPartial, type LiveDraft } from '../../lib/drafts'
 import { errorText } from '../../lib/errorText'
 import { onFlush } from '../../lib/flush'
 import type { WritingPrefs } from '../../lib/writing'
 import { EvidencePanel, type Picked } from '../review/EvidencePanel'
+import { ClaudeConfirm } from './ClaudeConfirm'
 import { OutputFormat } from './OutputFormat'
 
 /** How long an edit waits before it is saved and its citations checked again. */
@@ -157,10 +158,10 @@ function DraftEditor({ draftId, library, visibleIds, prefs, onPrefsChange, onCre
   const projectModel = useProjectModel()
   const [view, setView] = useState<DraftView | null>(null)
   const [input, setInput] = useState<DraftInput>(() => emptyInput(projectModel))
-  const modelTouched = useRef(false)
   const formTouched = useRef(false)
   const [live, setLive] = useState<LiveDraft | null>(null)
-  const [plan, setPlan] = useState<WritingPlan | null>(null)
+  /** The shared cost confirmation is open. */
+  const [confirming, setConfirming] = useState(false)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -181,7 +182,7 @@ function DraftEditor({ draftId, library, visibleIds, prefs, onPrefsChange, onCre
   liveRef.current = live
 
   useEffect(() => {
-    if (!draftId && !modelTouched.current) setInput((i) => ({ ...i, model: projectModel }))
+    if (!draftId) setInput((i) => ({ ...i, model: projectModel }))
   }, [draftId, projectModel])
 
   const load = useCallback(() => {
@@ -270,27 +271,19 @@ function DraftEditor({ draftId, library, visibleIds, prefs, onPrefsChange, onCre
 
   const askPlan = (): void => {
     setError(null)
-    setPending(true)
-    window.research.drafts.plan().then(
-      (p) => {
-        setPending(false)
-        setPlan(p)
-      },
-      () => {
-        setPending(false)
-        setError(errorText(t, 'unknown'))
-      }
-    )
+    setConfirming(true)
   }
-  const run = async (): Promise<void> => {
-    setPlan(null)
+  /** «Confirmar» in the shared confirmation: the model picked there is the draft's from now on. */
+  const run = async (model: LlmModel): Promise<void> => {
+    setConfirming(false)
     setPending(true)
     setError(null)
     await save()
     try {
-      const r = await window.research.drafts.run({ ...input, papers }, draftId, true)
+      const r = await window.research.drafts.run({ ...input, model, papers }, draftId, true)
       if (!r.ok) setError(errorText(t, r.error))
       else {
+        setInput((i) => ({ ...i, model }))
         setShownVersion(null)
         if (!draftId) onCreated(r.draftId)
       }
@@ -390,7 +383,6 @@ function DraftEditor({ draftId, library, visibleIds, prefs, onPrefsChange, onCre
       <DraftForm
         input={input}
         onChange={(next) => {
-          if (next.model !== input.model) modelTouched.current = true
           formTouched.current = true
           setInput(next)
         }}
@@ -405,19 +397,15 @@ function DraftEditor({ draftId, library, visibleIds, prefs, onPrefsChange, onCre
         </button>
         {running && draftId && <button onClick={() => void window.research.drafts.stop(draftId)}>{t('writing.draft.stop')}</button>}
       </div>
-      {plan && (
-        <div className="banner" role="dialog" aria-label={t('writing.draft.confirm_title')}>
-          <strong>{draftId ? t('writing.draft.confirm_regenerate', { model: input.model }) : t('writing.draft.confirm_run', { model: input.model })}</strong>
-          {planLines(t, plan).map((line) => (
-            <p key={line}>{line}</p>
-          ))}
-          <div className="row">
-            <button className="primary" onClick={() => void run()}>
-              {t('writing.draft.confirm')}
-            </button>
-            <button onClick={() => setPlan(null)}>{t('writing.draft.cancel')}</button>
-          </div>
-        </div>
+      {confirming && (
+        <ClaudeConfirm
+          kind="draft"
+          title={draftId ? t('writing.draft.confirm_regenerate') : t('writing.draft.confirm_run')}
+          model={input.model}
+          confirmLabel={draftId ? t('writing.draft.regenerate') : t('writing.draft.run')}
+          onConfirm={(model) => void run(model)}
+          onCancel={() => setConfirming(false)}
+        />
       )}
       {error && (
         <div className="banner error" role="alert">
@@ -531,7 +519,7 @@ function CheckSummary({ check, onOpen }: { check: DraftCheck; onOpen: (c: DraftC
 
 type PaperSource = 'manual' | 'filtered' | 'mapping'
 
-/** The draft's form: title, purpose, research question, papers, length and model. */
+/** The draft's form: title, purpose, research question, papers and length (the model is picked in the confirmation). */
 function DraftForm({
   input,
   onChange,
@@ -605,16 +593,6 @@ function DraftForm({
             {DRAFT_LENGTHS.map((l) => (
               <option key={l} value={l}>
                 {t(`writing.draft.lengths.${l}`, { words: DRAFT_WORDS[l] })}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          <span>{t('writing.draft.model')}</span>
-          <select value={input.model} onChange={(e) => set({ model: e.target.value as LlmModel })}>
-            {LLM_MODELS.map((m) => (
-              <option key={m} value={m}>
-                {m}
               </option>
             ))}
           </select>

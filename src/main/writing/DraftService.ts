@@ -1,7 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { PAPER_KEY } from '../../shared/chat'
 import { LLM_MODELS, thesisLanguage } from '../../shared/summary'
-import type { WritingPlan } from '../../shared/writing/api'
 import {
   DRAFT_ID,
   DRAFT_LENGTHS,
@@ -26,7 +25,7 @@ import { indexSources, verifyCitations } from '../chats/citations'
 import { readPaperContext } from '../chats/paperContext'
 import { toUserFacing, UserFacingError } from '../library/UserFacingError'
 import { limitsFromConfig, type BudgetGuard } from '../llm/BudgetGuard'
-import { operationPlan, runCappedOperation, type CappedDeps } from '../llm/cappedOperation'
+import { runCappedOperation, type CappedDeps } from '../llm/cappedOperation'
 import type { CostLedger } from '../llm/CostLedger'
 import { failedCallCost, LlmError, type ChatResult, type LlmProvider } from '../llm/LlmProvider'
 import { startAgentRun, type AgentRunLog } from '../log/agentLog'
@@ -44,8 +43,8 @@ export interface DraftServiceDeps {
   provider: LlmProvider
   budget: BudgetGuard
   ledger: CostLedger
-  /** Starts the read-only MCP server for one draft (closed when the draft ends). */
-  startTools: (opts: LibraryMcpOptions) => Promise<LibraryMcpHandle>
+  /** Starts the read-only MCP server for one draft, its tools limited to `papers` (closed when the draft ends). */
+  startTools: (opts: LibraryMcpOptions, papers: readonly string[]) => Promise<LibraryMcpHandle>
   /** Names this machine in the files it writes (`updated_on`), so the sync can name a copy. */
   machine: string
   /** The drafts changed (the session's 'drafts' event). */
@@ -96,7 +95,7 @@ const cleanTitle = (title: string): string => title.replace(/\s+/g, ' ').trim()
 
 /**
  * «Borrador»: drafts/ and its index, and the versions Claude writes. A version is one confirmed, capped agent run (kind
- * `draft`) with the chat's read-only library tools, streamed to the window and written once at the end; «Detener»
+ * `draft`) with the chat's read-only library tools limited to the chosen papers, streamed to the window and written once at the end; «Detener»
  * keeps what arrived. Every citation is checked as the chat's are, and flagged when it cites a paper outside the draft's
  * selection.
  */
@@ -189,15 +188,10 @@ export class DraftService {
     return draftCheck(text, verifyCitations(text, indexSources(this.deps.cache)), papers)
   }
 
-  /** What a version would cost, shown before asking. */
-  plan(): Promise<WritingPlan> {
-    return operationPlan(this.capped, 'draft')
-  }
-
   /**
    * «Redactar» (a new draft, `draftId` null) or «Regenerar» (a new version of `draftId`, written from the form as it is
    * now). Resolves with the draft's id once the run is admitted and the draft written; over a cap nothing is written.
-   * The caller asked the user first (the run IPC checks `confirmed`).
+   * The caller asked the user first with `writing.plan('draft')` (the run IPC checks `confirmed`).
    */
   run(input: DraftInput, draftId: string | null): Promise<string> {
     return this.track(this.runNow(input, draftId))
@@ -360,7 +354,7 @@ export class DraftService {
         const maxTurns = DRAFT_MAX_TOOL_CALLS + 3
         const log = startAgentRun({ kind: 'draft', subject: id, model: input.model, capUsd: maxUsd, maxTurns, ids: { papers: input.papers.length } })
         run.log = log
-        const tools = await this.deps.startTools({ maxToolCalls: DRAFT_MAX_TOOL_CALLS, markData: true, log }).catch((error: unknown) => {
+        const tools = await this.deps.startTools({ maxToolCalls: DRAFT_MAX_TOOL_CALLS, markData: true, log }, input.papers).catch((error: unknown) => {
           throw new UserFacingError('agent_tools_unavailable', { cause: error })
         })
         try {

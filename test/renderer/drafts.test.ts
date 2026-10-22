@@ -1,7 +1,7 @@
 import type { TFunction } from 'i18next'
 import { describe, expect, it } from 'vitest'
 import type { DraftStreamEvent, DraftStreamUpdate } from '../../src/shared/writing/draft'
-import { applyDraftUpdate, draftFileName, draftPapers, draftTitle, liveFromPartial, planLines, type LiveDraft } from '../../src/renderer/lib/drafts'
+import { applyDraftUpdate, draftFileName, draftPapers, draftTitle, liveFromPartial, type LiveDraft } from '../../src/renderer/lib/drafts'
 
 const t = ((key: string, options?: Record<string, unknown>) => (options ? `${key} ${JSON.stringify(options)}` : key)) as unknown as TFunction
 const u = (seq: number, e: DraftStreamEvent): DraftStreamUpdate => ({ ...e, draftId: 'd', seq })
@@ -27,16 +27,6 @@ describe('«Borrador» in the window', () => {
     // Opened mid-run: a delta with nothing to apply it to asks for the draft again.
     expect(applyDraftUpdate(null, u(8, { kind: 'delta', text: 'x' }))).toEqual({ live: null, resync: true })
     expect(applyDraftUpdate(liveFromPartial({ text: 'a', tools: 0, seq: 9 }), u(10, { kind: 'error', error: 'llm_timeout' })).live).toMatchObject({ status: 'error', error: 'llm_timeout', text: 'a' })
-  })
-
-  it('confirms with the estimate, the draft cap and the month', () => {
-    expect(planLines(t, { estimateUsd: 0.2, capUsd: 1, monthSpentUsd: 3, monthCapUsd: 20 })).toEqual([
-      'writing.draft.confirm_estimate {"cost":"~$0.20"}',
-      'writing.draft.confirm_cap {"cap":"1.00"}',
-      'writing.draft.confirm_month {"spent":"3.00","cap":"20.00"}'
-    ])
-    expect(planLines(t, { estimateUsd: 0.001, capUsd: 1, monthSpentUsd: 0, monthCapUsd: null })[0]).toContain('< $0.01')
-    expect(planLines(t, { estimateUsd: 0.2, capUsd: 1, monthSpentUsd: 0, monthCapUsd: null })[2]).toContain('confirm_month_no_cap')
   })
 
   it('names copies, counts the chosen papers once and names the saved file', () => {

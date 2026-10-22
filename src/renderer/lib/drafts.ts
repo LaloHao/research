@@ -1,5 +1,4 @@
 import type { TFunction } from 'i18next'
-import type { WritingPlan } from '../../shared/writing/api'
 import type { CiteFormat } from '../../shared/writing/citations'
 import { MAX_DRAFT_PAPERS, type DraftPartial, type DraftStreamUpdate, type DraftSummary } from '../../shared/writing/draft'
 import { exportFileName, FILE_EXTENSIONS } from './writing'
@@ -30,17 +29,6 @@ export function applyDraftUpdate(live: LiveDraft | null, u: DraftStreamUpdate): 
   if (u.kind === 'delta') return { live: { ...live, text: live.text + u.text, seq: u.seq }, resync: false }
   if (u.kind === 'turn') return { live: { ...live, text: '', seq: u.seq }, resync: false }
   return { live: { ...live, tools: live.tools + 1, seq: u.seq }, resync: false }
-}
-
-const usd = (n: number): string => n.toFixed(2)
-
-/** The confirmation's lines: the estimate, the draft cap, the month. */
-export function planLines(t: TFunction, plan: WritingPlan): string[] {
-  return [
-    t('writing.draft.confirm_estimate', { cost: plan.estimateUsd > 0 && plan.estimateUsd < 0.01 ? '< $0.01' : `~$${usd(plan.estimateUsd)}` }),
-    t('writing.draft.confirm_cap', { cap: usd(plan.capUsd) }),
-    plan.monthCapUsd === null ? t('writing.draft.confirm_month_no_cap', { spent: usd(plan.monthSpentUsd) }) : t('writing.draft.confirm_month', { spent: usd(plan.monthSpentUsd), cap: usd(plan.monthCapUsd) })
-  ]
 }
 
 /** A draft's title in the list; a copy the sync split off says which machine it came from. */

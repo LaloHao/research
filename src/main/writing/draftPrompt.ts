@@ -2,13 +2,12 @@ import type { ThesisContext } from '../../shared/summary'
 import { DRAFT_WORDS, UNCITED_MARK, type DraftLength } from '../../shared/writing/draft'
 import { CITATION_RULES, libraryToolRules, paperLines, type PaperContext } from '../chats/chatPrompt'
 import { escapePromptData } from '../llm/promptTags'
+import { languageName } from '../summary/prompt'
 import { hasThesisContext, thesisPromptBlock } from '../summary/thesis'
 
 export const DRAFT_PROMPT_VERSION = 1
 /** Tool calls per draft (the MCP server enforces it): enough to read several of the chosen papers. Fixed, not a setting. */
 export const DRAFT_MAX_TOOL_CALLS = 20
-
-const LANGUAGE_NAMES: Record<string, string> = { es: 'Spanish', en: 'English' }
 
 export interface DraftPromptInput {
   thesis: ThesisContext
@@ -23,9 +22,6 @@ export interface DraftPromptInput {
   length: DraftLength
 }
 
-/** The language's name in the prompt (its code when the app does not name it). */
-export const languageName = (code: string): string => LANGUAGE_NAMES[code] ?? code
-
 export function draftSystemPrompt(language: string, length: DraftLength): string {
   return [
     'You are a research assistant. You write the first draft of one section of the user\'s thesis from the papers the user chose.',
@@ -36,6 +32,7 @@ export function draftSystemPrompt(language: string, length: DraftLength): string
     `Cite only the papers given in <paper> tags: a citation of any other paper is flagged as outside the selection. Never cite a paper for something it does not say. When the section needs a claim the chosen papers do not support, write it only if it is necessary and follow it with ${UNCITED_MARK} instead of a citation.`,
     '',
     ...libraryToolRules(DRAFT_MAX_TOOL_CALLS, 'draft', 'write the draft'),
+    'For this draft the tools reach only the chosen papers: they refuse any other key, and searches, lists, citations and neighbours return only chosen papers.',
     '',
     `Write the draft in ${languageName(language)} (the language of the thesis), as academic prose: Markdown paragraphs, no headings, no lists unless the purpose asks for them, no HTML. Keep each quote in the language of its paper, exactly as the paper has it. Write about ${DRAFT_WORDS[length]} words. Answer with the draft only: no preamble, no notes after it.`
   ].join('\n')

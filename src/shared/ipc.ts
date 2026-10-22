@@ -37,8 +37,12 @@ import type { ExtractionForm, FormImpact, FormInfo, LlmConfig, LlmModel, ReviewI
 import type { CloseDecision, ConflictDecision, ConflictDiff, ConflictItem, SyncResult, SyncStatus } from './sync'
 import type { DeletePlanResult, RestoreOutcome, TrashEntry, TrashOutcome, TrashTarget } from './trash'
 import type { PaperRelations, RelationPlan, RelationsFileState, RelationStatus, RelationType } from './typedRelations'
-import type { ChapterBibResult, OutlineDataResult, OutlineScope, WritingLibrary, WritingPlan, WritingSource } from './writing/api'
 import type { DraftEditResult, DraftInput, DraftListQuery, DraftOpenResult, DraftRunResult, DraftStreamUpdate, DraftSummary } from './writing/draft'
+import type { ChapterBibResult, OutlineDataResult, OutlineScope, WritingLibrary, WritingPlanKind, WritingRunPlan, WritingSource } from './writing/api'
+import type { CiteCheckPlanResult, CiteCheckProgress, CiteCheckRequest, CiteCheckRunResult } from './writing/citeCheck'
+import type { CiteFormat } from './writing/citations'
+import type { OutlineProposalResult, OutlineRequest } from './writing/outlineProposal'
+import type { StyleRequest, StyleReviewResult } from './writing/style'
 
 export const IPC = {
   settingsGet: 'settings:get',
@@ -161,13 +165,19 @@ export const IPC = {
   writingOutlineData: 'writing:outline-data',
   draftsList: 'drafts:list',
   draftsOpen: 'drafts:open',
-  draftsPlan: 'drafts:plan',
   draftsRun: 'drafts:run',
   draftsStop: 'drafts:stop',
   draftsEdit: 'drafts:edit',
   draftsRename: 'drafts:rename',
   draftsArchive: 'drafts:archive',
   draftsRemove: 'drafts:remove',
+  writingCheckPlan: 'writing:check-plan',
+  writingCheck: 'writing:check',
+  writingCheckProgress: 'writing:check-progress',
+  writingCheckStop: 'writing:check-stop',
+  writingPlan: 'writing:plan',
+  writingProposeOutline: 'writing:propose-outline',
+  writingReviewStyle: 'writing:review-style',
   syncStatus: 'sync:status',
   syncRun: 'sync:run',
   syncConflicts: 'sync:conflicts',
@@ -478,6 +488,20 @@ export interface ResearchApi {
     bibtex(source: WritingSource): Promise<ChapterBibResult>
     /** «Esquema»: the facets, papers and confirmed relations of the chosen set. */
     outlineData(scope: OutlineScope): Promise<OutlineDataResult>
+    /** A Claude operation's cost confirmation: its estimate, its cap, the month and the default model. */
+    plan(kind: WritingPlanKind): Promise<WritingRunPlan>
+    /** What «Verificar con Claude» would check in this text and cost (the shape of `plan`, plus the text's counts). */
+    checkPlan(text: string, format: CiteFormat): Promise<CiteCheckPlanResult>
+    /** After the confirmation (`confirmed` is that click): checks each sentence's cited papers; a new check stops the running one. */
+    check(req: CiteCheckRequest, confirmed: true): Promise<CiteCheckRunResult>
+    /** The running check's calls done, or null when none runs. */
+    checkProgress(): Promise<CiteCheckProgress | null>
+    /** «Detener»: what was checked so far comes back as the check's result. */
+    checkStop(): Promise<void>
+    /** «Proponer redacción del esquema», after the confirmation: the outline is built again in the main process. */
+    proposeOutline(req: OutlineRequest, confirmed: true): Promise<OutlineProposalResult>
+    /** «Revisar estilo», after the confirmation: the checked suggestions (nothing is saved). */
+    reviewStyle(req: StyleRequest, confirmed: true): Promise<StyleReviewResult>
   }
   /** «Borrador»: drafts/ (the only part of «Redacción» kept in the project). */
   drafts: {
@@ -485,11 +509,9 @@ export interface ResearchApi {
     list(query?: DraftListQuery): Promise<DraftSummary[]>
     /** The draft with every version's citations checked, and the version being written, if any. */
     open(id: string): Promise<DraftOpenResult>
-    /** What a version would cost (estimate, the draft cap, the month), before asking. */
-    plan(): Promise<WritingPlan>
     /**
-     * «Redactar» (`draftId` null: a new draft) or «Regenerar» (a new version), after the user confirmed the cost; the
-     * version arrives through `onStream`.
+     * «Redactar» (`draftId` null: a new draft) or «Regenerar» (a new version), after the user confirmed the cost
+     * (`writing.plan('draft')` in the shared confirmation); the version arrives through `onStream`.
      */
     run(input: DraftInput, draftId: string | null, confirmed: true): Promise<DraftRunResult>
     /** «Detener»: what arrived is kept as a stopped version. */

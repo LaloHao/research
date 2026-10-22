@@ -11,8 +11,14 @@ describe('DraftService', () => {
     const { store, drafts, provider, updates } = await setupDrafts({
       responses: [
         async (req, emit) => {
-          const [hit] = await callTools(req.servers[0], [{ name: 'find_in_paper', arguments: { paper_id: DRAIN_ID, text: 'log messages' } }])
+          const [hit, outside] = await callTools(req.servers[0], [
+            { name: 'find_in_paper', arguments: { paper_id: DRAIN_ID, text: 'log messages' } },
+            { name: 'read_pages', arguments: { paper_id: LOGHUB_ID, from: 1, to: 1 } }
+          ])
           expect(hit.text.startsWith('<library_data>')).toBe(true)
+          // The tools reach only the chosen papers.
+          expect(outside).toMatchObject({ isError: true })
+          expect(outside.text).toContain('not among the papers chosen for this draft')
           emit({ kind: 'turn' })
           emit({ kind: 'tool', name: 'find_in_paper' })
           emit({ kind: 'turn' })

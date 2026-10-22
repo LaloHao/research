@@ -5,6 +5,7 @@ import { CostLedger } from '../../src/main/llm/CostLedger'
 import { MapService } from '../../src/main/map/MapService'
 import { startLibraryMcpServer } from '../../src/main/mcp/LibraryMcpServer'
 import { libraryTools } from '../../src/main/mcp/libraryTools'
+import { scopeLibraryTools } from '../../src/main/mcp/scopedTools'
 import { ProjectStore } from '../../src/main/project/ProjectStore'
 import { DraftService } from '../../src/main/writing/DraftService'
 import type { DraftFile, DraftInput, DraftMeta, DraftStreamUpdate, DraftVersion } from '../../src/shared/writing/draft'
@@ -75,7 +76,7 @@ export async function setupDrafts(opts: { responses?: ChatResponse[] } = {}) {
     budget,
     ledger,
     machine: 'laptop',
-    startTools: (o) => startLibraryMcpServer(libraryTools({ store, cache, map: new MapService({ store, cache }), embeddings: null }), o),
+    startTools: (o, papers) => startLibraryMcpServer(scopeLibraryTools(libraryTools({ store, cache, map: new MapService({ store, cache }), embeddings: null }), papers), o),
     emit: () => counter.events++,
     stream: (u) => updates.push(u),
     now: () => new Date(DRAFT_AT),
