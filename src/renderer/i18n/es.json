@@ -133,6 +133,8 @@
     "thesis_rqs": "Preguntas de investigación",
     "thesis_add_rq": "Agregar pregunta",
     "thesis_remove_rq": "Quitar",
+    "thesis_language": "Idioma de la tesis",
+    "thesis_language_help": "«Redacción» escribe en este idioma; las citas textuales quedan en el idioma de cada paper.",
     "thesis_help": "Claude usa esto para explicar cómo se relaciona cada paper con tu tesis. Si lo cambias, los resúmenes existentes quedan desactualizados."
   },
   "library": {
