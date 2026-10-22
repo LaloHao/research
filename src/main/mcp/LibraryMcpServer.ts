@@ -60,7 +60,8 @@ export function markAsData(text: string): string {
 
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: 'text', text: t }], ...(isError ? { isError: true } : {}) })
 
-function defineTools(server: McpServer, tools: LibraryTools, run: Run): void {
+/** Registers the read-only library tools; also offered by the local API (src/main/api). */
+export function defineLibraryTools(server: McpServer, tools: LibraryTools, run: Run): void {
   const paperId = z.string().describe('Key of a library paper, e.g. he2017drain')
   const limit = z.number().int().min(1).max(30).optional().describe('Maximum number of results')
   server.registerTool(
@@ -250,5 +251,5 @@ export async function startMcpServer(name: string, define: DefineTools, opts: Li
 
 /** The read-only library server of the agent runs and the chat. */
 export function startLibraryMcpServer(tools: LibraryTools, opts: LibraryMcpOptions): Promise<LibraryMcpHandle> {
-  return startMcpServer(MCP_SERVER_NAME, (server, run) => defineTools(server, tools, run), opts)
+  return startMcpServer(MCP_SERVER_NAME, (server, run) => defineLibraryTools(server, tools, run), opts)
 }

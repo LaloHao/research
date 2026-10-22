@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { DEFAULT_SETTINGS, type AppSettings } from '../shared/settings'
+import { API_PORTS } from '../shared/localApi'
 import { AUTO_SYNC_MINUTES } from '../shared/sync'
 import { atomicWrite } from './project/atomicWrite'
 
@@ -8,6 +9,8 @@ const DEVICE_ID = /^[0-9a-f-]{36}$/
 
 const validMinutes = (value: unknown): value is number =>
   typeof value === 'number' && Number.isInteger(value) && value >= AUTO_SYNC_MINUTES.min && value <= AUTO_SYNC_MINUTES.max
+
+const validPort = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= API_PORTS.min && value <= API_PORTS.max
 
 export async function loadSettings(file: string): Promise<AppSettings> {
   let parsed: unknown
@@ -23,7 +26,10 @@ export async function loadSettings(file: string): Promise<AppSettings> {
     lastProjectPath: typeof raw.lastProjectPath === 'string' ? raw.lastProjectPath : DEFAULT_SETTINGS.lastProjectPath,
     deviceId: typeof raw.deviceId === 'string' && DEVICE_ID.test(raw.deviceId) ? raw.deviceId : randomUUID(),
     autoSync: typeof raw.autoSync === 'boolean' ? raw.autoSync : DEFAULT_SETTINGS.autoSync,
-    autoSyncMinutes: validMinutes(raw.autoSyncMinutes) ? raw.autoSyncMinutes : DEFAULT_SETTINGS.autoSyncMinutes
+    autoSyncMinutes: validMinutes(raw.autoSyncMinutes) ? raw.autoSyncMinutes : DEFAULT_SETTINGS.autoSyncMinutes,
+    apiEnabled: typeof raw.apiEnabled === 'boolean' ? raw.apiEnabled : DEFAULT_SETTINGS.apiEnabled,
+    apiPort: validPort(raw.apiPort) ? raw.apiPort : DEFAULT_SETTINGS.apiPort,
+    apiAllowCostly: typeof raw.apiAllowCostly === 'boolean' ? raw.apiAllowCostly : DEFAULT_SETTINGS.apiAllowCostly
   }
 }
 

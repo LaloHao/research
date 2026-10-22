@@ -405,6 +405,39 @@ The **Redacción** (Writing) view (✍️ in the side rail) helps you write the 
 - **«Proponer redacción del esquema»** (Propose the outline's wording, with Claude), below the outline: after the cost confirmation (model, estimate, «Tope por esquema» and the month's spending), Claude reads the outline, each paper's one-liner and the verbatim quotes of its summary, and your thesis (Settings → Tesis), and proposes a title for each section and subsection, the order of the sections, an opening sentence or two per section and, for each gap, one sentence on why it matters for the thesis. It can't add, merge or split sections, nor cite papers outside the outline: an answer that does is refused (asked once more, then shown as an error with «Reintentar»). Every claim about a paper carries the app's citation `[[key|p. N|"quote"]]`, checked against the paper's indexed text or its summary's evidence; the preview shows the proposal merged into the outline (the facet value next to each new title), with a chip per citation, and how many could not be verified. It exports like the basic outline (Org, LaTeX or Markdown, with the openings and gap sentences as paragraphs, converted citations, a «NO VERIFICADA» comment on each one that did not check out and, if you tick it, each quote as a comment); «Copiar» or «Guardar…». If you change the outline's choices afterwards, the proposal is marked as being for the previous outline. Nothing is saved in the project. Up to 300 papers per proposal.
 - **«Estilo»** (Style, with Claude): paste up to 20 000 characters of Org, LaTeX or Markdown (detected; you can pick another), choose what to look at (clarity, concision, academic register, spelling and grammar, coherence between paragraphs; all by default) and, after the cost confirmation («Tope por revisión de estilo»), Claude returns suggestions, each with the fragment it changes, the new text, the reason and its category. The app keeps only the safe ones and says how many it dropped and why: the fragment must appear in your text exactly as written (when it appears several times, Claude must give a longer fragment around it that appears once; otherwise it's dropped as ambiguous, never applied to the first one), and the change must leave every citation, key, math (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`, math environments), LaTeX command or escape (`\emph`, `\%`), `\ref`, `\label`, Org link, macro and `#+` line exactly as it was, without adding or removing any. When two suggestions overlap, the one that starts first stays. Each suggestion has «Aceptar» (Accept) and «Rechazar» (Reject); «Aceptar todas» (Accept all) accepts every one. The «Cambios» (Changes) view shows the text with the accepted changes struck through and inserted and the pending ones highlighted; «Texto final» (Final text) shows the result, and «Copiar texto final» (Copy final text) copies it. Nothing is saved in the project.
 
+### From Emacs (local API)
+
+The app can lend these tools to your editor. In **Settings → App → «API local»** turn on **«Activar la API local»** (Enable the local API): the app then runs a small server (MCP over HTTP) that answers only on this computer (`127.0.0.1`, port 47823 by default, which you can change) and only to requests carrying its token. The first time, the app generates the token and writes it with the address to `api.json` in its data folder (on Linux `~/.config/research/api.json`, readable by your user only); «Copiar token» (Copy token) copies it and «Regenerar token» (Regenerate token) replaces it (the old one stops working at once). It is off by default; while no project is open, every tool answers that you need to open one.
+
+What it offers: the same read-only library tools the chat uses (search the text, read pages, a paper's data and summary…), plus the papers you can cite (for completion), the local citation check of a text, the `.bib` of a text or of a file (by its full path, following its includes only inside its folder, as «BibTeX» does), the outline (as «Esquema» builds it, in Org, LaTeX or Markdown), a full-text passage search, and «abrir en la app» (open in the app): the app comes to the front with the paper at that page and the quote highlighted. All of these are free and change nothing in the project. With Claude, it also offers «Borrador» (a new draft from the papers you name, saved in the project like one written in the window, answered with its text in your format when it is done), «Verificar con Claude» (each sentence's verdicts with the paper's quote and page), «Proponer redacción del esquema» (the outline with Claude's wording, rendered in your format) and «Estilo» (the validated suggestions with where each one is). They are refused unless you also turn on **«Permitir operaciones con costo desde la API»** (Allow operations with cost from the API, off by default); even then each one first answers its estimated cost (for the citation check, for that text), caps and the month's spending, and runs only when called again with the confirmation. They run exactly as in the window (same checks, same caps under Settings → Claude) and are charged once each, like there.
+
+**Emacs.** The repository's `emacs/research.el` (no dependencies, Emacs 29+) uses this API in Org, LaTeX and Markdown buffers with `research-mode`: `research-insert-citation` (complete a paper, insert `[cite:@key]`, `\cite{key}` or `[@key]`), `research-check-citations` (unknown, trashed, repeated and not-indexed keys as Flymake diagnostics), `research-bibtex-for-file` (the `.bib` next to the file; offers to add `#+bibliography:` and to add it to `citar-bibliography`), `research-insert-outline`, `research-find-passage` (RET inserts the quote with its citation and page; `o` opens it in the app) and `research-open-citation-at-point`. With Claude, after showing the estimate and asking: `research-check-citations-with-claude` (each citation's verdict in Flymake, with the paper's quote and page: an error when it doesn't support the sentence or its quote wasn't found, a warning when it supports it in part or no passage was found, a note when it supports it), `research-propose-outline` (inserts the proposal) and `research-style-review` (walks the suggestions like `query-replace`, `y`/`n`/`!`/`q`, and refuses if the text changed meanwhile). `research-draft` asks for the title, purpose, papers, length and research question, waits while the draft is written (up to `research-draft-timeout`, 30 minutes) and opens its text in Org in a new `*research-draft*` buffer; the draft is also in «Borrador». With Doom Emacs, add to `packages.el`:
+
+```elisp
+(package! research :recipe (:local-repo "~/dev/lalohao/research/emacs" :files ("research.el")))
+```
+
+and to `config.el`:
+
+```elisp
+(use-package! research
+  :hook ((org-mode latex-mode LaTeX-mode markdown-mode) . research-mode)
+  :init (setq research-keymap-prefix nil))
+
+(map! :after research
+      :map (org-mode-map latex-mode-map LaTeX-mode-map markdown-mode-map)
+      :localleader
+      (:prefix ("r" . "research")
+       "c" #'research-insert-citation
+       "k" #'research-check-citations
+       "b" #'research-bibtex-for-file
+       "o" #'research-insert-outline
+       "f" #'research-find-passage
+       "a" #'research-open-citation-at-point))
+```
+
+then `doom sync`. `emacs/README.md` has every command, option and key.
+
 ## Settings
 
 Settings are organized in tabs.
@@ -487,6 +520,7 @@ Below the editor is the «Sugerencias de Claude» (Claude's suggestions) section
 - **Clave de API de OpenAlex** (OpenAlex API key): optional and free. Without a key OpenAlex allows about 1000 requests a day; with one, more. Stored on this machine only and sent only to OpenAlex.
 - **Modelos locales** (Local models): the content-similarity model (multilingual-e5-small, about 470 MB) runs on your machine. Shows whether it's downloaded and how much space it takes, with «Descargar» (Download; progress shows in Activity) and «Borrar» (Delete). It's stored in the app's data folder, never in the project, so each machine downloads it once. The download runs as a job of the open project (one must be open); if you close the project or the app midway, it resumes the next time you open that project. «Borrar» (Delete) cancels the similarity computations still queued.
 - **Sincronizar automáticamente** (Sync automatically) and **Cada (minutos)** (Every (minutes)): the automatic git sync (see "Syncing with git"), when the project opens and every 5 to 120 minutes (10 by default). It's a per-device setting, not stored in `project.yaml`.
+- **«API local»** (Local API): lets an editor on this computer (Emacs, with `emacs/research.el`) use the writing tools; off by default, with its port, «Copiar token», «Regenerar token» and «Permitir operaciones con costo desde la API». See "From Emacs (local API)" under "Writing".
 - **«Abrir carpeta de registros»** (Open log folder): opens the folder of the app's log, `main.log`, in your file manager (see "Common problems").
 - **Cerrar proyecto** (Close project): returns to the welcome screen to create or open another project.
 

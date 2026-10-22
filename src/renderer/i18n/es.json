@@ -10,6 +10,27 @@
     "open": "Abrir proyecto…",
     "error": "No se pudo crear o abrir el proyecto: {{message}}"
   },
+  "local_api": {
+    "title": "API local (Emacs y otros editores)",
+    "intro": "Deja que un editor de este equipo (por ejemplo Emacs con el paquete research.el) use las herramientas de la app: insertar citas, verificarlas, generar el .bib, el esquema, buscar pasajes y abrir un paper aquí. Solo escucha en 127.0.0.1 y exige un token.",
+    "enabled": "Activar la API local",
+    "port": "Puerto",
+    "port_help": "Entre {{min}} y {{max}}. Solo escucha en este equipo (127.0.0.1); el editor lee la dirección de api.json.",
+    "port_invalid": "Escribe un número entre {{min}} y {{max}}.",
+    "state": { "running": "Escuchando en {{url}}", "stopped": "Detenida" },
+    "file": "El editor lee la dirección y el token de {{file}} (solo tu usuario puede leerlo).",
+    "copy_token": "Copiar token",
+    "copied": "Token copiado al portapapeles.",
+    "no_token": "Todavía no hay token: activa la API primero.",
+    "regenerate": "Regenerar token",
+    "regenerate_confirm": "¿Regenerar el token? El actual deja de funcionar al instante; el editor lee el nuevo de api.json.",
+    "regenerated": "Token regenerado.",
+    "allow_costly": "Permitir operaciones con costo desde la API",
+    "allow_costly_help": "Las funciones de Claude (borrador, verificar citas con Claude, propuesta de esquema, estilo) consumen cuota. Aun activado, el editor muestra el costo estimado de cada una y solo corre si confirmas, con los topes de Ajustes → Claude.",
+    "errors": { "port_in_use": "El puerto {{port}} está ocupado: elige otro.", "start_failed": "No se pudo iniciar la API local." },
+    "opened": "Abierto desde el editor",
+    "close": "Cerrar"
+  },
   "settings": {
     "title": "Ajustes",
     "saved": "Guardado",

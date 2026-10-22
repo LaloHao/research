@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -146,6 +146,14 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     const dropped = rendererErrors.takeDropped()
     appLog.error('renderer_error', dropped > 0 ? { ...report, droppedBefore: dropped } : report)
   })
+
+  ipcMain.handle(IPC.localApiStatus, () => app.apiStatus())
+  ipcMain.handle(IPC.localApiCopyToken, () => {
+    const token = app.apiCurrentToken()
+    if (token) clipboard.writeText(token)
+    return token !== null
+  })
+  ipcMain.handle(IPC.localApiRegenerateToken, () => app.regenerateApiToken())
 
   ipcMain.handle(IPC.settingsGet, () => app.getSettings())
   ipcMain.handle(IPC.settingsSet, (_e, patch: unknown) => app.setSettings(arg(ipcArgs.settingsPatch, patch, 'patch')))

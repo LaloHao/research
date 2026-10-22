@@ -405,6 +405,39 @@ La vista **Redacción** (✍️ en la barra lateral) ayuda a escribir la tesis c
 - **«Proponer redacción del esquema»** (con Claude), debajo del esquema: tras la confirmación de costo (modelo, estimación, «Tope por esquema» y el gasto del mes), Claude lee el esquema, el «en pocas palabras» de cada paper y las frases textuales de su resumen, y tu tesis (Ajustes → Tesis), y propone un título para cada sección y subsección, el orden de las secciones, una o dos frases de apertura por sección y, por cada hueco, una frase sobre por qué importa para la tesis. No puede agregar, juntar ni dividir secciones, ni citar papers fuera del esquema: una respuesta que lo hace se rechaza (se le pide una vez más y si no, se muestra el error con «Reintentar»). Cada afirmación sobre un paper lleva la cita de la app `[[clave|p. N|"frase"]]`, verificada contra el texto indexado del paper o la evidencia de su resumen; la vista previa muestra la propuesta mezclada con el esquema (el valor de la faceta junto a cada título nuevo), con un chip por cita, y cuántas no se pudieron verificar. Se exporta como el esquema básico (Org, LaTeX o Markdown, con las aperturas y las frases de los huecos como párrafos, las citas convertidas, un comentario «NO VERIFICADA» en cada una que no se verificó y, si lo marcas, cada frase textual como comentario); «Copiar» o «Guardar…». Si cambias las opciones del esquema después, la propuesta se marca como del esquema anterior. Nada se guarda en el proyecto. Hasta 300 papers por propuesta.
 - **«Estilo»** (con Claude): pegas hasta 20 000 caracteres de Org, LaTeX o Markdown (se detecta; puedes elegir otro), eliges qué revisar (claridad, concisión, registro académico, ortografía y gramática, coherencia entre párrafos; todo por defecto) y, tras la confirmación de costo («Tope por revisión de estilo»), Claude devuelve sugerencias, cada una con el fragmento que cambia, el texto nuevo, el motivo y su categoría. La app conserva solo las seguras y dice cuántas descartó y por qué: el fragmento tiene que aparecer en tu texto tal cual (si aparece varias veces, Claude debe dar un fragmento más largo a su alrededor que aparezca una sola vez; si no, se descarta como ambigua, nunca se aplica a la primera), y el cambio tiene que dejar cada cita, clave, matemática (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`, entornos matemáticos), comando o escape de LaTeX (`\emph`, `\%`), `\ref`, `\label`, enlace de Org, macro y línea `#+` exactamente como estaba, sin agregar ni quitar ninguno. Si dos sugerencias se solapan, queda la que empieza antes. Cada sugerencia tiene «Aceptar» y «Rechazar»; «Aceptar todas» las acepta todas. La vista «Cambios» muestra el texto con los cambios aceptados tachados e insertados y los pendientes resaltados; «Texto final» muestra el resultado y «Copiar texto final» lo copia. Nada se guarda en el proyecto.
 
+### Desde Emacs (API local)
+
+La app puede prestarle estas herramientas a tu editor. En **Ajustes → Aplicación → «API local»** activa **«Activar la API local»**: la app levanta un servidor pequeño (MCP sobre HTTP) que solo responde en este equipo (`127.0.0.1`, puerto 47823 por defecto, que puedes cambiar) y solo a peticiones con su token. La primera vez, la app genera el token y lo escribe con la dirección en `api.json`, en su carpeta de datos (en Linux `~/.config/research/api.json`, que solo tu usuario puede leer); «Copiar token» lo copia y «Regenerar token» lo reemplaza (el anterior deja de funcionar al instante). Viene desactivada; mientras no haya un proyecto abierto, cada herramienta responde que abras uno.
+
+Lo que ofrece: las mismas herramientas de solo lectura de la biblioteca que usa el chat (buscar en el texto, leer páginas, los datos y el resumen de un paper…), y además los papers que puedes citar (para completar), la verificación local de las citas de un texto, el `.bib` de un texto o de un archivo (por su ruta completa, siguiendo sus inclusiones solo dentro de su carpeta, como «BibTeX»), el esquema (como lo arma «Esquema», en Org, LaTeX o Markdown), una búsqueda de pasajes en el texto completo y «abrir en la app»: la app pasa al frente con el paper en esa página y la cita resaltada. Todo esto es gratis y no cambia nada del proyecto. Con Claude, ofrece además «Borrador» (un borrador nuevo a partir de los papers que indiques, guardado en el proyecto como uno escrito en la ventana, que responde con su texto en tu formato al terminar), «Verificar con Claude» (los veredictos de cada oración con la cita textual y la página del paper), «Proponer redacción del esquema» (el esquema con la redacción de Claude, en tu formato) y «Estilo» (las sugerencias validadas, con dónde va cada una). Se rechazan salvo que actives también **«Permitir operaciones con costo desde la API»** (desactivado por defecto); aun así, cada una responde primero su costo estimado (en la verificación, el de ese texto), los topes y el gasto del mes, y solo corre cuando se la vuelve a llamar con la confirmación. Corren igual que en la ventana (mismas verificaciones, mismos topes de Ajustes → Claude) y se cobran una sola vez, como allí.
+
+**Emacs.** El paquete `emacs/research.el` del repositorio (sin dependencias, Emacs 29+) usa esta API en búferes Org, LaTeX y Markdown con `research-mode`: `research-insert-citation` (completa un paper e inserta `[cite:@clave]`, `\cite{clave}` o `[@clave]`), `research-check-citations` (claves desconocidas, en la papelera, repetidas o sin texto indexado como diagnósticos de Flymake), `research-bibtex-for-file` (el `.bib` junto al archivo; ofrece agregar `#+bibliography:` y sumarlo a `citar-bibliography`), `research-insert-outline`, `research-find-passage` (RET inserta la cita textual con su cita y página; `o` la abre en la app) y `research-open-citation-at-point`. Con Claude, tras mostrar la estimación y preguntar: `research-check-citations-with-claude` (el veredicto de cada cita en Flymake, con la cita textual y la página del paper: error si no respalda la oración o su cita no se encontró, advertencia si la respalda en parte o no se encontró un pasaje, nota si la respalda), `research-propose-outline` (inserta la propuesta) y `research-style-review` (recorre las sugerencias como `query-replace`, `y`/`n`/`!`/`q`, y se niega si el texto cambió mientras tanto). `research-draft` pide el título, el propósito, los papers, la extensión y la pregunta de investigación, espera mientras se escribe el borrador (hasta `research-draft-timeout`, 30 minutos) y abre su texto en Org en un búfer nuevo `*research-draft*`; el borrador queda también en «Borrador». Con Doom Emacs, agrega a `packages.el`:
+
+```elisp
+(package! research :recipe (:local-repo "~/dev/lalohao/research/emacs" :files ("research.el")))
+```
+
+y a `config.el`:
+
+```elisp
+(use-package! research
+  :hook ((org-mode latex-mode LaTeX-mode markdown-mode) . research-mode)
+  :init (setq research-keymap-prefix nil))
+
+(map! :after research
+      :map (org-mode-map latex-mode-map LaTeX-mode-map markdown-mode-map)
+      :localleader
+      (:prefix ("r" . "research")
+       "c" #'research-insert-citation
+       "k" #'research-check-citations
+       "b" #'research-bibtex-for-file
+       "o" #'research-insert-outline
+       "f" #'research-find-passage
+       "a" #'research-open-citation-at-point))
+```
+
+y luego `doom sync`. `emacs/README.md` (en inglés) tiene todos los comandos, opciones y teclas.
+
 ## Ajustes
 
 Los ajustes se organizan en pestañas, navegables con ←/→/Inicio/Fin; la app recuerda la última pestaña abierta. La mayoría de los campos se guardan solos al salir de ellos (de inmediato en selectores y casillas) y muestran «Guardado»; el editor del formulario de extracción es la excepción — ahí los cambios quedan pendientes hasta tocar «Guardar cambios» (ver «Formulario» abajo).
@@ -485,6 +518,7 @@ Debajo del editor está la sección «Sugerencias de Claude» (ver «Facetas sug
 - **Clave de API de OpenAlex**: opcional y gratuita. Sin clave, OpenAlex permite unas 1000 consultas al día; con ella, más. Se guarda solo en este equipo y solo se envía a OpenAlex.
 - **Modelos locales**: el modelo de similitud de contenido (multilingual-e5-small, unos 470 MB) corre en tu equipo. Muestra si está descargado y cuánto ocupa, con «Descargar» (el avance se ve en Actividad) y «Borrar». Se guarda en la carpeta de datos de la app, nunca en el proyecto, así que cada equipo lo descarga una vez. La descarga corre como un trabajo del proyecto abierto (hace falta tener uno abierto); si cierras el proyecto o la app a mitad de camino, se retoma la próxima vez que abras ese proyecto. «Borrar» cancela los cálculos de similitud que estaban en cola.
 - **Sincronizar automáticamente** y **Cada (minutos)**: la sincronización automática con git (ver «Sincronizar con git»), al abrir el proyecto y cada 5 a 120 minutos (10 por defecto). Es un ajuste de este equipo; no se guarda en `project.yaml`.
+- **API local**: deja que un editor de este equipo (Emacs, con `emacs/research.el`) use las herramientas de redacción; viene desactivada, con su puerto, «Copiar token», «Regenerar token» y «Permitir operaciones con costo desde la API». Ver «Desde Emacs (API local)» en «Redacción».
 - **Abrir carpeta de registros**: abre en tu explorador de archivos la carpeta del registro de la app, `main.log` (ver «Problemas comunes»).
 - **Cerrar proyecto**: vuelve a la pantalla de bienvenida para crear o abrir otro proyecto.
 
