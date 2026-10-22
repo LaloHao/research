@@ -39,7 +39,7 @@ same checks and caps.
 | `research-check-citations-with-claude` | `C-c r v` | For the buffer (or region): whether each cited paper supports its sentence, as Flymake diagnostics on each citation with the paper's quote and page. Error: does not support, or its quote was not found in the paper; warning: partial support, or no passage found; note: supports (or could not be checked, with the reason). |
 | `research-propose-outline` | `C-c r p` | Insert the outline with Claude's headings, order, openings and gap sentences; citations the app could not verify are marked in the text. `C-u` asks for the outline's choices. |
 | `research-style-review` | `C-c r s` | Style suggestions for the buffer (or region), walked like `query-replace`: each one highlighted, `y` apply, `n` skip, `!` apply this and the rest, `q` stop. Applied at the end, from the last one; refused if the text changed while waiting. Suggestions never touch citations, math or LaTeX commands. |
-| `research-draft` | `C-c r d` | Not available yet: the app's «Borrador» is still being built (the command says so). |
+| `research-draft` | `C-c r d` | Asks for the title, the purpose, the papers it may cite (`completing-read-multiple`, keys annotated with title, year and authors), the length and an optional research question; Claude writes the section with every claim cited, the app saves it as a new draft in «Redacción → Borrador», and its text opens in Org in a new `*research-draft*` buffer for review, with the counts of unverified citations, citations outside the selection and claims marked `[SIN CITA]`. Writing takes minutes: the app answers when the draft is done, and this command waits up to `research-draft-timeout` (30 minutes) instead of `research-request-timeout`. |
 
 Errors from the app are shown in Spanish, like the app (no project open, the API is off, wrong token, unknown key…).
 
@@ -48,6 +48,7 @@ Errors from the app are shown in Spanish, like the app (no project open, the API
 - `research-api-file`: the connection file (default `~/.config/research/api.json`).
 - `research-latex-cite-command`: `"cite"` by default (e.g. `"parencite"`, `"autocite"`).
 - `research-quote-formats`: how a passage's quote is written per format.
+- `research-request-timeout`: seconds to wait for the app (60); `research-draft-timeout`: for a draft (1800).
 - `research-bib-order`: `"appearance"` (default) or `"alphabetical"`.
 - `research-keymap-prefix`: `"C-c r"` by default; `nil` to bind `research-command-map` yourself (set it before the
   package loads).

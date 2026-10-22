@@ -70,6 +70,12 @@ turned on."
   "Seconds to wait for the app's answer."
   :type 'integer)
 
+(defcustom research-draft-timeout 1800
+  "Seconds `research-draft' waits for the app to write a draft.
+A draft is an agent run that can take minutes; the app answers when it is
+written (or stopped), so this is longer than `research-request-timeout'."
+  :type 'integer)
+
 (defcustom research-bib-order "appearance"
   "Order of the entries `research-bibtex-for-file' writes."
   :type '(choice (const "appearance") (const "alphabetical")))
@@ -259,6 +265,25 @@ text.  Signals `research-error' with the API's error code."
                                   nil t)))
     ;; Every candidate starts with its key (some completion UIs drop text properties).
     (if (string-empty-p choice) "" (car (split-string choice)))))
+
+(defun research-read-keys (&optional prompt refresh)
+  "Read several library papers' keys with `completing-read-multiple'.
+PROMPT and REFRESH as in `research-read-key'.  The candidates are the keys,
+annotated with title, year and authors."
+  (let* ((papers (research--papers refresh))
+         (keys (mapcar (lambda (p) (alist-get 'key p)) papers))
+         (annotate (lambda (key)
+                     (let ((p (cl-find key papers :key (lambda (p) (alist-get 'key p)) :test #'equal)))
+                       (and p (format "  %s (%s)  %s" (alist-get 'title p) (or (alist-get 'year p) "s. f.")
+                                      (or (alist-get 'authors p) "")))))))
+    (cl-remove-if-not (lambda (k) (member k keys))
+                      (delete-dups
+                       (completing-read-multiple (or prompt "Papers: ")
+                                                 (lambda (string pred action)
+                                                   (if (eq action 'metadata)
+                                                       `(metadata (category . research-paper) (annotation-function . ,annotate))
+                                                     (complete-with-action action keys string pred)))
+                                                 nil t)))))
 
 ;;;###autoload
 (defun research-insert-citation (&optional refresh)
@@ -628,21 +653,44 @@ when declined."
              (pop-to-buffer (current-buffer))))))
 
 ;;;###autoload
-(defun research-draft (title purpose keys)
+(defun research-draft (title purpose keys &optional length rq)
   "Ask Claude, through the app, for a draft section TITLE with PURPOSE citing KEYS.
-Shows the estimated cost and asks before running."
+LENGTH is \"short\", \"medium\" (default) or \"long\"; RQ a research
+question such as \"RQ1\".  Shows the estimated cost and asks first.  The
+app saves the draft in the project («Redacción → Borrador») and the text,
+in Org, opens in a new `*research-draft*' buffer for review.  Writing it
+can take minutes: this call waits up to `research-draft-timeout'."
   (interactive
    (list (read-string "Título de la sección: ")
          (read-string "Propósito o indicaciones: ")
-         (let (keys key)
-           (while (not (string-empty-p (setq key (research-read-key "Paper (vacío para terminar): "))))
-             (push key keys))
-           (nreverse keys))))
+         (research-read-keys "Papers que puede citar: ")
+         (completing-read "Extensión: " '("short" "medium" "long") nil t nil nil "medium")
+         (let ((rq (read-string "Pregunta de investigación, p. ej. RQ1 (vacío: ninguna): ")))
+           (unless (string-empty-p rq) (upcase rq)))))
   (research--with-errors
-    (research--show-answer
-     (research-call-with-cost "draft" `((title . ,title) (purpose . ,purpose) (keys . ,(vconcat keys))
-                                        (format . ,(symbol-name (research--format)))))
-     "*research draft*")))
+    (when (string-empty-p (string-trim title)) (user-error "Falta el título"))
+    (unless keys (user-error "Elige al menos un paper"))
+    (let* ((research-request-timeout (max research-request-timeout research-draft-timeout))
+           (answer (research-call-with-cost
+                    "draft" `((title . ,title) (purpose . ,purpose) (keys . ,(vconcat keys))
+                              (length . ,(or length "medium")) (format . "org")
+                              ,@(and rq `((rq . ,rq)))))))
+      (if (null answer)
+          (message "Cancelado")
+        (let ((buffer (generate-new-buffer "*research-draft*")))
+          (with-current-buffer buffer
+            (org-mode)
+            (insert (format "#+title: %s\n\n" (or (alist-get 'title answer) title)) (alist-get 'text answer) "\n")
+            (goto-char (point-min))
+            (set-buffer-modified-p nil))
+          (pop-to-buffer buffer)
+          (message "Borrador %s: %d citas sin verificar, %d fuera de la selección, %d sin cita%s (US$%.2f)"
+                   (alist-get 'draft_id answer)
+                   (or (alist-get 'unverified answer) 0) (or (alist-get 'outside answer) 0)
+                   (or (alist-get 'uncited answer) 0)
+                   (if (alist-get 'stopped answer) "; se detuvo" "")
+                   (or (alist-get 'costUsd answer) 0))
+          buffer)))))
 
 ;;;###autoload
 (defun research-check-citations-with-claude (&optional beg end)
