@@ -1,12 +1,15 @@
 import { PAPER_KEY } from '../../shared/chat'
 import type { ChapterBib, OutlineData, OutlineScope, WritingLibrary } from '../../shared/writing/api'
+import type { CiteCheckPlan, CiteCheckProgress, CiteCheckRequest, CiteCheckResult } from '../../shared/writing/citeCheck'
 import { chapterBibReport, type BibLibraryPaper } from '../../shared/writing/bibtex'
 import { citedKeys, parseCitations, type CiteFormat } from '../../shared/writing/citations'
 import type { OutlinePaper } from '../../shared/writing/outline'
 import type { IndexCache } from '../cache/IndexCache'
 import { rekeyBibtex } from '../ingest/bibtex'
 import type { ProjectStore } from '../project/ProjectStore'
+import { UserFacingError } from '../library/UserFacingError'
 import { loadForm } from '../summary/extractionForm'
+import type { CiteChecker } from './CiteChecker'
 import { readWithIncludes } from './includes'
 
 export interface WritingDeps {
@@ -14,6 +17,8 @@ export interface WritingDeps {
   cache: IndexCache
   /** A mapping's papers included on full text («los incluidos de un mapeo»). */
   includedPapers: (mappingId: string) => string[]
+  /** «Verificar con Claude»; absent where no Claude is wired (tests of the reads). */
+  checker?: CiteChecker
 }
 
 /**
@@ -26,7 +31,61 @@ export interface WritingDeps {
  * `runCappedOperation` (both in ../llm/cappedOperation.ts), which admits, caps, logs the cost and settles.
  */
 export class WritingService {
+  /** The window's running citation check: one at a time, stopped by «Detener» or when the project closes. */
+  private check: { controller: AbortController; progress: CiteCheckProgress | null; done: Promise<unknown> } | null = null
+  private closed = false
+
   constructor(private readonly deps: WritingDeps) {}
+
+  private checker(): CiteChecker {
+    if (!this.deps.checker || this.closed) throw new UserFacingError('llm_unavailable')
+    return this.deps.checker
+  }
+
+  /** What «Verificar con Claude» would check and cost, for the confirmation. */
+  citeCheckPlan(text: string, format: CiteFormat): Promise<CiteCheckPlan> {
+    return this.checker().plan(text, format)
+  }
+
+  /**
+   * One citation check of `text`, for any caller (the window, or a local API): the structured result, never written
+   * anywhere. The caller has confirmed the cost; `signal` stops it (the result then says `stopped`).
+   */
+  citeCheck(req: CiteCheckRequest, opts: { signal?: AbortSignal; onProgress?: (p: CiteCheckProgress) => void } = {}): Promise<CiteCheckResult> {
+    return this.checker().run({ ...req, ...opts })
+  }
+
+  /** The window's check: a new one stops the previous one; its progress is polled with `checkProgress`. */
+  async windowCheck(req: CiteCheckRequest): Promise<CiteCheckResult> {
+    this.check?.controller.abort()
+    const controller = new AbortController()
+    const entry: NonNullable<WritingService['check']> = { controller, progress: null, done: Promise.resolve() }
+    this.check = entry
+    const run = this.citeCheck(req, { signal: controller.signal, onProgress: (p) => (entry.progress = p) })
+    entry.done = run.catch(() => undefined)
+    try {
+      return await run
+    } finally {
+      if (this.check === entry) this.check = null
+    }
+  }
+
+  checkProgress(): CiteCheckProgress | null {
+    return this.check?.progress ?? null
+  }
+
+  /** «Detener»: the batches answered so far are kept. */
+  stopCheck(): void {
+    this.check?.controller.abort()
+  }
+
+  /** The project closes: the running check stops. */
+  async close(): Promise<void> {
+    this.closed = true
+    const running = this.check
+    running?.controller.abort()
+    await running?.done
+  }
 
   library(): WritingLibrary {
     const { cache } = this.deps

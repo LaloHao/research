@@ -38,6 +38,8 @@ import type { CloseDecision, ConflictDecision, ConflictDiff, ConflictItem, SyncR
 import type { DeletePlanResult, RestoreOutcome, TrashEntry, TrashOutcome, TrashTarget } from './trash'
 import type { PaperRelations, RelationPlan, RelationsFileState, RelationStatus, RelationType } from './typedRelations'
 import type { ChapterBibResult, OutlineDataResult, OutlineScope, WritingLibrary, WritingSource } from './writing/api'
+import type { CiteCheckPlanResult, CiteCheckProgress, CiteCheckRequest, CiteCheckRunResult } from './writing/citeCheck'
+import type { CiteFormat } from './writing/citations'
 
 export const IPC = {
   settingsGet: 'settings:get',
@@ -158,6 +160,10 @@ export const IPC = {
   writingChooseFile: 'writing:choose-file',
   writingBibtex: 'writing:bibtex',
   writingOutlineData: 'writing:outline-data',
+  writingCheckPlan: 'writing:check-plan',
+  writingCheck: 'writing:check',
+  writingCheckProgress: 'writing:check-progress',
+  writingCheckStop: 'writing:check-stop',
   syncStatus: 'sync:status',
   syncRun: 'sync:run',
   syncConflicts: 'sync:conflicts',
@@ -464,6 +470,14 @@ export interface ResearchApi {
     bibtex(source: WritingSource): Promise<ChapterBibResult>
     /** «Esquema»: the facets, papers and confirmed relations of the chosen set. */
     outlineData(scope: OutlineScope): Promise<OutlineDataResult>
+    /** What «Verificar con Claude» would check and cost, before asking. */
+    checkPlan(text: string, format: CiteFormat): Promise<CiteCheckPlanResult>
+    /** After the confirmation (`confirmed` is that click): checks each sentence's cited papers; a new check stops the running one. */
+    check(req: CiteCheckRequest, confirmed: true): Promise<CiteCheckRunResult>
+    /** The running check's calls done, or null when none runs. */
+    checkProgress(): Promise<CiteCheckProgress | null>
+    /** «Detener»: what was checked so far comes back as the check's result. */
+    checkStop(): Promise<void>
   }
   sync: {
     status(): Promise<SyncStatus>
