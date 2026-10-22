@@ -166,14 +166,18 @@ export class AppController {
 
   /**
    * Called on quit: running jobs go back to the queue and resume on the next launch; a sync's fetch or push is cut
-   * short (its git would otherwise outlive the app) and no automatic sync starts again.
+   * short (its git would otherwise outlive the app) and no automatic sync starts again; Claude runs (the window's and
+   * the local API's) stop.
    */
   async shutdown(): Promise<void> {
     const session = this.session
     this.session = null
     appLog.info('app_shutdown', { project: session?.store.root ?? null })
-    await this.api?.close()
+    // The API stops listening at once and waits (bounded) for the calls in progress; the session's close stops the
+    // Claude runs they wait on (the API's included), so they answer and the wait ends.
+    const api = this.api?.close()
     await session?.close()
+    await api
     await this.sessionDefaults.embeddings?.dispose()
   }
 

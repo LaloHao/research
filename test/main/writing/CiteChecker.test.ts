@@ -271,6 +271,6 @@ describe('WritingService citation check', () => {
   it('refuses checks once closed', async () => {
     const { writing } = await setup()
     await writing.close()
-    expect(() => writing.citeCheck({ text: sentences(1), format: 'latex' })).toThrow('llm_unavailable')
+    await expect(writing.citeCheck({ text: sentences(1), format: 'latex' })).rejects.toThrow('llm_unavailable')
   })
 })

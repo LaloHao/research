@@ -14,7 +14,7 @@ import {
   type OutlineProposalRun,
   type OutlineRequest
 } from '../../shared/writing/outlineProposal'
-import { MAX_STYLE_CHARS, parseStyleOutput, STYLE_FOCUSES, styleSchema, validateStyleSuggestions, type StyleRequest, type StyleReviewRun } from '../../shared/writing/style'
+import { MAX_STYLE_CHARS, parseStyleOutput, STYLE_FOCUSES, styleSchema, validateStyleSuggestions, type StyleFocus, type StyleRequest, type StyleReviewRun } from '../../shared/writing/style'
 import type { IndexCache } from '../cache/IndexCache'
 import { verifyCitations } from '../chats/citations'
 import { rekeyBibtex } from '../ingest/bibtex'
@@ -60,7 +60,9 @@ const QUOTE_FIELDS = ['tldr', 'contribution', 'results', ...SUMMARY_TEXT_FIELDS]
  */
 export class WritingService {
   /** The window's running citation check: one at a time, stopped by «Detener» or when the project closes. */
-  private check: { controller: AbortController; progress: CiteCheckProgress | null; done: Promise<unknown> } | null = null
+  private check: { controller: AbortController; progress: CiteCheckProgress | null } | null = null
+  /** Every Claude run in progress, the window's and the local API's: stopped and awaited when the project closes. */
+  private readonly running = new Set<{ controller: AbortController; done: Promise<unknown> }>()
   private closed = false
 
   constructor(private readonly deps: WritingDeps) {}
@@ -79,20 +81,19 @@ export class WritingService {
    * One citation check of `text`, for any caller (the window, or a local API): the structured result, never written
    * anywhere. The caller has confirmed the cost; `signal` stops it (the result then says `stopped`).
    */
-  citeCheck(req: CiteCheckRequest, opts: { signal?: AbortSignal; onProgress?: (p: CiteCheckProgress) => void } = {}): Promise<CiteCheckResult> {
-    return this.checker().run({ ...req, ...opts })
+  async citeCheck(req: CiteCheckRequest, opts: { signal?: AbortSignal; onProgress?: (p: CiteCheckProgress) => void } = {}): Promise<CiteCheckResult> {
+    const checker = this.checker()
+    return this.tracked(opts.signal, (signal) => checker.run({ ...req, onProgress: opts.onProgress, signal }))
   }
 
   /** The window's check: a new one stops the previous one; its progress is polled with `checkProgress`. */
   async windowCheck(req: CiteCheckRequest): Promise<CiteCheckResult> {
     this.check?.controller.abort()
     const controller = new AbortController()
-    const entry: NonNullable<WritingService['check']> = { controller, progress: null, done: Promise.resolve() }
+    const entry: NonNullable<WritingService['check']> = { controller, progress: null }
     this.check = entry
-    const run = this.citeCheck(req, { signal: controller.signal, onProgress: (p) => (entry.progress = p) })
-    entry.done = run.catch(() => undefined)
     try {
-      return await run
+      return await this.citeCheck(req, { signal: controller.signal, onProgress: (p) => (entry.progress = p) })
     } finally {
       if (this.check === entry) this.check = null
     }
@@ -107,12 +108,38 @@ export class WritingService {
     this.check?.controller.abort()
   }
 
-  /** The project closes: the running check stops. */
+  /** The project closes: no new run starts, and every run in progress (the window's or the API's) stops and is awaited. */
   async close(): Promise<void> {
     this.closed = true
-    const running = this.check
-    running?.controller.abort()
-    await running?.done
+    const runs = [...this.running]
+    for (const run of runs) run.controller.abort()
+    await Promise.allSettled(runs.map((r) => r.done))
+  }
+
+  /** How many Claude runs are in progress (tests, and the close that waits for them). */
+  get runningCount(): number {
+    return this.running.size
+  }
+
+  /**
+   * Runs `work` with its own signal, aborted by the caller's `signal` or by `close()`, and kept in `running` until it
+   * ends: a run started by the local API has no window to stop it, but the project's close still does.
+   */
+  private async tracked<T>(signal: AbortSignal | undefined, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    if (this.closed) throw new UserFacingError('llm_unavailable')
+    const controller = new AbortController()
+    const stop = (): void => controller.abort()
+    if (signal?.aborted) controller.abort()
+    else signal?.addEventListener('abort', stop, { once: true })
+    const run = work(controller.signal)
+    const entry = { controller, done: run.catch(() => undefined) }
+    this.running.add(entry)
+    try {
+      return await run
+    } finally {
+      this.running.delete(entry)
+      signal?.removeEventListener('abort', stop)
+    }
   }
 
   library(): WritingLibrary {
@@ -215,6 +242,10 @@ export class WritingService {
    */
   async proposeOutline(req: OutlineRequest, signal?: AbortSignal): Promise<OutlineProposalRun> {
     const deps = this.capped()
+    return this.tracked(signal, (stop) => this.proposeOutlineNow(req, deps, stop))
+  }
+
+  private async proposeOutlineNow(req: OutlineRequest, deps: CappedDeps & { provider: LlmProvider }, signal: AbortSignal): Promise<OutlineProposalRun> {
     const { store, cache } = this.deps
     const outline = await this.outlineFor(req)
     const targets = outlineTargets(outline)
@@ -260,11 +291,15 @@ export class WritingService {
   /** «Estilo»: Claude's suggestions for the text, each checked (verbatim, protected constructs, overlaps). */
   async reviewStyle(req: StyleRequest, signal?: AbortSignal): Promise<StyleReviewRun> {
     const deps = this.capped()
-    const { store } = this.deps
     if (!req.text.trim()) throw new Error('Nothing to review')
     if (req.text.length > MAX_STYLE_CHARS) throw new UserFacingError('too_long')
     const focus = STYLE_FOCUSES.filter((f) => req.focus.includes(f))
     if (focus.length === 0) throw new Error('No focus chosen')
+    return this.tracked(signal, (stop) => this.reviewStyleNow(req, focus, deps, stop))
+  }
+
+  private async reviewStyleNow(req: StyleRequest, focus: StyleFocus[], deps: CappedDeps & { provider: LlmProvider }, signal: AbortSignal): Promise<StyleReviewRun> {
+    const { store } = this.deps
     const model = req.model ?? store.config.llm.model
     const run = await this.logged('style', `${req.text.length} chars`, model, deps, () =>
       runCappedOperation(deps, { kind: 'style', model }, (maxUsd) =>

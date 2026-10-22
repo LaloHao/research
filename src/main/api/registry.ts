@@ -20,7 +20,7 @@ export interface ApiContext {
   library: LibraryTools
   writing: Pick<WritingService, 'bibFromText' | 'bibFromFile' | 'outlineData' | 'library' | 'citeCheckPlan' | 'citeCheck' | 'proposeOutline' | 'reviewStyle'>
   /** «Borrador»: drafts written by Claude, saved in the project (drafts/). */
-  drafts: Pick<DraftService, 'run' | 'finished' | 'open'>
+  drafts: Pick<DraftService, 'run' | 'open' | 'stop' | 'progress' | 'outcome' | 'apiDraft'>
   /** Budget, ledger and caps, for `operationPlan` and `runCappedOperation`. */
   capped: CappedDeps
   /** Focuses the app's window and shows the paper at that page, the quote highlighted. */
@@ -32,7 +32,7 @@ export interface ApiContext {
  * that is not an `ApiError` is reported as `failed` without its detail, but a library `ToolError` (a
  * message written for whoever called the tool) as `invalid`.
  */
-export const API_ERROR_CODES = ['no_project', 'costly_disabled', 'invalid', 'not_found', 'invalid_path', 'unreadable', 'too_large', 'no_facets', 'failed'] as const
+export const API_ERROR_CODES = ['no_project', 'costly_disabled', 'invalid', 'not_found', 'invalid_path', 'unreadable', 'too_large', 'no_facets', 'busy', 'failed'] as const
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number]
 
 export class ApiError extends Error {
@@ -90,7 +90,8 @@ export interface CostlyApiTool<S extends ZodRawShape = ZodRawShape> {
     /** `run` charges itself through `runCappedOperation`: the registry must not wrap it. */
     selfCapped?: boolean
   }
-  run(ctx: ApiContext, args: z.infer<z.ZodObject<S>>, maxUsd: number | null): Promise<CostlyResult>
+  /** `signal` aborts when the caller hangs up: a run that answers only at its end stops (a draft, which answers once admitted, does not). */
+  run(ctx: ApiContext, args: z.infer<z.ZodObject<S>>, maxUsd: number | null, signal?: AbortSignal): Promise<CostlyResult>
 }
 
 // The registry holds tools of every input shape; `freeTool`/`costlyTool` keep each one typed where it is written.
@@ -127,7 +128,7 @@ export function toolInput(tool: ApiTool): ZodRawShape {
  * Runs one tool call. A costly tool is refused unless `allowCostly`, answers its plan unless `confirmed` is exactly
  * true, and otherwise runs capped. `args` were already validated against `toolInput(tool)`.
  */
-export async function callApiTool(tool: ApiTool, ctx: ApiContext, args: Record<string, unknown>, opts: { allowCostly: boolean }): Promise<unknown> {
+export async function callApiTool(tool: ApiTool, ctx: ApiContext, args: Record<string, unknown>, opts: { allowCostly: boolean; signal?: AbortSignal }): Promise<unknown> {
   if (!isCostly(tool)) return (tool as FreeApiTool).run(ctx, args)
   if (!opts.allowCostly) throw new ApiError('costly_disabled', 'Operations that spend Claude quota are off for the local API: turn them on in Settings → Aplicación → API local.')
   const { confirmed, ...rest } = args
@@ -146,6 +147,6 @@ export async function callApiTool(tool: ApiTool, ctx: ApiContext, args: Record<s
       month_cap_usd: plan.monthCapUsd
     } satisfies ApiPlan
   }
-  if (tool.cost.selfCapped) return tool.run(ctx, rest, null)
-  return runCappedOperation(ctx.capped, { kind: tool.cost.kind, model }, (maxUsd) => tool.run(ctx, rest, maxUsd))
+  if (tool.cost.selfCapped) return tool.run(ctx, rest, null, opts.signal)
+  return runCappedOperation(ctx.capped, { kind: tool.cost.kind, model }, (maxUsd) => tool.run(ctx, rest, maxUsd, opts.signal))
 }

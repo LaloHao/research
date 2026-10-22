@@ -1,76 +1,111 @@
 import { z } from 'zod'
 import { PAPER_KEY } from '../../shared/chat'
-import type { UserErrorCode } from '../../shared/library'
 import { LLM_MODELS, type LlmModel } from '../../shared/summary'
 import { MAX_CHECK_CHARS } from '../../shared/writing/api'
 import { detectFormat, type CiteFormat } from '../../shared/writing/citations'
 import { entryOutcome } from '../../shared/writing/citeCheck'
 import { LATEX_OUTPUT_COMMANDS } from '../../shared/writing/convert'
-import { DRAFT_LENGTHS, exportDraft, MAX_DRAFT_PAPERS, MAX_DRAFT_PURPOSE, MAX_DRAFT_TITLE } from '../../shared/writing/draft'
+import { DRAFT_ID, DRAFT_LENGTHS, exportDraft, MAX_DRAFT_PAPERS, MAX_DRAFT_PURPOSE, MAX_DRAFT_TITLE } from '../../shared/writing/draft'
 import { renderProposedOutline } from '../../shared/writing/outlineProposal'
 import { MAX_STYLE_CHARS, STYLE_FOCUSES } from '../../shared/writing/style'
 import { UserFacingError } from '../library/UserFacingError'
-import { ApiError, costlyTool, type ApiContext, type ApiTool } from './registry'
+import { ApiDraftRunning } from '../writing/DraftService'
+import { ApiError, costlyTool, freeTool, type ApiContext, type ApiTool } from './registry'
 import { codePointOffsets, format, OUTLINE_INPUT, OUTLINE_LABELS, outlineChoice } from './writingTools'
 
 const model = z.enum(LLM_MODELS).optional().describe("sonnet, haiku or opus; the project's model when missing")
 const modelOf = (ctx: ApiContext, args: { model?: LlmModel }): LlmModel => args.model ?? ctx.store.config.llm.model
+const busy = (id: string | null): ApiError =>
+  new ApiError('busy', `A draft started from the API is still being written${id ? ` (${id})` : ''}: wait for it with draft_status or stop it with draft_stop.`)
 const formatOf = (args: { text: string; format?: CiteFormat }): CiteFormat => args.format ?? detectFormat(args.text)
 
 /**
  * The «Redacción» operations that use Claude, for the local API. Each one is the app's own service method (the same
  * prompts, checks and caps as the window), which charges itself through `runCappedOperation`: hence `selfCapped`.
+ * A check, an outline proposal or a style review stops when its caller hangs up or the project closes; a draft runs
+ * in the app (it answers once started) and is followed and stopped with the free `draft_status` and `draft_stop`.
  * Offsets in their answers count characters (code points), like `check_citations_local`'s.
  */
 export const CLAUDE_API_TOOLS: ApiTool[] = [
   costlyTool({
     name: 'draft',
     description:
-      "«Borrador»: Claude writes a section from the chosen papers (read-only tools limited to them), every claim cited with a quote and page the app checks. Creates a new draft in the project (drafts/) and answers when it is written, which can take minutes: its id and its text in Org, LaTeX or Markdown with the counts of unverified citations, citations outside the selection and claims marked without a citation. Costs Claude quota: without confirmed it answers the plan.",
+      "«Borrador»: Claude writes a section from the chosen papers (read-only tools limited to them), every claim cited with a quote and page the app checks. Creates a new draft in the project (drafts/) and answers at once with its draft_id; the draft is written in the app (minutes): follow it with draft_status (free), stop it with draft_stop. One draft from the API at a time: while one is being written this refuses with busy. Costs Claude quota: without confirmed it answers the plan (running_draft names a draft still being written).",
     input: {
       title: z.string().trim().min(1).max(MAX_DRAFT_TITLE),
       purpose: z.string().max(MAX_DRAFT_PURPOSE).optional(),
       rq: z.string().regex(/^RQ[1-9][0-9]*$/).optional().describe('A research question of the thesis, e.g. RQ1'),
       keys: z.array(z.string().regex(PAPER_KEY)).min(1).max(MAX_DRAFT_PAPERS).describe('The papers it may cite'),
       length: z.enum(DRAFT_LENGTHS).optional().describe('short (~300 words), medium (~700, default) or long (~1500)'),
-      model,
-      format: format.optional().describe('org (default), latex or markdown'),
-      latex_command: z.enum(LATEX_OUTPUT_COMMANDS).optional(),
-      quotes: z.boolean().optional().describe("Keep each citation's verbatim quote as a comment")
+      model
     },
     cost: {
       kind: 'draft',
       model: modelOf,
       // DraftService.run admits and charges the version under the draft cap.
       selfCapped: true,
-      plan: async (_ctx, args) => ({ papers: new Set(args.keys).size, length: args.length ?? 'medium' })
+      plan: async (ctx, args) => ({ papers: new Set(args.keys).size, length: args.length ?? 'medium', running_draft: ctx.drafts.apiDraft() })
     },
     async run(ctx, args) {
-      const id = await ctx.drafts.run(
-        { title: args.title, purpose: args.purpose ?? '', rq: args.rq ?? null, papers: args.keys, length: args.length ?? 'medium', model: modelOf(ctx, args) },
-        null
-      )
-      const outcome = await ctx.drafts.finished(id)
-      const view = await ctx.drafts.open(id)
-      const version = view.versions.at(-1)
-      if (!version) {
-        if (outcome.error) throw new UserFacingError(outcome.error as UserErrorCode)
-        throw new ApiError('failed', 'The draft has no text.')
+      const input = { title: args.title, purpose: args.purpose ?? '', rq: args.rq ?? null, papers: args.keys, length: args.length ?? 'medium', model: modelOf(ctx, args) }
+      let id: string
+      try {
+        // Resolves once admitted and the draft created; the version is written in the background (not tied to this call).
+        id = await ctx.drafts.run(input, null, { fromApi: true })
+      } catch (error) {
+        if (error instanceof ApiDraftRunning) throw busy(error.draftId)
+        throw error
       }
+      // Charged by DraftService when the version ends; nothing is spent by this answer.
+      return { draft_id: id, status: 'running', costUsd: 0, model: input.model }
+    }
+  }),
+  freeTool({
+    name: 'draft_status',
+    description:
+      "A draft's state: running (with the characters written so far and the tool calls), done or stopped (its last version's text in Org, LaTeX or Markdown with the counts of unverified citations, citations outside the selection and claims marked without a citation), or error with its code. Free.",
+    input: {
+      draft_id: z.string().regex(DRAFT_ID),
+      format: format.optional().describe('org (default), latex or markdown'),
+      latex_command: z.enum(LATEX_OUTPUT_COMMANDS).optional(),
+      quotes: z.boolean().optional().describe("Keep each citation's verbatim quote as a comment")
+    },
+    async run(ctx, args) {
+      const id = args.draft_id
+      const progress = ctx.drafts.progress(id)
+      if (progress) return { draft_id: id, status: 'running', chars: progress.chars, tools: progress.tools }
+      const outcome = ctx.drafts.outcome(id)
+      if (outcome?.error) return { draft_id: id, status: 'error', error: outcome.error }
+      const view = await ctx.drafts.open(id).catch((error: unknown) => {
+        if (error instanceof UserFacingError && error.code === 'draft_not_found') throw new ApiError('not_found', `No draft ${id}.`)
+        throw error
+      })
+      const version = view.versions.at(-1)
+      if (!version) return { draft_id: id, status: outcome?.stopped ? 'stopped' : 'error', ...(outcome?.stopped ? { text: null } : { error: 'failed' }) }
       const fmt = args.format ?? 'org'
       const exported = exportDraft(version.text, version.check, { format: fmt, latexCommand: args.latex_command, quotes: args.quotes })
       return {
         draft_id: id,
+        status: version.stopped ? 'stopped' : 'done',
         title: view.summary.title,
         format: fmt,
         text: exported.text,
-        stopped: version.stopped,
         unverified: version.check.unverified,
         outside: version.check.outside,
         uncited: version.check.uncited,
         costUsd: version.costUsd,
         model: version.model
       }
+    }
+  }),
+  freeTool({
+    name: 'draft_stop',
+    description: "Stops a draft being written; what arrived is kept as a stopped version (draft_status then says stopped). Free.",
+    input: { draft_id: z.string().regex(DRAFT_ID) },
+    async run(ctx, args) {
+      const running = ctx.drafts.progress(args.draft_id) !== null
+      if (running) ctx.drafts.stop(args.draft_id)
+      return { draft_id: args.draft_id, stopping: running }
     }
   }),
   costlyTool({
@@ -89,9 +124,9 @@ export const CLAUDE_API_TOOLS: ApiTool[] = [
         return { sentences: plan.sentences, pairs: plan.pairs, batches: plan.batches, unverifiable: plan.unverifiable }
       }
     },
-    async run(ctx, args) {
+    async run(ctx, args, _maxUsd, signal) {
       const fmt = formatOf(args)
-      const result = await ctx.writing.citeCheck({ text: args.text, format: fmt, model: args.model })
+      const result = await ctx.writing.citeCheck({ text: args.text, format: fmt, model: args.model }, { signal })
       const at = codePointOffsets(args.text)
       return {
         format: fmt,
@@ -133,7 +168,7 @@ export const CLAUDE_API_TOOLS: ApiTool[] = [
       quotes: z.boolean().optional().describe("Keep each citation's verbatim quote as a comment")
     },
     cost: { kind: 'outline', model: modelOf, selfCapped: true },
-    async run(ctx, args) {
+    async run(ctx, args, _maxUsd, signal) {
       // Checked here, so a wrong facet or question costs nothing.
       const { scope, main, secondary, question } = await outlineChoice(ctx, args)
       const run = await ctx.writing.proposeOutline({
@@ -143,7 +178,7 @@ export const CLAUDE_API_TOOLS: ApiTool[] = [
         onlyReviewed: args.reviewed_only ?? false,
         questionId: question?.id ?? null,
         model: args.model
-      })
+      }, signal)
       const fmt = args.format ?? 'org'
       const rendered = renderProposedOutline(run.outline, run.proposal, {
         format: fmt,
@@ -166,9 +201,9 @@ export const CLAUDE_API_TOOLS: ApiTool[] = [
       model
     },
     cost: { kind: 'style', model: modelOf, selfCapped: true },
-    async run(ctx, args) {
+    async run(ctx, args, _maxUsd, signal) {
       const fmt = formatOf(args)
-      const run = await ctx.writing.reviewStyle({ text: args.text, format: fmt, focus: args.focus ?? [...STYLE_FOCUSES], model: args.model })
+      const run = await ctx.writing.reviewStyle({ text: args.text, format: fmt, focus: args.focus ?? [...STYLE_FOCUSES], model: args.model }, signal)
       const at = codePointOffsets(args.text)
       return {
         format: fmt,

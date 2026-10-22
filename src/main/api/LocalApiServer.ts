@@ -15,6 +15,8 @@ export const API_SERVER_NAME = 'research'
 /** Chapters with their includes can be long: bigger than the agent servers' limit, still bounded. */
 const MAX_BODY_BYTES = 8_000_000
 const MAX_ANSWER_CHARS = 20_000_000
+/** How long closing waits for the tool calls in progress (a Claude run stopped by the project's close ends quickly). */
+export const CLOSE_GRACE_MS = 10_000
 
 /**
  * The tools beyond the library's: the free writing tools, then the costly ones (claudeTools.ts). A costly tool is added
@@ -39,7 +41,11 @@ export interface LocalApiServerOptions {
 export interface LocalApiServerHandle {
   port: number
   url: string
-  close(): Promise<void>
+  /**
+   * Stops listening at once, waits (at most `graceMs`, CLOSE_GRACE_MS by default) for the tool calls in progress to
+   * answer, then drops every connection.
+   */
+  close(graceMs?: number): Promise<void>
 }
 
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: 'text', text: t }], ...(isError ? { isError: true } : {}) })
@@ -104,6 +110,8 @@ function errorText(error: unknown): string {
 export async function startLocalApiServer(opts: LocalApiServerOptions): Promise<LocalApiServerHandle> {
   const tools = opts.tools ?? API_TOOLS
   let port = opts.port
+  /** The requests being answered (each until its response is sent or its caller hangs up), which closing waits for. */
+  const inFlight = new Set<Promise<void>>()
 
   const run: Run = async (tool, fn) => {
     const started = Date.now()
@@ -132,18 +140,21 @@ export async function startLocalApiServer(opts: LocalApiServerOptions): Promise<
       return void res.writeHead(400).end()
     }
     const ctx = opts.context()
+    // The caller hung up (an editor's C-g or timeout): a Claude run still waiting for its answer stops.
+    const hangUp = new AbortController()
     const server = new McpServer({ name: API_SERVER_NAME, version: '1.0.0' })
     defineLibraryTools(server, ctx?.library ?? NO_PROJECT_LIBRARY, run)
     for (const tool of tools) {
       server.registerTool(tool.name, { description: tool.description, inputSchema: toolInput(tool) }, (args: Record<string, unknown>) =>
         run(tool.name, () => {
           if (!ctx) throw noProject()
-          return callApiTool(tool, ctx, args, { allowCostly: opts.allowCostly() })
+          return callApiTool(tool, ctx, args, { allowCostly: opts.allowCostly(), signal: hangUp.signal })
         })
       )
     }
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
     res.on('close', () => {
+      hangUp.abort()
       void transport.close()
       void server.close()
     })
@@ -152,6 +163,9 @@ export async function startLocalApiServer(opts: LocalApiServerOptions): Promise<
   }
 
   const http = createServer((req, res) => {
+    const answered = new Promise<void>((resolve) => res.once('close', resolve))
+    inFlight.add(answered)
+    void answered.then(() => inFlight.delete(answered))
     handle(req, res).catch(() => {
       if (!res.headersSent) res.writeHead(500)
       res.end()
@@ -168,10 +182,16 @@ export async function startLocalApiServer(opts: LocalApiServerOptions): Promise<
   return {
     port,
     url: `http://127.0.0.1:${port}/mcp`,
-    close: () =>
-      new Promise<void>((resolve) => {
-        http.closeAllConnections()
-        http.close(() => resolve())
-      })
+    close: async (graceMs = CLOSE_GRACE_MS) => {
+      const closed = new Promise<void>((resolve) => http.close(() => resolve()))
+      if (inFlight.size > 0) {
+        let timer: NodeJS.Timeout | undefined
+        const timeout = new Promise<void>((resolve) => (timer = setTimeout(resolve, graceMs)))
+        await Promise.race([Promise.allSettled([...inFlight]), timeout])
+        clearTimeout(timer)
+      }
+      http.closeAllConnections()
+      await closed
+    }
   }
 }

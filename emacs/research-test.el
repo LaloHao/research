@@ -82,6 +82,10 @@ HANDLER returns (STATUS . BODY); `research-test--result' builds one."
       (should (string-match-p "No encontrado: No library paper" (nth 2 err)))))
   (research-test--with-app (lambda (_tool _args) (cons 401 ""))
     (should (equal (nth 1 (should-error (research-call "outline") :type 'research-error)) "unauthorized")))
+  (research-test--with-app (lambda (_tool _args) (cons 403 ""))
+    (let ((err (should-error (research-call "outline") :type 'research-error)))
+      (should (equal (nth 1 err) "forbidden"))
+      (should (string-match-p "Host u Origin" (nth 2 err)))))
   (research-test--with-app (lambda (_tool _args) (research-test--result "MCP error -32602: Tool draft not found" t))
     (should (equal (nth 1 (should-error (research-call "draft") :type 'research-error)) "unavailable"))))
 
@@ -304,45 +308,99 @@ HANDLER returns (STATUS . BODY); `research-test--result' builds one."
                          '((costUsd . 0.12) (model . "claude-sonnet-5") (text . "Draft.")))))
         (should (equal (alist-get 'confirmed (alist-get 'arguments (alist-get 'params (nth 2 (car research-test--requests))))) t))))))
 
-(ert-deftest research-test-draft-asks-waits-long-and-opens-the-text-for-review ()
-  (let (timeouts)
+;; The draft's timer is captured: each test runs its polls by hand.
+(defmacro research-test--with-draft-timer (poll &rest body)
+  "Run BODY with `run-with-timer' storing its function in POLL (a symbol)."
+  (declare (indent 1))
+  `(let ((research--draft nil))
+     (cl-letf (((symbol-function 'run-with-timer) (lambda (_secs _repeat fn &rest _) (setq ,poll fn) 'research-test-timer))
+               ((symbol-function 'cancel-timer) #'ignore))
+       ,@body)))
+
+(ert-deftest research-test-draft-asks-starts-and-opens-the-text-when-written ()
+  (let ((statuses (list '((draft_id . "20261022-120000-a1b2") (status . "running") (chars . 120) (tools . 2))
+                        '((draft_id . "20261022-120000-a1b2") (status . "done") (title . "Log parsing") (format . "org")
+                          (text . "Online parsers exist [cite:@he2017drain p. 1]. [SIN CITA]")
+                          (unverified . 0) (outside . 0) (uncited . 1) (costUsd . 0.12))))
+        poll messages)
     (research-test--with-app
         (lambda (tool args)
           (pcase tool
             ("list_papers_for_citation" (research-test--result (vconcat research-test--papers)))
             ("draft"
-             (push research-request-timeout timeouts)
              (should (equal (alist-get 'keys args) '("he2017drain" "zhu2020loghub")))
              (should (equal (alist-get 'length args) "long"))
-             (should (equal (alist-get 'format args) "org"))
              (should (equal (alist-get 'rq args) "RQ1"))
              (if (alist-get 'confirmed args)
-                 (research-test--result '((draft_id . "20261022-120000-a1b2") (title . "Log parsing") (format . "org")
-                                          (text . "Online parsers exist [cite:@he2017drain p. 1]. [SIN CITA]")
-                                          (stopped . :false) (unverified . 0) (outside . 0) (uncited . 1) (costUsd . 0.12)))
+                 (research-test--result '((draft_id . "20261022-120000-a1b2") (status . "running") (costUsd . 0) (model . "sonnet")))
                (research-test--result '((confirmation_required . t) (operation . "draft") (model . "sonnet") (estimate_usd . 0.2)
-                                        (cap_usd . 1) (month_spent_usd . 0) (month_cap_usd . :null) (papers . 2)))))))
-      (let ((answers '("Log parsing" "Compare online parsers." "rq1"))
-            (research-request-timeout 60)
-            (research-draft-timeout 1800)
-            buffer)
-        (cl-letf (((symbol-function 'read-string) (lambda (&rest _) (pop answers)))
-                  ((symbol-function 'completing-read-multiple)
-                   (lambda (_prompt table &rest _)
-                     (should (equal (all-completions "" table) '("he2017drain" "zhu2020loghub")))
-                     (should (string-match-p "Drain (2017)" (funcall (alist-get 'annotation-function (cdr (funcall table "" nil 'metadata))) "he2017drain")))
-                     '("he2017drain" "zhu2020loghub" "he2017drain")))
-                  ((symbol-function 'completing-read) (lambda (&rest _) "long"))
-                  ((symbol-function 'yes-or-no-p) (lambda (_) t)))
-          (setq buffer (call-interactively #'research-draft)))
-        (unwind-protect
-            (with-current-buffer buffer
-              (should (string-prefix-p "*research-draft*" (buffer-name)))
-              (should (derived-mode-p 'org-mode))
-              (should (equal (buffer-string) "#+title: Log parsing\n\nOnline parsers exist [cite:@he2017drain p. 1]. [SIN CITA]\n")))
-          (kill-buffer buffer))
-        ;; The plan and the run both wait as long as a draft may take.
-        (should (equal timeouts '(1800 1800)))))))
+                                        (cap_usd . 1) (month_spent_usd . 0) (month_cap_usd . :null) (papers . 2) (running_draft . :null)))))
+            ("draft_status"
+             (should (equal args '((draft_id . "20261022-120000-a1b2") (format . "org"))))
+             (research-test--result (pop statuses)))))
+      (research-test--with-draft-timer poll
+        (let ((answers '("Log parsing" "Compare online parsers." "rq1")))
+          (cl-letf (((symbol-function 'read-string) (lambda (&rest _) (pop answers)))
+                    ((symbol-function 'completing-read-multiple)
+                     (lambda (_prompt table &rest _)
+                       (should (equal (all-completions "" table) '("he2017drain" "zhu2020loghub")))
+                       (should (string-match-p "Drain (2017)" (funcall (alist-get 'annotation-function (cdr (funcall table "" nil 'metadata))) "he2017drain")))
+                       '("he2017drain" "zhu2020loghub" "he2017drain")))
+                    ((symbol-function 'completing-read) (lambda (&rest _) "long"))
+                    ((symbol-function 'yes-or-no-p) (lambda (_) t))
+                    ((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+            ;; It answers at once with the id; the text comes later, on the timer.
+            (should (equal (call-interactively #'research-draft) "20261022-120000-a1b2"))
+            (should-not (get-buffer "*research-draft*"))
+            (should (equal (plist-get research--draft :id) "20261022-120000-a1b2"))
+            ;; A second draft while this one runs is refused before asking anything.
+            (let ((sent (length research-test--requests)))
+              (should-error (research-draft "Other" "" '("he2017drain")) :type 'user-error)
+              (should (= (length research-test--requests) sent)))
+            (funcall poll)
+            (should (string-match-p "120 caracteres, 2 consultas" (car messages)))
+            (should-not (get-buffer "*research-draft*"))
+            (funcall poll)))
+        (should-not research--draft)
+        (let ((buffer (get-buffer "*research-draft*")))
+          (unwind-protect
+              (with-current-buffer buffer
+                (should (derived-mode-p 'org-mode))
+                (should (equal (buffer-string) "#+title: Log parsing\n\nOnline parsers exist [cite:@he2017drain p. 1]. [SIN CITA]\n")))
+            (kill-buffer buffer)))
+        (should (string-match-p "1 sin cita" (car messages)))))))
+
+(ert-deftest research-test-draft-refuses-while-the-app-writes-one-started-from-the-api ()
+  (research-test--with-app
+      (lambda (_tool args)
+        (should-not (alist-get 'confirmed args))
+        (research-test--result '((confirmation_required . t) (operation . "draft") (model . "sonnet") (estimate_usd . 0.2)
+                                 (cap_usd . 1) (month_spent_usd . 0) (month_cap_usd . :null) (running_draft . "20261022-110000-ffff"))))
+    (research-test--with-draft-timer _poll
+      (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) (error "Must not ask"))))
+        (let ((err (should-error (research-draft "T" "" '("he2017drain")) :type 'user-error)))
+          (should (string-match-p "20261022-110000-ffff" (cadr err)))))
+      (should (= (length research-test--requests) 1))
+      (should-not research--draft))))
+
+(ert-deftest research-test-draft-stop-and-a-failed-draft ()
+  (let ((status '((draft_id . "20261022-120000-a1b2") (status . "error") (error . "llm_quota")))
+        poll messages)
+    (research-test--with-app
+        (lambda (tool args)
+          (pcase tool
+            ("draft_stop"
+             (should (equal args '((draft_id . "20261022-120000-a1b2"))))
+             (research-test--result '((draft_id . "20261022-120000-a1b2") (stopping . t))))
+            ("draft_status" (research-test--result status))))
+      (research-test--with-draft-timer poll
+        (cl-letf (((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+          (research--draft-follow "20261022-120000-a1b2" "T")
+          (research-draft-stop)
+          (should (string-match-p "Deteniendo el borrador 20261022-120000-a1b2" (car messages)))
+          (funcall poll)
+          (should (string-match-p "no se escribió: se agotó la cuota de Claude" (car messages)))
+          (should-not research--draft))))))
 
 (ert-deftest research-test-draft-declined-writes-nothing ()
   (research-test--with-app (research-test--costly "draft" '((text . "never")))

@@ -70,11 +70,11 @@ turned on."
   "Seconds to wait for the app's answer."
   :type 'integer)
 
-(defcustom research-draft-timeout 1800
-  "Seconds `research-draft' waits for the app to write a draft.
-A draft is an agent run that can take minutes; the app answers when it is
-written (or stopped), so this is longer than `research-request-timeout'."
-  :type 'integer)
+(defcustom research-draft-poll-interval 5
+  "Seconds between two looks at the draft `research-draft' started.
+The app writes the draft in the background (it can take minutes); Emacs
+stays free and asks for its state on a timer."
+  :type 'number)
 
 (defcustom research-bib-order "appearance"
   "Order of the entries `research-bibtex-for-file' writes."
@@ -105,7 +105,9 @@ Returns (STATUS . RESPONSE-BODY).  Tests replace it.")
     ("invalid" . "Petición no válida")
     ("budget_exceeded" . "Se alcanzó un tope de gasto de Claude.")
     ("failed" . "La herramienta falló.")
+    ("busy" . "Ya hay un borrador pedido desde la API en curso: espera a que termine o detenlo con `research-draft-stop'.")
     ("unauthorized" . "La app rechazó el token: revisa el archivo de conexión (¿regeneraste el token?).")
+    ("forbidden" . "La app rechazó la petición (Host u Origin no permitidos): usa la URL de 127.0.0.1 del archivo de conexión, sin proxy.")
     ("connection" . "No se pudo conectar con la app: ¿está abierta y con la API local activada?")
     ("no_connection" . "No encuentro el archivo de conexión de la app: activa la API local en Ajustes → Aplicación.")
     ("unavailable" . "Esta función todavía no está disponible en la app."))
@@ -116,7 +118,7 @@ Returns (STATUS . RESPONSE-BODY).  Tests replace it.")
   (let ((base (or (cdr (assoc code research--error-messages)) code)))
     (signal 'research-error
             (list code (if (and detail (not (string-empty-p detail))
-                                (not (member code '("no_project" "costly_disabled" "unauthorized" "connection" "no_connection"))))
+                                (not (member code '("no_project" "costly_disabled" "unauthorized" "forbidden" "connection" "no_connection"))))
                            (format "%s: %s" base detail)
                          base)))))
 
@@ -198,7 +200,8 @@ text.  Signals `research-error' with the API's error code."
                               ("Accept" . "application/json, text/event-stream"))
                             body))
          (status (car response)))
-    (cond ((memq status '(401 403)) (research--fail "unauthorized"))
+    (cond ((eql status 401) (research--fail "unauthorized"))
+          ((eql status 403) (research--fail "forbidden"))
           ((not (eql status 200)) (research--fail "failed" (format "HTTP %s" status))))
     (let* ((json (condition-case nil (research--parse-json (cdr response))
                    (error (research--fail "failed" "respuesta no válida"))))
@@ -381,8 +384,10 @@ ask where.  Then offers to use it as the Org `#+bibliography:' and in
   (research--with-errors
     (unless buffer-file-name (user-error "Este búfer no visita un archivo"))
     (when (and (buffer-modified-p) (y-or-n-p "¿Guardar el archivo antes?")) (save-buffer))
-    (let* ((source (expand-file-name buffer-file-name))
-           (default (concat (file-name-sans-extension source) ".bib"))
+    (let* ((visited (expand-file-name buffer-file-name))
+           ;; The app reads the real file: a symlinked chapter's includes are next to its target.
+           (source (file-truename visited))
+           (default (concat (file-name-sans-extension visited) ".bib"))
            (target (if choose (expand-file-name (read-file-name "Guardar .bib en: " nil default nil (file-name-nondirectory default)))
                      default))
            (answer (research-call "bibtex_for_file" `((path . ,source) (order . ,research-bib-order))))
@@ -652,45 +657,139 @@ when declined."
              (special-mode)
              (pop-to-buffer (current-buffer))))))
 
+;;;; Drafts
+
+(defvar research--draft nil
+  "The draft `research-draft' started and is following: a plist with
+`:id', `:title', `:timer' and `:failures'; nil when none.")
+
+(defconst research--draft-errors
+  '(("draft_budget" . "se alcanzó el tope por borrador")
+    ("llm_quota" . "se agotó la cuota de Claude")
+    ("llm_timeout" . "Claude tardó demasiado")
+    ("llm_invalid_output" . "Claude no devolvió texto")
+    ("llm_unavailable" . "Claude no está disponible")
+    ("agent_tools_unavailable" . "no se pudieron abrir las herramientas de la biblioteca"))
+  "Spanish reasons for the error codes `draft_status' can report.")
+
 ;;;###autoload
 (defun research-draft (title purpose keys &optional length rq)
   "Ask Claude, through the app, for a draft section TITLE with PURPOSE citing KEYS.
 LENGTH is \"short\", \"medium\" (default) or \"long\"; RQ a research
 question such as \"RQ1\".  Shows the estimated cost and asks first.  The
-app saves the draft in the project («Redacción → Borrador») and the text,
-in Org, opens in a new `*research-draft*' buffer for review.  Writing it
-can take minutes: this call waits up to `research-draft-timeout'."
+app saves the draft in the project («Redacción → Borrador») and writes it
+in the background (it can take minutes): Emacs stays free, shows its
+progress and, when it is written, opens its text in Org in a new
+`*research-draft*' buffer.  `research-draft-stop' stops it.  One draft at
+a time: while one is being written this refuses.  Returns the draft's id."
   (interactive
-   (list (read-string "Título de la sección: ")
-         (read-string "Propósito o indicaciones: ")
-         (research-read-keys "Papers que puede citar: ")
-         (completing-read "Extensión: " '("short" "medium" "long") nil t nil nil "medium")
-         (let ((rq (read-string "Pregunta de investigación, p. ej. RQ1 (vacío: ninguna): ")))
-           (unless (string-empty-p rq) (upcase rq)))))
+   (progn
+     (research--draft-refuse-if-running)
+     (list (read-string "Título de la sección: ")
+           (read-string "Propósito o indicaciones: ")
+           (research-read-keys "Papers que puede citar: ")
+           (completing-read "Extensión: " '("short" "medium" "long") nil t nil nil "medium")
+           (let ((rq (read-string "Pregunta de investigación, p. ej. RQ1 (vacío: ninguna): ")))
+             (unless (string-empty-p rq) (upcase rq))))))
+  (research--draft-refuse-if-running)
   (research--with-errors
     (when (string-empty-p (string-trim title)) (user-error "Falta el título"))
     (unless keys (user-error "Elige al menos un paper"))
-    (let* ((research-request-timeout (max research-request-timeout research-draft-timeout))
-           (answer (research-call-with-cost
-                    "draft" `((title . ,title) (purpose . ,purpose) (keys . ,(vconcat keys))
-                              (length . ,(or length "medium")) (format . "org")
-                              ,@(and rq `((rq . ,rq)))))))
-      (if (null answer)
-          (message "Cancelado")
-        (let ((buffer (generate-new-buffer "*research-draft*")))
-          (with-current-buffer buffer
-            (org-mode)
-            (insert (format "#+title: %s\n\n" (or (alist-get 'title answer) title)) (alist-get 'text answer) "\n")
-            (goto-char (point-min))
-            (set-buffer-modified-p nil))
-          (pop-to-buffer buffer)
-          (message "Borrador %s: %d citas sin verificar, %d fuera de la selección, %d sin cita%s (US$%.2f)"
-                   (alist-get 'draft_id answer)
-                   (or (alist-get 'unverified answer) 0) (or (alist-get 'outside answer) 0)
-                   (or (alist-get 'uncited answer) 0)
-                   (if (alist-get 'stopped answer) "; se detuvo" "")
-                   (or (alist-get 'costUsd answer) 0))
-          buffer)))))
+    (let* ((arguments `((title . ,title) (purpose . ,purpose) (keys . ,(vconcat keys))
+                        (length . ,(or length "medium")) ,@(and rq `((rq . ,rq)))))
+           (plan (research-call "draft" arguments)))
+      ;; A draft another Emacs (or a lost poll) started is still being written: never pay for a second one.
+      (when-let* ((running (and (consp plan) (alist-get 'running_draft plan))))
+        (user-error "El borrador %s todavía se está escribiendo: espera a que termine o detenlo con `research-draft-stop'" running))
+      (if (not (and (consp plan) (alist-get 'confirmation_required plan) (yes-or-no-p (research--plan-prompt plan))))
+          (progn (message "Cancelado") nil)
+        (let* ((answer (research-call "draft" (append arguments '((confirmed . t)))))
+               (id (alist-get 'draft_id answer)))
+          (research--draft-follow id title)
+          (message "Borrador %s: Claude lo está escribiendo en la app; te aviso cuando esté (`research-draft-stop' lo detiene)" id)
+          id)))))
+
+(defun research--draft-refuse-if-running ()
+  "Signal a `user-error' when this Emacs is following a draft."
+  (when research--draft
+    (user-error "El borrador %s todavía se está escribiendo: espera a que termine o detenlo con `research-draft-stop'"
+                (plist-get research--draft :id))))
+
+(defun research--draft-follow (id title)
+  "Follow the draft ID (TITLE) on a timer until it ends."
+  (research--draft-forget)
+  (setq research--draft
+        (list :id id :title title :failures 0
+              :timer (run-with-timer research-draft-poll-interval research-draft-poll-interval
+                                     #'research--draft-poll))))
+
+(defun research--draft-forget ()
+  "Stop following the draft."
+  (when-let* ((timer (plist-get research--draft :timer))) (cancel-timer timer))
+  (setq research--draft nil))
+
+(defun research--draft-poll ()
+  "Ask the app how the followed draft goes; show it once written."
+  (when research--draft
+    (let ((id (plist-get research--draft :id))
+          (title (plist-get research--draft :title)))
+      (condition-case err
+          (let ((status (research-call "draft_status" `((draft_id . ,id) (format . "org")))))
+            (plist-put research--draft :failures 0)
+            (pcase (alist-get 'status status)
+              ("running"
+               (message "Borrador %s: %d caracteres, %d consultas a la biblioteca…"
+                        id (or (alist-get 'chars status) 0) (or (alist-get 'tools status) 0)))
+              ((or "done" "stopped")
+               (research--draft-forget)
+               (research--draft-show status title))
+              (_
+               (research--draft-forget)
+               (let ((code (or (alist-get 'error status) "failed")))
+                 (message "El borrador %s no se escribió: %s" id
+                          (or (cdr (assoc code research--draft-errors))
+                              (cdr (assoc code research--error-messages))
+                              code))))))
+        (research-error
+         ;; The app may be busy or restarting: give up only after a few failures in a row.
+         (let ((failures (1+ (plist-get research--draft :failures))))
+           (plist-put research--draft :failures failures)
+           (when (>= failures 3)
+             (research--draft-forget)
+             (message "Dejé de seguir el borrador %s: %s.  Míralo en la app («Redacción → Borrador»)"
+                      id (research--error-message err)))))))))
+
+(defun research--draft-show (answer title)
+  "Open ANSWER, the `draft_status' of a written draft, in a new buffer.
+The buffer is `*research-draft*', in Org; TITLE is the one asked for,
+when the answer has none.  Returns the buffer."
+  (let ((buffer (generate-new-buffer "*research-draft*")))
+    (with-current-buffer buffer
+      (org-mode)
+      (insert (format "#+title: %s\n\n" (or (alist-get 'title answer) title)) (or (alist-get 'text answer) "") "\n")
+      (goto-char (point-min))
+      (set-buffer-modified-p nil))
+    (pop-to-buffer buffer)
+    (message "Borrador %s: %d citas sin verificar, %d fuera de la selección, %d sin cita%s (US$%.2f)"
+             (alist-get 'draft_id answer)
+             (or (alist-get 'unverified answer) 0) (or (alist-get 'outside answer) 0)
+             (or (alist-get 'uncited answer) 0)
+             (if (equal (alist-get 'status answer) "stopped") "; se detuvo" "")
+             (or (alist-get 'costUsd answer) 0))
+    buffer))
+
+;;;###autoload
+(defun research-draft-stop (&optional id)
+  "Stop the draft `research-draft' is following (or the draft ID).
+What Claude wrote so far is kept as a stopped version and opens as usual."
+  (interactive)
+  (research--with-errors
+    (let ((id (or id (plist-get research--draft :id)
+                  (let ((typed (read-string "Id del borrador: ")))
+                    (if (string-empty-p typed) (user-error "No hay un borrador en curso") typed)))))
+      (if (alist-get 'stopping (research-call "draft_stop" `((draft_id . ,id))))
+          (message "Deteniendo el borrador %s…" id)
+        (message "El borrador %s ya no se está escribiendo" id)))))
 
 ;;;###autoload
 (defun research-check-citations-with-claude (&optional beg end)
@@ -856,6 +955,7 @@ request.  Shows the estimated cost and asks first."
     (define-key map (kbd "f") #'research-find-passage)
     (define-key map (kbd "a") #'research-open-citation-at-point)
     (define-key map (kbd "d") #'research-draft)
+    (define-key map (kbd "D") #'research-draft-stop)
     (define-key map (kbd "v") #'research-check-citations-with-claude)
     (define-key map (kbd "p") #'research-propose-outline)
     (define-key map (kbd "s") #'research-style-review)

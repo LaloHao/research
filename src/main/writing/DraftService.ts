@@ -37,6 +37,14 @@ import type { ProjectStore } from '../project/ProjectStore'
 import { AGENT_TIMEOUT_MS } from '../relations/RelationSuggester'
 import { DRAFT_MAX_TOOL_CALLS, draftInput, draftSystemPrompt } from './draftPrompt'
 
+/** The local API asked for a draft while the one it started before is still being written. */
+export class ApiDraftRunning extends Error {
+  constructor(readonly draftId: string | null) {
+    super('A draft started from the API is still being written')
+    this.name = 'ApiDraftRunning'
+  }
+}
+
 export interface DraftServiceDeps {
   store: ProjectStore
   cache: IndexCache
@@ -74,10 +82,25 @@ interface Run {
   seq: number
   done: Promise<void>
   log: AgentRunLog | null
-  /** How the version ended, once `done`: stopped, or the error code the stream reported. */
-  outcome?: { stopped: boolean; error: string | null }
+  /** How the version ended, once `done`. */
+  outcome?: DraftOutcome
 }
 
+/** How a version ended: stopped, or the error code the stream reported. */
+export interface DraftOutcome {
+  stopped: boolean
+  error: string | null
+}
+
+/** A version being written, as a caller polling it sees it. */
+export interface DraftProgress {
+  /** Characters of the current turn so far. */
+  chars: number
+  tools: number
+}
+
+/** How many ended runs keep their outcome (for a caller that polls, see `outcome`). */
+const KEPT_OUTCOMES = 100
 const SEARCH_CHARS = 200_000
 const MAX_WRITE_ATTEMPTS = 3
 /** The summary field each chosen paper shows Claude: its one-liner («en pocas palabras»). */
@@ -113,6 +136,10 @@ export class DraftService {
   private readonly changedAt = new Map<string, number>()
   /** The last write queued for each draft (see update). */
   private readonly writing = new Map<string, Promise<unknown>>()
+  /** How the last runs ended, by draft (oldest first), so a run that failed at once still reports why. */
+  private readonly outcomes = new Map<string, DraftOutcome>()
+  /** The draft the local API is having written, from its admission to its end: one at a time. */
+  private apiRun: { id: string | null } | null = null
 
   constructor(private readonly deps: DraftServiceDeps) {}
 
@@ -195,19 +222,38 @@ export class DraftService {
    * now). Resolves with the draft's id once the run is admitted and the draft written; over a cap nothing is written.
    * The caller asked the user first with `writing.plan('draft')` (the run IPC checks `confirmed`).
    */
-  run(input: DraftInput, draftId: string | null): Promise<string> {
-    return this.track(this.runNow(input, draftId))
+  run(input: DraftInput, draftId: string | null, opts: { fromApi?: boolean } = {}): Promise<string> {
+    let slot: { id: string | null } | null = null
+    if (opts.fromApi) {
+      // Checked and taken in the same tick, so two calls at once cannot both start a paid draft.
+      if (this.apiRun) return Promise.reject(new ApiDraftRunning(this.apiRun.id))
+      slot = this.apiRun = { id: null }
+    }
+    const work = this.track(this.runNow(input, draftId, slot))
+    if (slot) {
+      const taken = slot
+      work.catch(() => {
+        if (this.apiRun === taken) this.apiRun = null
+      })
+    }
+    return work
   }
 
-  /**
-   * For a caller that waits for the whole version (the local API): resolves once the run of `id` ends, with how it
-   * ended (the window follows the stream instead). A draft not being written resolves at once, as finished.
-   */
-  async finished(id: string): Promise<{ stopped: boolean; error: string | null }> {
+  /** The draft the local API started and is still being written (null when none): the API starts one at a time. */
+  apiDraft(): string | null {
+    return this.apiRun?.id ?? null
+  }
+
+  /** The version of `id` being written now (null when none), for a caller that polls instead of following the stream. */
+  progress(id: string): DraftProgress | null {
+    if (this.sending.has(id)) return { chars: 0, tools: 0 }
     const run = this.runs.get(id)
-    if (!run) return { stopped: false, error: null }
-    await run.done
-    return run.outcome ?? { stopped: false, error: null }
+    return run ? { chars: run.text.length, tools: run.tools } : null
+  }
+
+  /** How the last run of `id` in this app session ended; null when none ended recently. */
+  outcome(id: string): DraftOutcome | null {
+    return this.outcomes.get(id) ?? null
   }
 
   /** «Detener»: what arrived is kept as a stopped version. */
@@ -294,7 +340,7 @@ export class DraftService {
     return { title, purpose, rq, papers, length: input.length, model: input.model }
   }
 
-  private async runNow(raw: DraftInput, draftId: string | null): Promise<string> {
+  private async runNow(raw: DraftInput, draftId: string | null, slot: { id: string | null } | null): Promise<string> {
     if (this.closed) throw new UserFacingError('draft_busy')
     if (draftId !== null && !DRAFT_ID.test(draftId)) throw new UserFacingError('draft_not_found')
     if (draftId !== null && this.busy(draftId)) throw new UserFacingError('draft_busy')
@@ -304,6 +350,7 @@ export class DraftService {
       if (!e.file) throw new UserFacingError('draft_invalid')
     }
     const id = draftId ?? newChatId(this.now(), this.deps.randomHex?.() ?? randomBytes(2).toString('hex'))
+    if (slot) slot.id = id
     this.sending.add(id)
     const run: Run = { controller: new AbortController(), text: '', tools: 0, seq: streamSeq, done: Promise.resolve(), log: null }
     let admitted!: () => void
@@ -325,6 +372,8 @@ export class DraftService {
       .finally(() => {
         this.sending.delete(id)
         if (this.runs.get(id) === run) this.runs.delete(id)
+        if (run.outcome) this.keepOutcome(id, run.outcome)
+        if (slot && this.apiRun === slot) this.apiRun = null
       })
     await ready
     return id
@@ -417,6 +466,12 @@ export class DraftService {
         this.push(id, run, { kind: 'error', error: run.outcome.error! })
       }
     }
+  }
+
+  private keepOutcome(id: string, outcome: DraftOutcome): void {
+    this.outcomes.delete(id)
+    this.outcomes.set(id, outcome)
+    if (this.outcomes.size > KEPT_OUTCOMES) this.outcomes.delete(this.outcomes.keys().next().value!)
   }
 
   private async appendVersion(id: string, version: DraftFile['meta']['versions'][number], text: string): Promise<void> {

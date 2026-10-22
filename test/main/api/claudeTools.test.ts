@@ -5,7 +5,7 @@ import type { ApiContext } from '../../../src/main/api/registry'
 import { IndexCache } from '../../../src/main/cache/IndexCache'
 import { BudgetGuard, limitsFromConfig } from '../../../src/main/llm/BudgetGuard'
 import { CostLedger } from '../../../src/main/llm/CostLedger'
-import type { CompleteRequest, CompleteResult } from '../../../src/main/llm/LlmProvider'
+import { LlmError, type CompleteRequest, type CompleteResult } from '../../../src/main/llm/LlmProvider'
 import { MapService } from '../../../src/main/map/MapService'
 import { libraryTools } from '../../../src/main/mcp/libraryTools'
 import { ProjectStore } from '../../../src/main/project/ProjectStore'
@@ -101,6 +101,11 @@ const ok = async (server: LocalApiServerHandle, name: string, args: Record<strin
   return JSON.parse(out.text)
 }
 
+async function until(done: () => boolean): Promise<void> {
+  for (let i = 0; i < 200 && !done(); i++) await new Promise((r) => setTimeout(r, 10))
+  expect(done()).toBe(true)
+}
+
 const costs = async (store: ProjectStore) => (await store.readCosts()).map((c) => [c.operation, c.cost_usd])
 
 describe('local API: costly tools of «Redacción»', () => {
@@ -163,28 +168,100 @@ describe('local API: costly tools of «Redacción»', () => {
     expect(await costs(store)).toEqual([['style', 0.02]])
   })
 
-  it('draft: creates a draft, waits for it and answers its text converted, charged once', async () => {
+  it('draft: answers at once with its id; draft_status follows it to its text converted, charged once', async () => {
     const text = `Online parsers exist [[${DRAIN_ID}|p. 1|"Drain parses log messages online"]]. Everyone agrees [[sin cita]]. Loghub too [[${LOGHUB_ID}|p. 1|"Loghub is a large collection of system log datasets"]].`
     const { store, provider, ctx, drafts } = await project([], [chatAnswer(text, 0.12)])
     const server = await serve(ctx)
-    const args = { title: 'Log parsing', purpose: 'Compare online parsers.', keys: [DRAIN_ID], length: 'short', format: 'latex' }
-    expect(await ok(server, 'draft', args)).toMatchObject({ confirmation_required: true, operation: 'draft', papers: 1, length: 'short' })
+    const args = { title: 'Log parsing', purpose: 'Compare online parsers.', keys: [DRAIN_ID], length: 'short' }
+    expect(await ok(server, 'draft', args)).toMatchObject({ confirmation_required: true, operation: 'draft', papers: 1, length: 'short', running_draft: null })
     expect(provider.chatCalls).toHaveLength(0)
 
-    const out = await ok(server, 'draft', { ...args, confirmed: true })
-    expect(out).toMatchObject({ title: 'Log parsing', format: 'latex', stopped: false, unverified: 0, outside: 1, uncited: 1, costUsd: 0.12 })
+    const started = await ok(server, 'draft', { ...args, confirmed: true })
+    expect(started).toMatchObject({ status: 'running', costUsd: 0 })
+    await drafts.idle()
+    const out = await ok(server, 'draft_status', { draft_id: started.draft_id, format: 'latex' })
+    expect(out).toMatchObject({ status: 'done', title: 'Log parsing', format: 'latex', unverified: 0, outside: 1, uncited: 1, costUsd: 0.12 })
     expect(out.text).toContain(`\\cite[p.~1]{${DRAIN_ID}}`)
     expect(out.text).toContain('[SIN CITA]')
-    expect(drafts.list().map((d) => d.id)).toEqual([out.draft_id])
+    expect(drafts.list().map((d) => d.id)).toEqual([started.draft_id])
     expect(await costs(store)).toEqual([['draft', 0.12]])
   })
 
-  it('draft: a run that fails after it started answers its error code', async () => {
-    const { ctx } = await project([], [new Error('boom')])
+  it('draft: one at a time from the API; draft_stop keeps what arrived and a new one may start then', async () => {
+    let release!: () => void
+    const waiting = new Promise<void>((r) => (release = r))
+    const slow: ChatResponse = async (req, emit) => {
+      emit({ kind: 'turn' })
+      emit({ kind: 'delta', text: 'Parsers parse.' })
+      await new Promise<void>((resolve) => req.signal?.addEventListener('abort', () => resolve(), { once: true }))
+      release()
+      return chatAnswer('never')
+    }
+    const { store, provider, ctx, drafts } = await project([], [slow, chatAnswer('Second.', 0.05)])
     const server = await serve(ctx)
-    const out = await call(server, 'draft', { title: 'T', keys: [DRAIN_ID], confirmed: true })
-    expect(out.isError).toBe(true)
-    expect(out.text).toMatch(/^[a-z_]+: /)
+    const args = { title: 'T', keys: [DRAIN_ID] }
+    const first = await ok(server, 'draft', { ...args, confirmed: true })
+    await until(() => drafts.progress(first.draft_id)?.chars === 14)
+    expect(await ok(server, 'draft_status', { draft_id: first.draft_id })).toMatchObject({ status: 'running', chars: 14 })
+    expect(await ok(server, 'draft', args)).toMatchObject({ confirmation_required: true, running_draft: first.draft_id })
+    // A retry while it runs never starts a second paid draft.
+    const again = await call(server, 'draft', { ...args, confirmed: true })
+    expect(again.isError).toBe(true)
+    expect(again.text).toMatch(/^busy: /)
+    expect(provider.chatCalls).toHaveLength(1)
+
+    expect(await ok(server, 'draft_stop', { draft_id: first.draft_id })).toEqual({ draft_id: first.draft_id, stopping: true })
+    await waiting
+    await drafts.idle()
+    expect(await ok(server, 'draft_status', { draft_id: first.draft_id })).toMatchObject({ status: 'stopped', text: 'Parsers parse.' })
+    expect(await ok(server, 'draft_stop', { draft_id: first.draft_id })).toMatchObject({ stopping: false })
+
+    const second = await ok(server, 'draft', { ...args, confirmed: true })
+    await drafts.idle()
+    expect(await ok(server, 'draft_status', { draft_id: second.draft_id })).toMatchObject({ status: 'done', text: 'Second.' })
+    expect((await costs(store)).map(([op]) => op)).toEqual(['draft', 'draft'])
+  })
+
+  it('draft_status: a run that fails right after it started reports its real error code', async () => {
+    const { ctx, drafts } = await project([], [new LlmError('llm_quota', 0)])
+    const server = await serve(ctx)
+    const started = await ok(server, 'draft', { title: 'T', keys: [DRAIN_ID], confirmed: true })
+    await drafts.idle()
+    expect(await ok(server, 'draft_status', { draft_id: started.draft_id })).toEqual({ draft_id: started.draft_id, status: 'error', error: 'llm_quota' })
+    expect((await call(server, 'draft_status', { draft_id: '20260101-000000-abcd' })).text).toMatch(/^not_found: /)
+  })
+
+  it('a check whose caller hangs up stops, and the project close stops and awaits an API run', async () => {
+    let calls = 0
+    const waitAbort = (req: CompleteRequest): Promise<CompleteResult> =>
+      new Promise((_resolve, reject) => {
+        calls++
+        req.signal?.addEventListener('abort', () => reject(new DOMException('Stopped', 'AbortError')), { once: true })
+      })
+    const { ctx, provider } = await project([])
+    provider.complete = waitAbort
+    const writing = ctx.writing as WritingService
+    const server = await serve(ctx)
+    const hangUp = new AbortController()
+    const request = fetch(server.url, {
+      method: 'POST',
+      signal: hangUp.signal,
+      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'style', arguments: { text: 'It parse logs.', confirmed: true } } })
+    }).catch(() => null)
+    await until(() => writing.runningCount === 1)
+    hangUp.abort()
+    await request
+    await until(() => writing.runningCount === 0)
+
+    const pending = call(server, 'style', { text: 'It parse logs.', confirmed: true })
+    await until(() => writing.runningCount === 1)
+    await writing.close()
+    expect(writing.runningCount).toBe(0)
+    expect((await pending).isError).toBe(true)
+    expect(calls).toBe(2)
+    // Closed: no new run starts.
+    expect((await call(server, 'style', { text: 'It parse logs.', confirmed: true })).text).toMatch(/^llm_unavailable: /)
   })
 
   it('stays refused while Settings does not allow costly operations', async () => {

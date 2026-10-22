@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { allowedHost, allowedOrigin, isLoopbackAddress, startLocalApiServer, type LocalApiServerHandle } from '../../../src/main/api/LocalApiServer'
-import { costlyTool, type ApiContext, type ApiTool } from '../../../src/main/api/registry'
+import { costlyTool, freeTool, type ApiContext, type ApiTool } from '../../../src/main/api/registry'
 import { WRITING_API_TOOLS } from '../../../src/main/api/writingTools'
 import { IndexCache } from '../../../src/main/cache/IndexCache'
 import { BudgetGuard, limitsFromConfig } from '../../../src/main/llm/BudgetGuard'
@@ -263,5 +263,42 @@ describe('local API: costly tools', () => {
     runs.length = 0
     expect((await call(server, 'fake_draft', { title: 'Intro', confirmed: true })).text).toMatch(/^budget_exceeded: /)
     expect(runs).toEqual([])
+  })
+})
+
+describe('local API: closing', () => {
+  it('stops listening at once and waits for the calls in progress, at most its grace period', async () => {
+    let release!: () => void
+    const held = new Promise<void>((r) => (release = r))
+    const slow = freeTool({
+      name: 'slow',
+      description: 'Answers when released',
+      input: {},
+      async run() {
+        await held
+        return { done: true }
+      }
+    })
+    const never = freeTool({ name: 'never', description: 'Never answers', input: {}, run: () => new Promise(() => undefined) })
+    const { ctx } = await project()
+    const server = await startLocalApiServer({ port: 0, token: () => TOKEN, context: () => ctx, allowCostly: () => false, tools: [slow, never] })
+    const pending = call(server, 'slow')
+    await new Promise((r) => setTimeout(r, 50))
+    let closed = false
+    const closing = server.close(5_000).then(() => (closed = true))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(closed).toBe(false)
+    await expect(fetch(server.url, { method: 'POST' })).rejects.toThrow()
+    release()
+    expect(JSON.parse((await pending).text)).toEqual({ done: true })
+    await closing
+
+    const other = await startLocalApiServer({ port: 0, token: () => TOKEN, context: () => ctx, allowCostly: () => false, tools: [slow, never] })
+    const lost = call(other, 'never').catch(() => 'hung up')
+    await new Promise((r) => setTimeout(r, 50))
+    const started = Date.now()
+    await other.close(100)
+    expect(Date.now() - started).toBeLessThan(2_000)
+    expect(await lost).toBe('hung up')
   })
 })
