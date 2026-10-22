@@ -8,7 +8,10 @@ import { CANDIDATE_DIRECTIONS, CHART_KINDS, CITATIONS_STATUSES } from '../../src
 import { LLM_MODELS, RESEARCH_TYPES, SUMMARY_FIELD_KEYS } from '../../src/shared/summary'
 import type { CardStatus } from '../../src/renderer/lib/summaryView'
 import { SUMMARY_FILTERS } from '../../src/renderer/lib/badges'
-import { MAP_TABS, MAPPING_TABS, VIEWS } from '../../src/renderer/lib/navigation'
+import { MAP_TABS, MAPPING_TABS, VIEWS, WRITING_TABS } from '../../src/renderer/lib/navigation'
+import { SKIP_REASONS } from '../../src/shared/writing/api'
+import { BIB_FIELDS_CHECKED, BIB_ORDERS } from '../../src/shared/writing/bibtex'
+import { CITE_FORMATS, KEY_STATES } from '../../src/shared/writing/citations'
 import { DUPLICATE_REASONS, OPENALEX_TYPES, PHASE_STATES, PHASES, QUEUE_FILTERS, SNOWBALL_DIRECTIONS } from '../../src/shared/mapping'
 import { SETTINGS_TABS } from '../../src/renderer/lib/settingsTabs'
 import { RELATION_TYPES } from '../../src/shared/typedRelations'
@@ -302,7 +305,14 @@ describe('es.json covers every code the UI can receive', () => {
       'expires_other'
     ].map((k) => `chat.actions.${k}`),
     'chat.actions.review_status.verified',
-    'chat.actions.review_status.generated'
+    'chat.actions.review_status.generated',
+    ...WRITING_TABS.map((tab) => `writing.tabs.${tab}`),
+    ...CITE_FORMATS.map((f) => `writing.format.formats.${f}`),
+    ...KEY_STATES.map((k) => `writing.key_state.${k}`),
+    ...SKIP_REASONS.map((r) => `writing.bibtex.skip_reasons.${r}`),
+    ...BIB_ORDERS.map((o) => `writing.bibtex.orders.${o}`),
+    ...BIB_FIELDS_CHECKED.map((f) => `writing.bibtex.fields.${f}`),
+    ...['budget_draft', 'budget_cite_check', 'budget_outline', 'budget_style', 'budget_writing_help'].map((k) => `settings.${k}`)
   ])('%s', (path) => {
     expect(typeof lookup(path)).toBe('string')
   })
@@ -323,6 +333,20 @@ describe('mapping strings', () => {
     const dir = new URL('../../src/renderer/components/mappings/', import.meta.url)
     const files = [new URL('../../src/renderer/lib/mappings.ts', import.meta.url), ...(existsSync(dir) ? readdirSync(dir).map((name) => new URL(name, dir)) : [])]
     const missing = files.flatMap((file) => keysIn(readFileSync(file, 'utf8'))).filter((key) => typeof lookup(key) !== 'string' && typeof lookup(`${key}_other`) !== 'string')
+    expect(missing).toEqual([])
+  })
+})
+
+describe('writing strings', () => {
+  /** Literal `t('writing.…')` keys of a source file (template keys are covered by the lists above). */
+  const keysIn = (text: string): string[] => [...text.matchAll(/\bt\(\s*'(writing\.[A-Za-z0-9_.-]+)'/g)].map((m) => m[1])
+
+  it('exist for every literal key the writing components use', () => {
+    const dir = new URL('../../src/renderer/components/writing/', import.meta.url)
+    const files = existsSync(dir) ? readdirSync(dir).map((name) => new URL(name, dir)) : []
+    const keys = files.flatMap((file) => keysIn(readFileSync(file, 'utf8')))
+    expect(keys.length).toBeGreaterThan(50)
+    const missing = keys.filter((key) => typeof lookup(key) !== 'string' && typeof lookup(`${key}_other`) !== 'string')
     expect(missing).toEqual([])
   })
 })

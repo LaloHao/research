@@ -1276,5 +1276,158 @@
       "minutes": "Cada (minutos)",
       "minutes_help": "Un número entero entre 5 y 120."
     }
+  },
+  "writing": {
+    "tabs": {
+      "draft": "Borrador",
+      "check": "Verificar citas",
+      "outline": "Esquema",
+      "bibtex": "BibTeX",
+      "style": "Estilo"
+    },
+    "coming_soon": "Disponible pronto",
+    "copy": "Copiar",
+    "copied": "Copiado al portapapeles.",
+    "saved": "Guardado en {{path}}",
+    "format": {
+      "label": "Formato de salida",
+      "command": "Comando de cita",
+      "input": "Formato del texto",
+      "auto": "Detectar ({{format}})",
+      "formats": {
+        "org": "Org (org-cite)",
+        "latex": "LaTeX",
+        "markdown": "Markdown (pandoc)"
+      }
+    },
+    "key_state": {
+      "ok": "con texto",
+      "unknown": "no está en la biblioteca",
+      "trashed": "en la papelera",
+      "no_text": "sin texto indexado"
+    },
+    "draft": {
+      "title": "Borrador con citas verificadas",
+      "intro": "Claude escribe una sección a partir de los papers que elijas: cada afirmación lleva su cita textual y su página, y la app las verifica contra el texto. Lo copias o lo guardas como Org, LaTeX o Markdown.",
+      "run": "Generar borrador"
+    },
+    "style": {
+      "title": "Revisión de estilo",
+      "intro": "Claude revisa la claridad, la concisión, el registro académico, la ortografía y la coherencia de un texto que pegues, sin tocar citas, matemáticas ni comandos LaTeX. Tú aceptas o rechazas cada sugerencia.",
+      "run": "Revisar estilo"
+    },
+    "check": {
+      "intro": "Pega un texto en Org, LaTeX o Markdown: ves cada cita con su oración y qué claves no se pueden verificar. Este paso es local y gratis.",
+      "chars": "{{length}} / {{max}} caracteres",
+      "text_label": "Texto a verificar",
+      "placeholder": "Pega aquí un párrafo, una sección o un capítulo…",
+      "too_long": "El texto supera los {{max}} caracteres: acórtalo o verifícalo por partes.",
+      "summary_one": "{{count}} cita, {{keys}} claves distintas",
+      "summary_other": "{{count}} citas, {{keys}} claves distintas",
+      "count_unknown_one": "{{count}} clave desconocida",
+      "count_unknown_other": "{{count}} claves desconocidas",
+      "count_trashed_one": "{{count}} en la papelera",
+      "count_trashed_other": "{{count}} en la papelera",
+      "count_no_text_one": "{{count}} sin texto indexado",
+      "count_no_text_other": "{{count}} sin texto indexado",
+      "count_duplicates_one": "{{count}} repetida",
+      "count_duplicates_other": "{{count}} repetidas",
+      "none": "No encontré citas en el texto.",
+      "duplicate": "{{key}} repetida en la oración",
+      "claude_title": "Verificar con Claude",
+      "claude_intro": "Claude revisará si cada paper citado respalda la oración que lo cita, con la frase textual y su página verificadas por la app.",
+      "claude_run": "Verificar con Claude"
+    },
+    "bibtex": {
+      "intro": "Genera un .bib solo con las entradas de la biblioteca que cita un capítulo. Si eliges un archivo, también se leen los que incluye (\\input, \\include, \\subfile, #+INCLUDE) dentro de su carpeta.",
+      "source": "Origen",
+      "sources": {
+        "file": "Archivo",
+        "text": "Pegar texto"
+      },
+      "choose": "Elegir archivo…",
+      "no_file": "Ningún archivo elegido",
+      "text_label": "Texto con citas",
+      "placeholder": "Pega aquí el texto con las citas…",
+      "too_long": "El texto es demasiado largo: elige el archivo en lugar de pegarlo.",
+      "order": "Orden",
+      "orders": {
+        "appearance": "Orden de aparición",
+        "alphabetical": "Alfabético por clave"
+      },
+      "generate": "Generar .bib",
+      "generating": "Generando…",
+      "save": "Guardar .bib…",
+      "output_label": "Contenido del .bib",
+      "default_name": "capitulo",
+      "summary_one": "{{count}} clave citada ({{citations}} citas); {{entries}} entradas en el .bib",
+      "summary_other": "{{count}} claves citadas ({{citations}} citas); {{entries}} entradas en el .bib",
+      "files_one": "{{count}} archivo leído",
+      "files_other": "{{count}} archivos leídos",
+      "file_citations_one": "{{count}} cita",
+      "file_citations_other": "{{count}} citas",
+      "skipped_title": "Inclusiones que no se siguieron:",
+      "in_file": "en {{file}}",
+      "skip_reasons": {
+        "outside_folder": "está fuera de la carpeta del archivo elegido",
+        "missing": "no se encontró o no se pudo leer",
+        "cycle": "se incluye a sí mismo (ciclo)",
+        "too_deep": "demasiados niveles de inclusión",
+        "too_large": "el archivo es demasiado grande",
+        "too_many": "demasiados archivos"
+      },
+      "unknown_title_one": "{{count}} clave no está en la biblioteca:",
+      "unknown_title_other": "{{count}} claves no están en la biblioteca:",
+      "suggestion": "¿quisiste decir {{key}} («{{title}}»)?",
+      "trashed_title_one": "{{count}} clave está en la papelera:",
+      "trashed_title_other": "{{count}} claves están en la papelera:",
+      "invalid_title_one": "{{count}} paper tiene un BibTeX que no se puede leer:",
+      "invalid_title_other": "{{count}} papers tienen un BibTeX que no se puede leer:",
+      "incomplete_title_one": "{{count}} entrada incompleta",
+      "incomplete_title_other": "{{count}} entradas incompletas",
+      "fields": {
+        "year": "sin año",
+        "authors": "sin autores",
+        "venue": "sin venue"
+      }
+    },
+    "outline": {
+      "intro": "Arma un índice del estado del arte con las facetas: una sección por valor, los papers de cada una con su resumen en pocas palabras y sus relaciones confirmadas, y los huecos. Sin Claude.",
+      "question": "Pregunta de investigación",
+      "no_question": "Ninguna",
+      "facet": "Faceta principal",
+      "secondary": "Faceta secundaria",
+      "no_secondary": "Ninguna",
+      "papers": "Papers",
+      "scopes": {
+        "library": "Toda la biblioteca",
+        "filtered_one": "Los filtrados en la biblioteca ({{count}})",
+        "filtered_other": "Los filtrados en la biblioteca ({{count}})",
+        "filtered_unknown": "Los filtrados en la biblioteca (abre la biblioteca primero)",
+        "mapping": "Los incluidos de un mapeo"
+      },
+      "mapping": "Mapeo",
+      "pick_mapping": "Elige un mapeo…",
+      "only_reviewed": "Solo revisadas (facetas verificadas o editadas)",
+      "no_facets": "El formulario no tiene facetas de una o varias opciones: agrégalas en Ajustes → Formulario.",
+      "summary": "{{papers}} papers, {{sections}} secciones",
+      "count_gaps_one": "{{count}} hueco",
+      "count_gaps_other": "{{count}} huecos",
+      "count_unclassified_one": "{{count}} sin clasificar",
+      "count_unclassified_other": "{{count}} sin clasificar",
+      "unclassified": "Sin clasificar",
+      "gap_value": "{{value}}: sin papers",
+      "gap_combination": "{{value}} × {{other}}: sin papers",
+      "gap": "Hueco: {{text}}",
+      "header": "Esquema por {{facet}}",
+      "header_secondary": "subsecciones por {{facet}}",
+      "header_question": "pregunta {{id}}: {{text}}",
+      "file_name": "esquema",
+      "save": "Guardar…",
+      "output_label": "Esquema exportado",
+      "claude_title": "Proponer redacción del esquema",
+      "claude_intro": "Claude propondrá títulos de sección, el orden, una frase de apertura por sección y por qué importa cada hueco para la tesis, con citas verificadas.",
+      "claude_run": "Proponer redacción del esquema"
+    }
   }
 }
