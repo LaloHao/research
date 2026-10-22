@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { ChatStreamUpdate } from '../shared/chat'
-import { CHAT_STREAM_CHANNEL, eventChannel, IPC, type ResearchApi } from '../shared/ipc'
+import { API_OPEN_PAPER_CHANNEL, CHAT_STREAM_CHANNEL, eventChannel, IPC, type ResearchApi } from '../shared/ipc'
+import type { ApiOpenPaper } from '../shared/localApi'
 
 const api: ResearchApi = {
   settings: {
@@ -176,6 +177,16 @@ const api: ResearchApi = {
   },
   app: {
     openLogs: () => ipcRenderer.invoke(IPC.appOpenLogs)
+  },
+  localApi: {
+    status: () => ipcRenderer.invoke(IPC.localApiStatus),
+    copyToken: () => ipcRenderer.invoke(IPC.localApiCopyToken),
+    regenerateToken: () => ipcRenderer.invoke(IPC.localApiRegenerateToken),
+    onOpenPaper: (callback) => {
+      const handler = (_e: Electron.IpcRendererEvent, request: ApiOpenPaper): void => callback(request)
+      ipcRenderer.on(API_OPEN_PAPER_CHANNEL, handler)
+      return () => ipcRenderer.removeListener(API_OPEN_PAPER_CHANNEL, handler)
+    }
   },
   log: {
     rendererError: (report) => ipcRenderer.send(IPC.logRendererError, report)

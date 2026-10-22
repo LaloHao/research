@@ -18,6 +18,7 @@ import { HttpClient, type FetchFn } from '../ingest/http'
 import { MetadataResolver } from '../ingest/MetadataResolver'
 import { JobQueue } from '../jobs/JobQueue'
 import { BudgetGuard, limitsFromConfig } from '../llm/BudgetGuard'
+import type { CappedDeps } from '../llm/cappedOperation'
 import { ClaudeCliProvider } from '../llm/ClaudeCliProvider'
 import { CostLedger } from '../llm/CostLedger'
 import type { LlmProvider } from '../llm/LlmProvider'
@@ -89,6 +90,8 @@ export class ProjectSession {
   private scheduler: SyncScheduler | null = null
   /** Trash operations in flight: they move whole folders, so the automatic sync waits for the next tick. */
   private trashOps = 0
+  /** Budget, ledger and caps of the project's Claude operations (`runCappedOperation`); set as the session starts. */
+  capped!: CappedDeps
 
   private constructor(
     readonly store: ProjectStore,
@@ -312,6 +315,7 @@ export class ProjectSession {
     })
     const writing = new WritingService({ store, cache, includedPapers: (id) => mappings.includedPapers(id) })
     const session: ProjectSession = new ProjectSession(store, cache, http, library, queue, summaries, citations, similarity, map, relations, sync, facets, chats, mappings, writing)
+    session.capped = { budget, ledger, limits: () => limitsFromConfig(store.config.llm) }
     await library.reindexAll()
     await relations.reindex()
     await facets.reindex()

@@ -21,6 +21,7 @@ import {
   YEAR_MAX,
   YEAR_MIN
 } from '../shared/mapping'
+import { API_PORTS } from '../shared/localApi'
 import { RENDERER_ERROR_KINDS } from '../shared/ipc'
 import { CANDIDATE_DIRECTIONS, OPENALEX_ID } from '../shared/relations'
 import { PDF_POLICIES } from '../shared/schemas'
@@ -70,7 +71,10 @@ export const ipcArgs = {
     contactEmail: z.string().optional(),
     openalexApiKey: z.string().optional(),
     autoSync: z.boolean().optional(),
-    autoSyncMinutes: z.number().int().min(AUTO_SYNC_MINUTES.min).max(AUTO_SYNC_MINUTES.max).optional()
+    autoSyncMinutes: z.number().int().min(AUTO_SYNC_MINUTES.min).max(AUTO_SYNC_MINUTES.max).optional(),
+    apiEnabled: z.boolean().optional(),
+    apiPort: z.number().int().min(API_PORTS.min).max(API_PORTS.max).optional(),
+    apiAllowCostly: z.boolean().optional()
   }),
   projectPatch: z.strictObject({
     name: z.string().trim().min(1).optional(),

@@ -9,6 +9,7 @@ import { LLM_MODELS, RESEARCH_TYPES, SUMMARY_FIELD_KEYS } from '../../src/shared
 import type { CardStatus } from '../../src/renderer/lib/summaryView'
 import { SUMMARY_FILTERS } from '../../src/renderer/lib/badges'
 import { MAP_TABS, MAPPING_TABS, VIEWS, WRITING_TABS } from '../../src/renderer/lib/navigation'
+import { API_START_ERRORS } from '../../src/shared/localApi'
 import { SKIP_REASONS } from '../../src/shared/writing/api'
 import { BIB_FIELDS_CHECKED, BIB_ORDERS } from '../../src/shared/writing/bibtex'
 import { CITE_FORMATS, KEY_STATES } from '../../src/shared/writing/citations'
@@ -309,6 +310,7 @@ describe('es.json covers every code the UI can receive', () => {
     ...WRITING_TABS.map((tab) => `writing.tabs.${tab}`),
     ...CITE_FORMATS.map((f) => `writing.format.formats.${f}`),
     ...KEY_STATES.map((k) => `writing.key_state.${k}`),
+    ...API_START_ERRORS.map((e) => `local_api.errors.${e}`),
     ...SKIP_REASONS.map((r) => `writing.bibtex.skip_reasons.${r}`),
     ...BIB_ORDERS.map((o) => `writing.bibtex.orders.${o}`),
     ...BIB_FIELDS_CHECKED.map((f) => `writing.bibtex.fields.${f}`),

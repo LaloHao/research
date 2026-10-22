@@ -31,6 +31,7 @@ import type {
   ModelInfo,
   RelationsDetail
 } from './relations'
+import type { ApiOpenPaper, LocalApiStatus } from './localApi'
 import type { PdfPolicy } from './schemas'
 import type { AppSettings } from './settings'
 import type { ExtractionForm, FormImpact, FormInfo, LlmConfig, LlmModel, ReviewItem, Section, SummaryPlan, ThesisContext } from './summary'
@@ -168,6 +169,9 @@ export const IPC = {
   closeDecision: 'window:close-decision',
   flushDone: 'window:flush-done',
   appOpenLogs: 'app:open-logs',
+  localApiStatus: 'local-api:status',
+  localApiCopyToken: 'local-api:copy-token',
+  localApiRegenerateToken: 'local-api:regenerate-token',
   logRendererError: 'log:renderer-error'
 } as const
 
@@ -201,6 +205,9 @@ export type ResearchEvent =
   | 'close-request'
 
 export const eventChannel = (event: ResearchEvent): string => `event:${event}`
+
+/** The push channel of the local API's `open_in_app` (`ApiOpenPaper`): show a paper at a page. */
+export const API_OPEN_PAPER_CHANNEL = 'local-api:open-paper'
 
 /** The push channel of `ChatStreamUpdate`s (an answer as it streams). */
 export const CHAT_STREAM_CHANNEL = 'chat:stream'
@@ -254,7 +261,7 @@ export interface ResearchApi {
   settings: {
     get(): Promise<AppSettings>
     /** Contact email, OpenAlex API key and the automatic sync; the last project path is managed by the main process. */
-    set(patch: Pick<Partial<AppSettings>, 'contactEmail' | 'openalexApiKey' | 'autoSync' | 'autoSyncMinutes'>): Promise<AppSettings>
+    set(patch: Pick<Partial<AppSettings>, 'contactEmail' | 'openalexApiKey' | 'autoSync' | 'autoSyncMinutes' | 'apiEnabled' | 'apiPort' | 'apiAllowCostly'>): Promise<AppSettings>
   }
   project: {
     current(): Promise<ProjectInfo | null>
@@ -484,6 +491,16 @@ export interface ResearchApi {
   app: {
     /** «Abrir carpeta de registros»: the folder of main.log, in the system's file manager. */
     openLogs(): Promise<ActionResult>
+  }
+  /** Settings → Aplicación → «API local» (turned on and off with `settings.set`). The token never reaches the window. */
+  localApi: {
+    status(): Promise<LocalApiStatus | null>
+    /** «Copiar token»: the main process puts it on the clipboard; false when there is none yet. */
+    copyToken(): Promise<boolean>
+    /** «Regenerar token». */
+    regenerateToken(): Promise<LocalApiStatus | null>
+    /** `open_in_app` from an editor: show this paper. */
+    onOpenPaper(callback: (request: ApiOpenPaper) => void): () => void
   }
   log: {
     /** Sends an uncaught error of the window to the app log; fire and forget. */

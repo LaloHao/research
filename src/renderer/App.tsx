@@ -6,6 +6,7 @@ import { ChatView } from './components/chat/ChatView'
 import { LibraryView } from './components/library/LibraryView'
 import { MapView } from './components/map/MapView'
 import { MappingsView } from './components/mappings/MappingsView'
+import { OpenFromEditor } from './components/OpenFromEditor'
 import { Rail } from './components/Rail'
 import { RelationsFileBanner } from './components/RelationsFileBanner'
 import { SettingsView } from './components/SettingsView'
@@ -132,6 +133,7 @@ function ProjectShell({ project, view, onViewChange: setView, inert }: ProjectSh
         {view === 'settings' && <SettingsView project={project} />}
       </main>
       <RelationsFileBanner />
+      <OpenFromEditor />
     </div>
   )
 }
