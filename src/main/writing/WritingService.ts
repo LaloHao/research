@@ -1,5 +1,5 @@
 import { PAPER_KEY, type PaperState } from '../../shared/chat'
-import { SUMMARY_TEXT_FIELDS, thesisLanguage, type Evidence } from '../../shared/summary'
+import { SUMMARY_TEXT_FIELDS, thesisLanguage, type Evidence, type LlmModel } from '../../shared/summary'
 import type { CiteCheckPlan, CiteCheckProgress, CiteCheckRequest, CiteCheckResult } from '../../shared/writing/citeCheck'
 import type { ChapterBib, OutlineData, OutlineScope, WritingLibrary, WritingPlanKind, WritingRunPlan } from '../../shared/writing/api'
 import { chapterBibReport, type BibLibraryPaper } from '../../shared/writing/bibtex'
@@ -73,8 +73,8 @@ export class WritingService {
   }
 
   /** What «Verificar con Claude» would check and cost, for the confirmation. */
-  citeCheckPlan(text: string, format: CiteFormat): Promise<CiteCheckPlan> {
-    return this.checker().plan(text, format)
+  citeCheckPlan(text: string, format: CiteFormat, model?: LlmModel): Promise<CiteCheckPlan> {
+    return this.checker().plan(text, format, model)
   }
 
   /**

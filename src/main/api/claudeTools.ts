@@ -118,9 +118,9 @@ export const CLAUDE_API_TOOLS: ApiTool[] = [
       model: modelOf,
       selfCapped: true,
       // The check's estimate depends on the text (calls × the learned estimate per call).
-      estimate: (ctx, args) => ctx.writing.citeCheckPlan(args.text, formatOf(args)),
+      estimate: (ctx, args) => ctx.writing.citeCheckPlan(args.text, formatOf(args), args.model),
       plan: async (ctx, args) => {
-        const plan = await ctx.writing.citeCheckPlan(args.text, formatOf(args))
+        const plan = await ctx.writing.citeCheckPlan(args.text, formatOf(args), args.model)
         return { sentences: plan.sentences, pairs: plan.pairs, batches: plan.batches, unverifiable: plan.unverifiable }
       }
     },

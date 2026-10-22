@@ -237,6 +237,8 @@ describe('CiteChecker', () => {
     const plan = await checker.plan(`${sentences(23)} Also \\cite{nobody2020,${LOGHUB_ID}}.`, 'latex')
     expect(provider.calls).toHaveLength(0)
     expect(plan).toMatchObject({ sentences: 24, pairs: 24, batches: 3, unverifiable: 1, perCallUsd: 0.2, estimateUsd: 0.5, capUsd: 0.5, model: 'sonnet' })
+    // The model asked for, not the project's.
+    expect((await checker.plan(sentences(1), 'latex', 'opus')).model).toBe('opus')
   })
 
   it('ranks passages with the local model when it is on disk', async () => {

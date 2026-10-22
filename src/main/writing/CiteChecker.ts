@@ -76,8 +76,8 @@ export class CiteChecker {
     return { budget: this.deps.budget, ledger: this.deps.ledger, limits: this.deps.limits }
   }
 
-  /** What the confirmation shows: what will be checked, in how many calls, and their estimate (at most the cap). */
-  async plan(text: string, format: CiteFormat): Promise<CiteCheckPlan> {
+  /** What the confirmation shows: what will be checked, in how many calls, and their estimate (at most the cap); `model` the one asked for. */
+  async plan(text: string, format: CiteFormat, model?: LlmModel): Promise<CiteCheckPlan> {
     const { sentences, work } = this.prepare(text, format)
     const base = await operationPlan(this.capped, 'cite_check')
     const batches = Math.ceil(work.length / MAX_SENTENCES_PER_CALL)
@@ -91,7 +91,7 @@ export class CiteChecker {
       pairs,
       batches,
       unverifiable,
-      model: this.deps.store.config.llm.model
+      model: model ?? this.deps.store.config.llm.model
     }
   }
 
