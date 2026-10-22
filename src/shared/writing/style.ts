@@ -7,7 +7,8 @@
  *   occurrences count), the suggestion must carry a `context`: a longer verbatim excerpt that occurs exactly once in the
  *   text and contains `original` exactly once; that occurrence is the one changed. Otherwise it is dropped as ambiguous
  *   (never «the first one»: a change in the wrong place is worse than none).
- * - The suggestion keeps every protected construct exactly as written and in the same order, adding or removing none:
+ * - The text with the suggestion applied keeps every protected construct exactly as written and in the same order,
+ *   adding or removing none, and the edit changes the count of none of their delimiters (`%`, `$`, `{`, `}`):
  *   citations (the citation parser's), math (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`, math environments), LaTeX commands and
  *   escapes (`\emph`, `\%`), and whole for the commands whose argument is a reference or a name (`\ref`, `\label`,
  *   `\begin{…}`, `\url`…), the app's citation markers, Org links (`[[…]]`, `[[…][…]]`), macros (`{{{…}}}`) and, in
@@ -289,19 +290,33 @@ export function protectedSpans(text: string, format: CiteFormat): Span[] {
   return merge(spans)
 }
 
+/** The characters whose count an edit must not change: they open or close math, groups and LaTeX comments. */
+const DELIMITERS: Record<CiteFormat, readonly string[]> = { latex: ['%', '$', '{', '}'], org: ['%', '$', '{', '}'], markdown: ['$'] }
+
+/** How many unescaped `ch` lie in `text[start, end)` (escapes judged on the whole text). */
+function countUnescaped(text: string, start: number, end: number, ch: string): number {
+  let n = 0
+  for (let i = start; i < end; i++) if (text[i] === ch && !escaped(text, i)) n++
+  return n
+}
+
 /**
- * Whether replacing `text[start, end)` by `suggestion` keeps every protected construct: the range never cuts through
- * one, and the suggestion has the same ones, written the same, in the same order. `spans` are the text's.
+ * Whether replacing `text[start, end)` by `suggestion` keeps every protected construct, judged on the result: the range
+ * never cuts through one, the new text has exactly the same protected constructs, written the same and in the same
+ * order (`kept`, the text's, as strings), and the edit adds or removes none of the characters that open or close them
+ * (unescaped `%`, `$`, `{`, `}` in LaTeX and Org; `$` in Markdown), so a `%` cannot comment out a citation that follows,
+ * nor a `$` or a brace swallow the text around it. `spans` are the text's.
  */
-export function keepsProtected(text: string, spans: Span[], start: number, end: number, suggestion: string, format: CiteFormat): boolean {
-  const inside: string[] = []
+export function keepsProtected(text: string, spans: Span[], kept: readonly string[], start: number, end: number, suggestion: string, format: CiteFormat): boolean {
   for (const s of spans) {
     if (s.end <= start || s.start >= end) continue
     if (s.start < start || s.end > end) return false
-    inside.push(text.slice(s.start, s.end))
   }
-  const proposed = protectedSpans(suggestion, format).map((s) => suggestion.slice(s.start, s.end))
-  return proposed.length === inside.length && proposed.every((p, i) => p === inside[i])
+  const result = text.slice(0, start) + suggestion + text.slice(end)
+  const after = start + suggestion.length
+  if (DELIMITERS[format].some((ch) => countUnescaped(text, start, end, ch) !== countUnescaped(result, start, after, ch))) return false
+  const now = protectedSpans(result, format)
+  return now.length === kept.length && now.every((p, i) => result.slice(p.start, p.end) === kept[i])
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -315,6 +330,7 @@ export function emptyDrops(): Record<StyleDropReason, number> {
 export function validateStyleSuggestions(text: string, format: CiteFormat, raw: RawStyleSuggestion[]): StyleReview {
   const dropped = emptyDrops()
   const spans = protectedSpans(text, format)
+  const kept = spans.map((p) => text.slice(p.start, p.end))
   const located: (Omit<StyleSuggestion, 'id'> & { order: number })[] = []
   raw.forEach((s, order) => {
     if (s.suggestion === s.original) {
@@ -326,7 +342,7 @@ export function validateStyleSuggestions(text: string, format: CiteFormat, raw: 
       dropped[where]++
       return
     }
-    if (!keepsProtected(text, spans, where.start, where.end, s.suggestion, format)) {
+    if (!keepsProtected(text, spans, kept, where.start, where.end, s.suggestion, format)) {
       dropped.protected++
       return
     }

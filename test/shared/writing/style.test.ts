@@ -169,6 +169,22 @@ describe('protected constructs', () => {
     expect(kept(t, 'is fast', 'is quick', 'markdown')).toBe(true)
   })
 
+  it('judges the result: an edit that breaks a construct after it is dropped', () => {
+    // A `%` would comment out the citation that follows on the line.
+    const latex = 'Accuracy rose by 50 percent \\cite{he2017drain} on average.'
+    expect(kept(latex, '50 percent', '50%')).toBe(false)
+    expect(kept(latex, '50 percent', 'fifty percent')).toBe(true)
+    // A `$` would open math that swallows the `$x$` after it.
+    const md = 'Cost is high when $x$ grows.'
+    expect(kept(md, 'Cost is high', 'Cost is $high', 'markdown')).toBe(false)
+    expect(kept(md, 'Cost is high', 'The cost is high', 'markdown')).toBe(true)
+    // Braces inside \emph{} would close it early and open a stray group.
+    const emph = 'We stress \\emph{this point} here.'
+    expect(kept(emph, 'this', 'this} and {that')).toBe(false)
+    expect(kept(emph, 'this', 'that')).toBe(true)
+    expect(kept('Org text {{{x}}}.', 'Org text', 'Org {text', 'org')).toBe(false)
+  })
+
   it('drops an original that cuts through a protected construct, even if the suggestion is plain', () => {
     const t = 'As shown by \\citet{smith2020} the method works.'
     expect(kept(t, 'by \\citet{smi', 'by \\citet{smi')).toBe(false)
