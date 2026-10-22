@@ -2,7 +2,7 @@ import { lstat } from 'node:fs/promises'
 import { extname, isAbsolute } from 'node:path'
 import { z } from 'zod'
 import { PAPER_KEY } from '../../shared/chat'
-import { MAX_BIB_TEXT_CHARS } from '../../shared/writing/api'
+import { MAX_BIB_TEXT_CHARS, type OutlineScope } from '../../shared/writing/api'
 import { BIB_ORDERS, chapterBibText, type ChapterBibReport } from '../../shared/writing/bibtex'
 import { CITE_FORMATS, detectFormat, parseCitations, resolveCitations, type CiteFormat } from '../../shared/writing/citations'
 import { buildOutline, renderOutline, type OutlineLabels } from '../../shared/writing/outline'
@@ -11,7 +11,7 @@ import { UserFacingError } from '../library/UserFacingError'
 import { foldQuery } from '../mcp/libraryTools'
 import { ApiError, freeTool, type ApiContext, type ApiTool } from './registry'
 
-const format = z.enum(CITE_FORMATS)
+export const format = z.enum(CITE_FORMATS)
 const text = z.string().max(MAX_BIB_TEXT_CHARS)
 const key = z.string().regex(PAPER_KEY).max(80).describe('Citation key of a library paper, e.g. he2017drain')
 /** The files `bibtex_for_file` accepts, as the app's own dialog does (and what `formatOfPath` reads). */
@@ -101,6 +101,38 @@ export function bestSentence(snippet: string, query: string): string {
   return best
 }
 
+/** The outline's choices, shared by `outline` and the costly `outline_proposal`. */
+export const OUTLINE_INPUT = {
+  scope: z.enum(['library', 'mapping', 'papers']).optional().describe('library (default), a mapping\'s included papers, or the given papers'),
+  mapping_id: z.string().max(80).optional(),
+  paper_ids: z.array(key).max(5000).optional(),
+  rq: z.string().regex(/^RQ[1-9][0-9]*$/).optional().describe('A research question of the thesis, e.g. RQ1'),
+  facet: z.string().max(80).optional().describe('Main facet key; the form\'s first one when missing'),
+  secondary: z.string().max(80).optional().describe('Secondary facet key'),
+  reviewed_only: z.boolean().optional().describe('Count only facet values the user verified or edited'),
+  format: format.optional().describe('org (default), latex or markdown')
+}
+type OutlineArgs = z.infer<z.ZodObject<typeof OUTLINE_INPUT>>
+
+/** The scope, facets and question the arguments name, checked against the form and the thesis. */
+export async function outlineChoice(ctx: ApiContext, args: OutlineArgs) {
+  const scope: OutlineScope =
+    args.scope === 'mapping'
+      ? { kind: 'mapping', mappingId: args.mapping_id ?? '' }
+      : args.scope === 'papers'
+        ? { kind: 'papers', ids: args.paper_ids ?? [] }
+        : { kind: 'library' }
+  const data = await ctx.writing.outlineData(scope)
+  if (data.facets.length === 0) throw new ApiError('no_facets', 'The extraction form has no single or multi facets to group by.')
+  const main = args.facet === undefined ? data.facets[0] : data.facets.find((f) => f.key === args.facet)
+  if (!main) throw new ApiError('not_found', `The form has no facet "${args.facet}". Facets: ${data.facets.map((f) => f.key).join(', ')}.`)
+  const secondary = args.secondary === undefined ? null : (data.facets.find((f) => f.key === args.secondary && f.key !== main.key) ?? null)
+  if (args.secondary !== undefined && !secondary) throw new ApiError('not_found', `The form has no other facet "${args.secondary}".`)
+  const question = args.rq === undefined ? null : (ctx.store.config.thesis.research_questions.find((q) => q.id === args.rq) ?? null)
+  if (args.rq !== undefined && !question) throw new ApiError('not_found', `The thesis has no research question ${args.rq}.`)
+  return { scope, data, main, secondary, question }
+}
+
 /** The free tools of the local API: local, read-only, no Claude. */
 export const WRITING_API_TOOLS: ApiTool[] = [
   freeTool({
@@ -181,31 +213,9 @@ export const WRITING_API_TOOLS: ApiTool[] = [
     name: 'outline',
     description:
       "The state-of-the-art outline the app's «Esquema» builds: one section per value of a facet (subsections by a second one), each paper with its one-liner and confirmed relations, and the gaps. Rendered as Org, LaTeX or Markdown.",
-    input: {
-      scope: z.enum(['library', 'mapping', 'papers']).optional().describe('library (default), a mapping\'s included papers, or the given papers'),
-      mapping_id: z.string().max(80).optional(),
-      paper_ids: z.array(key).max(5000).optional(),
-      rq: z.string().regex(/^RQ[1-9][0-9]*$/).optional().describe('A research question of the thesis, e.g. RQ1'),
-      facet: z.string().max(80).optional().describe('Main facet key; the form\'s first one when missing'),
-      secondary: z.string().max(80).optional().describe('Secondary facet key'),
-      reviewed_only: z.boolean().optional().describe('Count only facet values the user verified or edited'),
-      format: format.optional().describe('org (default), latex or markdown')
-    },
+    input: OUTLINE_INPUT,
     async run(ctx, args) {
-      const scope =
-        args.scope === 'mapping'
-          ? { kind: 'mapping' as const, mappingId: args.mapping_id ?? '' }
-          : args.scope === 'papers'
-            ? { kind: 'papers' as const, ids: args.paper_ids ?? [] }
-            : { kind: 'library' as const }
-      const data = await ctx.writing.outlineData(scope)
-      if (data.facets.length === 0) throw new ApiError('no_facets', 'The extraction form has no single or multi facets to group by.')
-      const main = args.facet === undefined ? data.facets[0] : data.facets.find((f) => f.key === args.facet)
-      if (!main) throw new ApiError('not_found', `The form has no facet "${args.facet}". Facets: ${data.facets.map((f) => f.key).join(', ')}.`)
-      const secondary = args.secondary === undefined ? null : (data.facets.find((f) => f.key === args.secondary && f.key !== main.key) ?? null)
-      if (args.secondary !== undefined && !secondary) throw new ApiError('not_found', `The form has no other facet "${args.secondary}".`)
-      const question = args.rq === undefined ? null : (ctx.store.config.thesis.research_questions.find((q) => q.id === args.rq) ?? null)
-      if (args.rq !== undefined && !question) throw new ApiError('not_found', `The thesis has no research question ${args.rq}.`)
+      const { data, main, secondary, question } = await outlineChoice(ctx, args)
       const outline = buildOutline({ papers: data.papers, facet: main, secondary, relations: data.relations, onlyReviewed: args.reviewed_only ?? false, question })
       const fmt = args.format ?? 'org'
       return {

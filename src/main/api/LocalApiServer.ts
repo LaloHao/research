@@ -3,10 +3,12 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { UserFacingError } from '../library/UserFacingError'
 import { LlmError } from '../llm/LlmProvider'
 import { defineLibraryTools, type Run, type ToolResult } from '../mcp/LibraryMcpServer'
 import { ToolError, type LibraryTools } from '../mcp/libraryTools'
 import { ApiError, callApiTool, noProject, toolInput, type ApiContext, type ApiTool } from './registry'
+import { CLAUDE_API_TOOLS } from './claudeTools'
 import { WRITING_API_TOOLS } from './writingTools'
 
 export const API_SERVER_NAME = 'research'
@@ -15,10 +17,10 @@ const MAX_BODY_BYTES = 8_000_000
 const MAX_ANSWER_CHARS = 20_000_000
 
 /**
- * The tools beyond the library's: the free writing tools, then the costly ones (none yet). A costly tool is added here
+ * The tools beyond the library's: the free writing tools, then the costly ones (claudeTools.ts). A costly tool is added
  * with `costlyTool` (see registry.ts); the gate, the plan and the cap come with it.
  */
-export const API_TOOLS: ApiTool[] = [...WRITING_API_TOOLS]
+export const API_TOOLS: ApiTool[] = [...WRITING_API_TOOLS, ...CLAUDE_API_TOOLS]
 
 export interface LocalApiServerOptions {
   /** 0 picks a free port (tests). */
@@ -88,6 +90,8 @@ function errorText(error: unknown): string {
   if (error instanceof ApiError) return `${error.code}: ${error.message}`
   if (error instanceof ToolError) return `invalid: ${error.message}`
   if (error instanceof LlmError) return `${error.code}: The Claude operation did not finish (${error.code}).`
+  // The services' codes (llm_unavailable, too_long, outline_too_large…), the same the window translates.
+  if (error instanceof UserFacingError) return `${error.code}: ${error.detail ?? error.code}`
   return 'failed: The tool failed.'
 }
 

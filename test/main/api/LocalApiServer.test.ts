@@ -210,7 +210,7 @@ describe('local API: tools', () => {
 })
 
 describe('local API: costly tools', () => {
-  const runs: number[] = []
+  const runs: (number | null)[] = []
   const fake = costlyTool({
     name: 'fake_draft',
     description: 'A fake costly tool',

@@ -1,6 +1,7 @@
 import { z, type ZodRawShape } from 'zod'
 import type { ApiOpenPaper } from '../../shared/localApi'
 import type { CostOperation } from '../../shared/summary'
+import type { WritingPlan } from '../../shared/writing/api'
 import type { IndexCache } from '../cache/IndexCache'
 import { operationPlan, runCappedOperation, type CappedDeps } from '../llm/cappedOperation'
 import type { LibraryTools } from '../mcp/libraryTools'
@@ -16,7 +17,7 @@ export interface ApiContext {
   cache: IndexCache
   /** The read-only library tools of the chat and the agent runs (src/main/mcp). */
   library: LibraryTools
-  writing: Pick<WritingService, 'bibFromText' | 'bibFromFile' | 'outlineData' | 'library'>
+  writing: Pick<WritingService, 'bibFromText' | 'bibFromFile' | 'outlineData' | 'library' | 'citeCheckPlan' | 'citeCheck' | 'proposeOutline' | 'reviewStyle'>
   /** Budget, ledger and caps, for `operationPlan` and `runCappedOperation`. */
   capped: CappedDeps
   /** Focuses the app's window and shows the paper at that page, the quote highlighted. */
@@ -61,9 +62,16 @@ export interface CostlyResult {
 /**
  * A tool that spends Claude quota (a draft, a citation check with Claude, an outline proposal, a style review). It is
  * refused unless Settings allows costly operations from the API. Without `confirmed: true` it only answers its plan
- * (`ApiPlan`: the learned estimate, its cap, the month, plus whatever `plan` adds, e.g. how many sentences it would
- * check); with it, `run` goes through `runCappedOperation` (admitted against the monthly cap, `maxUsd` its own cap,
- * charged to the ledger as `cost.kind`). `run` validates its model output itself, as the app's own operations do.
+ * (`ApiPlan`: the estimate, its cap, the month, plus whatever `plan` adds, e.g. how many sentences it would check).
+ *
+ * With it, the run is charged exactly once, in one of two ways:
+ * - by default the registry wraps `run` in `runCappedOperation` (admitted against the monthly cap, `maxUsd` its own
+ *   cap, charged to the ledger as `cost.kind`): for a tool that makes one provider call itself;
+ * - with `selfCapped`, `run` calls a service method that already goes through `runCappedOperation` (the app's own
+ *   «Redacción» operations: WritingService.citeCheck, proposeOutline, reviewStyle), so the registry does not wrap it
+ *   again and `maxUsd` is null. Wrapping it would admit and charge the same call twice.
+ *
+ * `run` validates its model output itself (the services do), as the app's own operations do.
  */
 export interface CostlyApiTool<S extends ZodRawShape = ZodRawShape> {
   name: string
@@ -72,9 +80,14 @@ export interface CostlyApiTool<S extends ZodRawShape = ZodRawShape> {
   cost: {
     kind: CostOperation
     model(ctx: ApiContext, args: z.infer<z.ZodObject<S>>): string
+    /** The confirmation's numbers when they depend on the arguments (the citation check's); `operationPlan` otherwise. */
+    estimate?(ctx: ApiContext, args: z.infer<z.ZodObject<S>>): Promise<WritingPlan>
+    /** Fields added to the plan (what the run would do). */
     plan?(ctx: ApiContext, args: z.infer<z.ZodObject<S>>): Promise<Record<string, unknown>>
+    /** `run` charges itself through `runCappedOperation`: the registry must not wrap it. */
+    selfCapped?: boolean
   }
-  run(ctx: ApiContext, args: z.infer<z.ZodObject<S>>, maxUsd: number): Promise<CostlyResult>
+  run(ctx: ApiContext, args: z.infer<z.ZodObject<S>>, maxUsd: number | null): Promise<CostlyResult>
 }
 
 // The registry holds tools of every input shape; `freeTool`/`costlyTool` keep each one typed where it is written.
@@ -117,7 +130,7 @@ export async function callApiTool(tool: ApiTool, ctx: ApiContext, args: Record<s
   const { confirmed, ...rest } = args
   const model = tool.cost.model(ctx, rest)
   if (confirmed !== true) {
-    const plan = await operationPlan(ctx.capped, tool.cost.kind)
+    const plan = tool.cost.estimate ? await tool.cost.estimate(ctx, rest) : await operationPlan(ctx.capped, tool.cost.kind)
     const extra = tool.cost.plan ? await tool.cost.plan(ctx, rest) : {}
     return {
       ...extra,
@@ -130,5 +143,6 @@ export async function callApiTool(tool: ApiTool, ctx: ApiContext, args: Record<s
       month_cap_usd: plan.monthCapUsd
     } satisfies ApiPlan
   }
+  if (tool.cost.selfCapped) return tool.run(ctx, rest, null)
   return runCappedOperation(ctx.capped, { kind: tool.cost.kind, model }, (maxUsd) => tool.run(ctx, rest, maxUsd))
 }
