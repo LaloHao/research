@@ -27,8 +27,9 @@ import { PDF_POLICIES } from '../shared/schemas'
 import { AUTO_SYNC_MINUTES, CLOSE_DECISIONS, CONFLICT_CHOICES, CONFLICT_ID, CONFLICT_VERSION, isRemoteUrl } from '../shared/sync'
 import { AUTO_SUGGEST_FACETS_AFTER_MAX, ExtractionFormSchema, FacetDefSchema, LLM_MODELS, ThesisContextSchema } from '../shared/summary'
 import { MAX_JUSTIFICATION, RELATION_ID, RELATION_STATUSES, RELATION_TYPES } from '../shared/typedRelations'
-import { MAX_BIB_TEXT_CHARS, MAX_CHECK_CHARS } from '../shared/writing/api'
+import { MAX_BIB_TEXT_CHARS, MAX_CHECK_CHARS, WRITING_PLAN_KINDS } from '../shared/writing/api'
 import { CITE_FORMATS } from '../shared/writing/citations'
+import { MAX_STYLE_CHARS, STYLE_FOCUSES } from '../shared/writing/style'
 
 const paperIdSchema = z.string().regex(/^[a-z][a-z0-9]*$/)
 const facetKeySchema = z.string().regex(/^[a-z][a-z0-9_]*$/)
@@ -42,6 +43,11 @@ const llmModelSchema = z.enum(LLM_MODELS)
 const recordIdSchema = z.string().regex(RECORD_ID)
 /** The most records a confirmed plan sends back (a mapping of many searches at their cap). */
 const MAX_PLAN_RECORDS = 100_000
+const outlineScopeSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('library') }),
+  z.strictObject({ kind: z.literal('papers'), ids: z.array(paperIdSchema).max(20_000) }),
+  z.strictObject({ kind: z.literal('mapping'), mappingId: z.string().regex(MAPPING_ID) })
+])
 const phaseSchema = z.enum(PHASES)
 const yearSchema = z.number().int().min(YEAR_MIN).max(YEAR_MAX).nullable()
 /** The protocol draft with every nested object strict as well: only the editable fields reach the service. */
@@ -249,11 +255,23 @@ export const ipcArgs = {
   checkText: z.string().max(MAX_CHECK_CHARS),
   citeFormat: z.enum(CITE_FORMATS),
   citeCheckRequest: z.strictObject({ text: z.string().max(MAX_CHECK_CHARS), format: z.enum(CITE_FORMATS), model: llmModelSchema.optional() }),
-  outlineScope: z.discriminatedUnion('kind', [
-    z.strictObject({ kind: z.literal('library') }),
-    z.strictObject({ kind: z.literal('papers'), ids: z.array(paperIdSchema).max(20_000) }),
-    z.strictObject({ kind: z.literal('mapping'), mappingId: z.string().regex(MAPPING_ID) })
-  ])
+  outlineScope: outlineScopeSchema,
+  writingPlanKind: z.enum(WRITING_PLAN_KINDS),
+  /** «Proponer redacción del esquema»: the outline's choices (main builds it again), never the outline itself. */
+  outlineRequest: z.strictObject({
+    scope: outlineScopeSchema,
+    facet: facetKeySchema,
+    secondary: facetKeySchema.nullable(),
+    onlyReviewed: z.boolean(),
+    questionId: z.string().regex(/^RQ[1-9][0-9]*$/).nullable(),
+    model: llmModelSchema.optional()
+  }),
+  styleRequest: z.strictObject({
+    text: z.string().min(1).max(MAX_STYLE_CHARS),
+    format: z.enum(CITE_FORMATS),
+    focus: z.array(z.enum(STYLE_FOCUSES)).min(1).max(STYLE_FOCUSES.length),
+    model: llmModelSchema.optional()
+  })
 }
 
 export class InvalidIpcArgument extends Error {

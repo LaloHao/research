@@ -9,6 +9,8 @@ import type { CountResult } from '../shared/relations'
 import type { FormImpact } from '../shared/summary'
 import type { DeletePlanResult, RestoreOutcome, TrashOutcome } from '../shared/trash'
 import type { ChapterBibResult, OutlineDataResult } from '../shared/writing/api'
+import type { OutlineProposalResult } from '../shared/writing/outlineProposal'
+import type { StyleReviewResult } from '../shared/writing/style'
 import type { CiteCheckPlanResult, CiteCheckRunResult } from '../shared/writing/citeCheck'
 import {
   IPC,
@@ -748,6 +750,28 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     try {
       const session = app.requireSession()
       return { ok: true, data: await session.track(session.writing.outlineData(scope)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+  // The Claude operations: the plan for the confirmation, then the run with the user's confirming click.
+  ipcMain.handle(IPC.writingPlan, (_e, rawKind: unknown) => app.requireSession().writing.plan(arg(ipcArgs.writingPlanKind, rawKind, 'kind')))
+  ipcMain.handle(IPC.writingProposeOutline, async (_e, rawReq: unknown, rawConfirmed: unknown): Promise<OutlineProposalResult> => {
+    const req = arg(ipcArgs.outlineRequest, rawReq, 'request')
+    arg(ipcArgs.confirmed, rawConfirmed, 'confirmed')
+    try {
+      const session = app.requireSession()
+      return { ok: true, run: await session.track(session.writing.proposeOutline(req)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+  ipcMain.handle(IPC.writingReviewStyle, async (_e, rawReq: unknown, rawConfirmed: unknown): Promise<StyleReviewResult> => {
+    const req = arg(ipcArgs.styleRequest, rawReq, 'request')
+    arg(ipcArgs.confirmed, rawConfirmed, 'confirmed')
+    try {
+      const session = app.requireSession()
+      return { ok: true, run: await session.track(session.writing.reviewStyle(req)) }
     } catch (error) {
       return { ok: false, error: toUserFacing(error).message }
     }

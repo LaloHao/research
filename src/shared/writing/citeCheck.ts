@@ -3,7 +3,7 @@
  * process (which runs the check), the window (which shows it and exports the report) and any later local API.
  */
 import type { LlmModel } from '../summary'
-import type { WritingPlan } from './api'
+import type { WritingRunPlan } from './api'
 import type { CiteFormat, KeyState } from './citations'
 
 /** Claude's verdict on one (sentence, paper) pair. */
@@ -93,7 +93,8 @@ export interface CiteCheckResult {
 }
 
 /** The confirmation's numbers: the check's estimate (per call × calls, at most the cap) and what it will check. */
-export interface CiteCheckPlan extends WritingPlan {
+/** A text-dependent plan: the shape of `writing.plan(kind)`'s (numbers and default model) plus what this text would check. */
+export interface CiteCheckPlan extends WritingRunPlan {
   /** Sentences with at least one key that can be checked, and their (sentence, key) pairs. */
   sentences: number
   pairs: number
@@ -102,8 +103,6 @@ export interface CiteCheckPlan extends WritingPlan {
   perCallUsd: number
   /** Pairs that cannot be checked (unknown, trashed or no text). */
   unverifiable: number
-  /** The project's default model. */
-  model: LlmModel
 }
 
 export interface CiteCheckProgress {

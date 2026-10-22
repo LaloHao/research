@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PaperDetail } from '../../../shared/library'
-import { LLM_MODELS, type LlmModel } from '../../../shared/summary'
+import type { LlmModel } from '../../../shared/summary'
 import type { CitationReport, CiteFormat } from '../../../shared/writing/citations'
 import { citeCheckMarkdown, entryOutcome, type CheckedSentence, type CiteCheckPlan, type CiteCheckProgress, type CiteCheckResult } from '../../../shared/writing/citeCheck'
 import { checkPlanLines, countsLine, endedLine, reportLabels, textSegments } from '../../lib/citeCheck'
 import { errorText } from '../../lib/errorText'
-import { trapTab } from '../../lib/focusTrap'
 import { EvidencePanel, type Picked } from '../review/EvidencePanel'
+import { ClaudeConfirm } from './ClaudeConfirm'
 
 const PROGRESS_MS = 800
 
@@ -21,7 +21,6 @@ type Checked = { result: CiteCheckResult; text: string }
  */
 export function CheckWithClaude({ report, text, format }: { report: CitationReport | null; text: string; format: CiteFormat }): React.JSX.Element {
   const { t } = useTranslation()
-  const [model, setModel] = useState<LlmModel | ''>('')
   const [plan, setPlan] = useState<{ plan: CiteCheckPlan; text: string; format: CiteFormat } | null>(null)
   const [busy, setBusy] = useState(false)
   const [running, setRunning] = useState(false)
@@ -61,7 +60,7 @@ export function CheckWithClaude({ report, text, format }: { report: CitationRepo
     )
   }
 
-  const run = (): void => {
+  const run = (model: LlmModel): void => {
     if (!plan || running) return
     const asked = plan
     setPlan(null)
@@ -69,7 +68,7 @@ export function CheckWithClaude({ report, text, format }: { report: CitationRepo
     setProgress({ batches: asked.plan.batches, done: 0 })
     setError(null)
     setNotice(null)
-    window.research.writing.check({ text: asked.text, format: asked.format, ...(model ? { model } : {}) }, true).then(
+    window.research.writing.check({ text: asked.text, format: asked.format, model }, true).then(
       (r) => {
         setRunning(false)
         setProgress(null)
@@ -129,14 +128,6 @@ export function CheckWithClaude({ report, text, format }: { report: CitationRepo
       <h3>{t('writing.check.claude_title')}</h3>
       <p className="muted small">{t('writing.check.claude_intro')}</p>
       <div className="row">
-        <select value={model} onChange={(e) => setModel(e.target.value as LlmModel | '')} aria-label={t('writing.check.model')} disabled={running}>
-          <option value="">{t('writing.check.model_default')}</option>
-          {LLM_MODELS.map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </select>
         {running ? (
           <>
             <button onClick={stop}>{t('writing.check.stop')}</button>
@@ -225,34 +216,16 @@ export function CheckWithClaude({ report, text, format }: { report: CitationRepo
       )}
 
       {plan && (
-        <div className="modal-backdrop">
-          <div
-            className="modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="cite-check-title"
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') {
-                e.preventDefault()
-                setPlan(null)
-              } else trapTab(e)
-            }}
-          >
-            <h3 id="cite-check-title">{t('writing.check.confirm_title')}</h3>
-            <p>{t('writing.check.confirm_model', { model: model || plan.plan.model })}</p>
-            {checkPlanLines(t, plan.plan).map((line) => (
-              <p key={line}>{line}</p>
-            ))}
-            <div className="row">
-              <button autoFocus onClick={() => setPlan(null)}>
-                {t('writing.check.cancel')}
-              </button>
-              <button className="primary" disabled={plan.plan.batches === 0} onClick={run}>
-                {t('writing.check.confirm_run')}
-              </button>
-            </div>
-          </div>
-        </div>
+        <ClaudeConfirm
+          kind="cite_check"
+          title={t('writing.check.confirm_title')}
+          plan={plan.plan}
+          lines={checkPlanLines(t, plan.plan)}
+          confirmLabel={t('writing.check.confirm_run')}
+          canRun={plan.plan.batches > 0}
+          onConfirm={run}
+          onCancel={() => setPlan(null)}
+        />
       )}
     </div>
   )

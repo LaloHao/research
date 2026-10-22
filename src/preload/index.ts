@@ -167,7 +167,10 @@ const api: ResearchApi = {
     checkPlan: (text, format) => ipcRenderer.invoke(IPC.writingCheckPlan, text, format),
     check: (req, confirmed) => ipcRenderer.invoke(IPC.writingCheck, req, confirmed),
     checkProgress: () => ipcRenderer.invoke(IPC.writingCheckProgress),
-    checkStop: () => ipcRenderer.invoke(IPC.writingCheckStop)
+    checkStop: () => ipcRenderer.invoke(IPC.writingCheckStop),
+    plan: (kind) => ipcRenderer.invoke(IPC.writingPlan, kind),
+    proposeOutline: (req, confirmed) => ipcRenderer.invoke(IPC.writingProposeOutline, req, confirmed),
+    reviewStyle: (req, confirmed) => ipcRenderer.invoke(IPC.writingReviewStyle, req, confirmed)
   },
   sync: {
     status: () => ipcRenderer.invoke(IPC.syncStatus),

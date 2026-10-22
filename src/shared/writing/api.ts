@@ -1,6 +1,7 @@
 /** What the writing view («Redacción») exchanges with the main process. */
 import type { ChapterBibReport } from './bibtex'
 import type { CiteFormat } from './citations'
+import type { LlmModel } from '../summary'
 import type { OutlineFacet, OutlinePaper, OutlineRelation } from './outline'
 
 /** The longest text «Verificar citas» accepts. */
@@ -51,3 +52,11 @@ export interface WritingPlan {
   monthSpentUsd: number
   monthCapUsd: number | null
 }
+
+/** A writing operation's plan with the model it runs on unless the user picks another. */
+export interface WritingRunPlan extends WritingPlan {
+  model: LlmModel
+}
+/** The Claude operations of «Redacción» whose plan the window asks for. */
+export const WRITING_PLAN_KINDS = ['draft', 'cite_check', 'outline', 'style'] as const
+export type WritingPlanKind = (typeof WRITING_PLAN_KINDS)[number]

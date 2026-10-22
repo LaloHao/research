@@ -315,6 +315,7 @@ export class ProjectSession {
       store,
       cache,
       includedPapers: (id) => mappings.includedPapers(id),
+      llm: { provider: llm, budget, ledger },
       checker: new CiteChecker({
         store,
         cache,
