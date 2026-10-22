@@ -5,6 +5,9 @@ import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
 import { nextRqId } from '../../lib/thesis'
 
+/** The languages a thesis can be written in (the same choices as the project's content language). */
+const THESIS_LANGUAGES = ['es', 'en'] as const
+
 const EMPTY: ThesisContext = { title: '', description: '', research_questions: [] }
 
 export function ThesisSection(): React.JSX.Element {
@@ -51,6 +54,24 @@ export function ThesisSection(): React.JSX.Element {
       <label className="field">
         <span>{t('settings.thesis_description')}</span>
         <textarea rows={5} value={thesis.description} onChange={(e) => setThesis({ ...thesis, description: e.target.value })} onBlur={() => save(thesis)} />
+      </label>
+      <label className="field">
+        <span>{t('settings.thesis_language')}</span>
+        <select
+          value={thesis.language ?? 'es'}
+          onChange={(e) => {
+            const next = { ...thesis, language: e.target.value }
+            setThesis(next)
+            save(next)
+          }}
+        >
+          {THESIS_LANGUAGES.map((l) => (
+            <option key={l} value={l}>
+              {t(`settings.languages.${l}`)}
+            </option>
+          ))}
+        </select>
+        <small className="muted">{t('settings.thesis_language_help')}</small>
       </label>
       <div className="field">
         <span>{t('settings.thesis_rqs')}</span>

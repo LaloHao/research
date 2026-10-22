@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { PaperSchema, ProjectConfigSchema, type Paper, type ProjectConfig } from '../../shared/schemas'
 import { CHAT_ID, ChatMetaSchema, PAPER_KEY, type ChatFile } from '../../shared/chat'
 import { MAPPING_ID } from '../../shared/mapping'
+import { DRAFT_ID, type DraftFile } from '../../shared/writing/draft'
 import { parse } from 'yaml'
 import { SnowballSchema, type Snowball } from '../../shared/relations'
 import {
@@ -22,6 +23,7 @@ import { FacetSuggestionsFileSchema, type FacetSuggestionsFile } from '../../sha
 import { atomicWrite, MOVE_RETRYABLE, moveDir, sha256 } from './atomicWrite'
 import { renderLibraryBib } from '../export/BibExporter'
 import { CHATS_DIR, chatFileName, checkMessages, isChatFileName, parseChat, renderChat, totalCost } from './chatFile'
+import { DRAFTS_DIR, draftFileName, isDraftFileName, parseDraft, renderDraft } from './draftFile'
 import { ConflictError, ProjectError, type ReadResult } from './errors'
 import { FACET_SUGGESTIONS_FILE, sortSuggestions } from './facetSuggestionsFile'
 import { gitattributesLines, gitignoreLines, withManagedBlock } from './gitFiles'
@@ -72,6 +74,8 @@ export class ProjectStore {
     'writeMappingFile',
     'writeChat',
     'deleteChat',
+    'writeDraft',
+    'deleteDraft',
     'updateConfig',
     'trashPaper',
     'restorePaper',
@@ -414,6 +418,49 @@ export class ProjectStore {
   /** «Borrar»: only the version read (`expectedHash`); git history keeps it. Nothing to do when it is already gone. */
   async deleteChat(id: string, expectedHash: string): Promise<void> {
     const path = this.chatPath(id)
+    const current = await readOptional(path)
+    if (current === null) return
+    if (sha256(current) !== expectedHash) throw new ConflictError(path)
+    await rm(path, { force: true })
+  }
+
+  /** Draft ids in drafts/ (files named `<id>.md`), sorted. */
+  async listDraftIds(): Promise<string[]> {
+    const names = await readdir(join(this.root, DRAFTS_DIR)).catch(() => [] as string[])
+    return names
+      .filter(isDraftFileName)
+      .map((name) => name.slice(0, -3))
+      .sort()
+  }
+
+  draftPath(id: string): string {
+    if (!DRAFT_ID.test(id)) throw new Error(`Invalid draft id: ${id}`)
+    return join(this.root, DRAFTS_DIR, draftFileName(id))
+  }
+
+  /** drafts/<id>.md; null when it does not exist. A frontmatter id that is not the file's own reads as invalid. */
+  async readDraft(id: string): Promise<ReadResult<DraftFile> | null> {
+    const text = await readOptional(this.draftPath(id))
+    if (text === null) return null
+    const result = parseDraft(text)
+    if (result.ok && result.value.meta.id !== id) {
+      return { ok: false, hash: result.hash, problem: { kind: 'invalid_schema', message: `id ${result.value.meta.id} does not match file ${id}` } }
+    }
+    return result
+  }
+
+  /**
+   * One file per draft, like the chats: a file with conflict markers is never overwritten, even with its hash. The file
+   * is checked first (one text per version; a bad one throws and nothing is written) and `cost_usd` is recomputed.
+   */
+  async writeDraft(file: DraftFile, expectedHash: string | null): Promise<string> {
+    const text = renderDraft(file)
+    return this.writeChecked(this.draftPath(file.meta.id), text, expectedHash, { refuseConflictMarkers: true })
+  }
+
+  /** «Borrar»: only the version read (`expectedHash`); git history keeps it. Nothing to do when it is already gone. */
+  async deleteDraft(id: string, expectedHash: string): Promise<void> {
+    const path = this.draftPath(id)
     const current = await readOptional(path)
     if (current === null) return
     if (sha256(current) !== expectedHash) throw new ConflictError(path)

@@ -1,6 +1,7 @@
 import { readdirSync, statSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import { CHATS_DIR } from './chatFile'
+import { DRAFTS_DIR } from './draftFile'
 import { MAPPING_ID } from '../../shared/mapping'
 import { FACET_SUGGESTIONS_FILE } from './facetSuggestionsFile'
 import { MAPPINGS_DIR } from './mappingFiles'
@@ -19,6 +20,8 @@ export interface WatchHandlers {
   onTrash?(): void
   /** `chats/` appeared or went away, or a conversation file in it was written, replaced or removed. */
   onChats?(): void
+  /** `drafts/` appeared or went away, or a draft file in it was written, replaced or removed. */
+  onDrafts?(): void
   /** A file in `mappings/<id>/` was written, replaced or removed, or the mapping's folder appeared or went away. */
   onMappings?(id: string): void
 }
@@ -155,32 +158,37 @@ export function watchProject(root: string, handlers: WatchHandlers, debounceMs =
     if (notify) trashChanged()
   }
 
-  const chatsDir = join(root, CHATS_DIR)
-  let chatsWatcher: FSWatcher | null = null
-  const chatsChanged = (): void => schedule(CHATS_DIR, () => handlers.onChats?.())
-  const closeChatsDir = (): void => {
-    chatsWatcher?.close()
-    chatsWatcher = null
-  }
   /**
-   * Watches chats/ once it exists: conversations come and go in it (atomic writes, git checkouts, deletions). A root
-   * event for chats/ itself (`rearm`) always re-opens the watch: the folder may have been removed and recreated between
-   * two events (a git checkout), and the old watch would be left on the deleted folder. Its inode cannot tell: the
-   * filesystem may hand the new folder the same one.
+   * Watches a folder of one-file records (chats/, drafts/) once it exists: files come and go in it (atomic writes, git
+   * checkouts, deletions). A root event for the folder itself (`rearm`) always re-opens the watch: the folder may have
+   * been removed and recreated between two events (a git checkout), and the old watch would be left on the deleted
+   * folder. Its inode cannot tell: the filesystem may hand the new folder the same one.
    */
-  const syncChatsDir = (rearm: boolean): void => {
-    if (closed) return
-    if (rearm || !isDir(chatsDir)) closeChatsDir()
-    if (isDir(chatsDir))
-      chatsWatcher ??= watchDir(
-        chatsDir,
-        (name) => {
-          if (!name.startsWith('.')) chatsChanged()
-        },
-        closeChatsDir
-      )
-    if (rearm) chatsChanged()
+  const flatDir = (name: string, onChange: () => void): { sync: (rearm: boolean) => void; close: () => void } => {
+    const dir = join(root, name)
+    let watcher: FSWatcher | null = null
+    const changed = (): void => schedule(name, onChange)
+    const close = (): void => {
+      watcher?.close()
+      watcher = null
+    }
+    const sync = (rearm: boolean): void => {
+      if (closed) return
+      if (rearm || !isDir(dir)) close()
+      if (isDir(dir))
+        watcher ??= watchDir(
+          dir,
+          (entry) => {
+            if (!entry.startsWith('.')) changed()
+          },
+          close
+        )
+      if (rearm) changed()
+    }
+    return { sync, close }
   }
+  const chatsDir = flatDir(CHATS_DIR, () => handlers.onChats?.())
+  const draftsDir = flatDir(DRAFTS_DIR, () => handlers.onDrafts?.())
 
   const mappingsDir = join(root, MAPPINGS_DIR)
   let mappingsWatcher: FSWatcher | null = null
@@ -238,7 +246,8 @@ export function watchProject(root: string, handlers: WatchHandlers, debounceMs =
       if (name === PROJECT_FILE) schedule(PROJECT_FILE, () => handlers.onConfig())
       else if (name === RELATIONS_FILE) schedule(RELATIONS_FILE, () => handlers.onRelations?.())
       else if (name === FACET_SUGGESTIONS_FILE) schedule(FACET_SUGGESTIONS_FILE, () => handlers.onFacetSuggestions?.())
-      else if (name === CHATS_DIR) syncChatsDir(true)
+      else if (name === CHATS_DIR) chatsDir.sync(true)
+      else if (name === DRAFTS_DIR) draftsDir.sync(true)
       else if (name === MAPPINGS_DIR) syncMappingsDir(true)
       else if (name === TRASH_DIR) syncTrashDir(true)
       else if (name === 'papers') syncPapersDir()
@@ -247,7 +256,8 @@ export function watchProject(root: string, handlers: WatchHandlers, debounceMs =
   )
   syncPapersDir()
   syncTrashDir(false)
-  syncChatsDir(false)
+  chatsDir.sync(false)
+  draftsDir.sync(false)
   syncMappingsDir(false)
 
   return () => {
@@ -255,7 +265,8 @@ export function watchProject(root: string, handlers: WatchHandlers, debounceMs =
     rootWatcher?.close()
     closePapersDir()
     closeTrashDir()
-    closeChatsDir()
+    chatsDir.close()
+    draftsDir.close()
     closeMappingsDir()
     for (const timer of timers.values()) clearTimeout(timer)
     timers.clear()

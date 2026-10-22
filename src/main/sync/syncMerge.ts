@@ -1,8 +1,9 @@
 import type { ConflictChoice } from '../../shared/sync'
 import type { ConflictPaths, NameStatus, TreeEntry } from './gitOutput'
 import { siblingName } from '../project/trashPaths'
-import { chatIdOfPath, mergeChatText } from './chatMerge'
-import { mergerFor } from './mergers'
+import { chatIdOfPath, mergeChatText, type ChatMergeResult } from './chatMerge'
+import { draftIdOfPath, mergeDraftText } from './draftMerge'
+import { mergerFor, type MergeInput } from './mergers'
 import type { MergeResult, ProjectRepo, TreeEdit } from './ProjectRepo'
 
 /** A decision the merge waits for; kept in memory until the user chooses (the working tree did not change). */
@@ -176,20 +177,29 @@ async function autoMerged(repo: ProjectRepo, x: ConflictPaths): Promise<TreeEntr
   return text === null ? null : { mode: x.ours.mode, oid: await repo.writeBlob(text) }
 }
 
+/** The files merged one per file that may split into a copy: conversations and drafts. */
+const SPLITTING_MERGERS: { idOf: (relPath: string) => string | null; merge: (input: MergeInput, id: string) => ChatMergeResult | null }[] = [
+  { idOf: chatIdOfPath, merge: mergeChatText },
+  { idOf: draftIdOfPath, merge: mergeDraftText }
+]
+
 /**
- * chats/<id>.md, which never waits for a decision when both sides can be read: changed on both machines it merges (or
- * splits into two conversations, see mergeChatText); deleted on one and changed on the other, the changed one stays.
+ * chats/<id>.md and drafts/<id>.md, which never wait for a decision when both sides can be read: changed on both
+ * machines they merge (or split into two, see mergeChatText and mergeDraftText); deleted on one and changed on the
+ * other, the changed one stays.
  */
 async function chatEdits(repo: ProjectRepo, x: ConflictPaths, state: TreeState): Promise<boolean> {
-  const id = chatIdOfPath(x.path.slice(repo.prefix.length))
-  if (id === null) return false
+  const relPath = x.path.slice(repo.prefix.length)
+  const merger = SPLITTING_MERGERS.find((m) => m.idOf(relPath) !== null)
+  const id = merger?.idOf(relPath) ?? null
+  if (!merger || id === null) return false
   if (!x.ours || !x.theirs) {
     const kept = x.ours ?? x.theirs
     if (!kept) return false
     state.set(x.path, kept)
     return true
   }
-  const merged = mergeChatText(
+  const merged = merger.merge(
     {
       base: x.base ? await repo.readText(x.base.oid) : null,
       ours: await repo.readText(x.ours.oid),

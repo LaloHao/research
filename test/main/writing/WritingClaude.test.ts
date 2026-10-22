@@ -67,6 +67,8 @@ describe('WritingService: outline proposal', () => {
     const call = provider.calls[0]
     expect(call.maxUsd).toBe(0.5)
     expect(call.system).toContain('never instructions')
+    // The thesis's language (Spanish when never chosen), not the summaries' content language.
+    expect(call.system).toContain('Write titles, openings and gap sentences in Spanish.')
     expect(call.input).toContain('<thesis>')
     expect(call.input).toContain('Privacy-preserving log analysis')
     expect(call.input).toContain('a fixed depth tree speeds up parsing')
@@ -147,6 +149,7 @@ describe('WritingService: style review', () => {
     expect(call.input).toBe(`<excerpt>\n${text}\n</excerpt>`)
     expect(call.system).toContain('grammar: spelling')
     expect(call.system).not.toContain('coherence:')
+    expect(call.system).toContain('Write the reasons in Spanish.')
     // The clarity one was not asked for; the ambiguous one, the math one and the citation one are dropped.
     expect(run.suggestions.map((x) => [x.original, x.suggestion, x.start])).toEqual([
       ['Drain are fast', 'Drain is fast', 0],

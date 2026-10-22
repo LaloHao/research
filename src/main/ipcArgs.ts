@@ -28,6 +28,7 @@ import { AUTO_SYNC_MINUTES, CLOSE_DECISIONS, CONFLICT_CHOICES, CONFLICT_ID, CONF
 import { AUTO_SUGGEST_FACETS_AFTER_MAX, ExtractionFormSchema, FacetDefSchema, LLM_MODELS, ThesisContextSchema } from '../shared/summary'
 import { MAX_JUSTIFICATION, RELATION_ID, RELATION_STATUSES, RELATION_TYPES } from '../shared/typedRelations'
 import { MAX_BIB_TEXT_CHARS, MAX_CHECK_CHARS, WRITING_PLAN_KINDS } from '../shared/writing/api'
+import { DRAFT_ID, DRAFT_LENGTHS, MAX_DRAFT_PAPERS, MAX_DRAFT_PURPOSE, MAX_DRAFT_TEXT, MAX_DRAFT_TITLE } from '../shared/writing/draft'
 import { CITE_FORMATS } from '../shared/writing/citations'
 import { MAX_STYLE_CHARS, STYLE_FOCUSES } from '../shared/writing/style'
 
@@ -271,7 +272,22 @@ export const ipcArgs = {
     format: z.enum(CITE_FORMATS),
     focus: z.array(z.enum(STYLE_FOCUSES)).min(1).max(STYLE_FOCUSES.length),
     model: llmModelSchema.optional()
-  })
+  }),
+  draftId: z.string().regex(DRAFT_ID),
+  /** «Redactar» without a draft yet, «Regenerar» with one. */
+  draftTarget: z.string().regex(DRAFT_ID).nullable(),
+  draftTitle: z.string().trim().min(1).max(MAX_DRAFT_TITLE),
+  draftListQuery: z.strictObject({ text: z.string().max(200).optional() }).optional(),
+  draftInput: z.strictObject({
+    title: z.string().trim().min(1).max(MAX_DRAFT_TITLE),
+    purpose: z.string().max(MAX_DRAFT_PURPOSE),
+    rq: z.string().regex(/^RQ[1-9][0-9]*$/).nullable(),
+    papers: z.array(paperIdSchema).min(1).max(MAX_DRAFT_PAPERS),
+    length: z.enum(DRAFT_LENGTHS),
+    model: llmModelSchema
+  }),
+  /** The current version's text as the user edited it. */
+  draftText: z.string().max(MAX_DRAFT_TEXT)
 }
 
 export class InvalidIpcArgument extends Error {

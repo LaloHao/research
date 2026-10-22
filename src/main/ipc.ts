@@ -9,6 +9,7 @@ import type { CountResult } from '../shared/relations'
 import type { FormImpact } from '../shared/summary'
 import type { DeletePlanResult, RestoreOutcome, TrashOutcome } from '../shared/trash'
 import type { ChapterBibResult, OutlineDataResult } from '../shared/writing/api'
+import type { DraftEditResult, DraftOpenResult, DraftRunResult } from '../shared/writing/draft'
 import type { OutlineProposalResult } from '../shared/writing/outlineProposal'
 import type { StyleReviewResult } from '../shared/writing/style'
 import type { CiteCheckPlanResult, CiteCheckRunResult } from '../shared/writing/citeCheck'
@@ -801,6 +802,62 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
   })
   ipcMain.handle(IPC.writingCheckProgress, () => app.requireSession().writing.checkProgress())
   ipcMain.handle(IPC.writingCheckStop, (): void => app.requireSession().writing.stopCheck())
+
+  // «Borrador»: drafts/ through the session's DraftService; versions stream on DRAFT_STREAM_CHANNEL. Tracked, so closing
+  // the project waits for them.
+  const drafts = <T>(work: (session: ReturnType<AppController['requireSession']>) => Promise<T>): Promise<T> => {
+    const session = app.requireSession()
+    return session.track(work(session))
+  }
+  ipcMain.handle(IPC.draftsList, (_e, raw: unknown) => app.requireSession().drafts.list(arg(ipcArgs.draftListQuery, raw, 'query')))
+  ipcMain.handle(IPC.draftsOpen, async (_e, rawId: unknown): Promise<DraftOpenResult> => {
+    const id = arg(ipcArgs.draftId, rawId, 'id')
+    try {
+      return { ok: true, draft: await drafts((s) => s.drafts.open(id)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+  // «Redactar» / «Regenerar» in the cost confirmation: `confirmed` is that click.
+  ipcMain.handle(IPC.draftsRun, async (_e, rawInput: unknown, rawId: unknown, rawConfirmed: unknown): Promise<DraftRunResult> => {
+    const input = arg(ipcArgs.draftInput, rawInput, 'input')
+    const id = arg(ipcArgs.draftTarget, rawId, 'id')
+    arg(ipcArgs.confirmed, rawConfirmed, 'confirmed')
+    try {
+      return { ok: true, draftId: await drafts((s) => s.drafts.run(input, id)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+  ipcMain.handle(IPC.draftsStop, (_e, rawId: unknown): void => {
+    const id = arg(ipcArgs.draftId, rawId, 'id')
+    app.requireSession().drafts.stop(id)
+  })
+  ipcMain.handle(IPC.draftsEdit, async (_e, rawId: unknown, rawText: unknown): Promise<DraftEditResult> => {
+    const id = arg(ipcArgs.draftId, rawId, 'id')
+    const text = arg(ipcArgs.draftText, rawText, 'text')
+    try {
+      return { ok: true, check: await drafts((s) => s.drafts.edit(id, text)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+  ipcMain.handle(IPC.draftsRename, (_e, rawId: unknown, rawTitle: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.draftId, rawId, 'id')
+    const title = arg(ipcArgs.draftTitle, rawTitle, 'title')
+    return actionResult(() => drafts((s) => s.drafts.rename(id, title)))
+  })
+  ipcMain.handle(IPC.draftsArchive, (_e, rawId: unknown, rawArchived: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.draftId, rawId, 'id')
+    const archived = arg(ipcArgs.flag, rawArchived, 'archived')
+    return actionResult(() => drafts((s) => s.drafts.setArchived(id, archived)))
+  })
+  // «Borrar»: `confirmed` is what the renderer's confirmation answered; the service deletes only when it is true.
+  ipcMain.handle(IPC.draftsRemove, (_e, rawId: unknown, rawConfirmed: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.draftId, rawId, 'id')
+    const confirmed = arg(ipcArgs.flag, rawConfirmed, 'confirmed')
+    return actionResult(() => drafts((s) => s.drafts.remove(id, confirmed)))
+  })
 
   // A file the user chose to save (a chart, the graph, CSV data, a .bib or an outline), wherever they picked; never written into the project on our own.
   ipcMain.handle(IPC.exportSave, async (_e, rawName: unknown, rawData: unknown): Promise<SaveResult> => {

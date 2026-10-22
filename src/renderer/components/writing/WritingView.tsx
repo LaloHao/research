@@ -11,7 +11,8 @@ import { OutlineTab } from './OutlineTab'
 import { StyleTab } from './StyleTab'
 
 /**
- * «Redacción»: tools for writing the thesis with what the library knows. Each tab reads only; the output format
+ * «Redacción»: tools for writing the thesis with what the library knows. Each tab reads only (drafts aside, kept in
+ * drafts/); the output format
  * (Org, LaTeX or Markdown, and the LaTeX command) is shared by the tabs and remembered per project.
  */
 export function WritingView({
@@ -61,7 +62,7 @@ export function WritingView({
         ))}
       </nav>
       <div className="writing-body" id={`writing-panel-${tab}`} role="tabpanel" aria-labelledby={`writing-tab-${tab}`}>
-        {tab === 'draft' && <DraftTab />}
+        {tab === 'draft' && <DraftTab library={library} visibleIds={visibleIds} prefs={prefs} onPrefsChange={changePrefs} />}
         {tab === 'check' && <CheckTab library={library} />}
         {tab === 'outline' && <OutlineTab visibleIds={visibleIds} prefs={prefs} onPrefsChange={changePrefs} />}
         {tab === 'bibtex' && <BibtexTab />}

@@ -4,12 +4,14 @@ import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
 import { sha256 } from '../../../src/main/project/atomicWrite'
 import { parseChat, renderChat } from '../../../src/main/project/chatFile'
+import { renderDraft } from '../../../src/main/project/draftFile'
 import { toYaml } from '../../../src/main/project/yamlFile'
 import { ProjectRepo } from '../../../src/main/sync/ProjectRepo'
 import { editedKeys, planMerge, trashedKeys, type MergePlan } from '../../../src/main/sync/syncMerge'
 import type { ConflictChoice } from '../../../src/shared/sync'
 import type { TypedRelation } from '../../../src/shared/typedRelations'
 import { assistantMessage, CHAT_ID_A, chatFile, userMessage } from '../../helpers/chats'
+import { DRAFT_ID_A, draftFile } from '../../helpers/drafts'
 import { applyFiles, commitAll, trashOnDisk, twoMachines, type Machines } from '../../helpers/git'
 import { decision, hexId, protocolBody, protocolFile, record } from '../../helpers/mappings'
 import { typedRelation } from '../../helpers/relations'
@@ -118,6 +120,28 @@ describe('planMerge', () => {
     const copies = (await repo.lsTree(tree, [`${repo.prefix}chats/`])).map((e) => e.path.slice(repo.prefix.length)).filter((p) => p.startsWith(`chats/${CHAT_ID_A}-`))
     expect(copies).toHaveLength(1)
     expect(await file(tree, copies[0])).toContain('From A')
+    expect(await file(tree, copies[0])).toContain('machine: machine-a')
+  })
+
+  it('keeps a draft edited differently on both machines as two drafts, and merges one only one machine regenerated', async () => {
+    const other = '20261022-110000-c3d4'
+    const base = renderDraft(draftFile(['Base.']))
+    const otherBase = renderDraft(draftFile(['Base.'], { id: other }))
+    const onA = renderDraft(draftFile(['Edited on A.'], { updated_on: 'machine-a' }))
+    const onB = renderDraft(draftFile(['Edited on B.']))
+    const regenerated = renderDraft(draftFile(['Base.', 'Second.'], { id: other }))
+    const { plan, file, repo } = await diverged(
+      { [`drafts/${DRAFT_ID_A}.md`]: base, [`drafts/${other}.md`]: otherBase },
+      (p) => applyFiles(p, { [`drafts/${DRAFT_ID_A}.md`]: onA, [`drafts/${other}.md`]: regenerated }),
+      (p) => applyFiles(p, { [`drafts/${DRAFT_ID_A}.md`]: onB, [`drafts/${other}.md`]: renderDraft(draftFile(['Base.'], { id: other, title: 'Renamed' })) })
+    )
+    const tree = clean(await plan())
+    expect(await file(tree, `drafts/${DRAFT_ID_A}.md`)).toBe(onB)
+    expect(await file(tree, `drafts/${other}.md`)).toContain('Second.')
+    expect(await file(tree, `drafts/${other}.md`)).toContain('title: Renamed')
+    const copies = (await repo.lsTree(tree, [`${repo.prefix}drafts/`])).map((e) => e.path.slice(repo.prefix.length)).filter((p) => p.startsWith(`drafts/${DRAFT_ID_A}-`))
+    expect(copies).toHaveLength(1)
+    expect(await file(tree, copies[0])).toContain('Edited on A.')
     expect(await file(tree, copies[0])).toContain('machine: machine-a')
   })
 

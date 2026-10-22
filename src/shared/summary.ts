@@ -99,11 +99,16 @@ export const ThesisContextSchema = z.object({
    * was deleted (existing relations still refer to it by id). Never decreases. Excluded from
    * thesisHash: bumping it alone must not make summaries stale.
    */
-  last_rq: z.number().int().min(0).default(0)
+  last_rq: z.number().int().min(0).default(0),
+  /** The language the thesis is written in (absent: Spanish); «Redacción» writes in it. Not part of thesisHash. */
+  language: z.string().regex(/^[a-z]{2}$/).optional()
 })
 // `last_rq` is optional here (unlike the schema's own parsed output) so callers that only care about
 // title/description/research_questions can build a ThesisContext literal without it.
 export type ThesisContext = Omit<z.infer<typeof ThesisContextSchema>, 'last_rq'> & { last_rq?: number }
+
+/** The thesis's language, Spanish when it was never chosen. */
+export const thesisLanguage = (t: Pick<ThesisContext, 'language'>): string => t.language ?? 'es'
 
 /** How one paper relates to the thesis in project.yaml. */
 export const ThesisRelationSchema = z.object({

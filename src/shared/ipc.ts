@@ -37,6 +37,7 @@ import type { ExtractionForm, FormImpact, FormInfo, LlmConfig, LlmModel, ReviewI
 import type { CloseDecision, ConflictDecision, ConflictDiff, ConflictItem, SyncResult, SyncStatus } from './sync'
 import type { DeletePlanResult, RestoreOutcome, TrashEntry, TrashOutcome, TrashTarget } from './trash'
 import type { PaperRelations, RelationPlan, RelationsFileState, RelationStatus, RelationType } from './typedRelations'
+import type { DraftEditResult, DraftInput, DraftListQuery, DraftOpenResult, DraftRunResult, DraftStreamUpdate, DraftSummary } from './writing/draft'
 import type { ChapterBibResult, OutlineDataResult, OutlineScope, WritingLibrary, WritingPlanKind, WritingRunPlan, WritingSource } from './writing/api'
 import type { CiteCheckPlanResult, CiteCheckProgress, CiteCheckRequest, CiteCheckRunResult } from './writing/citeCheck'
 import type { CiteFormat } from './writing/citations'
@@ -162,6 +163,14 @@ export const IPC = {
   writingChooseFile: 'writing:choose-file',
   writingBibtex: 'writing:bibtex',
   writingOutlineData: 'writing:outline-data',
+  draftsList: 'drafts:list',
+  draftsOpen: 'drafts:open',
+  draftsRun: 'drafts:run',
+  draftsStop: 'drafts:stop',
+  draftsEdit: 'drafts:edit',
+  draftsRename: 'drafts:rename',
+  draftsArchive: 'drafts:archive',
+  draftsRemove: 'drafts:remove',
   writingCheckPlan: 'writing:check-plan',
   writingCheck: 'writing:check',
   writingCheckProgress: 'writing:check-progress',
@@ -196,7 +205,8 @@ export interface RendererErrorReport {
 /**
  * `sync-changed`: the git sync's state changed. `facets-changed`: the facet suggestions changed (a run, a decision,
  * or facet-suggestions.yaml edited outside the app). `chats-changed`: a conversation was written, deleted or changed
- * outside the app (answers stream on CHAT_STREAM_CHANNEL instead). `mappings-changed`: a mapping was written, or changed outside
+ * outside the app (answers stream on CHAT_STREAM_CHANNEL instead). `drafts-changed`: the same for drafts/ (versions
+ * stream on DRAFT_STREAM_CHANNEL). `mappings-changed`: a mapping was written, or changed outside
  * the app. `flush-request`: the window is about to close; save
  * pending edits, then call `flushDone()`. `close-request`: there are changes not synced; ask, then answer with `closeDecision()`.
  */
@@ -207,6 +217,7 @@ export type ResearchEvent =
   | 'sync-changed'
   | 'facets-changed'
   | 'chats-changed'
+  | 'drafts-changed'
   | 'mappings-changed'
   | 'flush-request'
   | 'close-request'
@@ -215,6 +226,8 @@ export const eventChannel = (event: ResearchEvent): string => `event:${event}`
 
 /** The push channel of `ChatStreamUpdate`s (an answer as it streams). */
 export const CHAT_STREAM_CHANNEL = 'chat:stream'
+/** The push channel of `DraftStreamUpdate`s (a draft's version as it streams). */
+export const DRAFT_STREAM_CHANNEL = 'draft:stream'
 
 export interface ProjectInfo {
   root: string
@@ -489,6 +502,28 @@ export interface ResearchApi {
     proposeOutline(req: OutlineRequest, confirmed: true): Promise<OutlineProposalResult>
     /** «Revisar estilo», after the confirmation: the checked suggestions (nothing is saved). */
     reviewStyle(req: StyleRequest, confirmed: true): Promise<StyleReviewResult>
+  }
+  /** «Borrador»: drafts/ (the only part of «Redacción» kept in the project). */
+  drafts: {
+    /** Newest first, by words in the title, the purpose or the current text. */
+    list(query?: DraftListQuery): Promise<DraftSummary[]>
+    /** The draft with every version's citations checked, and the version being written, if any. */
+    open(id: string): Promise<DraftOpenResult>
+    /**
+     * «Redactar» (`draftId` null: a new draft) or «Regenerar» (a new version), after the user confirmed the cost
+     * (`writing.plan('draft')` in the shared confirmation); the version arrives through `onStream`.
+     */
+    run(input: DraftInput, draftId: string | null, confirmed: true): Promise<DraftRunResult>
+    /** «Detener»: what arrived is kept as a stopped version. */
+    stop(id: string): Promise<void>
+    /** Saves the user's edit of the current version and checks its citations again. */
+    edit(id: string, text: string): Promise<DraftEditResult>
+    rename(id: string, title: string): Promise<ActionResult>
+    archive(id: string, archived: boolean): Promise<ActionResult>
+    /** «Borrar»: `confirmed` is the user's answer to the UI's question; the draft is deleted only when true. */
+    remove(id: string, confirmed: boolean): Promise<ActionResult>
+    /** Versions as they stream; `seq` orders them against `open()`'s `partial`. */
+    onStream(callback: (update: DraftStreamUpdate) => void): () => void
   }
   sync: {
     status(): Promise<SyncStatus>
