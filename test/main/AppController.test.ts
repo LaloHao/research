@@ -6,6 +6,9 @@ import { appLog, MemorySink, redact, setLogSecrets } from '../../src/main/log/ap
 import { toYaml } from '../../src/main/project/yamlFile'
 import type { ResearchEvent } from '../../src/shared/ipc'
 import type { ChatStreamUpdate } from '../../src/shared/chat'
+import type { DraftStreamUpdate } from '../../src/shared/writing/draft'
+import { renderDraft } from '../../src/main/project/draftFile'
+import { draftFile, DRAFT_ID_A } from '../helpers/drafts'
 import { renderChat } from '../../src/main/project/chatFile'
 import { chatFile, CHAT_ID_A } from '../helpers/chats'
 import { chatAnswer, FakeLlmProvider } from '../helpers/llm'
@@ -262,6 +265,33 @@ describe('AppController', () => {
       await new Promise((r) => setTimeout(r, 20))
     }
     expect(c.requireSession().chats.list()).toHaveLength(2)
+    await c.shutdown()
+  })
+
+  it('streams drafts to the window and tells it when drafts/ changes outside the app', async () => {
+    const events: ResearchEvent[] = []
+    const updates: DraftStreamUpdate[] = []
+    const llm = new FakeLlmProvider([], [], [chatAnswer('A short draft.')])
+    const c = new AppController(join(await tmpDir(), 'settings.json'), (e) => events.push(e), { autoSync: null, llm }, undefined, (u) => updates.push(u))
+    await c.init()
+    const root = await tmpDir()
+    await c.createProject(root, 'Thesis')
+    const session = c.requireSession()
+    const { samplePaper } = await import('../helpers/papers')
+    await session.store.writePaper(samplePaper(), null)
+    await session.library.indexPaper('he2017drain')
+    const id = await session.drafts.run({ title: 'Parsing', purpose: '', rq: null, papers: ['he2017drain'], length: 'short', model: 'sonnet' }, null)
+    await session.drafts.idle()
+    expect(updates.map((u) => [u.draftId, u.kind]).at(-1)).toEqual([id, 'done'])
+    expect(events).toContain('drafts-changed')
+    events.length = 0
+    await writeFile(join(root, 'drafts', `${DRAFT_ID_A}.md`), renderDraft(draftFile()))
+    const start = Date.now()
+    while (!events.includes('drafts-changed')) {
+      if (Date.now() - start > 3000) throw new Error('no drafts-changed event')
+      await new Promise((r) => setTimeout(r, 20))
+    }
+    expect(session.drafts.list()).toHaveLength(2)
     await c.shutdown()
   })
 })
