@@ -1,6 +1,7 @@
 import { hostname } from 'node:os'
 import { join } from 'node:path'
 import type { ChatStreamUpdate } from '../../shared/chat'
+import type { DraftStreamUpdate } from '../../shared/writing/draft'
 import type { JobSpec } from '../../shared/jobs'
 import type { PaperDetail } from '../../shared/library'
 import type { ReviewItem } from '../../shared/summary'
@@ -40,6 +41,7 @@ import { SummaryService } from '../summary/SummaryService'
 import { SyncScheduler } from '../sync/SyncScheduler'
 import { machineName } from '../sync/messages'
 import { SyncService } from '../sync/SyncService'
+import { DraftService } from '../writing/DraftService'
 import { WritingService } from '../writing/WritingService'
 import { DEFAULT_DEVICE_ID, LibraryService } from './LibraryService'
 
@@ -75,15 +77,16 @@ export interface SessionOptions {
   now?: () => Date
 }
 
-type SessionEvent = 'library' | 'jobs' | 'project' | 'sync' | 'facets' | 'chats' | 'mappings'
+type SessionEvent = 'library' | 'jobs' | 'project' | 'sync' | 'facets' | 'chats' | 'mappings' | 'drafts'
 
 /** Files whose external change alters the bibliography (paper.yaml, or the paper folder appearing or going away). */
 const BIB_FILES = new Set(['paper.yaml', PAPER_FOLDER])
 
 /** Everything that lives while one project is open. */
 export class ProjectSession {
-  private readonly listeners: Record<SessionEvent, Set<() => void>> = { library: new Set(), jobs: new Set(), project: new Set(), sync: new Set(), facets: new Set(), chats: new Set(), mappings: new Set() }
+  private readonly listeners: Record<SessionEvent, Set<() => void>> = { library: new Set(), jobs: new Set(), project: new Set(), sync: new Set(), facets: new Set(), chats: new Set(), mappings: new Set(), drafts: new Set() }
   private readonly streamListeners = new Set<(u: ChatStreamUpdate) => void>()
+  private readonly draftStreamListeners = new Set<(u: DraftStreamUpdate) => void>()
   private stopWatching: (() => void) | null = null
   private readonly inFlight = new Set<Promise<unknown>>()
   private scheduler: SyncScheduler | null = null
@@ -105,7 +108,8 @@ export class ProjectSession {
     readonly facets: FacetSuggestionService,
     readonly chats: ChatService,
     readonly mappings: MappingService,
-    readonly writing: WritingService
+    readonly writing: WritingService,
+    readonly drafts: DraftService
   ) {}
 
   static async create(root: string, name: string, opts: SessionOptions): Promise<ProjectSession> {
@@ -311,11 +315,25 @@ export class ProjectSession {
       pauseMs: opts.citationPauseMs
     })
     const writing = new WritingService({ store, cache, includedPapers: (id) => mappings.includedPapers(id) })
-    const session: ProjectSession = new ProjectSession(store, cache, http, library, queue, summaries, citations, similarity, map, relations, sync, facets, chats, mappings, writing)
+    const drafts = new DraftService({
+      store,
+      cache,
+      provider: llm,
+      budget,
+      ledger,
+      // A fresh read-only MCP server per version, closed when it ends.
+      startTools: (o) => startLibraryMcpServer(libraryTools({ store, cache, map, embeddings: opts.embeddings ?? null }), o),
+      machine: machineName(opts.machineName ?? hostname()),
+      emit: () => session.emit('drafts'),
+      stream: (u) => session.emitDraftStream(u),
+      now: opts.now
+    })
+    const session: ProjectSession = new ProjectSession(store, cache, http, library, queue, summaries, citations, similarity, map, relations, sync, facets, chats, mappings, writing, drafts)
     await library.reindexAll()
     await relations.reindex()
     await facets.reindex()
     await chats.reindex()
+    await drafts.reindex()
     await mappings.reindexAll()
     library.onChange(() => session.emit('library'))
     queue.onChange(() => session.emit('jobs'))
@@ -380,6 +398,16 @@ export class ProjectSession {
             )
             .catch((error) => console.error('chats', error))
         },
+        onDrafts: () => {
+          // Our own writes come through the watcher too and are already indexed: only a real external change counts.
+          void session
+            .track(
+              drafts.reindexIfChanged().then((changed) => {
+                if (changed) session.emit('drafts')
+              })
+            )
+            .catch((error) => console.error('drafts', error))
+        },
         onMappings: (id) => {
           // Our own writes come through the watcher too and are already indexed: only a real external change counts.
           void session
@@ -420,6 +448,12 @@ export class ProjectSession {
   onChatStream(listener: (u: ChatStreamUpdate) => void): () => void {
     this.streamListeners.add(listener)
     return () => this.streamListeners.delete(listener)
+  }
+
+  /** A draft's progress (the window shows it as it arrives). */
+  onDraftStream(listener: (u: DraftStreamUpdate) => void): () => void {
+    this.draftStreamListeners.add(listener)
+    return () => this.draftStreamListeners.delete(listener)
   }
 
   /** Registers work outside the job queue that uses the cache, so `close()` waits for it. */
@@ -521,8 +555,8 @@ export class ProjectSession {
     // in a process group of its own that would outlive the app, so a fetch or push is cut short; a local step, which may
     // hold the store's write gate, is let finish) and the queue (running jobs abort and stay queued for next time).
     // Awaiting the scheduler on its own first would wait for that fetch or push to end by itself.
-    // Running answers stop too, saved as stopped (sends in progress finish first), before the cache closes.
-    await Promise.all([this.scheduler?.stop(), this.sync.close(), this.queue.stop(), this.chats.close()])
+    // Running answers and drafts stop too, saved as stopped (sends in progress finish first), before the cache closes.
+    await Promise.all([this.scheduler?.stop(), this.sync.close(), this.queue.stop(), this.chats.close(), this.drafts.close()])
     while (this.inFlight.size > 0) await Promise.allSettled([...this.inFlight])
     this.cache.close()
   }
@@ -538,6 +572,17 @@ export class ProjectSession {
 
   private emit(event: SessionEvent): void {
     for (const listener of this.listeners[event]) listener()
+  }
+
+  /** A listener that throws (a window going away) never breaks the draft or the other listeners. */
+  private emitDraftStream(u: DraftStreamUpdate): void {
+    for (const listener of this.draftStreamListeners) {
+      try {
+        listener(u)
+      } catch (error) {
+        console.error('draft stream', error)
+      }
+    }
   }
 
   /** A listener that throws (a window going away) never breaks the answer or the other listeners. */

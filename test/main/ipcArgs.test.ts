@@ -351,4 +351,22 @@ describe('typed relation arguments', () => {
     expect(arg(ipcArgs.outlineScope, { kind: 'library' }, 'scope')).toEqual({ kind: 'library' })
     for (const bad of [{ kind: 'papers', ids: ['../x'] }, { kind: 'mapping', mappingId: '../x' }, { kind: 'all' }]) expect(() => arg(ipcArgs.outlineScope, bad, 'scope')).toThrow()
   })
+
+  it('checks «Borrador»’s form, ids and edits', () => {
+    const input = { title: 'Parsing', purpose: '', rq: 'RQ1', papers: ['he2017drain'], length: 'short', model: 'sonnet' }
+    expect(arg(ipcArgs.draftInput, input, 'input')).toEqual(input)
+    for (const bad of [
+      { ...input, papers: [] },
+      { ...input, papers: ['../x'] },
+      { ...input, papers: Array.from({ length: 61 }, (_v, i) => `p${i}`) },
+      { ...input, length: 'huge' },
+      { ...input, rq: 'Q1' },
+      { ...input, title: ' ' },
+      { ...input, extra: 1 }
+    ])
+      expect(() => arg(ipcArgs.draftInput, bad, 'input')).toThrow()
+    expect(arg(ipcArgs.draftTarget, null, 'id')).toBeNull()
+    expect(() => arg(ipcArgs.draftId, '../x', 'id')).toThrow()
+    expect(() => arg(ipcArgs.draftText, 'x'.repeat(100_001), 'text')).toThrow()
+  })
 })
