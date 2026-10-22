@@ -414,6 +414,9 @@ button.danger { color: var(--error); border-color: var(--error); }
 .writing-key-ok { background: var(--accent-soft); color: var(--accent); }
 .writing-controls { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0 16px; align-items: start; }
 .writing-controls .field { margin-bottom: 8px; }
+.writing-controls .field.wide { grid-column: 1 / -1; }
+/* A radio and its label stay on one line; the options wrap as wholes. */
+[role='radiogroup'] > label.row { flex-wrap: nowrap; }
 .writing-outline { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 8px 16px; }
 .writing-outline h3 { margin: 12px 0 4px; }
 .writing-outline h4 { margin: 8px 0 4px 12px; }

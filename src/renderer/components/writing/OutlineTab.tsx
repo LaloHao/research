@@ -163,7 +163,7 @@ export function OutlineTab({
               ))}
           </select>
         </label>
-        <div className="field">
+        <div className="field wide">
           <span>{t('writing.outline.papers')}</span>
           <div className="row" role="radiogroup" aria-label={t('writing.outline.papers')}>
             <label className="row">
