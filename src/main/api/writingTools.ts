@@ -1,4 +1,4 @@
-import { lstat } from 'node:fs/promises'
+import { realpath, stat } from 'node:fs/promises'
 import { extname, isAbsolute } from 'node:path'
 import { z } from 'zod'
 import { PAPER_KEY } from '../../shared/chat'
@@ -191,15 +191,19 @@ export const WRITING_API_TOOLS: ApiTool[] = [
   freeTool({
     name: 'bibtex_for_file',
     description:
-      'Like bibtex_for_text for a .tex, .org or .md file given by its absolute path, following \\input, \\include, \\subfile and #+INCLUDE only inside that file\'s folder. The path must be a regular file (not a link). The API answers only on 127.0.0.1 and with its token.',
+      'Like bibtex_for_text for a .tex, .org or .md file given by its absolute path, following \\input, \\include, \\subfile and #+INCLUDE only inside that file\'s folder. A symbolic link is followed: its target must be a regular file, and the includes stay inside the target\'s folder. The API answers only on 127.0.0.1 and with its token.',
     input: { path: z.string().min(1).max(4096).describe('Absolute path of the file'), order: z.enum(BIB_ORDERS).optional() },
     async run(ctx, args) {
       if (!isAbsolute(args.path)) throw new ApiError('invalid_path', 'Give the absolute path of the file.')
-      if (!SOURCE_EXTENSIONS.has(extname(args.path).toLowerCase())) throw new ApiError('invalid_path', 'Only .tex, .org and .md files (and their variants) are read.')
-      const info = await lstat(args.path).catch(() => null)
+      // A symbolic link to a chapter is followed: what is checked and read is its target, and its includes are
+      // confined to the target's folder.
+      const real = await realpath(args.path).catch(() => null)
+      if (!real) throw new ApiError('not_found', 'The file does not exist.')
+      if (!SOURCE_EXTENSIONS.has(extname(real).toLowerCase())) throw new ApiError('invalid_path', 'Only .tex, .org and .md files (and their variants) are read.')
+      const info = await stat(real).catch(() => null)
       if (!info) throw new ApiError('not_found', 'The file does not exist.')
       if (!info.isFile()) throw new ApiError('invalid_path', 'The path is not a regular file.')
-      const bib = await ctx.writing.bibFromFile(args.path).catch(fileError)
+      const bib = await ctx.writing.bibFromFile(real).catch(fileError)
       return {
         bib: chapterBibText(bib.report, args.order ?? 'appearance'),
         citations: bib.citations,

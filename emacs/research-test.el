@@ -166,7 +166,7 @@ HANDLER returns (STATUS . BODY); `research-test--result' builds one."
         (research-test--with-app
             (lambda (tool args)
               (should (equal tool "bibtex_for_file"))
-              (should (equal (alist-get 'path args) file))
+              (should (equal (alist-get 'path args) (file-truename file)))
               (should (equal (alist-get 'order args) "appearance"))
               (research-test--result
                '((bib . "@article{he2017drain,\n  title = {Drain}\n}\n") (citations . 1)
@@ -185,6 +185,28 @@ HANDLER returns (STATUS . BODY); `research-test--result' builds one."
                   (should (= 1 (how-many "^#\\+bibliography:" (point-min) (point-max)))))
               (set-buffer-modified-p nil)
               (kill-buffer))))
+      (delete-directory dir t))))
+
+(ert-deftest research-test-bibtex-for-file-sends-a-symlinked-chapter-as-its-target ()
+  (let* ((dir (make-temp-file "research-bib" t))
+         (real (expand-file-name "chapters/one.org" dir))
+         (link (expand-file-name "one.org" dir)))
+    (unwind-protect
+        (research-test--with-app
+            (lambda (_tool args)
+              (should (equal (alist-get 'path args) (file-truename real)))
+              (research-test--result '((bib . "") (citations . 0) (report . ((keys . []) (entries . []) (unknown . []) (trashed . []))))))
+          (make-directory (file-name-directory real))
+          (with-temp-file real (insert "Text.\n"))
+          (make-symbolic-link real link)
+          (let ((find-file-visit-truename nil))
+            (with-current-buffer (find-file-noselect link)
+              (unwind-protect
+                  (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) nil)))
+                    (research-bibtex-for-file)
+                    ;; The .bib goes next to the file as visited.
+                    (should (file-exists-p (expand-file-name "one.bib" dir))))
+                (kill-buffer)))))
       (delete-directory dir t))))
 
 ;;;; Outline

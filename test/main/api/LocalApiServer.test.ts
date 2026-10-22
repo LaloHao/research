@@ -174,9 +174,16 @@ describe('local API: tools', () => {
     expect(fromFile.files.map((f: { path: string }) => f.path)).toEqual(['thesis.org', 'ch/one.org'])
     expect(fromFile.skipped).toEqual([expect.objectContaining({ reason: 'outside_folder' })])
 
-    await symlink(join(dir, 'thesis.org'), join(dir, 'link.org'))
+    // A symbolic link to the chapter, from another folder: its target is read, its includes stay in the target's folder.
+    await symlink(join(dir, 'thesis.org'), join(outside, 'link.org'))
+    const viaLink = await ok(server, 'bibtex_for_file', { path: join(outside, 'link.org') })
+    expect(viaLink.files.map((f: { path: string }) => f.path)).toEqual(['thesis.org', 'ch/one.org'])
+    expect(viaLink.skipped).toEqual([expect.objectContaining({ reason: 'outside_folder' })])
+    await symlink('/etc/passwd', join(dir, 'passwd.org'))
+    expect((await call(server, 'bibtex_for_file', { path: join(dir, 'passwd.org') })).text).toMatch(/^invalid_path: /)
+    await symlink(join(dir, 'ch'), join(dir, 'folder.org'))
+    expect((await call(server, 'bibtex_for_file', { path: join(dir, 'folder.org') })).text).toMatch(/^invalid_path: /)
     expect((await call(server, 'bibtex_for_file', { path: 'thesis.org' })).text).toMatch(/^invalid_path: /)
-    expect((await call(server, 'bibtex_for_file', { path: join(dir, 'link.org') })).text).toMatch(/^invalid_path: /)
     expect((await call(server, 'bibtex_for_file', { path: join(dir, 'ch') + '.org' })).text).toMatch(/^not_found: /)
     expect((await call(server, 'bibtex_for_file', { path: '/etc/passwd' })).text).toMatch(/^invalid_path: /)
   })
