@@ -21,12 +21,17 @@ import {
   YEAR_MAX,
   YEAR_MIN
 } from '../shared/mapping'
+import { API_PORTS } from '../shared/localApi'
 import { RENDERER_ERROR_KINDS } from '../shared/ipc'
 import { CANDIDATE_DIRECTIONS, OPENALEX_ID } from '../shared/relations'
 import { PDF_POLICIES } from '../shared/schemas'
 import { AUTO_SYNC_MINUTES, CLOSE_DECISIONS, CONFLICT_CHOICES, CONFLICT_ID, CONFLICT_VERSION, isRemoteUrl } from '../shared/sync'
 import { AUTO_SUGGEST_FACETS_AFTER_MAX, ExtractionFormSchema, FacetDefSchema, LLM_MODELS, ThesisContextSchema } from '../shared/summary'
 import { MAX_JUSTIFICATION, RELATION_ID, RELATION_STATUSES, RELATION_TYPES } from '../shared/typedRelations'
+import { MAX_BIB_TEXT_CHARS, MAX_CHECK_CHARS, WRITING_PLAN_KINDS } from '../shared/writing/api'
+import { DRAFT_ID, DRAFT_LENGTHS, MAX_DRAFT_PAPERS, MAX_DRAFT_PURPOSE, MAX_DRAFT_TEXT, MAX_DRAFT_TITLE } from '../shared/writing/draft'
+import { CITE_FORMATS } from '../shared/writing/citations'
+import { MAX_STYLE_CHARS, STYLE_FOCUSES } from '../shared/writing/style'
 
 const paperIdSchema = z.string().regex(/^[a-z][a-z0-9]*$/)
 const facetKeySchema = z.string().regex(/^[a-z][a-z0-9_]*$/)
@@ -40,6 +45,11 @@ const llmModelSchema = z.enum(LLM_MODELS)
 const recordIdSchema = z.string().regex(RECORD_ID)
 /** The most records a confirmed plan sends back (a mapping of many searches at their cap). */
 const MAX_PLAN_RECORDS = 100_000
+const outlineScopeSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('library') }),
+  z.strictObject({ kind: z.literal('papers'), ids: z.array(paperIdSchema).max(20_000) }),
+  z.strictObject({ kind: z.literal('mapping'), mappingId: z.string().regex(MAPPING_ID) })
+])
 const phaseSchema = z.enum(PHASES)
 const yearSchema = z.number().int().min(YEAR_MIN).max(YEAR_MAX).nullable()
 /** The protocol draft with every nested object strict as well: only the editable fields reach the service. */
@@ -68,7 +78,10 @@ export const ipcArgs = {
     contactEmail: z.string().optional(),
     openalexApiKey: z.string().optional(),
     autoSync: z.boolean().optional(),
-    autoSyncMinutes: z.number().int().min(AUTO_SYNC_MINUTES.min).max(AUTO_SYNC_MINUTES.max).optional()
+    autoSyncMinutes: z.number().int().min(AUTO_SYNC_MINUTES.min).max(AUTO_SYNC_MINUTES.max).optional(),
+    apiEnabled: z.boolean().optional(),
+    apiPort: z.number().int().min(API_PORTS.min).max(API_PORTS.max).optional(),
+    apiAllowCostly: z.boolean().optional()
   }),
   projectPatch: z.strictObject({
     name: z.string().trim().min(1).optional(),
@@ -94,7 +107,11 @@ export const ipcArgs = {
         per_batch_usd: z.number().positive().optional(),
         per_month_usd: z.number().positive().nullable().optional(),
         per_facet_suggestion_usd: z.number().positive().optional(),
-        per_chat_message_usd: z.number().positive().optional()
+        per_chat_message_usd: z.number().positive().optional(),
+        per_draft_usd: z.number().positive().optional(),
+        per_cite_check_usd: z.number().positive().optional(),
+        per_outline_usd: z.number().positive().optional(),
+        per_style_usd: z.number().positive().optional()
       })
       .optional()
   }),
@@ -117,7 +134,7 @@ export const ipcArgs = {
   ]),
   facetFilters: z.array(z.strictObject({ facet: facetKeySchema, value: z.string().min(1) })).max(4),
   /** A bare file name for the save dialog's default: never a path. */
-  exportName: z.string().regex(/^[\w.-]{1,100}\.(png|svg|csv)$/),
+  exportName: z.string().regex(/^[\w.-]{1,100}\.(png|svg|csv|bib|tex|md|org)$/),
   exportData: z.union([z.string(), z.custom<Uint8Array>((v) => v instanceof Uint8Array)]),
   relationId: z.string().regex(RELATION_ID),
   relationStatus: z.enum(RELATION_STATUSES),
@@ -233,7 +250,48 @@ export const ipcArgs = {
   /** «Agregar a la biblioteca» for one record (its ids) or all (undefined). */
   mappingRecordScope: z.array(recordIdSchema).min(1).max(MAX_PLAN_RECORDS).optional(),
   /** A request that costs money or the OpenAlex budget: only `true`, what the window sends on the user's confirming click. */
-  confirmed: z.literal(true)
+  confirmed: z.literal(true),
+  /** «BibTeX»'s source: pasted text (bounded), or the token of the file the main process's dialog picked. */
+  writingSource: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('text'), text: z.string().max(MAX_BIB_TEXT_CHARS), format: z.enum(CITE_FORMATS) }),
+    z.strictObject({ kind: z.literal('file'), token: z.uuid() })
+  ]),
+  /** «Verificar citas»: the pasted text (bounded) and its format. */
+  checkText: z.string().max(MAX_CHECK_CHARS),
+  citeFormat: z.enum(CITE_FORMATS),
+  citeCheckRequest: z.strictObject({ text: z.string().max(MAX_CHECK_CHARS), format: z.enum(CITE_FORMATS), model: llmModelSchema.optional() }),
+  outlineScope: outlineScopeSchema,
+  writingPlanKind: z.enum(WRITING_PLAN_KINDS),
+  /** «Proponer redacción del esquema»: the outline's choices (main builds it again), never the outline itself. */
+  outlineRequest: z.strictObject({
+    scope: outlineScopeSchema,
+    facet: facetKeySchema,
+    secondary: facetKeySchema.nullable(),
+    onlyReviewed: z.boolean(),
+    questionId: z.string().regex(/^RQ[1-9][0-9]*$/).nullable(),
+    model: llmModelSchema.optional()
+  }),
+  styleRequest: z.strictObject({
+    text: z.string().min(1).max(MAX_STYLE_CHARS),
+    format: z.enum(CITE_FORMATS),
+    focus: z.array(z.enum(STYLE_FOCUSES)).min(1).max(STYLE_FOCUSES.length),
+    model: llmModelSchema.optional()
+  }),
+  draftId: z.string().regex(DRAFT_ID),
+  /** «Redactar» without a draft yet, «Regenerar» with one. */
+  draftTarget: z.string().regex(DRAFT_ID).nullable(),
+  draftTitle: z.string().trim().min(1).max(MAX_DRAFT_TITLE),
+  draftListQuery: z.strictObject({ text: z.string().max(200).optional() }).optional(),
+  draftInput: z.strictObject({
+    title: z.string().trim().min(1).max(MAX_DRAFT_TITLE),
+    purpose: z.string().max(MAX_DRAFT_PURPOSE),
+    rq: z.string().regex(/^RQ[1-9][0-9]*$/).nullable(),
+    papers: z.array(paperIdSchema).min(1).max(MAX_DRAFT_PAPERS),
+    length: z.enum(DRAFT_LENGTHS),
+    model: llmModelSchema
+  }),
+  /** The current version's text as the user edited it. */
+  draftText: z.string().max(MAX_DRAFT_TEXT)
 }
 
 export class InvalidIpcArgument extends Error {

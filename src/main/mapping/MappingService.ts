@@ -936,6 +936,11 @@ export class MappingService {
     }
   }
 
+  /** The library papers a mapping included on full text («los incluidos de un mapeo»). */
+  includedPapers(id: string): string[] {
+    return [...new Set(this.included(id).map((r) => r.paper_id!))]
+  }
+
   /** Records included on full text that are library papers: where snowballing starts. */
   private included(id: string): MappingRecordRow[] {
     const { cache, store } = this.deps

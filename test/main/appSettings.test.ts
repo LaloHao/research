@@ -24,7 +24,10 @@ describe('app settings', () => {
       lastProjectPath: '/tmp/thesis',
       deviceId: 'd0d0d0d0-0000-0000-0000-000000000000',
       autoSync: true,
-      autoSyncMinutes: 10
+      autoSyncMinutes: 10,
+      apiEnabled: false,
+      apiPort: 47823,
+      apiAllowCostly: false
     })
     expect(await loadSettings(file)).toMatchObject({ contactEmail: 'me@uni.test', lastProjectPath: '/tmp/thesis' })
     await writeFile(file, JSON.stringify({ contactEmail: 42, lastProjectPath: '/x', extra: true }))

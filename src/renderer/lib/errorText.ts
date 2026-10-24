@@ -1,10 +1,12 @@
 import type { TFunction } from 'i18next'
 import { parseUserError, type UserErrorCode } from '../../shared/library'
 import { SEARCH_CAP } from '../../shared/mapping'
+import { MAX_PROPOSAL_PAPERS } from '../../shared/writing/outlineProposal'
 
 /** Fixed values some error texts name (the app's own limits), so the wording follows the code. */
 const ERROR_VALUES: Partial<Record<UserErrorCode, Record<string, unknown>>> = {
-  search_too_large: { max: SEARCH_CAP.max }
+  search_too_large: { max: SEARCH_CAP.max },
+  outline_too_large: { max: MAX_PROPOSAL_PAPERS }
 }
 
 /** A user-facing error code from the main process (with its detail, if any), or the raw message when it is not a known code. */

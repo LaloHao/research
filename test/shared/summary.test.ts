@@ -81,7 +81,7 @@ describe('LlmConfigSchema', () => {
       auto_suggest_facets: false,
       auto_suggest_facets_after: 10,
       max_input_chars: 400000,
-      budget: { per_operation_usd: 0.5, per_batch_usd: 10, per_month_usd: null, per_facet_suggestion_usd: 2, per_chat_message_usd: 0.5 }
+      budget: { per_operation_usd: 0.5, per_batch_usd: 10, per_month_usd: null, per_facet_suggestion_usd: 2, per_chat_message_usd: 0.5, per_draft_usd: 1, per_cite_check_usd: 1, per_outline_usd: 0.5, per_style_usd: 0.5 }
     })
   })
 
@@ -100,7 +100,7 @@ describe('LlmConfigSchema', () => {
       auto_suggest_facets: false,
       auto_suggest_facets_after: 10,
       max_input_chars: 1000,
-      budget: { per_operation_usd: 0.5, per_batch_usd: 3, per_month_usd: 20, per_facet_suggestion_usd: 2, per_chat_message_usd: 0.5 }
+      budget: { per_operation_usd: 0.5, per_batch_usd: 3, per_month_usd: 20, per_facet_suggestion_usd: 2, per_chat_message_usd: 0.5, per_draft_usd: 1, per_cite_check_usd: 1, per_outline_usd: 0.5, per_style_usd: 0.5 }
     })
     expect(LlmConfigSchema.parse({ model: 'opus', budget: 'oops' })).toMatchObject({ model: 'opus', budget: { per_operation_usd: 0.5, per_batch_usd: 10, per_month_usd: null } })
   })
@@ -121,12 +121,17 @@ describe('LlmConfigSchema', () => {
       auto_suggest_facets_after: 10,
       budget: { per_facet_suggestion_usd: 2 }
     })
-    expect(COST_OPERATIONS).toEqual(['summarize', 'suggest_relations', 'suggest_facets', 'fill_facets', 'chat', 'screening'])
+    expect(COST_OPERATIONS).toEqual(['summarize', 'suggest_relations', 'suggest_facets', 'fill_facets', 'chat', 'screening', 'draft', 'cite_check', 'outline', 'style'])
   })
 
   it('reads the per-message chat cap, falling back on its own', () => {
     expect(LlmConfigSchema.parse({ budget: { per_chat_message_usd: 0.2 } }).budget).toMatchObject({ per_chat_message_usd: 0.2, per_operation_usd: 0.5 })
     expect(LlmConfigSchema.parse({ budget: { per_chat_message_usd: 0, per_batch_usd: 3 } }).budget).toMatchObject({ per_chat_message_usd: 0.5, per_batch_usd: 3 })
+  })
+
+  it('reads the writing caps, each falling back on its own', () => {
+    expect(LlmConfigSchema.parse({ budget: { per_draft_usd: 2, per_style_usd: 0.2 } }).budget).toMatchObject({ per_draft_usd: 2, per_cite_check_usd: 1, per_outline_usd: 0.5, per_style_usd: 0.2 })
+    expect(LlmConfigSchema.parse({ budget: { per_draft_usd: 0, per_cite_check_usd: 'x', per_outline_usd: 3 } }).budget).toMatchObject({ per_draft_usd: 1, per_cite_check_usd: 1, per_outline_usd: 3 })
   })
 })
 

@@ -8,6 +8,7 @@ const ITEMS: { view: View; icon: string }[] = [
   { view: 'map', icon: '🕸' },
   { view: 'mappings', icon: '📋' },
   { view: 'chat', icon: '💬' },
+  { view: 'writing', icon: '✍️' },
   { view: 'trash', icon: '🗑' }
 ]
 

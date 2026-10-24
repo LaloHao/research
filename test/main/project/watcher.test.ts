@@ -105,6 +105,25 @@ describe('watchProject', () => {
     stop()
   })
 
+  it('reports drafts written and removed in drafts/, apart from the conversations', async () => {
+    const root = await tmpDir()
+    let drafts = 0
+    let chats = 0
+    const stop = watchProject(root, { onPaper: () => undefined, onConfig: () => undefined, onChats: () => chats++, onDrafts: () => drafts++ }, 50)
+    await new Promise((r) => setTimeout(r, 100))
+    await mkdir(join(root, 'drafts'))
+    await waitFor(() => drafts > 0)
+    await new Promise((r) => setTimeout(r, 150))
+    for (const change of [() => atomicWrite(join(root, 'drafts/20261022-120000-a1b2.md'), 'a'), () => unlink(join(root, 'drafts/20261022-120000-a1b2.md'))]) {
+      const before = drafts
+      await change()
+      await waitFor(() => drafts > before)
+      await new Promise((r) => setTimeout(r, 150))
+    }
+    expect(chats).toBe(0)
+    stop()
+  })
+
   it('reports the mapping whose files change, also when mappings/ appears later', async () => {
     const root = await tmpDir()
     const changed: string[] = []

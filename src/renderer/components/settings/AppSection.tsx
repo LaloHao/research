@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { AppSettings } from '../../../shared/settings'
 import { errorText } from '../../lib/errorText'
 import { parseSyncMinutes } from '../../lib/sync'
+import { LocalApiSection } from './LocalApiSection'
 import { ModelsSection } from './ModelsSection'
 
 type SettingsPatch = Parameters<typeof window.research.settings.set>[0]
@@ -160,6 +161,7 @@ export function AppSection({ onSaved }: { onSaved: () => void }): React.JSX.Elem
         </p>
       )}
       <ModelsSection />
+      <LocalApiSection onSaved={onSaved} />
       <h3>{t('settings.logs')}</h3>
       <div className="field">
         <button type="button" disabled={openingLogs} onClick={openLogs}>

@@ -1,6 +1,7 @@
 import { hostname } from 'node:os'
 import { join } from 'node:path'
 import type { ChatStreamUpdate } from '../../shared/chat'
+import type { DraftStreamUpdate } from '../../shared/writing/draft'
 import type { JobSpec } from '../../shared/jobs'
 import type { PaperDetail } from '../../shared/library'
 import type { ReviewItem } from '../../shared/summary'
@@ -18,6 +19,7 @@ import { HttpClient, type FetchFn } from '../ingest/http'
 import { MetadataResolver } from '../ingest/MetadataResolver'
 import { JobQueue } from '../jobs/JobQueue'
 import { BudgetGuard, limitsFromConfig } from '../llm/BudgetGuard'
+import type { CappedDeps } from '../llm/cappedOperation'
 import { ClaudeCliProvider } from '../llm/ClaudeCliProvider'
 import { CostLedger } from '../llm/CostLedger'
 import type { LlmProvider } from '../llm/LlmProvider'
@@ -28,6 +30,7 @@ import { ScreeningSuggester } from '../mapping/ScreeningSuggester'
 import { startActionsMcpServer } from '../mcp/ActionsMcpServer'
 import { startLibraryMcpServer } from '../mcp/LibraryMcpServer'
 import { libraryTools } from '../mcp/libraryTools'
+import { scopeLibraryTools } from '../mcp/scopedTools'
 import { ProjectStore } from '../project/ProjectStore'
 import { PAPER_FOLDER, watchProject } from '../project/watcher'
 import { interleaveReview } from '../relations/relationMerge'
@@ -40,6 +43,9 @@ import { SummaryService } from '../summary/SummaryService'
 import { SyncScheduler } from '../sync/SyncScheduler'
 import { machineName } from '../sync/messages'
 import { SyncService } from '../sync/SyncService'
+import { DraftService } from '../writing/DraftService'
+import { CiteChecker } from '../writing/CiteChecker'
+import { WritingService } from '../writing/WritingService'
 import { DEFAULT_DEVICE_ID, LibraryService } from './LibraryService'
 
 /** The per-device automatic sync settings, read at every tick. */
@@ -74,20 +80,23 @@ export interface SessionOptions {
   now?: () => Date
 }
 
-type SessionEvent = 'library' | 'jobs' | 'project' | 'sync' | 'facets' | 'chats' | 'mappings'
+type SessionEvent = 'library' | 'jobs' | 'project' | 'sync' | 'facets' | 'chats' | 'mappings' | 'drafts'
 
 /** Files whose external change alters the bibliography (paper.yaml, or the paper folder appearing or going away). */
 const BIB_FILES = new Set(['paper.yaml', PAPER_FOLDER])
 
 /** Everything that lives while one project is open. */
 export class ProjectSession {
-  private readonly listeners: Record<SessionEvent, Set<() => void>> = { library: new Set(), jobs: new Set(), project: new Set(), sync: new Set(), facets: new Set(), chats: new Set(), mappings: new Set() }
+  private readonly listeners: Record<SessionEvent, Set<() => void>> = { library: new Set(), jobs: new Set(), project: new Set(), sync: new Set(), facets: new Set(), chats: new Set(), mappings: new Set(), drafts: new Set() }
   private readonly streamListeners = new Set<(u: ChatStreamUpdate) => void>()
+  private readonly draftStreamListeners = new Set<(u: DraftStreamUpdate) => void>()
   private stopWatching: (() => void) | null = null
   private readonly inFlight = new Set<Promise<unknown>>()
   private scheduler: SyncScheduler | null = null
   /** Trash operations in flight: they move whole folders, so the automatic sync waits for the next tick. */
   private trashOps = 0
+  /** Budget, ledger and caps of the project's Claude operations (`runCappedOperation`); set as the session starts. */
+  capped!: CappedDeps
 
   private constructor(
     readonly store: ProjectStore,
@@ -103,7 +112,9 @@ export class ProjectSession {
     readonly sync: SyncService,
     readonly facets: FacetSuggestionService,
     readonly chats: ChatService,
-    readonly mappings: MappingService
+    readonly mappings: MappingService,
+    readonly writing: WritingService,
+    readonly drafts: DraftService
   ) {}
 
   static async create(root: string, name: string, opts: SessionOptions): Promise<ProjectSession> {
@@ -142,7 +153,7 @@ export class ProjectSession {
       () => limitsFromConfig(store.config.llm),
       () => ledger.monthTotal(),
       0.05,
-      { suggest_relations: 0.25, suggest_facets: 0.5, chat: 0.1, screening: 0.1 }
+      { suggest_relations: 0.25, suggest_facets: 0.5, chat: 0.1, screening: 0.1, draft: 0.2, cite_check: 0.2, outline: 0.1, style: 0.1 }
     )
     const llm = opts.llm ?? new ClaudeCliProvider()
     const summarizer = new Summarizer({ store, cache, provider: llm, budget, ledger })
@@ -308,11 +319,41 @@ export class ProjectSession {
       cancelBatch: (batchId) => queue.cancelBatch(batchId),
       pauseMs: opts.citationPauseMs
     })
-    const session: ProjectSession = new ProjectSession(store, cache, http, library, queue, summaries, citations, similarity, map, relations, sync, facets, chats, mappings)
+    const writing = new WritingService({
+      store,
+      cache,
+      includedPapers: (id) => mappings.includedPapers(id),
+      llm: { provider: llm, budget, ledger },
+      checker: new CiteChecker({
+        store,
+        cache,
+        provider: llm,
+        budget,
+        ledger,
+        limits: () => limitsFromConfig(store.config.llm),
+        embedder: async () => (opts.embeddings ? opts.embeddings.embedder() : null)
+      })
+    })
+    const drafts = new DraftService({
+      store,
+      cache,
+      provider: llm,
+      budget,
+      ledger,
+      // A fresh read-only MCP server per version, its tools limited to the chosen papers, closed when it ends.
+      startTools: (o, papers) => startLibraryMcpServer(scopeLibraryTools(libraryTools({ store, cache, map, embeddings: opts.embeddings ?? null }), papers), o),
+      machine: machineName(opts.machineName ?? hostname()),
+      emit: () => session.emit('drafts'),
+      stream: (u) => session.emitDraftStream(u),
+      now: opts.now
+    })
+    const session: ProjectSession = new ProjectSession(store, cache, http, library, queue, summaries, citations, similarity, map, relations, sync, facets, chats, mappings, writing, drafts)
+    session.capped = { budget, ledger, limits: () => limitsFromConfig(store.config.llm) }
     await library.reindexAll()
     await relations.reindex()
     await facets.reindex()
     await chats.reindex()
+    await drafts.reindex()
     await mappings.reindexAll()
     library.onChange(() => session.emit('library'))
     queue.onChange(() => session.emit('jobs'))
@@ -377,6 +418,16 @@ export class ProjectSession {
             )
             .catch((error) => console.error('chats', error))
         },
+        onDrafts: () => {
+          // Our own writes come through the watcher too and are already indexed: only a real external change counts.
+          void session
+            .track(
+              drafts.reindexIfChanged().then((changed) => {
+                if (changed) session.emit('drafts')
+              })
+            )
+            .catch((error) => console.error('drafts', error))
+        },
         onMappings: (id) => {
           // Our own writes come through the watcher too and are already indexed: only a real external change counts.
           void session
@@ -417,6 +468,12 @@ export class ProjectSession {
   onChatStream(listener: (u: ChatStreamUpdate) => void): () => void {
     this.streamListeners.add(listener)
     return () => this.streamListeners.delete(listener)
+  }
+
+  /** A draft's progress (the window shows it as it arrives). */
+  onDraftStream(listener: (u: DraftStreamUpdate) => void): () => void {
+    this.draftStreamListeners.add(listener)
+    return () => this.draftStreamListeners.delete(listener)
   }
 
   /** Registers work outside the job queue that uses the cache, so `close()` waits for it. */
@@ -518,8 +575,8 @@ export class ProjectSession {
     // in a process group of its own that would outlive the app, so a fetch or push is cut short; a local step, which may
     // hold the store's write gate, is let finish) and the queue (running jobs abort and stay queued for next time).
     // Awaiting the scheduler on its own first would wait for that fetch or push to end by itself.
-    // Running answers stop too, saved as stopped (sends in progress finish first), before the cache closes.
-    await Promise.all([this.scheduler?.stop(), this.sync.close(), this.queue.stop(), this.chats.close()])
+    // Running answers and drafts stop too, saved as stopped (sends in progress finish first), and a running citation check, before the cache closes.
+    await Promise.all([this.scheduler?.stop(), this.sync.close(), this.queue.stop(), this.chats.close(), this.writing.close(), this.drafts.close()])
     while (this.inFlight.size > 0) await Promise.allSettled([...this.inFlight])
     this.cache.close()
   }
@@ -535,6 +592,17 @@ export class ProjectSession {
 
   private emit(event: SessionEvent): void {
     for (const listener of this.listeners[event]) listener()
+  }
+
+  /** A listener that throws (a window going away) never breaks the draft or the other listeners. */
+  private emitDraftStream(u: DraftStreamUpdate): void {
+    for (const listener of this.draftStreamListeners) {
+      try {
+        listener(u)
+      } catch (error) {
+        console.error('draft stream', error)
+      }
+    }
   }
 
   /** A listener that throws (a window going away) never breaks the answer or the other listeners. */

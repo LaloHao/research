@@ -9,6 +9,11 @@ export interface BudgetLimits {
   perFacetSuggestionUsd?: number
   /** One chat answer; the per-operation cap when absent. */
   perChatMessageUsd?: number
+  /** «Redacción»'s operations (draft, cite_check, outline, style); the per-operation cap when absent. */
+  perDraftUsd?: number
+  perCiteCheckUsd?: number
+  perOutlineUsd?: number
+  perStyleUsd?: number
 }
 
 export interface Reservation {
@@ -24,7 +29,11 @@ export function limitsFromConfig(llm: LlmConfig): BudgetLimits {
     perBatchUsd: llm.budget.per_batch_usd,
     perMonthUsd: llm.budget.per_month_usd,
     perFacetSuggestionUsd: llm.budget.per_facet_suggestion_usd,
-    perChatMessageUsd: llm.budget.per_chat_message_usd
+    perChatMessageUsd: llm.budget.per_chat_message_usd,
+    perDraftUsd: llm.budget.per_draft_usd,
+    perCiteCheckUsd: llm.budget.per_cite_check_usd,
+    perOutlineUsd: llm.budget.per_outline_usd,
+    perStyleUsd: llm.budget.per_style_usd
   }
 }
 
@@ -32,6 +41,10 @@ export function limitsFromConfig(llm: LlmConfig): BudgetLimits {
 export function operationCap(limits: BudgetLimits, operation: CostOperation): number {
   if (operation === 'suggest_facets') return limits.perFacetSuggestionUsd ?? limits.perOperationUsd
   if (operation === 'chat') return limits.perChatMessageUsd ?? limits.perOperationUsd
+  if (operation === 'draft') return limits.perDraftUsd ?? limits.perOperationUsd
+  if (operation === 'cite_check') return limits.perCiteCheckUsd ?? limits.perOperationUsd
+  if (operation === 'outline') return limits.perOutlineUsd ?? limits.perOperationUsd
+  if (operation === 'style') return limits.perStyleUsd ?? limits.perOperationUsd
   return limits.perOperationUsd
 }
 

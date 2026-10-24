@@ -95,6 +95,7 @@ describe('IPC argument validation', () => {
     expect(arg(ipcArgs.facetFilters, [{ facet: 'task', value: 'log_parsing' }], 'f')).toHaveLength(1)
     expect(() => arg(ipcArgs.facetFilters, [{ facet: 'Task', value: 'x' }], 'f')).toThrow()
     expect(arg(ipcArgs.exportName, 'bars-task.svg', 'name')).toBe('bars-task.svg')
+    for (const name of ['chapter.bib', 'outline.tex', 'outline.md', 'outline.org']) expect(arg(ipcArgs.exportName, name, 'name')).toBe(name)
     for (const bad of ['../x.png', 'a/b.png', 'x.exe', '']) expect(() => arg(ipcArgs.exportName, bad, 'name')).toThrow()
     expect(arg(ipcArgs.exportData, new Uint8Array([1]), 'data')).toEqual(new Uint8Array([1]))
     expect(arg(ipcArgs.exportData, 'a,b\n', 'data')).toBe('a,b\n')
@@ -203,6 +204,10 @@ describe('typed relation arguments', () => {
   it('accepts chat ids, titles, queries, messages and the per-message cap, nothing else', () => {
     expect(arg(ipcArgs.llmPatch, { budget: { per_chat_message_usd: 0.2 } }, 'patch')).toEqual({ budget: { per_chat_message_usd: 0.2 } })
     expect(() => arg(ipcArgs.llmPatch, { budget: { per_chat_message_usd: 0 } }, 'patch')).toThrow()
+    expect(arg(ipcArgs.llmPatch, { budget: { per_draft_usd: 2, per_cite_check_usd: 1, per_outline_usd: 0.3, per_style_usd: 0.2 } }, 'patch')).toEqual({
+      budget: { per_draft_usd: 2, per_cite_check_usd: 1, per_outline_usd: 0.3, per_style_usd: 0.2 }
+    })
+    expect(() => arg(ipcArgs.llmPatch, { budget: { per_style_usd: -1 } }, 'patch')).toThrow()
     expect(arg(ipcArgs.chatId, '20261011-120000-a1b2-0f9e8d', 'id')).toBe('20261011-120000-a1b2-0f9e8d')
     for (const bad of ['', '../x', '20261011-120000-A1B2', `20261011-120000-a1b2${'-0f9e8d'.repeat(9)}`, 7, null]) {
       expect(() => arg(ipcArgs.chatId, bad, 'id')).toThrow()
@@ -328,5 +333,54 @@ describe('typed relation arguments', () => {
   it('takes a costly mapping request only with the confirmation of the user\'s click', () => {
     expect(arg(ipcArgs.confirmed, true, 'confirmed')).toBe(true)
     for (const bad of [false, 'true', 1, null, undefined]) expect(() => arg(ipcArgs.confirmed, bad, 'confirmed')).toThrow()
+  })
+
+  it('checks «Redacción»’s sources and scopes: a bounded text or a file token, never a path', () => {
+    expect(arg(ipcArgs.writingSource, { kind: 'text', text: '\\cite{a}', format: 'latex' }, 'source')).toEqual({ kind: 'text', text: '\\cite{a}', format: 'latex' })
+    const token = '123e4567-e89b-42d3-a456-426614174000'
+    expect(arg(ipcArgs.writingSource, { kind: 'file', token }, 'source')).toEqual({ kind: 'file', token })
+    for (const bad of [
+      { kind: 'file', path: '/etc/passwd' },
+      { kind: 'file', token: '../x' },
+      { kind: 'text', text: 'x', format: 'docx' },
+      { kind: 'text', text: 'x'.repeat(2_000_001), format: 'org' },
+      { kind: 'text', text: 'x', format: 'org', extra: 1 }
+    ])
+      expect(() => arg(ipcArgs.writingSource, bad, 'source')).toThrow()
+    expect(arg(ipcArgs.outlineScope, { kind: 'papers', ids: ['he2017drain'] }, 'scope')).toEqual({ kind: 'papers', ids: ['he2017drain'] })
+    expect(arg(ipcArgs.outlineScope, { kind: 'library' }, 'scope')).toEqual({ kind: 'library' })
+    for (const bad of [{ kind: 'papers', ids: ['../x'] }, { kind: 'mapping', mappingId: '../x' }, { kind: 'all' }]) expect(() => arg(ipcArgs.outlineScope, bad, 'scope')).toThrow()
+  })
+
+  it('checks «Borrador»’s form, ids and edits', () => {
+    const input = { title: 'Parsing', purpose: '', rq: 'RQ1', papers: ['he2017drain'], length: 'short', model: 'sonnet' }
+    expect(arg(ipcArgs.draftInput, input, 'input')).toEqual(input)
+    for (const bad of [
+      { ...input, papers: [] },
+      { ...input, papers: ['../x'] },
+      { ...input, papers: Array.from({ length: 61 }, (_v, i) => `p${i}`) },
+      { ...input, length: 'huge' },
+      { ...input, rq: 'Q1' },
+      { ...input, title: ' ' },
+      { ...input, extra: 1 }
+    ])
+      expect(() => arg(ipcArgs.draftInput, bad, 'input')).toThrow()
+    expect(arg(ipcArgs.draftTarget, null, 'id')).toBeNull()
+    expect(() => arg(ipcArgs.draftId, '../x', 'id')).toThrow()
+    expect(() => arg(ipcArgs.draftText, 'x'.repeat(100_001), 'text')).toThrow()
+  })
+
+  it('checks «Verificar con Claude»’s request: a bounded text, a known format and model, nothing else', () => {
+    expect(arg(ipcArgs.citeCheckRequest, { text: '\\cite{a}', format: 'latex', model: 'haiku' }, 'request')).toEqual({ text: '\\cite{a}', format: 'latex', model: 'haiku' })
+    expect(arg(ipcArgs.citeCheckRequest, { text: 'x', format: 'org' }, 'request')).toEqual({ text: 'x', format: 'org' })
+    for (const bad of [
+      { text: 'x'.repeat(30_001), format: 'org' },
+      { text: 'x', format: 'docx' },
+      { text: 'x', format: 'org', model: 'gpt' },
+      { text: 'x', format: 'org', maxUsd: 9 }
+    ])
+      expect(() => arg(ipcArgs.citeCheckRequest, bad, 'request')).toThrow()
+    expect(() => arg(ipcArgs.checkText, 'x'.repeat(30_001), 'text')).toThrow()
+    expect(() => arg(ipcArgs.citeFormat, 'tex', 'format')).toThrow()
   })
 })

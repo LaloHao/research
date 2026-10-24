@@ -133,6 +133,12 @@ export function PdfViewer({
           if (focusPage === n && focusQuote !== null) {
             // The focused page gets its text layer right away, with the quote highlighted.
             focusHandled = true
+            if (!focusQuote.trim()) {
+              // Only a page to show (an editor's citation without a quote): nothing to look for.
+              wrap.scrollIntoView({ block: 'start' })
+              onFocusResultRef.current?.(true)
+              continue
+            }
             try {
               const container = await addTextLayer(page, wrap, cssViewport)
               if (!container) break

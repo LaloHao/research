@@ -31,12 +31,19 @@ import type {
   ModelInfo,
   RelationsDetail
 } from './relations'
+import type { ApiOpenPaper, LocalApiStatus } from './localApi'
 import type { PdfPolicy } from './schemas'
 import type { AppSettings } from './settings'
 import type { ExtractionForm, FormImpact, FormInfo, LlmConfig, LlmModel, ReviewItem, Section, SummaryPlan, ThesisContext } from './summary'
 import type { CloseDecision, ConflictDecision, ConflictDiff, ConflictItem, SyncResult, SyncStatus } from './sync'
 import type { DeletePlanResult, RestoreOutcome, TrashEntry, TrashOutcome, TrashTarget } from './trash'
 import type { PaperRelations, RelationPlan, RelationsFileState, RelationStatus, RelationType } from './typedRelations'
+import type { DraftEditResult, DraftInput, DraftListQuery, DraftOpenResult, DraftRunResult, DraftStreamUpdate, DraftSummary } from './writing/draft'
+import type { ChapterBibResult, OutlineDataResult, OutlineScope, WritingLibrary, WritingPlanKind, WritingRunPlan, WritingSource } from './writing/api'
+import type { CiteCheckPlanResult, CiteCheckProgress, CiteCheckRequest, CiteCheckRunResult } from './writing/citeCheck'
+import type { CiteFormat } from './writing/citations'
+import type { OutlineProposalResult, OutlineRequest } from './writing/outlineProposal'
+import type { StyleRequest, StyleReviewResult } from './writing/style'
 
 export const IPC = {
   settingsGet: 'settings:get',
@@ -153,6 +160,25 @@ export const IPC = {
   mappingsIngestPlan: 'mappings:ingest-plan',
   mappingsIngest: 'mappings:ingest',
   exportSave: 'export:save',
+  writingLibrary: 'writing:library',
+  writingChooseFile: 'writing:choose-file',
+  writingBibtex: 'writing:bibtex',
+  writingOutlineData: 'writing:outline-data',
+  draftsList: 'drafts:list',
+  draftsOpen: 'drafts:open',
+  draftsRun: 'drafts:run',
+  draftsStop: 'drafts:stop',
+  draftsEdit: 'drafts:edit',
+  draftsRename: 'drafts:rename',
+  draftsArchive: 'drafts:archive',
+  draftsRemove: 'drafts:remove',
+  writingCheckPlan: 'writing:check-plan',
+  writingCheck: 'writing:check',
+  writingCheckProgress: 'writing:check-progress',
+  writingCheckStop: 'writing:check-stop',
+  writingPlan: 'writing:plan',
+  writingProposeOutline: 'writing:propose-outline',
+  writingReviewStyle: 'writing:review-style',
   syncStatus: 'sync:status',
   syncRun: 'sync:run',
   syncConflicts: 'sync:conflicts',
@@ -163,6 +189,9 @@ export const IPC = {
   closeDecision: 'window:close-decision',
   flushDone: 'window:flush-done',
   appOpenLogs: 'app:open-logs',
+  localApiStatus: 'local-api:status',
+  localApiCopyToken: 'local-api:copy-token',
+  localApiRegenerateToken: 'local-api:regenerate-token',
   logRendererError: 'log:renderer-error'
 } as const
 
@@ -180,7 +209,8 @@ export interface RendererErrorReport {
 /**
  * `sync-changed`: the git sync's state changed. `facets-changed`: the facet suggestions changed (a run, a decision,
  * or facet-suggestions.yaml edited outside the app). `chats-changed`: a conversation was written, deleted or changed
- * outside the app (answers stream on CHAT_STREAM_CHANNEL instead). `mappings-changed`: a mapping was written, or changed outside
+ * outside the app (answers stream on CHAT_STREAM_CHANNEL instead). `drafts-changed`: the same for drafts/ (versions
+ * stream on DRAFT_STREAM_CHANNEL). `mappings-changed`: a mapping was written, or changed outside
  * the app. `flush-request`: the window is about to close; save
  * pending edits, then call `flushDone()`. `close-request`: there are changes not synced; ask, then answer with `closeDecision()`.
  */
@@ -191,14 +221,20 @@ export type ResearchEvent =
   | 'sync-changed'
   | 'facets-changed'
   | 'chats-changed'
+  | 'drafts-changed'
   | 'mappings-changed'
   | 'flush-request'
   | 'close-request'
 
 export const eventChannel = (event: ResearchEvent): string => `event:${event}`
 
+/** The push channel of the local API's `open_in_app` (`ApiOpenPaper`): show a paper at a page. */
+export const API_OPEN_PAPER_CHANNEL = 'local-api:open-paper'
+
 /** The push channel of `ChatStreamUpdate`s (an answer as it streams). */
 export const CHAT_STREAM_CHANNEL = 'chat:stream'
+/** The push channel of `DraftStreamUpdate`s (a draft's version as it streams). */
+export const DRAFT_STREAM_CHANNEL = 'draft:stream'
 
 export interface ProjectInfo {
   root: string
@@ -216,7 +252,7 @@ export type ActionResult = { ok: true } | { ok: false; error: string }
 export type RunBatchResult = { ok: true; batchId: string; count: number } | { ok: false; error: string }
 export type MappingCreateResult = { ok: true; id: string } | { ok: false; error: string }
 export type MappingOpenResult = { ok: true; mapping: MappingView } | { ok: false; error: string }
-/** An export file picked in the app's dialog: the window sees its name and hands back only the token. */
+/** A file picked in the app's dialog (an export to import, a text for «BibTeX»): the window sees its name and hands back only the token. */
 export interface ImportChoice {
   token: string
   name: string
@@ -249,7 +285,7 @@ export interface ResearchApi {
   settings: {
     get(): Promise<AppSettings>
     /** Contact email, OpenAlex API key and the automatic sync; the last project path is managed by the main process. */
-    set(patch: Pick<Partial<AppSettings>, 'contactEmail' | 'openalexApiKey' | 'autoSync' | 'autoSyncMinutes'>): Promise<AppSettings>
+    set(patch: Pick<Partial<AppSettings>, 'contactEmail' | 'openalexApiKey' | 'autoSync' | 'autoSyncMinutes' | 'apiEnabled' | 'apiPort' | 'apiAllowCostly'>): Promise<AppSettings>
   }
   project: {
     current(): Promise<ProjectInfo | null>
@@ -446,6 +482,56 @@ export interface ResearchApi {
     /** Asks where to save, then writes the file there. */
     save(defaultName: string, data: string | Uint8Array): Promise<SaveResult>
   }
+  /** «Redacción»: reads only; nothing here writes to the project. */
+  writing: {
+    /** The keys a text may cite: library papers (and whether their text is indexed) and trashed ones. */
+    library(): Promise<WritingLibrary>
+    /**
+     * Asks for a .tex, .md or .org file in the app's dialog; null when the user cancels. The path stays in the main
+     * process: `bibtex` names the file by the token, once.
+     */
+    chooseFile(): Promise<ImportChoice | null>
+    /** «BibTeX»: the cited entries of pasted text, or of the chosen file and what it includes inside its folder. */
+    bibtex(source: WritingSource): Promise<ChapterBibResult>
+    /** «Esquema»: the facets, papers and confirmed relations of the chosen set. */
+    outlineData(scope: OutlineScope): Promise<OutlineDataResult>
+    /** A Claude operation's cost confirmation: its estimate, its cap, the month and the default model. */
+    plan(kind: WritingPlanKind): Promise<WritingRunPlan>
+    /** What «Verificar con Claude» would check in this text and cost (the shape of `plan`, plus the text's counts). */
+    checkPlan(text: string, format: CiteFormat): Promise<CiteCheckPlanResult>
+    /** After the confirmation (`confirmed` is that click): checks each sentence's cited papers; a new check stops the running one. */
+    check(req: CiteCheckRequest, confirmed: true): Promise<CiteCheckRunResult>
+    /** The running check's calls done, or null when none runs. */
+    checkProgress(): Promise<CiteCheckProgress | null>
+    /** «Detener»: what was checked so far comes back as the check's result. */
+    checkStop(): Promise<void>
+    /** «Proponer redacción del esquema», after the confirmation: the outline is built again in the main process. */
+    proposeOutline(req: OutlineRequest, confirmed: true): Promise<OutlineProposalResult>
+    /** «Revisar estilo», after the confirmation: the checked suggestions (nothing is saved). */
+    reviewStyle(req: StyleRequest, confirmed: true): Promise<StyleReviewResult>
+  }
+  /** «Borrador»: drafts/ (the only part of «Redacción» kept in the project). */
+  drafts: {
+    /** Newest first, by words in the title, the purpose or the current text. */
+    list(query?: DraftListQuery): Promise<DraftSummary[]>
+    /** The draft with every version's citations checked, and the version being written, if any. */
+    open(id: string): Promise<DraftOpenResult>
+    /**
+     * «Redactar» (`draftId` null: a new draft) or «Regenerar» (a new version), after the user confirmed the cost
+     * (`writing.plan('draft')` in the shared confirmation); the version arrives through `onStream`.
+     */
+    run(input: DraftInput, draftId: string | null, confirmed: true): Promise<DraftRunResult>
+    /** «Detener»: what arrived is kept as a stopped version. */
+    stop(id: string): Promise<void>
+    /** Saves the user's edit of the current version and checks its citations again. */
+    edit(id: string, text: string): Promise<DraftEditResult>
+    rename(id: string, title: string): Promise<ActionResult>
+    archive(id: string, archived: boolean): Promise<ActionResult>
+    /** «Borrar»: `confirmed` is the user's answer to the UI's question; the draft is deleted only when true. */
+    remove(id: string, confirmed: boolean): Promise<ActionResult>
+    /** Versions as they stream; `seq` orders them against `open()`'s `partial`. */
+    onStream(callback: (update: DraftStreamUpdate) => void): () => void
+  }
   sync: {
     status(): Promise<SyncStatus>
     /** «Sincronizar»: commit, fetch, merge and push; `conflicts` when decisions are waiting. */
@@ -465,6 +551,16 @@ export interface ResearchApi {
   app: {
     /** «Abrir carpeta de registros»: the folder of main.log, in the system's file manager. */
     openLogs(): Promise<ActionResult>
+  }
+  /** Settings → Aplicación → «API local» (turned on and off with `settings.set`). The token never reaches the window. */
+  localApi: {
+    status(): Promise<LocalApiStatus | null>
+    /** «Copiar token»: the main process puts it on the clipboard; false when there is none yet. */
+    copyToken(): Promise<boolean>
+    /** «Regenerar token». */
+    regenerateToken(): Promise<LocalApiStatus | null>
+    /** `open_in_app` from an editor: show this paper. */
+    onOpenPaper(callback: (request: ApiOpenPaper) => void): () => void
   }
   log: {
     /** Sends an uncaught error of the window to the app log; fire and forget. */

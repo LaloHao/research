@@ -1,3 +1,4 @@
+import { DEFAULT_API_PORT } from './localApi'
 import { AUTO_SYNC_MINUTES } from './sync'
 
 /** Per-user settings stored in the app's userData, never in a project folder. */
@@ -12,6 +13,11 @@ export interface AppSettings {
   /** Sync the open project with git on its own: when it opens and every `autoSyncMinutes` (this device only). */
   autoSync: boolean
   autoSyncMinutes: number
+  /** The local API (MCP over HTTP on 127.0.0.1) for editors such as Emacs; off by default. */
+  apiEnabled: boolean
+  apiPort: number
+  /** Lets the local API run operations that spend Claude quota (each still asks for confirmation); off by default. */
+  apiAllowCostly: boolean
 }
 
 export const DEFAULT_SETTINGS: Omit<AppSettings, 'deviceId'> = {
@@ -19,5 +25,8 @@ export const DEFAULT_SETTINGS: Omit<AppSettings, 'deviceId'> = {
   openalexApiKey: '',
   lastProjectPath: null,
   autoSync: true,
-  autoSyncMinutes: AUTO_SYNC_MINUTES.default
+  autoSyncMinutes: AUTO_SYNC_MINUTES.default,
+  apiEnabled: false,
+  apiPort: DEFAULT_API_PORT,
+  apiAllowCostly: false
 }

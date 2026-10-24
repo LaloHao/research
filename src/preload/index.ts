@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { ChatStreamUpdate } from '../shared/chat'
-import { CHAT_STREAM_CHANNEL, eventChannel, IPC, type ResearchApi } from '../shared/ipc'
+import { API_OPEN_PAPER_CHANNEL, CHAT_STREAM_CHANNEL, DRAFT_STREAM_CHANNEL, eventChannel, IPC, type ResearchApi } from '../shared/ipc'
+import type { ApiOpenPaper } from '../shared/localApi'
+import type { DraftStreamUpdate } from '../shared/writing/draft'
 
 const api: ResearchApi = {
   settings: {
@@ -158,6 +160,37 @@ const api: ResearchApi = {
   exports: {
     save: (defaultName, data) => ipcRenderer.invoke(IPC.exportSave, defaultName, data)
   },
+  writing: {
+    library: () => ipcRenderer.invoke(IPC.writingLibrary),
+    // The file is picked by the main process; the window only gets its name and a token.
+    chooseFile: () => ipcRenderer.invoke(IPC.writingChooseFile),
+    bibtex: (source) => ipcRenderer.invoke(IPC.writingBibtex, source),
+    outlineData: (scope) => ipcRenderer.invoke(IPC.writingOutlineData, scope),
+    checkPlan: (text, format) => ipcRenderer.invoke(IPC.writingCheckPlan, text, format),
+    check: (req, confirmed) => ipcRenderer.invoke(IPC.writingCheck, req, confirmed),
+    checkProgress: () => ipcRenderer.invoke(IPC.writingCheckProgress),
+    checkStop: () => ipcRenderer.invoke(IPC.writingCheckStop),
+    plan: (kind) => ipcRenderer.invoke(IPC.writingPlan, kind),
+    proposeOutline: (req, confirmed) => ipcRenderer.invoke(IPC.writingProposeOutline, req, confirmed),
+    reviewStyle: (req, confirmed) => ipcRenderer.invoke(IPC.writingReviewStyle, req, confirmed)
+  },
+  drafts: {
+    list: (query) => ipcRenderer.invoke(IPC.draftsList, query),
+    open: (id) => ipcRenderer.invoke(IPC.draftsOpen, id),
+    // `confirmed` comes from the window's cost confirmation, never assumed here.
+    run: (input, draftId, confirmed) => ipcRenderer.invoke(IPC.draftsRun, input, draftId, confirmed),
+    stop: (id) => ipcRenderer.invoke(IPC.draftsStop, id),
+    edit: (id, text) => ipcRenderer.invoke(IPC.draftsEdit, id, text),
+    rename: (id, title) => ipcRenderer.invoke(IPC.draftsRename, id, title),
+    archive: (id, archived) => ipcRenderer.invoke(IPC.draftsArchive, id, archived),
+    // `confirmed` comes from the window's confirmation, never assumed here.
+    remove: (id, confirmed) => ipcRenderer.invoke(IPC.draftsRemove, id, confirmed),
+    onStream: (callback) => {
+      const handler = (_e: Electron.IpcRendererEvent, update: DraftStreamUpdate): void => callback(update)
+      ipcRenderer.on(DRAFT_STREAM_CHANNEL, handler)
+      return () => ipcRenderer.removeListener(DRAFT_STREAM_CHANNEL, handler)
+    }
+  },
   sync: {
     status: () => ipcRenderer.invoke(IPC.syncStatus),
     run: () => ipcRenderer.invoke(IPC.syncRun),
@@ -169,6 +202,16 @@ const api: ResearchApi = {
   },
   app: {
     openLogs: () => ipcRenderer.invoke(IPC.appOpenLogs)
+  },
+  localApi: {
+    status: () => ipcRenderer.invoke(IPC.localApiStatus),
+    copyToken: () => ipcRenderer.invoke(IPC.localApiCopyToken),
+    regenerateToken: () => ipcRenderer.invoke(IPC.localApiRegenerateToken),
+    onOpenPaper: (callback) => {
+      const handler = (_e: Electron.IpcRendererEvent, request: ApiOpenPaper): void => callback(request)
+      ipcRenderer.on(API_OPEN_PAPER_CHANNEL, handler)
+      return () => ipcRenderer.removeListener(API_OPEN_PAPER_CHANNEL, handler)
+    }
   },
   log: {
     rendererError: (report) => ipcRenderer.send(IPC.logRendererError, report)

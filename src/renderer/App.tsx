@@ -6,6 +6,7 @@ import { ChatView } from './components/chat/ChatView'
 import { LibraryView } from './components/library/LibraryView'
 import { MapView } from './components/map/MapView'
 import { MappingsView } from './components/mappings/MappingsView'
+import { OpenFromEditor } from './components/OpenFromEditor'
 import { Rail } from './components/Rail'
 import { RelationsFileBanner } from './components/RelationsFileBanner'
 import { SettingsView } from './components/SettingsView'
@@ -13,10 +14,11 @@ import { CloseSyncDialog } from './components/sync/CloseSyncDialog'
 import { SyncView } from './components/sync/SyncView'
 import { TrashView } from './components/TrashView'
 import { WelcomeView } from './components/WelcomeView'
+import { WritingView } from './components/writing/WritingView'
 import { useEvent } from './hooks/useEvent'
 import { useSyncStatus } from './hooks/useSyncStatus'
 import { flushAll } from './lib/flush'
-import type { MapTab, View } from './lib/navigation'
+import type { MapTab, View, WritingTab } from './lib/navigation'
 
 export function App(): React.JSX.Element {
   const { t } = useTranslation()
@@ -62,6 +64,7 @@ interface ProjectShellProps {
 /** Everything whose state belongs to the open project. */
 function ProjectShell({ project, view, onViewChange: setView, inert }: ProjectShellProps): React.JSX.Element {
   const [mapTab, setMapTab] = useState<MapTab>('graph')
+  const [writingTab, setWritingTab] = useState<WritingTab>('bibtex')
   const [candidatesPaper, setCandidatesPaper] = useState<string | null>(null)
   const [facetFilters, setFacetFilters] = useState<FacetFilter[]>([])
   // The library's last visible rows, for the graph's "apply the library's filters"; null until the library is shown.
@@ -124,11 +127,13 @@ function ProjectShell({ project, view, onViewChange: setView, inert }: ProjectSh
         )}
         {view === 'mappings' && <MappingsView />}
         {view === 'chat' && <ChatView />}
+        {view === 'writing' && <WritingView projectRoot={project.root} tab={writingTab} onTabChange={setWritingTab} visibleIds={visibleIds} />}
         {view === 'trash' && <TrashView />}
         {view === 'sync' && <SyncView sync={sync} />}
         {view === 'settings' && <SettingsView project={project} />}
       </main>
       <RelationsFileBanner />
+      <OpenFromEditor />
     </div>
   )
 }

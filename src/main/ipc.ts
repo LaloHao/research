@@ -1,12 +1,18 @@
-import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
+import type { UserErrorCode } from '../shared/library'
 import type { OpenAlexCount } from '../shared/mapping'
 import type { CountResult } from '../shared/relations'
 import type { FormImpact } from '../shared/summary'
 import type { DeletePlanResult, RestoreOutcome, TrashOutcome } from '../shared/trash'
+import type { ChapterBibResult, OutlineDataResult } from '../shared/writing/api'
+import type { DraftEditResult, DraftOpenResult, DraftRunResult } from '../shared/writing/draft'
+import type { OutlineProposalResult } from '../shared/writing/outlineProposal'
+import type { StyleReviewResult } from '../shared/writing/style'
+import type { CiteCheckPlanResult, CiteCheckRunResult } from '../shared/writing/citeCheck'
 import {
   IPC,
   type ActionResult,
@@ -72,12 +78,24 @@ async function chooseExport(window: BrowserWindow | null): Promise<string | null
   return result.canceled ? null : (result.filePaths[0] ?? null)
 }
 
+/** The picker of «BibTeX» in «Redacción»: a LaTeX, Markdown or Org text. */
+async function chooseWritingFile(window: BrowserWindow | null): Promise<string | null> {
+  const options: Electron.OpenDialogOptions = {
+    properties: ['openFile'],
+    filters: [{ name: 'LaTeX, Markdown, Org', extensions: ['tex', 'ltx', 'md', 'markdown', 'qmd', 'rmd', 'org', 'txt'] }]
+  }
+  const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
+  return result.canceled ? null : (result.filePaths[0] ?? null)
+}
+
 /**
- * The export files the dialog of «Importar» returned, by the token handed to the window: the path never comes from the
+ * The files a dialog returned («Importar», «BibTeX»), by the token handed to the window: the path never comes from the
  * window. A token is used once; only the latest few are kept.
  */
 class ImportChoices {
   private readonly paths = new Map<string, string>()
+
+  constructor(private readonly unknownToken: UserErrorCode = 'import_unreadable') {}
 
   add(path: string): ImportChoice {
     const token = randomUUID()
@@ -88,7 +106,7 @@ class ImportChoices {
 
   take(token: string): string {
     const path = this.paths.get(token)
-    if (path === undefined) throw new UserFacingError('import_unreadable')
+    if (path === undefined) throw new UserFacingError(this.unknownToken)
     this.paths.delete(token)
     return path
   }
@@ -128,6 +146,14 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     const dropped = rendererErrors.takeDropped()
     appLog.error('renderer_error', dropped > 0 ? { ...report, droppedBefore: dropped } : report)
   })
+
+  ipcMain.handle(IPC.localApiStatus, () => app.apiStatus())
+  ipcMain.handle(IPC.localApiCopyToken, () => {
+    const token = app.apiCurrentToken()
+    if (token) clipboard.writeText(token)
+    return token !== null
+  })
+  ipcMain.handle(IPC.localApiRegenerateToken, () => app.regenerateApiToken())
 
   ipcMain.handle(IPC.settingsGet, () => app.getSettings())
   ipcMain.handle(IPC.settingsSet, (_e, patch: unknown) => app.setSettings(arg(ipcArgs.settingsPatch, patch, 'patch')))
@@ -711,7 +737,137 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
     return actionResult(() => chats((s) => s.chats.undo(id, actionId)))
   })
 
-  // A file the user chose to save (a chart, the graph, CSV data), wherever they picked; never written into the project on our own.
+  // «Redacción»: reads only (the .bib, the outline's data). Tracked, so closing the project waits for them.
+  const writingFiles = new ImportChoices('writing_file_unreadable')
+  ipcMain.handle(IPC.writingLibrary, () => app.requireSession().writing.library())
+  ipcMain.handle(IPC.writingChooseFile, async (): Promise<ImportChoice | null> => {
+    const path = await chooseWritingFile(getWindow())
+    return path === null ? null : writingFiles.add(path)
+  })
+  ipcMain.handle(IPC.writingBibtex, async (_e, rawSource: unknown): Promise<ChapterBibResult> => {
+    const source = arg(ipcArgs.writingSource, rawSource, 'source')
+    try {
+      const session = app.requireSession()
+      const bib = source.kind === 'text' ? session.writing.bibFromText(source.text, source.format) : session.writing.bibFromFile(writingFiles.take(source.token))
+      return { ok: true, bib: await session.track(bib) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+  ipcMain.handle(IPC.writingOutlineData, async (_e, rawScope: unknown): Promise<OutlineDataResult> => {
+    const scope = arg(ipcArgs.outlineScope, rawScope, 'scope')
+    try {
+      const session = app.requireSession()
+      return { ok: true, data: await session.track(session.writing.outlineData(scope)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+  // The Claude operations: the plan for the confirmation, then the run with the user's confirming click.
+  ipcMain.handle(IPC.writingPlan, (_e, rawKind: unknown) => app.requireSession().writing.plan(arg(ipcArgs.writingPlanKind, rawKind, 'kind')))
+  ipcMain.handle(IPC.writingProposeOutline, async (_e, rawReq: unknown, rawConfirmed: unknown): Promise<OutlineProposalResult> => {
+    const req = arg(ipcArgs.outlineRequest, rawReq, 'request')
+    arg(ipcArgs.confirmed, rawConfirmed, 'confirmed')
+    try {
+      const session = app.requireSession()
+      return { ok: true, run: await session.track(session.writing.proposeOutline(req)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+  ipcMain.handle(IPC.writingReviewStyle, async (_e, rawReq: unknown, rawConfirmed: unknown): Promise<StyleReviewResult> => {
+    const req = arg(ipcArgs.styleRequest, rawReq, 'request')
+    arg(ipcArgs.confirmed, rawConfirmed, 'confirmed')
+    try {
+      const session = app.requireSession()
+      return { ok: true, run: await session.track(session.writing.reviewStyle(req)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+
+  // «Verificar con Claude»: the plan is free; the check takes `confirmed` (the click on the cost confirmation), is
+  // tracked so closing the project waits for it (closing also stops it), and comes back whole, stopped or cut short.
+  ipcMain.handle(IPC.writingCheckPlan, async (_e, rawText: unknown, rawFormat: unknown): Promise<CiteCheckPlanResult> => {
+    const text = arg(ipcArgs.checkText, rawText, 'text')
+    const format = arg(ipcArgs.citeFormat, rawFormat, 'format')
+    try {
+      const session = app.requireSession()
+      return { ok: true, plan: await session.track(session.writing.citeCheckPlan(text, format)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+  ipcMain.handle(IPC.writingCheck, async (_e, rawReq: unknown, rawConfirmed: unknown): Promise<CiteCheckRunResult> => {
+    const req = arg(ipcArgs.citeCheckRequest, rawReq, 'request')
+    arg(ipcArgs.confirmed, rawConfirmed, 'confirmed')
+    try {
+      const session = app.requireSession()
+      return { ok: true, result: await session.track(session.writing.windowCheck(req)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+  ipcMain.handle(IPC.writingCheckProgress, () => app.requireSession().writing.checkProgress())
+  ipcMain.handle(IPC.writingCheckStop, (): void => app.requireSession().writing.stopCheck())
+
+  // «Borrador»: drafts/ through the session's DraftService; versions stream on DRAFT_STREAM_CHANNEL. Tracked, so closing
+  // the project waits for them.
+  const drafts = <T>(work: (session: ReturnType<AppController['requireSession']>) => Promise<T>): Promise<T> => {
+    const session = app.requireSession()
+    return session.track(work(session))
+  }
+  ipcMain.handle(IPC.draftsList, (_e, raw: unknown) => app.requireSession().drafts.list(arg(ipcArgs.draftListQuery, raw, 'query')))
+  ipcMain.handle(IPC.draftsOpen, async (_e, rawId: unknown): Promise<DraftOpenResult> => {
+    const id = arg(ipcArgs.draftId, rawId, 'id')
+    try {
+      return { ok: true, draft: await drafts((s) => s.drafts.open(id)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+  // «Redactar» / «Regenerar» in the cost confirmation: `confirmed` is that click.
+  ipcMain.handle(IPC.draftsRun, async (_e, rawInput: unknown, rawId: unknown, rawConfirmed: unknown): Promise<DraftRunResult> => {
+    const input = arg(ipcArgs.draftInput, rawInput, 'input')
+    const id = arg(ipcArgs.draftTarget, rawId, 'id')
+    arg(ipcArgs.confirmed, rawConfirmed, 'confirmed')
+    try {
+      return { ok: true, draftId: await drafts((s) => s.drafts.run(input, id)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+  ipcMain.handle(IPC.draftsStop, (_e, rawId: unknown): void => {
+    const id = arg(ipcArgs.draftId, rawId, 'id')
+    app.requireSession().drafts.stop(id)
+  })
+  ipcMain.handle(IPC.draftsEdit, async (_e, rawId: unknown, rawText: unknown): Promise<DraftEditResult> => {
+    const id = arg(ipcArgs.draftId, rawId, 'id')
+    const text = arg(ipcArgs.draftText, rawText, 'text')
+    try {
+      return { ok: true, check: await drafts((s) => s.drafts.edit(id, text)) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+  ipcMain.handle(IPC.draftsRename, (_e, rawId: unknown, rawTitle: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.draftId, rawId, 'id')
+    const title = arg(ipcArgs.draftTitle, rawTitle, 'title')
+    return actionResult(() => drafts((s) => s.drafts.rename(id, title)))
+  })
+  ipcMain.handle(IPC.draftsArchive, (_e, rawId: unknown, rawArchived: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.draftId, rawId, 'id')
+    const archived = arg(ipcArgs.flag, rawArchived, 'archived')
+    return actionResult(() => drafts((s) => s.drafts.setArchived(id, archived)))
+  })
+  // «Borrar»: `confirmed` is what the renderer's confirmation answered; the service deletes only when it is true.
+  ipcMain.handle(IPC.draftsRemove, (_e, rawId: unknown, rawConfirmed: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.draftId, rawId, 'id')
+    const confirmed = arg(ipcArgs.flag, rawConfirmed, 'confirmed')
+    return actionResult(() => drafts((s) => s.drafts.remove(id, confirmed)))
+  })
+
+  // A file the user chose to save (a chart, the graph, CSV data, a .bib or an outline), wherever they picked; never written into the project on our own.
   ipcMain.handle(IPC.exportSave, async (_e, rawName: unknown, rawData: unknown): Promise<SaveResult> => {
     const name = arg(ipcArgs.exportName, rawName, 'name')
     const data = arg(ipcArgs.exportData, rawData, 'data')
