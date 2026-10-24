@@ -75,7 +75,7 @@ and to `config.el`:
 (map! :after research
       :map (org-mode-map latex-mode-map LaTeX-mode-map markdown-mode-map)
       :localleader
-      (:prefix ("r" . "research")
+      (:prefix ("w" . "writing (research)")
        :desc "Insert citation"        "c" #'research-insert-citation
        :desc "Check citations"        "k" #'research-check-citations
        :desc "BibTeX for this file"   "b" #'research-bibtex-for-file
@@ -90,7 +90,7 @@ and to `config.el`:
 ```
 
 Then run `doom sync` and restart Emacs (run `doom sync` again after updating the repository). In an Org buffer,
-`SPC m r c` (or `, r c` with Doom's default localleader in evil mode) inserts a citation.
+`SPC m w c` inserts a citation. The prefix is `w` (writing) because Org already uses `SPC m r` for refiling.
 
 The `.bib` that `research-bibtex-for-file` writes is the same the app's «Redacción → BibTeX» builds, so it can be the
 file of `#+bibliography:` that org-cite exports to biblatex (`#+cite_export: biblatex`) and biber reads; let the command
