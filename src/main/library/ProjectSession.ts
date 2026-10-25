@@ -153,7 +153,7 @@ export class ProjectSession {
       () => limitsFromConfig(store.config.llm),
       () => ledger.monthTotal(),
       0.05,
-      { suggest_relations: 0.25, suggest_facets: 0.5, chat: 0.1, screening: 0.1, draft: 0.2, cite_check: 0.2, outline: 0.1, style: 0.1 }
+      { suggest_relations: 0.25, suggest_facets: 0.5, chat: 0.1, screening: 0.1, draft: 0.2, cite_check: 0.2, outline: 0.1, style: 0.1, tutor: 0.05, alternatives: 0.02, reverse_outline: 0.1, rq_coverage: 0.1 }
     )
     const llm = opts.llm ?? new ClaudeCliProvider()
     const summarizer = new Summarizer({ store, cache, provider: llm, budget, ledger })

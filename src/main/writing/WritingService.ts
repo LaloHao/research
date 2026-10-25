@@ -15,6 +15,38 @@ import {
   type OutlineRequest
 } from '../../shared/writing/outlineProposal'
 import { MAX_STYLE_CHARS, parseStyleOutput, STYLE_FOCUSES, styleSchema, validateStyleSuggestions, type StyleFocus, type StyleRequest, type StyleReviewRun } from '../../shared/writing/style'
+import {
+  buildReverseOutline,
+  buildRqCoverage,
+  MAX_REVERSE_OUTLINE_CHARS,
+  MAX_REVERSE_OUTLINE_PARAGRAPHS,
+  MAX_RQ_COVERAGE_CHARS,
+  MAX_RQ_COVERAGE_SECTIONS,
+  parseReverseOutline,
+  parseRqCoverage,
+  reverseOutlineSchema,
+  rqCoverageSchema,
+  splitSections,
+  type ReverseOutlineRequest,
+  type ReverseOutlineRun,
+  type RqCoverageRequest,
+  type RqCoverageRun
+} from '../../shared/writing/structure'
+import {
+  alternativesSchema,
+  MAX_ALTERNATIVES_CONTEXT,
+  MAX_ALTERNATIVES_SENTENCE,
+  MAX_TUTOR_CHARS,
+  parseAlternativesOutput,
+  parseTutorOutput,
+  tutorSchema,
+  validateAlternatives,
+  validateTutorIssues,
+  type AlternativesRequest,
+  type AlternativesRun,
+  type TutorRequest,
+  type TutorRun
+} from '../../shared/writing/tutor'
 import type { IndexCache } from '../cache/IndexCache'
 import { verifyCitations } from '../chats/citations'
 import { rekeyBibtex } from '../ingest/bibtex'
@@ -33,6 +65,19 @@ import { readWithIncludes } from './includes'
 import { outlineInput, outlineSystemPrompt, type OutlinePaperData } from './outlinePrompt'
 import { completeChecked } from './structuredCall'
 import { styleInput, styleSystemPrompt } from './stylePrompt'
+import {
+  alternativesInput,
+  alternativesSystemPrompt,
+  reverseOutlineInput,
+  reverseOutlineSystemPrompt,
+  rqCoverageInput,
+  rqCoverageSystemPrompt,
+  tutorInput,
+  tutorSystemPrompt
+} from './tutorPrompt'
+
+/** The tutor's operations: their cost kind and their log kind. */
+type TutorKindName = 'tutor' | 'alternatives' | 'reverse_outline' | 'rq_coverage'
 
 export interface WritingDeps {
   store: ProjectStore
@@ -319,8 +364,106 @@ export class WritingService {
     return { ...validateStyleSuggestions(req.text, req.format, run.value), costUsd: run.costUsd, model: run.model }
   }
 
+  // -------------------------------------------------------------------------------------------------------------------
+  // The tutor (local API): Claude reads the author's text and explains, asks or offers options to compare, never
+  // writing it. One confirmed, capped structured call each, checked here; nothing is written to the project.
+
+  /** «Tutor»: issues in a passage, each located verbatim, with why and a Socratic question; never a rewrite. */
+  async tutor(req: TutorRequest, signal?: AbortSignal): Promise<TutorRun> {
+    const deps = this.capped()
+    if (!req.text.trim()) throw new Error('Nothing to read')
+    if (req.text.length > MAX_TUTOR_CHARS) throw new UserFacingError('too_long')
+    return this.tracked(signal, async (stop) => {
+      const run = await this.structured('tutor', `${req.text.length} chars`, req.model, deps, stop, {
+        system: tutorSystemPrompt(req.format, thesisLanguage(this.deps.store.config.thesis)),
+        input: tutorInput(req.text),
+        schema: tutorSchema(),
+        parse: parseTutorOutput
+      })
+      return { ...validateTutorIssues(req.text, run.value), costUsd: run.costUsd, model: run.model }
+    })
+  }
+
+  /** Two or three other phrasings of one sentence, each keeping its citations, math and commands. */
+  async alternatives(req: AlternativesRequest, signal?: AbortSignal): Promise<AlternativesRun> {
+    const deps = this.capped()
+    if (!req.sentence.trim()) throw new Error('No sentence')
+    if (req.sentence.length > MAX_ALTERNATIVES_SENTENCE || (req.context?.length ?? 0) > MAX_ALTERNATIVES_CONTEXT) throw new UserFacingError('too_long')
+    return this.tracked(signal, async (stop) => {
+      const run = await this.structured('alternatives', `${req.sentence.length} chars`, req.model, deps, stop, {
+        system: alternativesSystemPrompt(req.format, thesisLanguage(this.deps.store.config.thesis)),
+        input: alternativesInput(req.sentence, req.context),
+        schema: alternativesSchema(),
+        parse: parseAlternativesOutput
+      })
+      return { ...validateAlternatives(req.sentence, req.format, run.value), costUsd: run.costUsd, model: run.model }
+    })
+  }
+
+  /** The reverse outline of a section: per paragraph (split by the app), its main idea and flags. */
+  async reverseOutline(req: ReverseOutlineRequest, signal?: AbortSignal): Promise<ReverseOutlineRun> {
+    const deps = this.capped()
+    if (req.text.length > MAX_REVERSE_OUTLINE_CHARS) throw new UserFacingError('too_long')
+    const sections = splitSections(req.text, req.format)
+    const count = sections.reduce((n, s) => n + s.paragraphs.length, 0)
+    if (count === 0) throw new Error('No paragraphs')
+    if (count > MAX_REVERSE_OUTLINE_PARAGRAPHS) throw new UserFacingError('too_long')
+    return this.tracked(signal, async (stop) => {
+      const run = await this.structured('reverse_outline', `${count} paragraphs`, req.model, deps, stop, {
+        system: reverseOutlineSystemPrompt(req.format, thesisLanguage(this.deps.store.config.thesis)),
+        input: reverseOutlineInput(sections),
+        schema: reverseOutlineSchema(),
+        parse: (raw) => parseReverseOutline(raw, count)
+      })
+      return { ...buildReverseOutline(sections, run.value), costUsd: run.costUsd, model: run.model }
+    })
+  }
+
+  /** Which of the thesis' research questions each heading addresses, with verified evidence, and those none does. */
+  async rqCoverage(req: RqCoverageRequest, signal?: AbortSignal): Promise<RqCoverageRun> {
+    const deps = this.capped()
+    if (req.text.length > MAX_RQ_COVERAGE_CHARS) throw new UserFacingError('too_long')
+    const questions = this.deps.store.config.thesis.research_questions
+    if (questions.length === 0) throw new Error('No research questions')
+    const sections = splitSections(req.text, req.format).filter((s) => s.paragraphs.length > 0)
+    if (sections.length === 0) throw new Error('No paragraphs')
+    if (sections.length > MAX_RQ_COVERAGE_SECTIONS) throw new UserFacingError('too_long')
+    const ids = questions.map((q) => q.id)
+    return this.tracked(signal, async (stop) => {
+      const run = await this.structured('rq_coverage', `${sections.length} sections`, req.model, deps, stop, {
+        system: rqCoverageSystemPrompt(req.format, thesisLanguage(this.deps.store.config.thesis)),
+        input: rqCoverageInput(questions, sections),
+        schema: rqCoverageSchema(),
+        parse: (raw) =>
+          parseRqCoverage(
+            raw,
+            sections.map((s) => s.id),
+            ids
+          )
+      })
+      return { ...buildRqCoverage(req.text, sections, run.value, ids), costUsd: run.costUsd, model: run.model }
+    })
+  }
+
+  /** One logged, capped structured call of `kind` (asked again once when `parse` refuses the answer). */
+  private structured<T>(
+    kind: TutorKindName,
+    subject: string,
+    requested: LlmModel | undefined,
+    deps: CappedDeps & { provider: LlmProvider },
+    signal: AbortSignal,
+    call: { system: string; input: string; schema: object; parse: (raw: unknown) => { ok: true; value: T } | { ok: false; error: string } }
+  ): Promise<{ value: T; costUsd: number; model: string }> {
+    const model = requested ?? this.deps.store.config.llm.model
+    return this.logged(kind, subject, model, deps, () =>
+      runCappedOperation(deps, { kind, model }, (maxUsd) =>
+        completeChecked(deps.provider, { system: call.system, input: call.input, schema: call.schema, model, signal }, maxUsd, call.parse)
+      )
+    )
+  }
+
   /** The run in the app log (never the text, only sizes and costs). */
-  private async logged<T extends { costUsd: number }>(kind: AgentKind & ('outline' | 'style'), subject: string, model: string, deps: CappedDeps, work: () => Promise<T>): Promise<T> {
+  private async logged<T extends { costUsd: number }>(kind: AgentKind & ('outline' | 'style' | TutorKindName), subject: string, model: string, deps: CappedDeps, work: () => Promise<T>): Promise<T> {
     const log = startAgentRun({ kind, subject, model, capUsd: operationCap(deps.limits(), kind) })
     try {
       const result = await work()

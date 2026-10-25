@@ -77,13 +77,18 @@ describe('BudgetGuard', () => {
       perDraftUsd: 1,
       perCiteCheckUsd: 1,
       perOutlineUsd: 0.5,
-      perStyleUsd: 0.5
+      perStyleUsd: 0.5,
+      perTutorUsd: 0.3,
+      perAlternativesUsd: 0.1,
+      perReverseOutlineUsd: 0.5,
+      perRqCoverageUsd: 0.5
     })
   })
 
   it('caps each writing operation with its own cap, the per-operation one when absent', () => {
     const all = limitsFromConfig(DEFAULT_LLM_CONFIG)
     expect((['draft', 'cite_check', 'outline', 'style'] as const).map((op) => operationCap(all, op))).toEqual([1, 1, 0.5, 0.5])
+    expect((['tutor', 'alternatives', 'reverse_outline', 'rq_coverage'] as const).map((op) => operationCap(all, op))).toEqual([0.3, 0.1, 0.5, 0.5])
     expect(operationCap({ perOperationUsd: 0.4, perBatchUsd: 10, perMonthUsd: null }, 'style')).toBe(0.4)
   })
 

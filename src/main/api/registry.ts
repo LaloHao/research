@@ -18,7 +18,7 @@ export interface ApiContext {
   cache: IndexCache
   /** The read-only library tools of the chat and the agent runs (src/main/mcp). */
   library: LibraryTools
-  writing: Pick<WritingService, 'bibFromText' | 'bibFromFile' | 'outlineData' | 'library' | 'citeCheckPlan' | 'citeCheck' | 'proposeOutline' | 'reviewStyle'>
+  writing: Pick<WritingService, 'bibFromText' | 'bibFromFile' | 'outlineData' | 'library' | 'citeCheckPlan' | 'citeCheck' | 'proposeOutline' | 'reviewStyle' | 'tutor' | 'alternatives' | 'reverseOutline' | 'rqCoverage'>
   /** «Borrador»: drafts written by Claude, saved in the project (drafts/). */
   drafts: Pick<DraftService, 'run' | 'open' | 'stop' | 'progress' | 'outcome' | 'apiDraft'>
   /** Budget, ledger and caps, for `operationPlan` and `runCappedOperation`. */

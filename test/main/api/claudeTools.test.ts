@@ -272,3 +272,80 @@ describe('local API: costly tools of «Redacción»', () => {
     expect(provider.calls).toHaveLength(0)
   })
 })
+
+describe('local API: the tutor', () => {
+  it('tutor: a plan first, then issues at character offsets with no rewrite, charged once', async () => {
+    const text = '😀 Esto mejora el modelo. Se aplicó la técnica.'
+    const issues = [{ excerpt: 'Se aplicó la técnica', context: null, kind: 'lost_subject', explanation: 'No se sabe quién.', question: '¿Quién la aplicó?' }]
+    const { store, provider, ctx } = await project([{ value: { issues }, costUsd: 0.02, model: 'claude-sonnet-5' }])
+    const server = await serve(ctx)
+    const plan = await ok(server, 'tutor', { text, format: 'org' })
+    expect(plan).toMatchObject({ confirmation_required: true, operation: 'tutor', cap_usd: 0.3, chars: [...text].length })
+    expect(provider.calls).toHaveLength(0)
+    const out = await ok(server, 'tutor', { text, format: 'org', confirmed: true })
+    expect(out.issues).toEqual([{ start: 25, end: 45, excerpt: 'Se aplicó la técnica', kind: 'lost_subject', explanation: 'No se sabe quién.', question: '¿Quién la aplicó?' }])
+    expect([...text].slice(25, 45).join('')).toBe('Se aplicó la técnica')
+    expect(Object.keys(out.issues[0]).sort()).toEqual(['end', 'excerpt', 'explanation', 'kind', 'question', 'start'])
+    expect(await costs(store)).toEqual([['tutor', 0.02]])
+  })
+
+  it('alternatives: the options with what changes, charged once', async () => {
+    const alternatives = [
+      { text: 'Existen parsers en línea \\cite{he2017drain}.', aspect: 'order', what_changes: 'Empieza por el verbo.' },
+      { text: 'Hay parsers en línea \\cite{he2017drain}.', aspect: 'register', what_changes: 'Más llano.' }
+    ]
+    const { store, ctx } = await project([{ value: { alternatives }, costUsd: 0.01, model: 'claude-sonnet-5' }])
+    const server = await serve(ctx)
+    const out = await ok(server, 'alternatives', { sentence: 'Los parsers en línea existen \\cite{he2017drain}.', format: 'latex', confirmed: true })
+    expect(out.alternatives.map((a: { aspect: string }) => a.aspect)).toEqual(['order', 'register'])
+    expect(await costs(store)).toEqual([['alternatives', 0.01]])
+  })
+
+  it('reverse_outline: plans with the paragraphs it would send; a text without prose costs nothing', async () => {
+    const text = '* Métodos\n😀 Uno.\n\nDos.\n'
+    const paragraphs = [
+      { n: 1, main_idea: 'Uno.', flags: [] },
+      { n: 2, main_idea: 'Dos.', flags: [{ flag: 'missing_transition', note: 'Nada lo une al anterior.' }] }
+    ]
+    const { store, provider, ctx } = await project([{ value: { paragraphs }, costUsd: 0.04, model: 'claude-sonnet-5' }])
+    const server = await serve(ctx)
+    expect(await ok(server, 'reverse_outline', { text, format: 'org' })).toMatchObject({ operation: 'reverse_outline', paragraphs: 2, headings: 1 })
+    expect((await call(server, 'reverse_outline', { text: '#+title: x\n', format: 'org' })).text).toMatch(/^invalid: /)
+    expect((await call(server, 'reverse_outline', { text: '#+title: x\n', format: 'org', confirmed: true })).text).toMatch(/^invalid: /)
+    expect(provider.calls).toHaveLength(0)
+    const out = await ok(server, 'reverse_outline', { text, format: 'org', confirmed: true })
+    expect(out.paragraphs.map((p: { index: number; start: number; end: number; heading: string }) => [p.index, [...text].slice(p.start, p.end).join(''), p.heading])).toEqual([
+      [1, '😀 Uno.', 'Métodos'],
+      [2, 'Dos.', 'Métodos']
+    ])
+    expect(await costs(store)).toEqual([['reverse_outline', 0.04]])
+  })
+
+  it('rq_coverage: the thesis questions, evidence per heading and what is left, charged once', async () => {
+    const text = '* Introducción\nLa sanitización preserva la utilidad.\n'
+    const sections = [{ id: 'S1', addresses: [{ rq: 'RQ1', excerpt: 'La sanitización preserva la utilidad.' }] }]
+    const { store, ctx } = await project([{ value: { sections }, costUsd: 0.03, model: 'claude-sonnet-5' }])
+    const server = await serve(ctx)
+    expect(await ok(server, 'rq_coverage', { text, format: 'org' })).toMatchObject({ operation: 'rq_coverage', sections: 1, questions: ['RQ1', 'RQ2'] })
+    const out = await ok(server, 'rq_coverage', { text, format: 'org', confirmed: true })
+    expect(out.sections[0]).toMatchObject({ id: 'S1', heading: 'Introducción', addresses: [{ rq: 'RQ1', excerpt: 'La sanitización preserva la utilidad.' }] })
+    expect(out.not_addressed).toEqual(['RQ2'])
+    expect(out.questions.map((q: { id: string }) => q.id)).toEqual(['RQ1', 'RQ2'])
+    expect(await costs(store)).toEqual([['rq_coverage', 0.03]])
+    await store.updateConfig({ thesis: { ...store.config.thesis, research_questions: [] } })
+    expect((await call(server, 'rq_coverage', { text, format: 'org' })).text).toMatch(/^invalid: The thesis has no research questions/)
+  })
+
+  it('the tutor tools stay refused while Settings does not allow costly operations', async () => {
+    const { provider, ctx } = await project([])
+    const server = await serve(ctx, false)
+    for (const [name, args] of [
+      ['tutor', { text: 'x' }],
+      ['alternatives', { sentence: 'x' }],
+      ['reverse_outline', { text: 'x' }],
+      ['rq_coverage', { text: 'x' }]
+    ] as const)
+      expect((await call(server, name, { ...args, confirmed: true })).text).toMatch(/^costly_disabled: /)
+    expect(provider.calls).toHaveLength(0)
+  })
+})

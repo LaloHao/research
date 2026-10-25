@@ -81,7 +81,7 @@ describe('LlmConfigSchema', () => {
       auto_suggest_facets: false,
       auto_suggest_facets_after: 10,
       max_input_chars: 400000,
-      budget: { per_operation_usd: 0.5, per_batch_usd: 10, per_month_usd: null, per_facet_suggestion_usd: 2, per_chat_message_usd: 0.5, per_draft_usd: 1, per_cite_check_usd: 1, per_outline_usd: 0.5, per_style_usd: 0.5 }
+      budget: { per_operation_usd: 0.5, per_batch_usd: 10, per_month_usd: null, per_facet_suggestion_usd: 2, per_chat_message_usd: 0.5, per_draft_usd: 1, per_cite_check_usd: 1, per_outline_usd: 0.5, per_style_usd: 0.5, per_tutor_usd: 0.3, per_alternatives_usd: 0.1, per_reverse_outline_usd: 0.5, per_rq_coverage_usd: 0.5 }
     })
   })
 
@@ -100,7 +100,7 @@ describe('LlmConfigSchema', () => {
       auto_suggest_facets: false,
       auto_suggest_facets_after: 10,
       max_input_chars: 1000,
-      budget: { per_operation_usd: 0.5, per_batch_usd: 3, per_month_usd: 20, per_facet_suggestion_usd: 2, per_chat_message_usd: 0.5, per_draft_usd: 1, per_cite_check_usd: 1, per_outline_usd: 0.5, per_style_usd: 0.5 }
+      budget: { per_operation_usd: 0.5, per_batch_usd: 3, per_month_usd: 20, per_facet_suggestion_usd: 2, per_chat_message_usd: 0.5, per_draft_usd: 1, per_cite_check_usd: 1, per_outline_usd: 0.5, per_style_usd: 0.5, per_tutor_usd: 0.3, per_alternatives_usd: 0.1, per_reverse_outline_usd: 0.5, per_rq_coverage_usd: 0.5 }
     })
     expect(LlmConfigSchema.parse({ model: 'opus', budget: 'oops' })).toMatchObject({ model: 'opus', budget: { per_operation_usd: 0.5, per_batch_usd: 10, per_month_usd: null } })
   })
@@ -121,7 +121,7 @@ describe('LlmConfigSchema', () => {
       auto_suggest_facets_after: 10,
       budget: { per_facet_suggestion_usd: 2 }
     })
-    expect(COST_OPERATIONS).toEqual(['summarize', 'suggest_relations', 'suggest_facets', 'fill_facets', 'chat', 'screening', 'draft', 'cite_check', 'outline', 'style'])
+    expect(COST_OPERATIONS).toEqual(['summarize', 'suggest_relations', 'suggest_facets', 'fill_facets', 'chat', 'screening', 'draft', 'cite_check', 'outline', 'style', 'tutor', 'alternatives', 'reverse_outline', 'rq_coverage'])
   })
 
   it('reads the per-message chat cap, falling back on its own', () => {

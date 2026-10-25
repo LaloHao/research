@@ -14,6 +14,11 @@ export interface BudgetLimits {
   perCiteCheckUsd?: number
   perOutlineUsd?: number
   perStyleUsd?: number
+  /** The tutor's operations (tutor, alternatives, reverse_outline, rq_coverage); the per-operation cap when absent. */
+  perTutorUsd?: number
+  perAlternativesUsd?: number
+  perReverseOutlineUsd?: number
+  perRqCoverageUsd?: number
 }
 
 export interface Reservation {
@@ -33,7 +38,11 @@ export function limitsFromConfig(llm: LlmConfig): BudgetLimits {
     perDraftUsd: llm.budget.per_draft_usd,
     perCiteCheckUsd: llm.budget.per_cite_check_usd,
     perOutlineUsd: llm.budget.per_outline_usd,
-    perStyleUsd: llm.budget.per_style_usd
+    perStyleUsd: llm.budget.per_style_usd,
+    perTutorUsd: llm.budget.per_tutor_usd,
+    perAlternativesUsd: llm.budget.per_alternatives_usd,
+    perReverseOutlineUsd: llm.budget.per_reverse_outline_usd,
+    perRqCoverageUsd: llm.budget.per_rq_coverage_usd
   }
 }
 
@@ -45,6 +54,10 @@ export function operationCap(limits: BudgetLimits, operation: CostOperation): nu
   if (operation === 'cite_check') return limits.perCiteCheckUsd ?? limits.perOperationUsd
   if (operation === 'outline') return limits.perOutlineUsd ?? limits.perOperationUsd
   if (operation === 'style') return limits.perStyleUsd ?? limits.perOperationUsd
+  if (operation === 'tutor') return limits.perTutorUsd ?? limits.perOperationUsd
+  if (operation === 'alternatives') return limits.perAlternativesUsd ?? limits.perOperationUsd
+  if (operation === 'reverse_outline') return limits.perReverseOutlineUsd ?? limits.perOperationUsd
+  if (operation === 'rq_coverage') return limits.perRqCoverageUsd ?? limits.perOperationUsd
   return limits.perOperationUsd
 }
 

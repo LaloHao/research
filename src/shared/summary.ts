@@ -155,7 +155,11 @@ export const DEFAULT_LLM_CONFIG = {
     per_draft_usd: 1,
     per_cite_check_usd: 1,
     per_outline_usd: 0.5,
-    per_style_usd: 0.5
+    per_style_usd: 0.5,
+    per_tutor_usd: 0.3,
+    per_alternatives_usd: 0.1,
+    per_reverse_outline_usd: 0.5,
+    per_rq_coverage_usd: 0.5
   }
 }
 
@@ -180,7 +184,12 @@ export const LlmConfigShape = z.object({
       per_draft_usd: z.number().positive().default(1),
       per_cite_check_usd: z.number().positive().default(1),
       per_outline_usd: z.number().positive().default(0.5),
-      per_style_usd: z.number().positive().default(0.5)
+      per_style_usd: z.number().positive().default(0.5),
+      /** The tutor's operations (local API): a tutor read, a sentence's alternatives, a reverse outline, an RQ coverage. */
+      per_tutor_usd: z.number().positive().default(0.3),
+      per_alternatives_usd: z.number().positive().default(0.1),
+      per_reverse_outline_usd: z.number().positive().default(0.5),
+      per_rq_coverage_usd: z.number().positive().default(0.5)
     })
     .prefault({})
 })
@@ -209,7 +218,11 @@ export const LlmConfigSchema = z
         per_draft_usd: z.number().positive().catch(B.per_draft_usd),
         per_cite_check_usd: z.number().positive().catch(B.per_cite_check_usd),
         per_outline_usd: z.number().positive().catch(B.per_outline_usd),
-        per_style_usd: z.number().positive().catch(B.per_style_usd)
+        per_style_usd: z.number().positive().catch(B.per_style_usd),
+        per_tutor_usd: z.number().positive().catch(B.per_tutor_usd),
+        per_alternatives_usd: z.number().positive().catch(B.per_alternatives_usd),
+        per_reverse_outline_usd: z.number().positive().catch(B.per_reverse_outline_usd),
+        per_rq_coverage_usd: z.number().positive().catch(B.per_rq_coverage_usd)
       })
       .catch(() => ({ ...B }))
   })
@@ -219,8 +232,26 @@ export type LlmConfig = z.infer<typeof LlmConfigShape>
 export const SUMMARY_STATUSES = ['none', 'generated', 'reviewed', 'stale', 'too_long', 'failed'] as const
 export type SummaryStatus = (typeof SUMMARY_STATUSES)[number]
 
-/** `draft`, `cite_check`, `outline` and `style`: the Claude operations of «Redacción», each with its own cap. */
-export const COST_OPERATIONS = ['summarize', 'suggest_relations', 'suggest_facets', 'fill_facets', 'chat', 'screening', 'draft', 'cite_check', 'outline', 'style'] as const
+/**
+ * `draft`, `cite_check`, `outline` and `style`: the Claude operations of «Redacción»; `tutor`, `alternatives`,
+ * `reverse_outline` and `rq_coverage`: the tutor's (local API). Each with its own cap.
+ */
+export const COST_OPERATIONS = [
+  'summarize',
+  'suggest_relations',
+  'suggest_facets',
+  'fill_facets',
+  'chat',
+  'screening',
+  'draft',
+  'cite_check',
+  'outline',
+  'style',
+  'tutor',
+  'alternatives',
+  'reverse_outline',
+  'rq_coverage'
+] as const
 export type CostOperation = (typeof COST_OPERATIONS)[number]
 
 /** One line of costs/<device-id>.jsonl. */
