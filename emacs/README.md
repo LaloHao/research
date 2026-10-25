@@ -4,6 +4,10 @@ Use the Research app's library from Emacs while you write: insert citations, che
 insert the state-of-the-art outline, search passages in the papers' full text and open a cited paper in the app at its
 page. Works in Org (org-cite), LaTeX and Markdown (pandoc) buffers.
 
+It also helps you write without writing for you: `research-prose.el` checks Spanish academic prose locally (no app,
+no cost), and the tutor commands ask Claude, through the app, to point at problems, explain them and ask you a
+question, outline your paragraphs or offer options for one sentence. None of them writes your text.
+
 It talks to the app's **local API**: an MCP server the app runs on `127.0.0.1` only, protected by a bearer token. Pure
 Emacs Lisp (Emacs 29+), no dependencies: `url.el` and the native JSON parser.
 
@@ -42,6 +46,58 @@ same checks and caps.
 | `research-draft` | `C-c r d` | Asks for the title, the purpose, the papers it may cite (`completing-read-multiple`, keys annotated with title, year and authors), the length and an optional research question; Claude writes the section with every claim cited, the app saves it as a new draft in «Redacción → Borrador», and writes it in the background (minutes) while Emacs stays free: the echo area shows its progress every `research-draft-poll-interval` seconds, and when it is written its text opens in Org in a new `*research-draft*` buffer for review, with the counts of unverified citations, citations outside the selection and claims marked `[SIN CITA]`. While one draft started from the API is being written, another is refused (a retry never pays twice). |
 | `research-draft-stop` | `C-c r D` | Stops the draft `research-draft` is following; what Claude wrote so far is kept as a stopped version and opens as usual. |
 
+The tutor (Claude, same confirmation and the same switch; caps «Tope por lectura del tutor», «Tope por alternativas de
+una oración», «Tope por esquema inverso» and «Tope por cobertura de preguntas» in Settings → Claude). They never
+rewrite your text: they point, explain and ask, or offer options for you to choose from.
+
+| Command | Key | What it does |
+| --- | --- | --- |
+| `research-tutor` | `C-c r t` | For the region (or the paragraph at point, up to 8 000 characters): Flymake notes, in their own backend, on what may weaken the text (ambigüedad, salto lógico, conector, sujeto perdido, registro, cohesión, ritmo, precisión), each with why and one question that leads you to the fix. Asking again about the same stretch replaces its notes; `research-tutor-clear` forgets them all. Notes whose explanation or question quotes a rewrite are dropped by the app. |
+| `research-alternatives` | `C-c r w` | For the sentence at point (or the region, up to 600 characters), with its paragraph as context: two or three other phrasings in a small buffer, each saying what it changes (énfasis, orden, ritmo, concisión…). `RET` puts the one under the cursor in place of your sentence, only if you haven't changed it meanwhile (`undo` brings yours back); `q` keeps yours; `n`/`p` move. Citations, math and commands stay exactly as you wrote them. |
+| `research-reverse-outline` | `C-c r r` | For the Org subtree at point (or the region; the buffer outside a heading; up to 20 000 characters): a side buffer with one line per paragraph, its main idea in your terms (at most 20 words) and flags (dos ideas, sin transición, fuera del tema) with a short note. `RET` jumps to the paragraph. The app splits the paragraphs, so the jumps are exact. |
+| `research-rq-coverage` | `C-c r q` | For the file (or the region; `C-u`: the Org subtree at point; up to 40 000 characters): which research questions of Settings → Tesis each heading addresses, with a short excerpt as evidence (verified in your text), and the questions no heading addresses. `RET` on a heading or an excerpt jumps to it. |
+
+## Prose checks (`research-prose.el`)
+
+Local and free: pure Emacs Lisp, no app, no network, no external process. A Flymake backend for Spanish academic prose
+in Org buffers. Each diagnostic says *why* the passage may read badly, often with a question; it never proposes a
+rewrite.
+
+| Command | Key | What it does |
+| --- | --- | --- |
+| `research-prose-check` | `C-c r l` | Checks the region (or the buffer) once and shows the diagnostics with Flymake; the echo area counts them per check. |
+| `research-prose-mode` | | Minor mode: keeps the checks on while you write (Flymake runs them when you pause). |
+| `research-prose-maybe-enable` | | For `org-mode-hook`: turns the mode on in thesis files only (see `research-prose-thesis-directories`). |
+
+The checks (each one can be turned off in `research-prose-checks`):
+
+- **Long sentences**: more than `research-prose-max-sentence-words` words (40). Warning.
+- **Repetition**: the same content word (crude Spanish stemming: *registro*/*registros*) again within
+  `research-prose-repetition-window` words (30); function words, words shorter than
+  `research-prose-repetition-min-length` (5), acronyms and the terms of your term groups are never flagged. Note.
+- **Filler phrases**: «cabe mencionar», «es importante señalar», «en este sentido», «a nivel de», «en base a», «de cara
+  a», «hoy en día», «el mismo / la misma» as a pronoun, «es por eso que», «jugar un papel», «llevar a cabo», «y/o»…
+  Each with why it reads badly (`research-prose-filler-phrases`, an alist you can extend). Warning.
+- **Gerunds**: more than `research-prose-max-gerunds` (1) in a sentence. Note.
+- **Adverbs in -mente**: more than `research-prose-max-mente-adverbs` (1) in a sentence. Note.
+- **Periphrastic passive**: *ser* + participle («fueron analizados», «ha sido propuesta»); adjectives like «es
+  válido» or «es adecuado» are not counted. Note.
+- **Readability**: the INFLESZ score (Szigriszt-Pazos, with Spanish syllable counting) of each paragraph of at least
+  `research-prose-readability-min-words` words (40), noted when below `research-prose-readability-threshold` (40, «muy
+  difícil»; academic prose usually sits between 40 and 55).
+- **Terms**: groups of terms for the same concept, from `research-prose-term-groups` and from keyword lines in the
+  file, e.g. `#+PROSE_TERMS: desensibilización|anonimización|sanitización`. When the text uses several terms of a group
+  (plurals count), the less used ones are flagged. Warning.
+- **Acronyms**: the thesis' `acronimos.tex` (`research-prose-acronym-files`, found in the file's folder or above it
+  with `locate-dominating-file`) is read for `\newacronym{KEY}{SHORT}{LONG}`. A defined acronym written bare (`LLM`,
+  `LLMs`) is a warning (write `\gls{llm}`); a `\gls{X}` (or `\Gls`, `\glspl`, `\acrshort`…) of an undefined key is an
+  error.
+
+What is not prose is ignored: headings, `#+` keyword lines, drawers, `src`/`example`/`export`/`comment`/`quote`/`verse`
+blocks, tables, comment lines, fixed-width lines, LaTeX environments (math, figures, tables, listings), display and
+inline math, LaTeX commands (with their argument when it is a key or a label), citations `[cite:…]`, link targets (the
+description is checked), footnote labels, macros, inline source, verbatim and code.
+
 Errors from the app are shown in Spanish, like the app (no project open, the API is off, wrong token, a refused `Host`/`Origin`, unknown key…).
 
 ## Options
@@ -54,13 +110,18 @@ Errors from the app are shown in Spanish, like the app (no project open, the API
 - `research-bib-order`: `"appearance"` (default) or `"alphabetical"`.
 - `research-keymap-prefix`: `"C-c r"` by default; `nil` to bind `research-command-map` yourself (set it before the
   package loads).
+- `research-prose.el`: `research-prose-checks`, `research-prose-max-sentence-words`, `research-prose-repetition-window`,
+  `research-prose-repetition-min-length`, `research-prose-max-gerunds`, `research-prose-max-mente-adverbs`,
+  `research-prose-readability-threshold`, `research-prose-readability-min-words`, `research-prose-term-groups`,
+  `research-prose-filler-phrases`, `research-prose-acronym-files`, `research-prose-skipped-blocks`,
+  `research-prose-skipped-environments`, `research-prose-thesis-directories` (`M-x customize-group RET research-prose`).
 
 ## Doom Emacs setup
 
 With the `biblio` module (citar) and org-cite export to LaTeX with biblatex/biber, add to `packages.el`:
 
 ```elisp
-(package! research :recipe (:local-repo "~/dev/lalohao/research/emacs" :files ("research.el")))
+(package! research :recipe (:local-repo "~/dev/lalohao/research/emacs" :files ("research.el" "research-prose.el")))
 ```
 
 and to `config.el`:
@@ -71,6 +132,14 @@ and to `config.el`:
   :init
   ;; Under the localleader instead of C-c r.
   (setq research-keymap-prefix nil))
+
+;; Local prose checks while you write, in the thesis' Org files only.
+(use-package! research-prose
+  :commands (research-prose-mode research-prose-check)
+  :hook (org-mode . research-prose-maybe-enable)
+  :init
+  ;; The thesis' folders; without them, any Org file with an acronimos.tex above it.
+  (setq research-prose-thesis-directories '("~/thesis/")))
 
 (map! :after research
       :map (org-mode-map latex-mode-map LaTeX-mode-map markdown-mode-map)
@@ -86,11 +155,17 @@ and to `config.el`:
        :desc "Stop the draft"         "D" #'research-draft-stop
        :desc "Check with Claude"      "v" #'research-check-citations-with-claude
        :desc "Propose outline"        "p" #'research-propose-outline
-       :desc "Style review (Claude)"  "s" #'research-style-review))
+       :desc "Style review (Claude)"  "s" #'research-style-review
+       :desc "Tutor (Claude)"         "t" #'research-tutor
+       :desc "Alternatives (Claude)"  "w" #'research-alternatives
+       :desc "Reverse outline"        "r" #'research-reverse-outline
+       :desc "RQ coverage"            "q" #'research-rq-coverage
+       :desc "Prose check (local)"    "l" #'research-prose-check))
 ```
 
 Then run `doom sync` and restart Emacs (run `doom sync` again after updating the repository). In an Org buffer,
-`SPC m w c` inserts a citation. The prefix is `w` (writing) because Org already uses `SPC m r` for refiling.
+`SPC m w c` inserts a citation, `SPC m w l` checks the prose of the buffer and `SPC m w t` asks the tutor about the
+paragraph. The prefix is `w` (writing) because Org already uses `SPC m r` for refiling.
 
 The `.bib` that `research-bibtex-for-file` writes is the same the app's «Redacción → BibTeX» builds, so it can be the
 file of `#+bibliography:` that org-cite exports to biblatex (`#+cite_export: biblatex`) and biber reads; let the command
@@ -108,5 +183,5 @@ Headless ERT tests, with the HTTP layer mocked (no app, no network):
 ```sh
 pnpm test:emacs
 # or
-emacs --batch -L emacs -l emacs/research-test.el -f ert-run-tests-batch-and-exit
+emacs --batch -L emacs -l emacs/research-test.el -l emacs/research-prose-test.el -f ert-run-tests-batch-and-exit
 ```
