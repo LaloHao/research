@@ -27,8 +27,14 @@
 ;;
 ;; The commands that spend Claude quota (`research-draft',
 ;; `research-check-citations-with-claude', `research-propose-outline',
-;; `research-style-review') always ask for the API's cost estimate first and run
-;; only after `yes-or-no-p'.
+;; `research-style-review' and the tutor's `research-tutor',
+;; `research-alternatives', `research-reverse-outline', `research-rq-coverage')
+;; always ask for the API's cost estimate first and run only after
+;; `yes-or-no-p'.  The tutor's never write your text: they point, explain, ask,
+;; outline, or offer options of one sentence for you to choose from.
+;;
+;; `research-prose-check' (research-prose.el, `l' in the command map) checks
+;; Spanish academic prose locally, without the app.
 ;;
 ;; Pure Emacs Lisp: url.el for HTTP and the native JSON parser.
 
@@ -41,6 +47,8 @@
 
 (declare-function flymake-make-diagnostic "flymake")
 (declare-function flymake-start "flymake")
+(declare-function org-back-to-heading "org")
+(declare-function org-end-of-subtree "org")
 (defvar flymake-diagnostic-functions)
 (defvar flymake-mode)
 (defvar citar-bibliography)
@@ -310,10 +318,10 @@ With a prefix argument REFRESH, ask the app for the papers again."
   "DIAGNOSTICS (BEG END TYPE TEXT) with markers instead of positions."
   (mapcar (lambda (d) (list (copy-marker (nth 0 d)) (copy-marker (nth 1 d)) (nth 2 d) (nth 3 d))) diagnostics))
 
-(defun research--flymake-refresh ()
-  "Show the stored diagnostics with Flymake."
+(defun research--flymake-refresh (&optional backend)
+  "Show the stored diagnostics with Flymake, through BACKEND (`research-flymake')."
   (when (require 'flymake nil t)
-    (add-hook 'flymake-diagnostic-functions #'research-flymake nil t)
+    (add-hook 'flymake-diagnostic-functions (or backend #'research-flymake) nil t)
     (if flymake-mode (flymake-start) (flymake-mode 1))))
 
 (defun research--diagnostic-list (report base)
@@ -944,6 +952,364 @@ request.  Shows the estimated cost and asks first."
           (message "%d de %d sugerencias aplicadas" (length accepted) (length suggestions)))))
       answer)))
 
+;;;; The tutor
+
+;; Claude reads what you wrote and points, explains and asks; it never writes
+;; your text.  Each command shows the plan (estimated cost, caps) and asks.
+
+(defconst research--tutor-limits
+  '(("tutor" . 8000) ("alternatives" . 600) ("reverse_outline" . 20000) ("rq_coverage" . 40000))
+  "The most characters each tutor tool reads at once.")
+
+(defun research--tutor-check-size (tool text)
+  "Signal a `user-error' when TEXT is longer than TOOL reads."
+  (let ((limit (cdr (assoc tool research--tutor-limits))))
+    (when (string-empty-p (string-trim text)) (user-error "No hay texto que leer aquí"))
+    (when (> (length text) limit)
+      (user-error "El texto tiene %d caracteres y esta función lee hasta %d: selecciona una parte más corta"
+                  (length text) limit))))
+
+(defconst research--tutor-kinds
+  '(("ambiguity" . "ambigüedad") ("logical_gap" . "salto lógico") ("connector" . "conector")
+    ("lost_subject" . "sujeto perdido") ("register" . "registro") ("cohesion" . "cohesión")
+    ("rhythm" . "ritmo") ("precision" . "precisión"))
+  "The tutor's kinds of issue, in Spanish.")
+
+(defconst research--alternative-aspects
+  '(("emphasis" . "énfasis") ("order" . "orden") ("rhythm" . "ritmo") ("concision" . "concisión")
+    ("register" . "registro") ("precision" . "precisión") ("connection" . "enlace"))
+  "What an alternative changes, in Spanish.")
+
+(defconst research--paragraph-flags
+  '(("two_ideas" . "dos ideas") ("missing_transition" . "sin transición") ("off_topic" . "fuera del tema"))
+  "The reverse outline's flags, in Spanish.")
+
+(defun research--label (code table)
+  "CODE's Spanish words in TABLE, or CODE."
+  (or (cdr (assoc code table)) code))
+
+(defvar-local research--tutor-diagnostics nil
+  "The tutor's notes in this buffer: (BEG-MARKER END-MARKER TYPE TEXT).")
+
+(defun research-tutor-flymake (report-fn &rest _)
+  "Flymake backend: report the tutor's notes to REPORT-FN."
+  (funcall report-fn
+           (cl-loop for (beg end type text) in research--tutor-diagnostics
+                    when (and (marker-buffer beg) (< beg end))
+                    collect (flymake-make-diagnostic (current-buffer) (marker-position beg)
+                                                     (marker-position end) type text))))
+
+(defun research--paragraph-bounds ()
+  "The (BEG . END) of the paragraph at point."
+  (save-excursion
+    (let ((end (progn (forward-paragraph) (skip-chars-backward " \t\n") (point)))
+          (beg (progn (backward-paragraph) (skip-chars-forward " \t\n") (point))))
+      (cons (min beg end) (max beg end)))))
+
+(defun research--tutor-notes (answer base)
+  "The tutor ANSWER's issues as diagnostics (BEG END TYPE TEXT) from BASE."
+  (mapcar (lambda (i)
+            (list (+ base (alist-get 'start i)) (+ base (alist-get 'end i)) :note
+                  (format "Tutor [%s]: %s %s" (research--label (alist-get 'kind i) research--tutor-kinds)
+                          (alist-get 'explanation i) (alist-get 'question i))))
+          (alist-get 'issues answer)))
+
+;;;###autoload
+(defun research-tutor (&optional beg end)
+  "Ask the tutor about the region (BEG..END) or the paragraph at point.
+Claude, through the app, points at what may weaken the text (ambiguity,
+logical gaps, connectors, lost subjects, register, cohesion, rhythm,
+precision) and, for each, explains why and asks one question that leads
+you to the fix.  It never rewrites your text.  The notes show with
+Flymake (their own backend) and replace the earlier ones of the same
+stretch.  Shows the estimated cost and asks first."
+  (interactive (if (use-region-p) (list (region-beginning) (region-end))))
+  (research--with-errors
+    (let* ((bounds (if (and beg end) (cons beg end) (research--paragraph-bounds)))
+           (beg (car bounds)) (end (cdr bounds))
+           (text (buffer-substring-no-properties beg end)))
+      (research--tutor-check-size "tutor" text)
+      (let ((answer (research-call-with-cost "tutor" `((text . ,text) (format . ,(symbol-name (research--format)))))))
+        (if (null answer)
+            (progn (message "Cancelado") nil)
+          (setq research--tutor-diagnostics
+                (append (cl-remove-if (lambda (d) (and (>= (nth 0 d) beg) (<= (nth 1 d) end))) research--tutor-diagnostics)
+                        (research--markers (research--tutor-notes answer beg))))
+          (research--flymake-refresh #'research-tutor-flymake)
+          (let ((dropped (apply #'+ (mapcar #'cdr (alist-get 'dropped answer)))))
+            (message "Tutor: %d observaciones%s (US$%.2f)" (length (alist-get 'issues answer))
+                     (if (> dropped 0) (format "; %d descartadas (no estaban en el texto o reescribían)" dropped) "")
+                     (or (alist-get 'costUsd answer) 0)))
+          answer)))))
+
+(defun research-tutor-clear ()
+  "Forget the tutor's notes in this buffer."
+  (interactive)
+  (setq research--tutor-diagnostics nil)
+  (when (bound-and-true-p flymake-mode) (flymake-start)))
+
+;;;; Alternatives of a sentence
+
+(defvar-local research--alternatives-origin nil
+  "Where the sentence is: (BUFFER BEG-MARKER END-MARKER ORIGINAL).")
+
+(defvar research-alternatives-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "RET") #'research-alternatives-choose)
+    (define-key map (kbd "n") #'research-alternatives-next)
+    (define-key map (kbd "p") #'research-alternatives-previous)
+    (define-key map (kbd "q") #'research-alternatives-keep)
+    map)
+  "Keymap of `research-alternatives-mode'.")
+
+(define-derived-mode research-alternatives-mode special-mode "Research-Alternatives"
+  "Other ways to phrase your sentence, to compare.
+\\<research-alternatives-mode-map>\\[research-alternatives-choose] puts the one at point in place of your sentence (only if you have not
+changed it meanwhile); \\[research-alternatives-keep] keeps yours.")
+
+(defun research--sentence-bounds ()
+  "The (BEG . END) of the sentence at point (one space ends a sentence)."
+  (save-excursion
+    (let* ((sentence-end-double-space nil)
+           (end (progn (forward-sentence) (point)))
+           (beg (progn (backward-sentence) (point))))
+      (cons beg end))))
+
+(defun research--alternative-starts ()
+  "Where each alternative of the buffer starts."
+  (let ((pos (point-min)) starts)
+    (while pos
+      (when (and (get-text-property pos 'research-alternative)
+                 (or (= pos (point-min)) (not (get-text-property (1- pos) 'research-alternative))))
+        (push pos starts))
+      (setq pos (next-single-property-change pos 'research-alternative)))
+    (nreverse starts)))
+
+(defun research-alternatives-next ()
+  "Move to the next alternative."
+  (interactive)
+  (let ((next (cl-find-if (lambda (p) (> p (point))) (research--alternative-starts))))
+    (when next (goto-char next))))
+
+(defun research-alternatives-previous ()
+  "Move to the previous alternative."
+  (interactive)
+  (let ((prev (cl-find-if (lambda (p) (< p (point))) (reverse (research--alternative-starts)))))
+    (when prev (goto-char prev))))
+
+(defun research-alternatives-choose ()
+  "Put the alternative at point in place of the sentence, if it is unchanged."
+  (interactive)
+  (let ((alternative (or (get-text-property (point) 'research-alternative) (user-error "No hay una alternativa aquí")))
+        (origin research--alternatives-origin))
+    (pcase-let ((`(,buffer ,beg ,end ,original) origin))
+      (unless (buffer-live-p buffer) (user-error "El búfer de origen ya no existe"))
+      (with-current-buffer buffer
+        (unless (equal (buffer-substring-no-properties beg end) original)
+          (user-error "La oración cambió desde que pediste las alternativas: no la toco"))
+        (save-excursion
+          (goto-char beg)
+          (delete-region beg end)
+          (insert alternative)))
+      (quit-window t)
+      (message "Oración reemplazada (deshaz con %s en el búfer)" (substitute-command-keys "\\[undo]")))))
+
+(defun research-alternatives-keep ()
+  "Close the alternatives and keep your sentence."
+  (interactive)
+  (quit-window t)
+  (message "Conservas tu oración"))
+
+;;;###autoload
+(defun research-alternatives (&optional beg end)
+  "Ask for other ways to phrase the sentence at point (or the region BEG..END).
+Two or three, through the app.  Each one says what it changes (emphasis,
+order, rhythm…) so you can compare; they keep your citations, math and
+commands.
+A buffer lists them: RET puts the one at point in place of your sentence,
+only if you have not changed it; q keeps yours.  Shows the estimated cost
+and asks first."
+  (interactive (if (use-region-p) (list (region-beginning) (region-end))))
+  (research--with-errors
+    (let* ((bounds (if (and beg end) (cons beg end) (research--sentence-bounds)))
+           (beg (car bounds)) (end (cdr bounds))
+           (sentence (string-trim (buffer-substring-no-properties beg end)))
+           (beg (save-excursion (goto-char beg) (skip-chars-forward " \t\n") (point)))
+           (end (+ beg (length sentence)))
+           (paragraph (research--paragraph-bounds))
+           (context (buffer-substring-no-properties (car paragraph) (cdr paragraph)))
+           (origin (list (current-buffer) (copy-marker beg) (copy-marker end t) sentence)))
+      (research--tutor-check-size "alternatives" sentence)
+      (let ((answer (research-call-with-cost
+                     "alternatives" `((sentence . ,sentence) (format . ,(symbol-name (research--format)))
+                                      ,@(and (<= (length context) 4000) (not (equal (string-trim context) sentence))
+                                             `((context . ,context)))))))
+        (if (null answer)
+            (progn (message "Cancelado") nil)
+          (let ((buffer (get-buffer-create "*research alternatives*"))
+                (alternatives (alist-get 'alternatives answer)))
+            (with-current-buffer buffer
+              (research-alternatives-mode)
+              (setq research--alternatives-origin origin)
+              (let ((inhibit-read-only t))
+                (erase-buffer)
+                (insert (propertize "Tu oración (q: quedártela; RET: usar la alternativa bajo el cursor)\n" 'face 'shadow)
+                        sentence "\n\n")
+                (if (null alternatives)
+                    (insert "Sin alternativas válidas.\n")
+                  (cl-loop for a in alternatives for i from 1 do
+                           (let ((start (point)))
+                             (insert (propertize (format "%d. %s: %s\n" i
+                                                         (research--label (alist-get 'aspect a) research--alternative-aspects)
+                                                         (alist-get 'what_changes a))
+                                                 'face 'bold)
+                                     (alist-get 'text a) "\n")
+                             (put-text-property start (point) 'research-alternative (alist-get 'text a))
+                             (insert "\n")))))
+              (goto-char (point-min))
+              (research-alternatives-next))
+            (pop-to-buffer buffer)
+            answer))))))
+
+;;;; Reverse outline
+
+(defvar-local research--outline-origin nil "The buffer the reverse outline is of.")
+
+(defvar research-outline-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "RET") #'research-outline-visit)
+    (define-key map (kbd "n") #'next-line)
+    (define-key map (kbd "p") #'previous-line)
+    map)
+  "Keymap of `research-outline-mode'.")
+
+(define-derived-mode research-outline-mode special-mode "Research-Outline"
+  "A report whose lines point into a buffer.
+\\<research-outline-mode-map>\\[research-outline-visit] jumps to the passage of the line at point.")
+
+(defun research-outline-visit ()
+  "Jump to the passage of the line at point."
+  (interactive)
+  (let ((marker (or (get-text-property (point) 'research-target) (user-error "Esta línea no apunta a un pasaje"))))
+    (unless (buffer-live-p (marker-buffer marker)) (user-error "El búfer de origen ya no existe"))
+    (pop-to-buffer (marker-buffer marker))
+    (goto-char marker)))
+
+(defun research--section-bounds ()
+  "The (BEG . END) of the Org subtree at point, or of the buffer."
+  (if (and (derived-mode-p 'org-mode) (fboundp 'org-back-to-heading)
+           (save-excursion (ignore-errors (org-back-to-heading t) t)))
+      (save-excursion
+        (org-back-to-heading t)
+        (cons (point) (progn (org-end-of-subtree t t) (point))))
+    (cons (point-min) (point-max))))
+
+(defun research--report-buffer (name origin)
+  "A fresh `research-outline-mode' buffer NAME for ORIGIN."
+  (let ((buffer (get-buffer-create name)))
+    (with-current-buffer buffer
+      (research-outline-mode)
+      (setq research--outline-origin origin)
+      (let ((inhibit-read-only t)) (erase-buffer)))
+    buffer))
+
+(defun research--insert-target (text marker &optional face)
+  "Insert TEXT (with FACE) whose RET jumps to MARKER."
+  (let ((start (point)))
+    (insert (if face (propertize text 'face face) text))
+    (put-text-property start (point) 'research-target marker)))
+
+;;;###autoload
+(defun research-reverse-outline (&optional beg end)
+  "The reverse outline of the section at point (or the region BEG..END).
+Through the app: each paragraph's main idea in your own terms and what
+may be wrong with it (two ideas in one paragraph, a missing transition,
+off the heading's topic), in a side buffer; RET jumps to the paragraph.
+Nothing is rewritten.  Shows the estimated cost and asks first."
+  (interactive (if (use-region-p) (list (region-beginning) (region-end))))
+  (research--with-errors
+    (let* ((bounds (if (and beg end) (cons beg end) (research--section-bounds)))
+           (beg (car bounds))
+           (text (buffer-substring-no-properties beg (cdr bounds)))
+           (origin (current-buffer)))
+      (research--tutor-check-size "reverse_outline" text)
+      (let ((answer (research-call-with-cost "reverse_outline" `((text . ,text) (format . ,(symbol-name (research--format)))))))
+        (if (null answer)
+            (progn (message "Cancelado") nil)
+          (let ((buffer (research--report-buffer "*research reverse outline*" origin))
+                (heading 'none))
+            (with-current-buffer buffer
+              (let ((inhibit-read-only t))
+                (insert (propertize (format "Esquema inverso de %s (RET: ir al párrafo)\n" (buffer-name origin)) 'face 'shadow))
+                (dolist (p (alist-get 'paragraphs answer))
+                  (let ((marker (with-current-buffer origin (copy-marker (+ beg (alist-get 'start p))))))
+                    (unless (equal heading (alist-get 'heading p))
+                      (setq heading (alist-get 'heading p))
+                      (insert "\n" (propertize (or heading "(sin encabezado)") 'face 'bold) "\n"))
+                    (research--insert-target
+                     (format "%3d. %s%s\n" (alist-get 'index p) (alist-get 'main_idea p)
+                             (mapconcat (lambda (f) (format "  [%s: %s]" (research--label (alist-get 'flag f) research--paragraph-flags)
+                                                            (alist-get 'note f)))
+                                        (alist-get 'flags p) ""))
+                     marker (and (alist-get 'flags p) 'warning)))))
+              (goto-char (point-min))
+              (forward-line 2))
+            (display-buffer buffer '((display-buffer-in-side-window) (side . right) (window-width . 0.4)))
+            (message "Esquema inverso: %d párrafos, %d con señales (US$%.2f)" (length (alist-get 'paragraphs answer))
+                     (cl-count-if (lambda (p) (alist-get 'flags p)) (alist-get 'paragraphs answer))
+                     (or (alist-get 'costUsd answer) 0))
+            answer))))))
+
+;;;; Research questions coverage
+
+;;;###autoload
+(defun research-rq-coverage (&optional subtree)
+  "Which of the thesis' research questions each heading addresses.
+The region, or the whole file; with a prefix argument SUBTREE, the Org
+subtree at point.  Through the app: per heading, the questions it
+addresses with a short excerpt as evidence (verified in your text), and
+the questions no heading addresses, in a report buffer; RET on an
+excerpt jumps to it.  Shows the estimated cost and asks first."
+  (interactive "P")
+  (research--with-errors
+    (let* ((bounds (cond ((use-region-p) (cons (region-beginning) (region-end)))
+                         (subtree (research--section-bounds))
+                         (t (cons (point-min) (point-max)))))
+           (beg (car bounds))
+           (text (buffer-substring-no-properties beg (cdr bounds)))
+           (origin (current-buffer)))
+      (research--tutor-check-size "rq_coverage" text)
+      (let ((answer (research-call-with-cost "rq_coverage" `((text . ,text) (format . ,(symbol-name (research--format)))))))
+        (if (null answer)
+            (progn (message "Cancelado") nil)
+          (let ((buffer (research--report-buffer "*research RQ coverage*" origin))
+                (questions (alist-get 'questions answer)))
+            (with-current-buffer buffer
+              (let ((inhibit-read-only t))
+                (insert (propertize (format "Preguntas de investigación en %s (RET: ir a la evidencia)\n\n" (buffer-name origin)) 'face 'shadow))
+                (dolist (q questions)
+                  (insert (format "%s: %s\n" (alist-get 'id q) (alist-get 'text q))))
+                (dolist (s (alist-get 'sections answer))
+                  (let ((marker (with-current-buffer origin (copy-marker (+ beg (alist-get 'start s)))))
+                        (addresses (alist-get 'addresses s)))
+                    (insert "\n")
+                    (research--insert-target
+                     (format "%s — %s\n" (or (alist-get 'heading s) "(sin encabezado)")
+                             (if addresses (mapconcat (lambda (a) (alist-get 'rq a)) addresses ", ") "ninguna"))
+                     marker 'bold)
+                    (dolist (a addresses)
+                      (research--insert-target
+                       (format "  %s: «%s»\n" (alist-get 'rq a) (replace-regexp-in-string "[ \t\n]+" " " (alist-get 'excerpt a)))
+                       (with-current-buffer origin (copy-marker (+ beg (alist-get 'start a))))))))
+                (insert "\n" (propertize "Sin abordar: " 'face 'bold)
+                        (if (alist-get 'not_addressed answer) (string-join (alist-get 'not_addressed answer) ", ") "ninguna")
+                        "\n"))
+              (goto-char (point-min)))
+            (pop-to-buffer buffer)
+            (message "Cobertura: %d preguntas sin abordar (US$%.2f)" (length (alist-get 'not_addressed answer))
+                     (or (alist-get 'costUsd answer) 0))
+            answer))))))
+
 ;;;; Minor mode
 
 (defvar research-command-map
@@ -959,9 +1325,17 @@ request.  Shows the estimated cost and asks first."
     (define-key map (kbd "v") #'research-check-citations-with-claude)
     (define-key map (kbd "p") #'research-propose-outline)
     (define-key map (kbd "s") #'research-style-review)
+    (define-key map (kbd "t") #'research-tutor)
+    (define-key map (kbd "w") #'research-alternatives)
+    (define-key map (kbd "r") #'research-reverse-outline)
+    (define-key map (kbd "q") #'research-rq-coverage)
+    (define-key map (kbd "l") #'research-prose-check)
     map)
   "The research commands, under `research-keymap-prefix' in `research-mode'.")
 (defalias 'research-command-map research-command-map)
+
+(autoload 'research-prose-check "research-prose"
+  "Check the prose of the region or the buffer (Spanish academic prose, local)." t)
 
 (defvar research-mode-map
   (let ((map (make-sparse-keymap)))
@@ -978,8 +1352,10 @@ request.  Shows the estimated cost and asks first."
   :keymap research-mode-map
   (unless research-mode
     (remove-hook 'flymake-diagnostic-functions #'research-flymake t)
+    (remove-hook 'flymake-diagnostic-functions #'research-tutor-flymake t)
     (setq research--diagnostics nil
-          research--claude-diagnostics nil)))
+          research--claude-diagnostics nil
+          research--tutor-diagnostics nil)))
 
 (provide 'research)
 ;;; research.el ends here

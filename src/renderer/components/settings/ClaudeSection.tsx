@@ -12,7 +12,11 @@ const WRITING_CAPS = [
   { field: 'perDraft', key: 'per_draft_usd', label: 'settings.budget_draft' },
   { field: 'perCiteCheck', key: 'per_cite_check_usd', label: 'settings.budget_cite_check' },
   { field: 'perOutline', key: 'per_outline_usd', label: 'settings.budget_outline' },
-  { field: 'perStyle', key: 'per_style_usd', label: 'settings.budget_style' }
+  { field: 'perStyle', key: 'per_style_usd', label: 'settings.budget_style' },
+  { field: 'perTutor', key: 'per_tutor_usd', label: 'settings.budget_tutor' },
+  { field: 'perAlternatives', key: 'per_alternatives_usd', label: 'settings.budget_alternatives' },
+  { field: 'perReverseOutline', key: 'per_reverse_outline_usd', label: 'settings.budget_reverse_outline' },
+  { field: 'perRqCoverage', key: 'per_rq_coverage_usd', label: 'settings.budget_rq_coverage' }
 ] as const
 type WritingCap = (typeof WRITING_CAPS)[number]['field']
 
@@ -25,7 +29,7 @@ export function ClaudeSection(): React.JSX.Element {
   const [facetsAfter, setFacetsAfter] = useState('')
   const [perFacets, setPerFacets] = useState('')
   const [perChat, setPerChat] = useState('')
-  const [writingCaps, setWritingCaps] = useState<Record<WritingCap, string>>({ perDraft: '', perCiteCheck: '', perOutline: '', perStyle: '' })
+  const [writingCaps, setWritingCaps] = useState<Record<WritingCap, string>>(() => Object.fromEntries(WRITING_CAPS.map((c) => [c.field, ''])) as Record<WritingCap, string>)
   const [perOperation, setPerOperation] = useState('')
   const [perBatch, setPerBatch] = useState('')
   const [perMonth, setPerMonth] = useState('')
@@ -44,12 +48,7 @@ export function ClaudeSection(): React.JSX.Element {
       setFacetsAfter(String(config.auto_suggest_facets_after))
       setPerFacets(String(config.budget.per_facet_suggestion_usd))
       setPerChat(String(config.budget.per_chat_message_usd))
-      setWritingCaps({
-        perDraft: String(config.budget.per_draft_usd),
-        perCiteCheck: String(config.budget.per_cite_check_usd),
-        perOutline: String(config.budget.per_outline_usd),
-        perStyle: String(config.budget.per_style_usd)
-      })
+      setWritingCaps(Object.fromEntries(WRITING_CAPS.map((c) => [c.field, String(config.budget[c.key])])) as Record<WritingCap, string>)
       setPerOperation(String(config.budget.per_operation_usd))
       setPerBatch(String(config.budget.per_batch_usd))
       setPerMonth(config.budget.per_month_usd === null ? '' : String(config.budget.per_month_usd))

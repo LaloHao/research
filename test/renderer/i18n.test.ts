@@ -321,7 +321,7 @@ describe('es.json covers every code the UI can receive', () => {
     ...['accepted', 'rejected'].map((d) => `writing.style.decisions.${d}`),
     ...['summary', 'dropped'].flatMap((k) => [`writing.style.${k}_one`, `writing.style.${k}_other`]),
     ...['claude_citations', 'claude_unverified'].flatMap((k) => [`writing.outline.${k}_one`, `writing.outline.${k}_other`]),
-    ...['budget_draft', 'budget_cite_check', 'budget_outline', 'budget_style', 'budget_writing_help'].map((k) => `settings.${k}`)
+    ...['budget_draft', 'budget_cite_check', 'budget_outline', 'budget_style', 'budget_tutor', 'budget_alternatives', 'budget_reverse_outline', 'budget_rq_coverage', 'budget_writing_help'].map((k) => `settings.${k}`)
   ])('%s', (path) => {
     expect(typeof lookup(path)).toBe('string')
   })

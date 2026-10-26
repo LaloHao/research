@@ -111,7 +111,11 @@ export const ipcArgs = {
         per_draft_usd: z.number().positive().optional(),
         per_cite_check_usd: z.number().positive().optional(),
         per_outline_usd: z.number().positive().optional(),
-        per_style_usd: z.number().positive().optional()
+        per_style_usd: z.number().positive().optional(),
+        per_tutor_usd: z.number().positive().optional(),
+        per_alternatives_usd: z.number().positive().optional(),
+        per_reverse_outline_usd: z.number().positive().optional(),
+        per_rq_coverage_usd: z.number().positive().optional()
       })
       .optional()
   }),

@@ -3,7 +3,7 @@
  * one of them: every opener of such a tag is neutralized, wherever the data comes from. A new prompt tag is added here
  * and nowhere else.
  */
-export const PROMPT_TAG_NAMES = ['thesis', 'paper', 'earlier', 'conversation', 'turn', 'excerpt', 'question', 'actions_done', 'library_data', 'protocol', 'record'] as const
+export const PROMPT_TAG_NAMES = ['thesis', 'paper', 'earlier', 'conversation', 'turn', 'excerpt', 'question', 'actions_done', 'library_data', 'protocol', 'record', 'context', 'section', 'heading', 'paragraph'] as const
 
 /** `<` and the look-alikes a model may read as one: full-width (U+FF1C) and small-form (U+FE64). */
 const OPENERS = '<\uff1c\ufe64'

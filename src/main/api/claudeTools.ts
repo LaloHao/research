@@ -8,6 +8,14 @@ import { LATEX_OUTPUT_COMMANDS } from '../../shared/writing/convert'
 import { DRAFT_ID, DRAFT_LENGTHS, exportDraft, MAX_DRAFT_PAPERS, MAX_DRAFT_PURPOSE, MAX_DRAFT_TITLE } from '../../shared/writing/draft'
 import { renderProposedOutline } from '../../shared/writing/outlineProposal'
 import { MAX_STYLE_CHARS, STYLE_FOCUSES } from '../../shared/writing/style'
+import {
+  MAX_REVERSE_OUTLINE_CHARS,
+  MAX_REVERSE_OUTLINE_PARAGRAPHS,
+  MAX_RQ_COVERAGE_CHARS,
+  MAX_RQ_COVERAGE_SECTIONS,
+  splitSections
+} from '../../shared/writing/structure'
+import { MAX_ALTERNATIVES_CONTEXT, MAX_ALTERNATIVES_SENTENCE, MAX_TUTOR_CHARS } from '../../shared/writing/tutor'
 import { UserFacingError } from '../library/UserFacingError'
 import { ApiDraftRunning } from '../writing/DraftService'
 import { ApiError, costlyTool, freeTool, type ApiContext, type ApiTool } from './registry'
@@ -19,12 +27,34 @@ const busy = (id: string | null): ApiError =>
   new ApiError('busy', `A draft started from the API is still being written${id ? ` (${id})` : ''}: wait for it with draft_status or stop it with draft_stop.`)
 const formatOf = (args: { text: string; format?: CiteFormat }): CiteFormat => args.format ?? detectFormat(args.text)
 
+/** The paragraphs a reverse outline would send, checked before anything is spent. */
+function outlineParagraphs(args: { text: string; format?: CiteFormat }) {
+  const sections = splitSections(args.text, formatOf(args))
+  const count = sections.reduce((n, s) => n + s.paragraphs.length, 0)
+  if (count === 0) throw new ApiError('invalid', 'The text has no prose paragraphs.')
+  if (count > MAX_REVERSE_OUTLINE_PARAGRAPHS) throw new ApiError('too_large', `The text has ${count} paragraphs: at most ${MAX_REVERSE_OUTLINE_PARAGRAPHS} at a time.`)
+  return { sections, count }
+}
+
+/** The sections and research questions an RQ coverage would send, checked before anything is spent. */
+function coverageInput(ctx: ApiContext, args: { text: string; format?: CiteFormat }) {
+  const questions = ctx.store.config.thesis.research_questions
+  if (questions.length === 0) throw new ApiError('invalid', 'The thesis has no research questions: add them in Settings → Tesis.')
+  const sections = splitSections(args.text, formatOf(args)).filter((s) => s.paragraphs.length > 0)
+  if (sections.length === 0) throw new ApiError('invalid', 'The text has no prose paragraphs.')
+  if (sections.length > MAX_RQ_COVERAGE_SECTIONS) throw new ApiError('too_large', `The text has ${sections.length} sections: at most ${MAX_RQ_COVERAGE_SECTIONS} at a time.`)
+  return { questions, sections }
+}
+
 /**
  * The «Redacción» operations that use Claude, for the local API. Each one is the app's own service method (the same
  * prompts, checks and caps as the window), which charges itself through `runCappedOperation`: hence `selfCapped`.
  * A check, an outline proposal or a style review stops when its caller hangs up or the project closes; a draft runs
  * in the app (it answers once started) and is followed and stopped with the free `draft_status` and `draft_stop`.
  * Offsets in their answers count characters (code points), like `check_citations_local`'s.
+ *
+ * The tutor's tools (tutor, alternatives, reverse_outline, rq_coverage) help the author write without writing for
+ * them: they point, explain, ask, outline or offer options of one sentence to compare; none returns a rewritten text.
  */
 export const CLAUDE_API_TOOLS: ApiTool[] = [
   costlyTool({
@@ -216,6 +246,106 @@ export const CLAUDE_API_TOOLS: ApiTool[] = [
           reason: s.reason,
           category: s.category
         })),
+        dropped: run.dropped,
+        costUsd: run.costUsd,
+        model: run.model
+      }
+    }
+  }),
+  costlyTool({
+    name: 'tutor',
+    description:
+      "The tutor: reads a passage (up to 8 000 characters) and points at what may weaken it (ambiguity, logical_gap, connector, lost_subject, register, cohesion, rhythm, precision), each with its verbatim excerpt and offsets, why (explanation) and one Socratic question that leads the author to the fix. It never rewrites the text: the answer has no rewrite, and entries whose explanation or question quotes one are dropped and counted. Explanations in the thesis' language. Costs Claude quota: without confirmed it answers the plan.",
+    input: { text: z.string().min(1).max(MAX_TUTOR_CHARS), format: format.optional(), model },
+    cost: { kind: 'tutor', model: modelOf, selfCapped: true, plan: async (_ctx, args) => ({ chars: [...args.text].length }) },
+    async run(ctx, args, _maxUsd, signal) {
+      const fmt = formatOf(args)
+      const run = await ctx.writing.tutor({ text: args.text, format: fmt, model: args.model }, signal)
+      const at = codePointOffsets(args.text)
+      return {
+        format: fmt,
+        issues: run.issues.map((i) => ({ start: at(i.start), end: at(i.end), excerpt: i.excerpt, kind: i.kind, explanation: i.explanation, question: i.question })),
+        dropped: run.dropped,
+        costUsd: run.costUsd,
+        model: run.model
+      }
+    }
+  }),
+  costlyTool({
+    name: 'alternatives',
+    description:
+      "Two or three other ways to phrase ONE sentence the author wrote (up to 600 characters; the paragraph around it optional, for context only), each with what it changes (emphasis, order, rhythm, concision, register, precision, connection) explained, for the author to compare and choose or keep theirs. Each keeps the sentence's citations, math and LaTeX commands exactly; the others are dropped and counted. Costs Claude quota: without confirmed it answers the plan.",
+    input: {
+      sentence: z.string().trim().min(1).max(MAX_ALTERNATIVES_SENTENCE),
+      context: z.string().max(MAX_ALTERNATIVES_CONTEXT).optional().describe('The paragraph around the sentence'),
+      format: format.optional(),
+      model
+    },
+    cost: { kind: 'alternatives', model: modelOf, selfCapped: true },
+    async run(ctx, args, _maxUsd, signal) {
+      const fmt = args.format ?? detectFormat(args.sentence)
+      const run = await ctx.writing.alternatives({ sentence: args.sentence, context: args.context ?? null, format: fmt, model: args.model }, signal)
+      return { format: fmt, alternatives: run.alternatives, dropped: run.dropped, costUsd: run.costUsd, model: run.model }
+    }
+  }),
+  costlyTool({
+    name: 'reverse_outline',
+    description:
+      "The reverse outline of a section (up to 20 000 characters): the app splits it into prose paragraphs (its offsets) and Claude gives each one its main idea in at most 20 words, in the author's terms, and flags (two_ideas, missing_transition, off_topic relative to its heading) with a one-line note each. Nothing is rewritten. Costs Claude quota: without confirmed it answers the plan (how many paragraphs).",
+    input: { text: z.string().min(1).max(MAX_REVERSE_OUTLINE_CHARS), format: format.optional(), model },
+    cost: {
+      kind: 'reverse_outline',
+      model: modelOf,
+      selfCapped: true,
+      plan: async (_ctx, args) => {
+        const { sections, count } = outlineParagraphs(args)
+        return { paragraphs: count, headings: sections.filter((s) => s.heading !== null).length }
+      }
+    },
+    async run(ctx, args, _maxUsd, signal) {
+      outlineParagraphs(args)
+      const fmt = formatOf(args)
+      const run = await ctx.writing.reverseOutline({ text: args.text, format: fmt, model: args.model }, signal)
+      const at = codePointOffsets(args.text)
+      return {
+        format: fmt,
+        paragraphs: run.paragraphs.map((p) => ({ index: p.index, start: at(p.start), end: at(p.end), heading: p.heading, main_idea: p.main_idea, flags: p.flags })),
+        dropped: run.dropped,
+        costUsd: run.costUsd,
+        model: run.model
+      }
+    }
+  }),
+  costlyTool({
+    name: 'rq_coverage',
+    description:
+      "Which of the thesis' research questions (Settings → Tesis) each heading of a chapter or section (up to 40 000 characters) addresses, each with a short excerpt of that section as evidence (verified verbatim by the app, with offsets; unverified claims are dropped and counted), and the questions no section addresses. Costs Claude quota: without confirmed it answers the plan.",
+    input: { text: z.string().min(1).max(MAX_RQ_COVERAGE_CHARS), format: format.optional(), model },
+    cost: {
+      kind: 'rq_coverage',
+      model: modelOf,
+      selfCapped: true,
+      plan: async (ctx, args) => {
+        const { questions, sections } = coverageInput(ctx, args)
+        return { sections: sections.length, questions: questions.map((q) => q.id) }
+      }
+    },
+    async run(ctx, args, _maxUsd, signal) {
+      const { questions } = coverageInput(ctx, args)
+      const fmt = formatOf(args)
+      const run = await ctx.writing.rqCoverage({ text: args.text, format: fmt, model: args.model }, signal)
+      const at = codePointOffsets(args.text)
+      return {
+        format: fmt,
+        questions: questions.map((q) => ({ id: q.id, text: q.text })),
+        sections: run.sections.map((s) => ({
+          id: s.id,
+          heading: s.heading,
+          start: at(s.start),
+          end: at(s.end),
+          addresses: s.addresses.map((a) => ({ rq: a.rq, excerpt: a.excerpt, start: at(a.start), end: at(a.end) }))
+        })),
+        not_addressed: run.not_addressed,
         dropped: run.dropped,
         costUsd: run.costUsd,
         model: run.model
