@@ -57,12 +57,25 @@ In the library's top bar you can:
 
 - **Paste a DOI, an arXiv id or a URL** and tap «Agregar» (Add). It also accepts an OpenAlex id (`W2741809807` or `https://openalex.org/W2741809807`); that's what «Agregar» (Add) in Candidates uses for works without a DOI. For a URL that isn't a DOI or arXiv id, the app looks at what's behind it: if it serves a PDF, it's added as a PDF; if the page has a DOI or an arXiv id, that identifier is used; otherwise it's saved as a web page (grey literature), with its readable text if found, and if not, it warns that «La página no tiene un artículo legible.» (The page has no readable article.).
 - **Drag one or more PDFs** onto the library.
+- **Open a URL in the app's browser** with «Abrir en navegador» (Open in browser), next to «Agregar» (Add); see "Sites that block downloads" below.
 
 The app fills in metadata automatically from the identifier. If the paper ends up with «Los metadatos están incompletos.» (Metadata is incomplete.), you can paste a DOI or arXiv id in the notice and tap «Completar» (Complete), or tap «Reintentar» (Retry) if it already had one.
 
 When a paper is added (or its metadata completed), the app looks up its references in OpenAlex in the background (see "Citations and candidates"); this uses no Claude quota.
 
 Adding an identifier or PDF that's already in the library updates the existing paper instead of duplicating it («ya estaba en la biblioteca» (was already in the library) / «actualizado» (updated) in the activity panel). A PDF dropped on the library is matched by the DOI or arXiv id printed on it, or by its title: when nothing matches, it becomes a new paper, and when the paper already has a PDF, the dropped one is ignored. To give a specific paper its PDF, use its PDF tab instead (see "Attaching or replacing a PDF" below).
+
+### Sites that block downloads
+
+Some sites (many blogs and magazines behind Cloudflare or similar bot protection, pages behind a login, pages built entirely by scripts) refuse the app's downloads. «Agregar» (Add) then fails with «El sitio bloquea las descargas automáticas (HTTP 403)…» (The site blocks automated downloads), never with the OpenAlex API key message, which only appears when OpenAlex itself refuses. The app never tries to get past a site's protection; instead:
+
+- **The app's browser.** In the activity panel, the failed entry has «Abrir en el navegador de la app» (Open in the app's browser); for any URL you can also type it next to «Agregar» (Add) and tap «Abrir en navegador» (Open in browser). A window opens with the page and a toolbar (back, forward, reload, the page's title and address). Browse it as in any browser: if the site shows a check («Verify you are human»), solve it yourself; log in if needed. When the page shows the article, tap «Agregar a la biblioteca» (Add to library). The app reads the page as it is then and prints it to PDF: if the page names a DOI or arXiv id, the paper is added through that identifier with the printed PDF; otherwise it's a web page with its readable text (Contenido tab) and the printed PDF (PDF and Texto tabs, search). When no article can be extracted, the paper keeps the page's own title (or one guessed from its URL) with «Los metadatos están incompletos.» (Metadata is incomplete): complete it with «Editar metadatos» (Edit metadata). «Cancelar» (Cancel) closes the window without adding anything.
+  The window is kept apart from the app: the page runs sandboxed, with no access to your files or to the app, every permission (camera, microphone, notifications, location…) is denied and downloads are blocked (download a file from that site in your own browser). Cookies and logins made there are kept between uses in a session of their own, separate from the app's.
+- **Print to PDF in your own browser.** Open the page in your browser, use Ctrl+P → «Save as PDF», and drop the file on the library (a new paper, titled from the PDF) or on a paper's PDF or Contenido tab (see below).
+
+### Editing metadata
+
+«Editar metadatos» (Edit metadata), under the paper's title in its detail, opens a form with the title, the authors (one per line, «Family, Given»; an organization on its own), the year (for a web page, its date as `YYYY`, `YYYY-MM` or `YYYY-MM-DD`, which sets the year), the journal or venue (for a web page, its site) and the URL. «Guardar» (Save) writes `paper.yaml` and the same fields in the paper's BibTeX entry, keeping every other field (pages, volume, publisher…), and updates `exports/library.bib`. The citation key never changes. Right after saving, «Deshacer» (Undo) puts back what the edit changed, as long as `paper.yaml` hasn't changed since. Filling in title, authors and year marks the metadata as complete.
 
 ### Attaching or replacing a PDF
 
@@ -594,6 +607,12 @@ This happens mostly on Windows, which won't move a folder with an open file. Clo
 
 **«Ese paper ya no está en la papelera (quizás ya se restauró).»** (That paper is no longer in the trash; maybe it was already restored.)
 «Deshacer» (Undo) or «Restaurar» (Restore) came too late: the paper is already back in the library (from here or from another machine).
+
+**«El sitio bloquea las descargas automáticas…»** (The site blocks automated downloads…)
+The site answered the app with bot protection or a 401/403. Open the page in the app's browser or save it as PDF from your own browser (see "Sites that block downloads").
+
+**«El servidor negó el acceso…»** / **«OpenAlex negó el acceso…»** (The server / OpenAlex denied access…)
+A server refused a request. Only the OpenAlex one points to your OpenAlex API key (Settings → App); for any other server, retry later or add the paper another way.
 
 **The paper is too long**
 The summarize button is disabled and «Forzar» (Force) appears, which summarizes using only the beginning of the text up to the configured maximum size (see "Maximum input size" under Settings → Claude). The resulting summary is marked as made from truncated text.

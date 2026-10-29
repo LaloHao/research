@@ -28,6 +28,14 @@
   - The tutor (built: the API tools `tutor`, `alternatives`, `reverse_outline` and `rq_coverage`, WritingService.tutor/alternatives/reverseOutline/rqCoverage with their cost kinds and caps, src/shared/writing/tutor.ts and structure.ts; `research-tutor`, `research-alternatives`, `research-reverse-outline`, `research-rq-coverage`) and the local prose checks (`emacs/research-prose.el`). Pending: they have no place in the window (only the API and Emacs); the rewrite filter only catches quoted rewrites of 8+ words (an unquoted one passes); `research-alternatives` sends the paragraph as context only when it is under 4 000 characters; `research-prose.el`'s stemming, gerund and passive detection are crude (false positives such as «es complicado», verbs in -mente like «implemente» listed by hand), the INFLESZ syllable count ignores prefixes (sub-, trans-) and the checks are Org-centric (LaTeX and Markdown buffers are read as Org); the term consistency counts plurals but not other inflections; the Flymake backend rechecks the whole buffer on each pass (fine for a chapter, slow for a whole thesis in one file).
 - Stage 5c (after 5b): reporting of systematic mappings. Tables of the included studies with their facets, bubble charts per research question, CSV, SVG and LaTeX tables, and the protocol, search log (the exact strings per database and date) and decisions as Markdown and CSV for a reproducible appendix. Labels name the protocol version a decision was made with; CSV cells that look like formulas are escaped.
 
+## Blocked sites and metadata editing technical minutiae
+
+- The app's browser window (src/main/capture): one window at a time (opening another URL reuses it); a capture is added directly, not as a job in «Actividad», and the window shows its error in the toolbar. Downloads from the page are denied rather than offered through a save dialog. A URL that serves a PDF and is blocked opens in Chromium's PDF viewer, whose print is not the original file: download it in your own browser instead.
+- Re-capturing a page is found as a duplicate only by DOI, arXiv id or title: the index has no URL column, so the same URL under a changed title adds a second paper.
+- A captured page with a DOI keeps the printed landing page as its PDF when the paper had none, even if an open-access PDF exists.
+- «Editar metadatos» is not offered from the chat's actions or the local API, and its undo token lives in memory (lost on restart). Editing does not reconcile `kind` (a web page cannot become an article); an author line is split at its last space unless it has a comma or braces.
+- PDF metadata (Title/Author of a PDF attached later) is not offered as a suggestion in the editor.
+
 ## Stage 2 technical minutiae
 
 - The PDF viewer reloads the whole document every time focus changes within the same paper.
