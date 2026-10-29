@@ -136,7 +136,10 @@ const normalized = (text: string): string => text.replace(/\s+/g, ' ').trim().to
 /** The policy of the printed document: nothing but its own inline style and data: images. */
 export const READER_CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'"
 
-/** Serif body at a readable width; margins and page numbers come from the print options. Link URLs are not expanded. */
+/**
+ * Serif body at a readable width; margins and page numbers come from the print options (on screen, «Vista de lectura»,
+ * some padding stands in for them). Link URLs are not expanded.
+ */
 export const READER_CSS = `
 html { background: #fff; }
 body { margin: 0 auto; max-width: 155mm; color: #111; font-family: "Noto Serif", "DejaVu Serif", "Liberation Serif", Georgia, "Times New Roman", serif;
@@ -163,6 +166,7 @@ caption { font-size: 9pt; color: #444; caption-side: bottom; padding-top: 0.3em;
 ul, ol { padding-left: 1.4em; }
 li { margin: 0.15em 0; }
 hr { border: 0; border-top: 1px solid #bbb; margin: 1.2em 0; }
+@media screen { body { padding: 28px 24px 56px; } }
 `
 
 export interface ReaderSource {

@@ -27,6 +27,7 @@ const api: ResearchApi = {
     editMetadata: (id, edit) => ipcRenderer.invoke(IPC.libraryEditMetadata, id, edit),
     revertMetadata: (undoToken) => ipcRenderer.invoke(IPC.libraryRevertMetadata, undoToken),
     openInBrowser: (url) => ipcRenderer.invoke(IPC.libraryOpenInBrowser, url),
+    recapture: (id) => ipcRenderer.invoke(IPC.libraryRecapture, id),
     readPdf: (id) => ipcRenderer.invoke(IPC.libraryReadPdf, id),
     readNotes: (id) => ipcRenderer.invoke(IPC.libraryReadNotes, id),
     writeNotes: (id, text, hash) => ipcRenderer.invoke(IPC.libraryWriteNotes, id, text, hash),

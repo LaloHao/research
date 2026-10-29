@@ -114,6 +114,32 @@ describe('LibraryService: capturing a page that is already in the library', () =
   })
 })
 
+describe('LibraryService: «Volver a capturar desde la web»', () => {
+  it('replaces the PDF of a paper found by its DOI, keeping its summary', async () => {
+    const first = await makePdf([['Drain parses logs online. Cookie banner text.']])
+    const { library, store } = await setupLibrary({ resolver: { '10.1109/icws.2017.13': DRAIN } })
+    await library.ingestCapture({ url: 'https://ieeexplore.ieee.test/document/1', html: html('scholarly.html'), pdf: first })
+    await store.writeSummary('he2017drain', sampleSummary(), 'Kept.\n', null)
+    const summaryBefore = await readFile(join(store.paperDir('he2017drain'), 'summary.md'), 'utf8')
+    const again = await makePdf([['Drain parses logs online with a fixed depth tree.']])
+    expect(await library.replaceCapturedPdf('he2017drain', again)).toEqual({ status: 'pdf_attached', paperId: 'he2017drain' })
+    const read = await store.readPaper('he2017drain')
+    expect(read.ok && read.value.pdf_sha256).toBe(sha256(again))
+    expect(read.ok && read.value.identifiers.doi).toBe('10.1109/icws.2017.13')
+    expect(await readFile(join(store.paperDir('he2017drain'), 'summary.md'), 'utf8')).toBe(summaryBefore)
+  })
+
+  it('gives a web page saved without a PDF its first one', async () => {
+    const { library, store } = await setupLibrary()
+    const { paperId } = await library.ingestCapture({ url: BLOG, html: html('postmortem.html'), pdf: null })
+    expect(store.resolvePdf(paperId)).toBeNull()
+    const pdf = await makePdf([['Postmortem of the database outage: the rollback took forty minutes.']])
+    await library.replaceCapturedPdf(paperId, pdf)
+    expect(store.resolvePdf(paperId)).not.toBeNull()
+    expect(await store.readContent(paperId)).toContain('## Timeline')
+  })
+})
+
 describe('LibraryService.editMetadata', () => {
   async function webPaper() {
     const lib = await setupLibrary()

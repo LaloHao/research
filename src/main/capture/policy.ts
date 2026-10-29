@@ -101,6 +101,17 @@ export function readerWindowOptions(): BrowserWindowConstructorOptions {
   }
 }
 
+/** The session the reader view is previewed in («Vista de lectura»): in memory, refusing every request but its document. */
+export const PREVIEW_PARTITION = 'capture-preview'
+
+/**
+ * The view that shows the reader view in the window: the same document the reader PDF is printed from, under the same
+ * rules as the printing window (no JavaScript, sandboxed, no preload), in its own in-memory session.
+ */
+export function previewWebPreferences(): WebPreferences {
+  return { ...readerWindowOptions().webPreferences, partition: PREVIEW_PARTITION }
+}
+
 type SessionLike = Pick<Session, 'setPermissionRequestHandler' | 'setPermissionCheckHandler' | 'setDevicePermissionHandler' | 'on'>
 
 const hardened = new WeakSet<object>()
@@ -154,6 +165,14 @@ export interface PageCapture {
   pdf: Uint8Array | null
 }
 
+/** The page's HTML as it is now, read from an isolated world (the page's scripts cannot change what it sees): untrusted. */
+export async function readPageHtml(contents: Pick<WebContents, 'executeJavaScriptInIsolatedWorld'>): Promise<string> {
+  const raw: unknown = await contents.executeJavaScriptInIsolatedWorld(CAPTURE_WORLD_ID, [
+    { code: 'document.documentElement ? document.documentElement.outerHTML : ""' }
+  ])
+  return typeof raw === 'string' ? raw.slice(0, MAX_CAPTURE_HTML) : ''
+}
+
 type CaptureContents = Pick<WebContents, 'getURL' | 'executeJavaScriptInIsolatedWorld' | 'printToPDF'> & OverlayContents
 
 export interface CaptureOptions {
@@ -170,10 +189,7 @@ export interface CaptureOptions {
 export async function readCapture(contents: CaptureContents, options: CaptureOptions): Promise<PageCapture> {
   const url = contents.getURL()
   if (!isWebUrl(url)) throw new Error('Not a web page')
-  const raw: unknown = await contents.executeJavaScriptInIsolatedWorld(CAPTURE_WORLD_ID, [
-    { code: 'document.documentElement ? document.documentElement.outerHTML : ""' }
-  ])
-  const html = typeof raw === 'string' ? raw.slice(0, MAX_CAPTURE_HTML) : ''
+  const html = await readPageHtml(contents)
   let printed: Uint8Array | null = null
   if (options.mode === 'reader' && html) printed = await options.printReader(html, url).catch(() => null)
   if (!printed) {
@@ -195,4 +211,20 @@ export async function routeCapture(
   const existing = capture.pdf ? await deps.findExisting(capture.url) : null
   if (existing && capture.pdf) return { existing, pdf: capture.pdf }
   return { added: (await deps.ingest(capture)).paperId }
+}
+
+/** The site of an address for `onSite`: its host without «www.», lowercased; null for anything but http(s). */
+export function siteOf(url: string): string | null {
+  if (!isWebUrl(url)) return null
+  return new URL(url).hostname.toLowerCase().replace(/^www\./, '')
+}
+
+/**
+ * Whether `url` is on one of `sites` (hosts as `siteOf` gives them): the same host, or a subdomain of one or the other
+ * (journals.acme.org and acme.org go together; two blogs on one hosting service don't).
+ */
+export function onSite(url: string, sites: readonly string[]): boolean {
+  const host = siteOf(url)
+  if (!host) return false
+  return sites.some((site) => host === site || host.endsWith(`.${site}`) || site.endsWith(`.${host}`))
 }

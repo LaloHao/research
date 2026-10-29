@@ -46,30 +46,68 @@ export function sessionImageFetcher(source: Session, referrer: string): ImageFet
 }
 
 /**
- * The reader-view PDF of a captured page: its article sanitized, images fetched through `pageSession` and embedded,
- * the document written to a private temporary folder and printed in a hidden window without JavaScript whose session
- * refuses every request but that one file. Null when the page has no article.
+ * The reader view of a captured page as a document: its article sanitized, images fetched through `pageSession` and
+ * embedded. Null when the page has no article. The same document is printed as the reader PDF and shown by
+ * «Vista de lectura».
  */
-export async function printReaderPdf(html: string, url: string, pageSession: Session, now = new Date()): Promise<Uint8Array | null> {
+export async function readerDocument(html: string, url: string, pageSession: Session, now = new Date()): Promise<string | null> {
   const article = readArticle(html, url)
   if (!article) return null
   const content = await embedImages(sanitizeArticle(article.content, url), url, sessionImageFetcher(pageSession, url))
-  const document = buildReaderHtml(article, content, { url, accessed: now })
+  return buildReaderHtml(article, content, { url, accessed: now })
+}
+
+/** The file URL each session may load now (one document per session at a time); data: URIs are always allowed. */
+const allowedFile = new Map<Session, string>()
+
+/** Every request of `target` is refused but `fileUrl` and data: URIs (the filter is installed once per session). */
+function allowOnly(target: Session, fileUrl: string): void {
+  if (!allowedFile.has(target)) {
+    target.webRequest.onBeforeRequest((details, callback) =>
+      callback({ cancel: !(details.url === allowedFile.get(target) || details.url.startsWith('data:')) })
+    )
+  }
+  allowedFile.set(target, fileUrl)
+}
+
+/**
+ * Loads a reader document into `contents` (a view or window without JavaScript in `target`'s session): written to a
+ * private temporary folder, loaded from there as the only request the session lets through, then removed.
+ */
+export async function loadReaderDocument<T>(
+  contents: Pick<Electron.WebContents, 'loadURL'>,
+  target: Session,
+  document: string,
+  then: () => Promise<T> = async () => undefined as T
+): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), 'research-reader-'))
   const file = join(dir, 'reader.html')
   const fileUrl = pathToFileURL(file).href
-  const readerSession = session.fromPartition(READER_PARTITION)
-  hardenSession(readerSession)
-  readerSession.webRequest.onBeforeRequest((details, callback) => callback({ cancel: !(details.url === fileUrl || details.url.startsWith('data:')) }))
+  hardenSession(target)
+  allowOnly(target, fileUrl)
+  try {
+    await writeFile(file, document, { encoding: 'utf8', mode: 0o600 })
+    await contents.loadURL(fileUrl)
+    return await then()
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
+/**
+ * The reader-view PDF of a captured page (`readerDocument`), printed in a hidden window without JavaScript whose
+ * session refuses every request but that document. Null when the page has no article.
+ */
+export async function printReaderPdf(html: string, url: string, pageSession: Session, now = new Date()): Promise<Uint8Array | null> {
+  const document = await readerDocument(html, url, pageSession, now)
+  if (document === null) return null
   const win = new BrowserWindow(readerWindowOptions())
   win.webContents.on('will-navigate', (event) => event.preventDefault())
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   let timer: NodeJS.Timeout | undefined
   try {
-    await writeFile(file, document, { encoding: 'utf8', mode: 0o600 })
-    const print = (async () => {
-      await win.loadURL(fileUrl)
-      return win.webContents.printToPDF({
+    const print = loadReaderDocument(win.webContents, session.fromPartition(READER_PARTITION), document, () =>
+      win.webContents.printToPDF({
         pageSize: 'A4',
         printBackground: false,
         displayHeaderFooter: true,
@@ -79,12 +117,11 @@ export async function printReaderPdf(html: string, url: string, pageSession: Ses
         generateDocumentOutline: true,
         generateTaggedPDF: true
       })
-    })()
+    )
     const timeout = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error('Reader print timed out')), PRINT_TIMEOUT_MS)))
     return new Uint8Array(await Promise.race([print, timeout]))
   } finally {
     clearTimeout(timer)
     if (!win.isDestroyed()) win.destroy()
-    await rm(dir, { recursive: true, force: true }).catch(() => undefined)
   }
 }

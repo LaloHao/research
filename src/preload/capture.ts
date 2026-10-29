@@ -11,6 +11,9 @@ const api: CaptureApi = {
   setPdfMode: (mode) => ipcRenderer.invoke(CAPTURE_IPC.pdfMode, mode),
   replace: () => ipcRenderer.invoke(CAPTURE_IPC.replace),
   keep: () => ipcRenderer.invoke(CAPTURE_IPC.keep),
+  update: () => ipcRenderer.invoke(CAPTURE_IPC.update),
+  preview: () => ipcRenderer.invoke(CAPTURE_IPC.preview),
+  showPage: () => ipcRenderer.invoke(CAPTURE_IPC.showPage),
   onState: (listener) => {
     const handler = (_e: IpcRendererEvent, state: CaptureState): void => listener(state)
     ipcRenderer.on(CAPTURE_IPC.state, handler)

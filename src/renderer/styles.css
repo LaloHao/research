@@ -474,6 +474,10 @@ button.danger { color: var(--error); border-color: var(--error); }
 .capture-status { max-width: 40%; font-size: 0.85em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .capture-status.ask { max-width: 55%; white-space: normal; line-height: 1.2; font-weight: 600; }
 .capture-mode { max-width: 230px; font-size: 0.85em; }
+.capture-status.info { color: var(--accent); }
+.capture-target { flex: none; max-width: 220px; padding: 2px 8px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: 0.85em; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.capture-bar button.active { background: var(--accent-soft); border-color: var(--accent); }
+.capture-bar button { white-space: nowrap; }
 .metadata-editor { display: flex; flex-direction: column; gap: 8px; max-width: 760px; padding: 10px 0; }
 .metadata-editor label { display: flex; flex-direction: column; gap: 2px; font-size: 0.9em; }
 .metadata-editor label.grow { flex: 1; }
