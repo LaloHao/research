@@ -1,4 +1,6 @@
 import type { BrowserWindowConstructorOptions, IpcMainInvokeEvent, Session, WebContents, WebPreferences } from 'electron'
+import type { CapturePdfMode } from '../../shared/capture'
+import { withoutOverlays, type OverlayContents } from './consent'
 
 /**
  * The rules of the app's browser window, apart from Electron so they can be tested: how the window and the page are
@@ -70,6 +72,35 @@ export function pageWebPreferences(): WebPreferences {
   }
 }
 
+/** The session the reader view is printed in: in memory, and its requests are all refused but the document's own. */
+export const READER_PARTITION = 'capture-reader'
+
+/**
+ * The hidden window that prints the reader view: no JavaScript at all, sandboxed, isolated, no preload, in its own
+ * in-memory session. Its document is the app's own, built from sanitized article HTML with data: images only.
+ */
+export function readerWindowOptions(): BrowserWindowConstructorOptions {
+  return {
+    show: false,
+    width: 900,
+    height: 1200,
+    webPreferences: {
+      partition: READER_PARTITION,
+      javascript: false,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      nodeIntegrationInSubFrames: false,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      webviewTag: false,
+      navigateOnDragDrop: false,
+      spellcheck: false,
+      images: true
+    }
+  }
+}
+
 type SessionLike = Pick<Session, 'setPermissionRequestHandler' | 'setPermissionCheckHandler' | 'setDevicePermissionHandler' | 'on'>
 
 const hardened = new WeakSet<object>()
@@ -123,22 +154,45 @@ export interface PageCapture {
   pdf: Uint8Array | null
 }
 
-type CaptureContents = Pick<WebContents, 'getURL' | 'executeJavaScriptInIsolatedWorld' | 'printToPDF'>
+type CaptureContents = Pick<WebContents, 'getURL' | 'executeJavaScriptInIsolatedWorld' | 'printToPDF'> & OverlayContents
 
-/** Reads what the page shows now: its URL, its HTML (from an isolated world) and a PDF print of it. */
-export async function readCapture(contents: CaptureContents): Promise<PageCapture> {
+export interface CaptureOptions {
+  mode: CapturePdfMode
+  /** Prints the reader view of the page's article; null when the page has no article to read. */
+  printReader: (html: string, url: string) => Promise<Uint8Array | null>
+}
+
+/**
+ * Reads what the page shows now: its URL, its HTML (from an isolated world) and a PDF. In `reader` mode the PDF is the
+ * reader view of the article; a page without one (or a reader print that fails) is printed as it looks instead, as in
+ * `page` mode, with consent overlays hidden.
+ */
+export async function readCapture(contents: CaptureContents, options: CaptureOptions): Promise<PageCapture> {
   const url = contents.getURL()
   if (!isWebUrl(url)) throw new Error('Not a web page')
   const raw: unknown = await contents.executeJavaScriptInIsolatedWorld(CAPTURE_WORLD_ID, [
     { code: 'document.documentElement ? document.documentElement.outerHTML : ""' }
   ])
   const html = typeof raw === 'string' ? raw.slice(0, MAX_CAPTURE_HTML) : ''
-  let pdf: Uint8Array | null = null
-  try {
-    const printed = await contents.printToPDF({ printBackground: true })
-    if (printed.byteLength <= MAX_CAPTURE_PDF) pdf = new Uint8Array(printed)
-  } catch {
-    // Without a PDF the paper still gets the page's text.
+  let printed: Uint8Array | null = null
+  if (options.mode === 'reader' && html) printed = await options.printReader(html, url).catch(() => null)
+  if (!printed) {
+    printed = await withoutOverlays(contents, CAPTURE_WORLD_ID, () => contents.printToPDF({ printBackground: true })).catch(() => null)
   }
+  // Without a PDF the paper still gets the page's text.
+  const pdf = printed && printed.byteLength <= MAX_CAPTURE_PDF ? new Uint8Array(printed) : null
   return { url, html, pdf }
+}
+
+/**
+ * Where a capture goes: a page already in the library (same URL) with a new PDF waits for «Actualizar su PDF»
+ * (`existing`) instead of becoming a duplicate; anything else is ingested (`added`).
+ */
+export async function routeCapture(
+  capture: PageCapture,
+  deps: { findExisting: (url: string) => Promise<string | null>; ingest: (capture: PageCapture) => Promise<{ paperId: string }> }
+): Promise<{ existing: string; pdf: Uint8Array } | { added: string }> {
+  const existing = capture.pdf ? await deps.findExisting(capture.url) : null
+  if (existing && capture.pdf) return { existing, pdf: capture.pdf }
+  return { added: (await deps.ingest(capture)).paperId }
 }

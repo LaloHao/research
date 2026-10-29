@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { sha256 } from '../../../src/main/project/atomicWrite'
 import { bibFields } from '../../../src/shared/writing/bibtex'
 import { DRAIN, setupLibrary } from '../../helpers/library'
+import { sampleSummary } from '../../helpers/summaries'
 import { makePdf } from '../../helpers/pdf'
 
 const html = (name: string): string => readFileSync(new URL(`../../fixtures/web/${name}`, import.meta.url), 'utf8')
@@ -76,6 +78,39 @@ describe('LibraryService.ingestCapture', () => {
       code: 'unreadable_pdf'
     })
     expect(await store.listPaperIds()).toEqual([])
+  })
+})
+
+describe('LibraryService: capturing a page that is already in the library', () => {
+  it('finds the paper by its URL, normalized, and replaces its PDF keeping the summary', async () => {
+    const first = await makePdf([['The banner said We value your privacy. Accept All.']])
+    const { library, store } = await setupLibrary()
+    const { paperId } = await library.ingestCapture({ url: BLOG, html: html('postmortem.html'), pdf: first })
+    await store.writeSummary(paperId, sampleSummary(), 'Kept.\n', null)
+    const summaryBefore = await readFile(join(store.paperDir(paperId), 'summary.md'), 'utf8')
+    expect(library.list('privacy').map((r) => r.id)).toEqual([paperId])
+
+    for (const same of [BLOG, `${BLOG}/`, 'http://www.eng.acme.test/posts/database-outage?utm_source=x#timeline']) expect(await library.findByUrl(same)).toBe(paperId)
+    for (const other of ['https://eng.acme.test/posts/other', 'https://eng.acme.test/posts/database-outage?page=2', 'not a url']) expect(await library.findByUrl(other)).toBeNull()
+
+    const fixed = await makePdf([['Postmortem of the database outage: the rollback took forty minutes.']])
+    expect(await library.replaceCapturedPdf(paperId, fixed)).toEqual({ status: 'pdf_attached', paperId })
+    expect(await store.listPaperIds()).toEqual([paperId])
+    const read = await store.readPaper(paperId)
+    expect(read.ok && read.value.pdf_sha256).toBe(sha256(fixed))
+    expect(await readFile(join(store.paperDir(paperId), 'summary.md'), 'utf8')).toBe(summaryBefore)
+    // The index has the new text, not the banner.
+    expect(library.list('forty').map((r) => r.id)).toEqual([paperId])
+    expect(library.list('privacy')).toEqual([])
+  })
+
+  it('refuses bytes that are not a PDF, leaving the paper as it was', async () => {
+    const pdf = await makePdf([['Postmortem of the database outage.']])
+    const { library, store } = await setupLibrary()
+    const { paperId } = await library.ingestCapture({ url: BLOG, html: html('postmortem.html'), pdf })
+    await expect(library.replaceCapturedPdf(paperId, new TextEncoder().encode('<html>'))).rejects.toMatchObject({ code: 'not_a_pdf' })
+    const read = await store.readPaper(paperId)
+    expect(read.ok && read.value.pdf_sha256).toBe(sha256(pdf))
   })
 })
 

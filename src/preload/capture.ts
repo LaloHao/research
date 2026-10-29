@@ -8,6 +8,9 @@ const api: CaptureApi = {
   back: () => ipcRenderer.invoke(CAPTURE_IPC.back),
   forward: () => ipcRenderer.invoke(CAPTURE_IPC.forward),
   reload: () => ipcRenderer.invoke(CAPTURE_IPC.reload),
+  setPdfMode: (mode) => ipcRenderer.invoke(CAPTURE_IPC.pdfMode, mode),
+  replace: () => ipcRenderer.invoke(CAPTURE_IPC.replace),
+  keep: () => ipcRenderer.invoke(CAPTURE_IPC.keep),
   onState: (listener) => {
     const handler = (_e: IpcRendererEvent, state: CaptureState): void => listener(state)
     ipcRenderer.on(CAPTURE_IPC.state, handler)

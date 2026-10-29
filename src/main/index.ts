@@ -200,7 +200,11 @@ function captureWindow(): { open(url: string): void } {
           process.env.ELECTRON_RENDERER_URL ? win.loadURL(`${process.env.ELECTRON_RENDERER_URL}/capture.html`) : win.loadFile(join(__dirname, '../renderer/capture.html')),
         ingest: (page) => controller.requireSession().ingestCapture(page),
         // The library list shows the new paper (library-changed); the app comes back to the front.
-        onAdded: () => focusMainWindow()
+        onAdded: () => focusMainWindow(),
+        findExisting: (url) => controller.requireSession().findCapturedPage(url),
+        replacePdf: (paperId, pdf) => controller.requireSession().replaceCapturedPdf(paperId, pdf),
+        pdfMode: () => controller.getSettings().capturePdfMode,
+        setPdfMode: async (mode) => void (await controller.setSettings({ capturePdfMode: mode }))
       })
       capture.open(url)
     }

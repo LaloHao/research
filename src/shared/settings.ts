@@ -1,3 +1,4 @@
+import type { CapturePdfMode } from './capture'
 import { DEFAULT_API_PORT } from './localApi'
 import { AUTO_SYNC_MINUTES } from './sync'
 
@@ -18,6 +19,8 @@ export interface AppSettings {
   apiPort: number
   /** Lets the local API run operations that spend Claude quota (each still asks for confirmation); off by default. */
   apiAllowCostly: boolean
+  /** How the app's browser makes a page's PDF (its toolbar sets it): the reader view by default. */
+  capturePdfMode: CapturePdfMode
 }
 
 export const DEFAULT_SETTINGS: Omit<AppSettings, 'deviceId'> = {
@@ -28,5 +31,6 @@ export const DEFAULT_SETTINGS: Omit<AppSettings, 'deviceId'> = {
   autoSyncMinutes: AUTO_SYNC_MINUTES.default,
   apiEnabled: false,
   apiPort: DEFAULT_API_PORT,
-  apiAllowCostly: false
+  apiAllowCostly: false,
+  capturePdfMode: 'reader'
 }
