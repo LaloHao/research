@@ -63,6 +63,7 @@ export const IPC = {
   libraryEditMetadata: 'library:edit-metadata',
   libraryRevertMetadata: 'library:revert-metadata',
   libraryOpenInBrowser: 'library:open-in-browser',
+  libraryRecapture: 'library:recapture',
   libraryReadPdf: 'library:read-pdf',
   libraryReadNotes: 'library:read-notes',
   libraryWriteNotes: 'library:write-notes',
@@ -314,6 +315,11 @@ export interface ResearchApi {
     revertMetadata(undoToken: string): Promise<ActionResult>
     /** «Abrir en el navegador de la app»: the user browses the page there and adds it from its toolbar. */
     openInBrowser(url: string): Promise<ActionResult>
+    /**
+     * «Volver a capturar desde la web»: opens the app's browser at the paper's URL (or its DOI), bound to the paper: its
+     * toolbar then updates that paper's PDF instead of adding the page.
+     */
+    recapture(id: string): Promise<ActionResult>
     readPdf(id: string): Promise<PdfReadResult>
     readNotes(id: string): Promise<{ text: string; hash: string | null }>
     writeNotes(id: string, text: string, hash: string | null): Promise<NotesWriteResult>

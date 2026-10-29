@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { recaptureUrl } from '../../../shared/capture'
 import type { ChatExcerpt } from '../../../shared/chat'
 import type { PaperDetail as Detail } from '../../../shared/library'
 import { useEvent } from '../../hooks/useEvent'
@@ -12,6 +13,7 @@ import { MetadataCompletion } from './MetadataCompletion'
 import { MetadataEditor } from './MetadataEditor'
 import { NotesEditor } from './NotesEditor'
 import { PdfViewer, type PdfFocus } from './PdfViewer'
+import { RecaptureButton } from './Recapture'
 import { RelationsTab } from './RelationsTab'
 import { RemovePaper } from './RemovePaper'
 import type { SelectionAskTarget } from './SelectionAsk'
@@ -19,15 +21,19 @@ import { TextTab } from './TextTab'
 import { PaperChatTab } from '../chat/PaperChatTab'
 import { SummaryTab } from '../summary/SummaryTab'
 
+type Identifiers = { url?: string | null; doi?: string | null }
+
 type PdfState = { status: 'loading' } | { status: 'ready'; data: Uint8Array } | { status: 'missing' } | { status: 'error'; message: string }
 
 function PdfTab({
   id,
+  identifiers,
   hasPdf,
   focus,
   onAsk
 }: {
   id: string
+  identifiers: Identifiers
   hasPdf: boolean
   focus: PdfFocus | null
   onAsk: (target: SelectionAskTarget) => boolean
@@ -62,6 +68,7 @@ function PdfTab({
     <div className={`pdf-drop${attach.dragging ? ' dragging' : ''}`} {...attach.dropProps}>
       {state.status === 'ready' && (
         <div className="pdf-toolbar">
+          <RecaptureButton id={id} identifiers={identifiers} />
           <button className="small" disabled={attach.busy} onClick={attach.pick}>
             {t('paper.attach.replace')}
           </button>
@@ -75,9 +82,12 @@ function PdfTab({
         {missing && (
           <div className="center muted column">
             <p>{t('paper.no_pdf')}</p>
-            <button disabled={attach.busy} onClick={attach.pick}>
-              {t('paper.attach.attach')}
-            </button>
+            <div className="row">
+              <button disabled={attach.busy} onClick={attach.pick}>
+                {t('paper.attach.attach')}
+              </button>
+              <RecaptureButton id={id} identifiers={identifiers} />
+            </div>
           </div>
         )}
       </div>
@@ -86,14 +96,16 @@ function PdfTab({
   )
 }
 
-/** The Contenido tab of a web page without a PDF: its text, plus a way to attach one. */
+/** The Contenido tab of a web page without a PDF: its text, plus a way to attach one or capture it again. */
 function ContentTab({
   id,
+  identifiers,
   content,
   focus,
   onAsk
 }: {
   id: string
+  identifiers: Identifiers
   content: string
   focus: ContentFocus | null
   onAsk: (target: SelectionAskTarget) => boolean
@@ -103,6 +115,7 @@ function ContentTab({
   return (
     <div className={`pdf-drop${attach.dragging ? ' dragging' : ''}`} {...attach.dropProps}>
       <div className="pdf-toolbar">
+        <RecaptureButton id={id} identifiers={identifiers} />
         <button className="small" disabled={attach.busy} onClick={attach.pick}>
           {t('paper.attach.attach')}
         </button>
@@ -258,13 +271,22 @@ export function PaperDetail({
       <div className="tab-body">
         {active === 'summary' && <SummaryTab key={detail.id} detail={detail} onOpenEvidence={openEvidence} />}
         {/* Keyed by the PDF hash too, so a replaced PDF is loaded again. */}
-        {active === 'pdf' && <PdfTab key={`${id}:${paper.pdf_sha256 ?? ''}`} id={id} hasPdf={detail.hasPdf} focus={focus} onAsk={ask} />}
+        {active === 'pdf' && <PdfTab key={`${id}:${paper.pdf_sha256 ?? ''}`} id={id} identifiers={paper.identifiers} hasPdf={detail.hasPdf} focus={focus} onAsk={ask} />}
         {active === 'text' && <TextTab key={id} id={id} />}
         {active === 'content' &&
           (detail.hasPdf ? (
-            <ContentView key={id} content={detail.content ?? ''} focus={contentFocus} onAsk={ask} />
+            <div key={id} className="pdf-drop">
+              {recaptureUrl(paper.identifiers) && (
+                <div className="pdf-toolbar">
+                  <RecaptureButton id={id} identifiers={paper.identifiers} />
+                </div>
+              )}
+              <div className="pdf-drop-scroll">
+                <ContentView content={detail.content ?? ''} focus={contentFocus} onAsk={ask} />
+              </div>
+            </div>
           ) : (
-            <ContentTab key={id} id={id} content={detail.content ?? ''} focus={contentFocus} onAsk={ask} />
+            <ContentTab key={id} id={id} identifiers={paper.identifiers} content={detail.content ?? ''} focus={contentFocus} onAsk={ask} />
           ))}
         {active === 'relations' && (
           <RelationsTab key={id} paperId={id} title={paper.title} onOpenEvidence={openEvidence} onOpenCandidates={onOpenCandidates} onSelectPaper={onSelectPaper} />

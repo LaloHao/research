@@ -7,11 +7,16 @@ import {
   hardenSession,
   isWebUrl,
   MAX_CAPTURE_HTML,
+  onSite,
   pageWebPreferences,
+  PREVIEW_PARTITION,
+  previewWebPreferences,
+  readPageHtml,
   readCapture,
   READER_PARTITION,
   readerWindowOptions,
   routeCapture,
+  siteOf,
   toolbarWindowOptions
 } from '../../../src/main/capture/policy'
 import { CONSENT_CSS, HIDE_ATTRIBUTE, MARK_FIXED_OVERLAYS, OVERLAY_NAME } from '../../../src/main/capture/consent'
@@ -257,6 +262,43 @@ describe('reader print window', () => {
     expect(options.webPreferences).toMatchObject({ partition: READER_PARTITION, javascript: false, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true })
     expect(options.webPreferences).not.toHaveProperty('preload')
     expect(READER_PARTITION).not.toMatch(/^persist:/)
+  })
+})
+
+describe('reader preview view', () => {
+  it('shows the reader view under the printing window’s rules, in its own in-memory session', () => {
+    const prefs = previewWebPreferences()
+    expect(prefs).toMatchObject({ partition: PREVIEW_PARTITION, javascript: false, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, webviewTag: false })
+    expect(prefs).not.toHaveProperty('preload')
+    expect(PREVIEW_PARTITION).not.toMatch(/^persist:/)
+    expect(PREVIEW_PARTITION).not.toBe(READER_PARTITION)
+  })
+
+  it('reads the page HTML from the isolated world, capped', async () => {
+    const worlds: number[] = []
+    const contents = { executeJavaScriptInIsolatedWorld: async (world: number) => (worlds.push(world), 'y'.repeat(MAX_CAPTURE_HTML + 5)) }
+    expect(await readPageHtml(contents as never)).toHaveLength(MAX_CAPTURE_HTML)
+    expect(worlds).toEqual([CAPTURE_WORLD_ID])
+    expect(await readPageHtml({ executeJavaScriptInIsolatedWorld: async () => ({ not: 'html' }) } as never)).toBe('')
+  })
+})
+
+describe('onSite', () => {
+  it('names a site by its host, without «www.»', () => {
+    expect(siteOf('https://www.Acme.test/a')).toBe('acme.test')
+    expect(siteOf('http://eng.acme.test')).toBe('eng.acme.test')
+    expect(siteOf('file:///etc/passwd')).toBeNull()
+  })
+
+  it('takes the same host and its subdomains (either way) as the same site, and nothing else', () => {
+    const sites = ['acme.test', 'doi.org']
+    for (const same of ['https://acme.test/x', 'https://www.acme.test/x', 'https://eng.acme.test/x', 'http://doi.org/10.1/x']) expect(onSite(same, sites)).toBe(true)
+    expect(onSite('https://acme.test/x', ['journals.acme.test'])).toBe(true)
+    for (const other of ['https://evilacme.test/x', 'https://acme.test.evil.test/x', 'https://mirror.test/acme.test', 'javascript:alert(1)', 'not a url']) {
+      expect(onSite(other, sites)).toBe(false)
+    }
+    expect(onSite('https://a.blogs.test', ['b.blogs.test'])).toBe(false)
+    expect(onSite('https://acme.test', [])).toBe(false)
   })
 })
 

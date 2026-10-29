@@ -191,9 +191,9 @@ function focusMainWindow(): void {
 let capture: CaptureWindow | null = null
 
 /** «Abrir en el navegador de la app»: created on first use; a captured page goes to the open project. */
-function captureWindow(): { open(url: string): void } {
+function captureWindow(): { open(url: string, target?: string): void } {
   return {
-    open: (url) => {
+    open: (url, target) => {
       capture ??= new CaptureWindow({
         preload: join(__dirname, '../preload/capture.js'),
         loadToolbar: (win) =>
@@ -206,7 +206,7 @@ function captureWindow(): { open(url: string): void } {
         pdfMode: () => controller.getSettings().capturePdfMode,
         setPdfMode: async (mode) => void (await controller.setSettings({ capturePdfMode: mode }))
       })
-      capture.open(url)
+      capture.open(url, target ?? null)
     }
   }
 }

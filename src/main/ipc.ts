@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
+import { recaptureUrl } from '../shared/capture'
 import type { MetadataEditResult, UserErrorCode } from '../shared/library'
 import type { OpenAlexCount } from '../shared/mapping'
 import type { CountResult } from '../shared/relations'
@@ -123,7 +124,8 @@ async function projectResult(action: () => Promise<ProjectInfo | null>): Promise
 
 /** The app's browser window («Abrir en el navegador de la app»). */
 export interface AppBrowser {
-  open(url: string): void
+  /** With `target` (a paper id) the window is bound to that paper: it updates its PDF. */
+  open(url: string, target?: string): void
 }
 
 export function registerIpc(app: AppController, getWindow: () => BrowserWindow | null, browser: AppBrowser): void {
@@ -220,6 +222,16 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
       // A capture needs a project to go to.
       app.requireSession()
       browser.open(url)
+    })
+  })
+  ipcMain.handle(IPC.libraryRecapture, (_e, rawId: unknown): Promise<ActionResult> => {
+    const id = arg(ipcArgs.paperId, rawId, 'id')
+    return actionResult(async () => {
+      // The start URL comes from the paper itself, never from the renderer.
+      const { paper } = await app.requireSession().detail(id)
+      const url = paper ? recaptureUrl(paper.identifiers) : null
+      if (!url) throw new UserFacingError('no_identifier')
+      browser.open(url, id)
     })
   })
   ipcMain.handle(IPC.libraryReadPdf, async (_e, rawId: unknown) => {

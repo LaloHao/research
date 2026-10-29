@@ -468,12 +468,17 @@ button.danger { color: var(--error); border-color: var(--error); }
 /* The toolbar of the app's browser window (capture.html); the page is a view below it. */
 .capture-body { margin: 0; overflow: hidden; }
 .capture-bar { display: flex; align-items: center; gap: 6px; height: 48px; box-sizing: border-box; padding: 0 10px; background: var(--bg); border-bottom: 1px solid var(--border); }
-.capture-where { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.2; }
+.capture-where { display: flex; flex-direction: column; min-width: 150px; flex: 1; line-height: 1.2; }
 .capture-title, .capture-url { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .capture-url { font-size: 0.8em; }
-.capture-status { max-width: 40%; font-size: 0.85em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.capture-status.ask { max-width: 55%; white-space: normal; line-height: 1.2; font-weight: 600; }
-.capture-mode { max-width: 230px; font-size: 0.85em; }
+.capture-status { flex: 0 1 auto; min-width: 0; max-width: 40%; font-size: 0.85em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.capture-status.ask, .capture-status.info { max-width: 55%; white-space: normal; line-height: 1.2; }
+.capture-status.ask { font-weight: 600; }
+.capture-mode { flex: 0 1 auto; min-width: 120px; max-width: 230px; font-size: 0.85em; }
+.capture-status.info { color: var(--accent); }
+.capture-target { flex: none; max-width: 220px; padding: 2px 8px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: 0.85em; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.capture-bar button.active { background: var(--accent-soft); border-color: var(--accent); }
+.capture-bar button { white-space: nowrap; }
 .metadata-editor { display: flex; flex-direction: column; gap: 8px; max-width: 760px; padding: 10px 0; }
 .metadata-editor label { display: flex; flex-direction: column; gap: 2px; font-size: 0.9em; }
 .metadata-editor label.grow { flex: 1; }
