@@ -357,11 +357,22 @@
     "forward": "Adelante",
     "reload": "Recargar",
     "add": "Agregar a la biblioteca",
-    "add_hint": "Guarda esta página en la biblioteca: su texto y un PDF de ella tal como la ves.",
+    "add_hint": "Guarda esta página en la biblioteca: su texto y un PDF de ella.",
     "cancel": "Cancelar",
     "untitled": "Sin título",
     "adding": "Agregando…",
-    "loading": "Cargando…"
+    "loading": "Cargando…",
+    "pdf_mode": {
+      "reader": "PDF: vista de lectura (recomendado)",
+      "page": "PDF: página tal como se ve"
+    },
+    "pdf_mode_hint": "Vista de lectura: un PDF limpio con el título, los autores, la fuente y el texto del artículo con sus imágenes, sin anuncios, menús ni avisos. Página tal como se ve: la página impresa, con los avisos de cookies ocultos. La app recuerda tu elección.",
+    "cookies_hint": "Si aparece un aviso de cookies, rechaza las no esenciales.",
+    "cookies_hint_long": "Si el sitio muestra un aviso de cookies, lo más privado es rechazar las no esenciales. La vista de lectura no depende de ese aviso: no lo incluye en el PDF.",
+    "exists": "Esta página ya está en la biblioteca como {{key}}. ¿Actualizar su PDF?",
+    "replace": "Actualizar PDF",
+    "replace_hint": "Reemplaza el PDF de {{key}} por el de esta captura; sus resúmenes y notas se mantienen.",
+    "keep": "No"
   },
   "paper": {
     "tabs": { "summary": "Resumen", "pdf": "PDF", "text": "Texto", "content": "Contenido", "relations": "Relaciones", "chat": "Chat", "notes": "Notas" },

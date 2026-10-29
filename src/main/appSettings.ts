@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
+import { isCapturePdfMode } from '../shared/capture'
 import { DEFAULT_SETTINGS, type AppSettings } from '../shared/settings'
 import { API_PORTS } from '../shared/localApi'
 import { AUTO_SYNC_MINUTES } from '../shared/sync'
@@ -29,7 +30,8 @@ export async function loadSettings(file: string): Promise<AppSettings> {
     autoSyncMinutes: validMinutes(raw.autoSyncMinutes) ? raw.autoSyncMinutes : DEFAULT_SETTINGS.autoSyncMinutes,
     apiEnabled: typeof raw.apiEnabled === 'boolean' ? raw.apiEnabled : DEFAULT_SETTINGS.apiEnabled,
     apiPort: validPort(raw.apiPort) ? raw.apiPort : DEFAULT_SETTINGS.apiPort,
-    apiAllowCostly: typeof raw.apiAllowCostly === 'boolean' ? raw.apiAllowCostly : DEFAULT_SETTINGS.apiAllowCostly
+    apiAllowCostly: typeof raw.apiAllowCostly === 'boolean' ? raw.apiAllowCostly : DEFAULT_SETTINGS.apiAllowCostly,
+    capturePdfMode: isCapturePdfMode(raw.capturePdfMode) ? raw.capturePdfMode : DEFAULT_SETTINGS.capturePdfMode
   }
 }
 

@@ -534,6 +534,16 @@ export class ProjectSession {
     )
   }
 
+  /** The paper a page from the app's browser already is (same URL), if any. */
+  findCapturedPage(url: string): Promise<string | null> {
+    return this.track(this.library.findByUrl(url))
+  }
+
+  /** «Actualizar su PDF»: like «Reemplazar PDF», only the PDF and its text change; summaries, citations and embeddings stay. */
+  replaceCapturedPdf(id: string, pdf: Uint8Array): Promise<void> {
+    return this.track(this.library.replaceCapturedPdf(id, pdf).then(() => undefined))
+  }
+
   /** «Editar metadatos»; the token undoes it. */
   editMetadata(id: string, edit: MetadataEdit): Promise<string | null> {
     return this.track(this.library.editMetadata(id, edit))

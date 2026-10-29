@@ -1,5 +1,5 @@
 import { BrowserWindow, ipcMain, session, WebContentsView, type IpcMainInvokeEvent } from 'electron'
-import { CAPTURE_IPC, type CaptureState } from '../../shared/capture'
+import { CAPTURE_IPC, isCapturePdfMode, type CapturePdfMode, type CaptureState } from '../../shared/capture'
 import { toUserFacing } from '../library/UserFacingError'
 import { appLog } from '../log/appLog'
 import {
@@ -10,10 +10,12 @@ import {
   isWebUrl,
   pageWebPreferences,
   readCapture,
+  routeCapture,
   TOOLBAR_HEIGHT,
   toolbarWindowOptions,
   type PageCapture
 } from './policy'
+import { printReaderPdf } from './print'
 
 export interface CaptureWindowDeps {
   /** The toolbar's preload script. */
@@ -24,9 +26,26 @@ export interface CaptureWindowDeps {
   ingest: (capture: PageCapture) => Promise<{ paperId: string }>
   /** The paper is in the library: the main window shows it. */
   onAdded: (paperId: string) => void
+  /** The paper of the open project that is this page already (same URL), if any. */
+  findExisting: (url: string) => Promise<string | null>
+  /** «Actualizar su PDF»: the paper's PDF becomes the new capture's (summaries stay, as with «Reemplazar PDF»). */
+  replacePdf: (paperId: string, pdf: Uint8Array) => Promise<void>
+  /** How the PDF is made, from the app's settings, and where a change is saved. */
+  pdfMode: () => CapturePdfMode
+  setPdfMode: (mode: CapturePdfMode) => Promise<void>
 }
 
-const idle = (url: string): CaptureState => ({ url, title: '', canGoBack: false, canGoForward: false, loading: true, phase: 'browsing', error: null })
+const idle = (url: string, pdfMode: CapturePdfMode): CaptureState => ({
+  url,
+  title: '',
+  canGoBack: false,
+  canGoForward: false,
+  loading: true,
+  phase: 'browsing',
+  error: null,
+  existing: null,
+  pdfMode
+})
 
 /**
  * «Abrir en el navegador de la app»: one window, a toolbar (back, forward, reload, the page's address and title,
@@ -36,9 +55,12 @@ const idle = (url: string): CaptureState => ({ url, title: '', canGoBack: false,
 export class CaptureWindow {
   private win: BrowserWindow | null = null
   private view: WebContentsView | null = null
-  private state: CaptureState = idle('')
+  private state: CaptureState
+  /** The capture waiting for «Actualizar su PDF» (phase `confirm`). */
+  private pending: { paperId: string; url: string; pdf: Uint8Array } | null = null
 
   constructor(private readonly deps: CaptureWindowDeps) {
+    this.state = idle('', deps.pdfMode())
     const handle = (channel: string, action: () => unknown): void => {
       ipcMain.handle(channel, async (event: IpcMainInvokeEvent, ...args: unknown[]) => {
         // The toolbar sends no arguments; anything else, or another sender, is refused.
@@ -51,12 +73,21 @@ export class CaptureWindow {
     handle(CAPTURE_IPC.back, () => this.page()?.navigationHistory.goBack())
     handle(CAPTURE_IPC.forward, () => this.page()?.navigationHistory.goForward())
     handle(CAPTURE_IPC.reload, () => this.page()?.reload())
+    handle(CAPTURE_IPC.replace, () => this.replace())
+    handle(CAPTURE_IPC.keep, () => this.keep())
+    ipcMain.handle(CAPTURE_IPC.pdfMode, async (event: IpcMainInvokeEvent, ...args: unknown[]) => {
+      // One argument, a known mode, from the toolbar only.
+      if (args.length !== 1 || !isCapturePdfMode(args[0]) || !fromToolbar(event, this.win?.webContents ?? null)) throw new Error('Refused')
+      await this.deps.setPdfMode(args[0])
+      this.update({ ...this.state, pdfMode: args[0] })
+    })
   }
 
   open(url: string): void {
     if (!isWebUrl(url)) throw new Error('Only http and https pages open in the app browser')
     if (this.win && !this.win.isDestroyed() && this.view) {
-      this.update(idle(url))
+      this.pending = null
+      this.update(idle(url, this.deps.pdfMode()))
       void this.view.webContents.loadURL(url).catch(() => undefined)
       if (this.win.isMinimized()) this.win.restore()
       this.win.focus()
@@ -91,7 +122,8 @@ export class CaptureWindow {
     win.once('ready-to-show', () => win.show())
     this.win = win
     this.view = view
-    this.state = idle(url)
+    this.state = idle(url, this.deps.pdfMode())
+    this.pending = null
     void this.deps.loadToolbar(win).then(() => this.push())
     void page.loadURL(url).catch(() => undefined)
   }
@@ -109,6 +141,9 @@ export class CaptureWindow {
   private fromPage(): void {
     const page = this.page()
     if (!page) return
+    // The question was about the page as it was captured: browsing elsewhere drops it.
+    const left = this.state.phase === 'confirm' && this.pending !== null && page.getURL() !== this.pending.url
+    if (left) this.pending = null
     this.update({
       ...this.state,
       url: page.getURL(),
@@ -117,7 +152,7 @@ export class CaptureWindow {
       canGoForward: page.navigationHistory.canGoForward(),
       loading: page.isLoading(),
       // Browsing on after a failure clears it.
-      ...(this.state.phase === 'failed' ? { phase: 'browsing' as const, error: null } : {})
+      ...(this.state.phase === 'failed' || left ? { phase: 'browsing' as const, error: null, existing: null } : {})
     })
   }
 
@@ -133,20 +168,47 @@ export class CaptureWindow {
 
   private async add(): Promise<void> {
     const page = this.page()
-    if (!page || this.state.phase === 'adding') return
+    if (!page || this.state.phase === 'adding' || this.state.phase === 'confirm') return
     if (!isWebUrl(page.getURL())) {
       this.update({ ...this.state, phase: 'failed', error: 'unreadable_page' })
       return
     }
     this.update({ ...this.state, phase: 'adding', error: null })
     try {
-      const capture = await readCapture(page)
-      const { paperId } = await this.deps.ingest(capture)
-      this.deps.onAdded(paperId)
+      const capture = await readCapture(page, {
+        mode: this.state.pdfMode,
+        printReader: (html, url) => printReaderPdf(html, url, session.fromPartition(CAPTURE_PARTITION))
+      })
+      const routed = await routeCapture(capture, this.deps)
+      if ('existing' in routed) {
+        this.pending = { paperId: routed.existing, url: capture.url, pdf: routed.pdf }
+        this.update({ ...this.state, phase: 'confirm', existing: routed.existing })
+        return
+      }
+      this.deps.onAdded(routed.added)
       this.close()
     } catch (error) {
       this.update({ ...this.state, phase: 'failed', error: toUserFacing(error).message })
     }
+  }
+
+  private async replace(): Promise<void> {
+    const pending = this.pending
+    if (!pending || this.state.phase !== 'confirm') return
+    this.pending = null
+    this.update({ ...this.state, phase: 'adding', error: null, existing: null })
+    try {
+      await this.deps.replacePdf(pending.paperId, pending.pdf)
+      this.deps.onAdded(pending.paperId)
+      this.close()
+    } catch (error) {
+      this.update({ ...this.state, phase: 'failed', error: toUserFacing(error).message })
+    }
+  }
+
+  private keep(): void {
+    this.pending = null
+    if (this.state.phase === 'confirm') this.update({ ...this.state, phase: 'browsing', existing: null })
   }
 }
 

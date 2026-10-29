@@ -27,7 +27,8 @@ describe('app settings', () => {
       autoSyncMinutes: 10,
       apiEnabled: false,
       apiPort: 47823,
-      apiAllowCostly: false
+      apiAllowCostly: false,
+      capturePdfMode: 'reader'
     })
     expect(await loadSettings(file)).toMatchObject({ contactEmail: 'me@uni.test', lastProjectPath: '/tmp/thesis' })
     await writeFile(file, JSON.stringify({ contactEmail: 42, lastProjectPath: '/x', extra: true }))
@@ -61,6 +62,18 @@ describe('app settings', () => {
     for (const bad of [{ autoSync: 'no', autoSyncMinutes: 4 }, { autoSyncMinutes: 121 }, { autoSyncMinutes: 7.5 }, { autoSyncMinutes: '10' }]) {
       await writeFile(file, JSON.stringify(bad))
       expect(await loadSettings(file)).toMatchObject({ autoSync: true, autoSyncMinutes: 10 })
+    }
+  })
+
+  it('remembers how the app browser makes PDFs: the reader view by default, the page as it looks when chosen', async () => {
+    const file = join(await tmpDir(), 'settings.json')
+    const first = await loadSettings(file)
+    expect(first.capturePdfMode).toBe('reader')
+    await saveSettings(file, { ...first, capturePdfMode: 'page' })
+    expect((await loadSettings(file)).capturePdfMode).toBe('page')
+    for (const bad of ['screenshot', 1, null]) {
+      await writeFile(file, JSON.stringify({ capturePdfMode: bad }))
+      expect((await loadSettings(file)).capturePdfMode).toBe('reader')
     }
   })
 })

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { bareWebMetadata, captureWebPage, cleanPageTitle, findScholarlyIds, parseByline, slugTitle, webMetadata } from '../../../src/main/ingest/web'
+import { bareWebMetadata, captureWebPage, cleanPageTitle, findScholarlyIds, normalizePageUrl, parseByline, readArticle, slugTitle, webMetadata } from '../../../src/main/ingest/web'
 
 const fx = (name: string): string => readFileSync(new URL(`../../fixtures/web/${name}`, import.meta.url), 'utf8')
 const URL_ = 'https://eng.acme.test/posts/database-outage'
@@ -132,5 +132,35 @@ describe('bareWebMetadata', () => {
   it('guesses the title from the URL when the page has none', () => {
     expect(bareWebMetadata('<html><body>…</body></html>', 'https://acme.test/why-logs-matter-0a1b2c3d4e5f').title).toBe('Why Logs Matter')
     expect(bareWebMetadata(null, 'https://acme.test/why-logs-matter').title).toBe('Why Logs Matter')
+  })
+})
+
+describe('normalizePageUrl', () => {
+  it('gives two captures of the same page the same form', () => {
+    const base = normalizePageUrl('https://towardsdatascience.com/how-to-validate-298978fea764/')
+    expect(base).toBe('towardsdatascience.com/how-to-validate-298978fea764')
+    for (const same of [
+      'http://www.towardsdatascience.com/how-to-validate-298978fea764',
+      'https://TowardsDataScience.com/how-to-validate-298978fea764/#section',
+      'https://towardsdatascience.com/how-to-validate-298978fea764/?utm_source=x&utm_medium=y&source=rss&fbclid=1'
+    ]) {
+      expect(normalizePageUrl(same)).toBe(base)
+    }
+  })
+
+  it('keeps what tells pages apart: the path, real parameters (sorted) and the port', () => {
+    expect(normalizePageUrl('https://acme.test/a?b=2&a=1')).toBe('acme.test/a?a=1&b=2')
+    expect(normalizePageUrl('https://acme.test/a?page=2')).not.toBe(normalizePageUrl('https://acme.test/a'))
+    expect(normalizePageUrl('http://127.0.0.1:8080/post')).toBe('127.0.0.1:8080/post')
+    for (const bad of ['file:///etc/passwd', 'not a url', '']) expect(normalizePageUrl(bad)).toBeNull()
+  })
+})
+
+describe('readArticle', () => {
+  it('returns the article HTML with what the page says about itself', () => {
+    const article = readArticle(fx('postmortem.html'), URL_)!
+    expect(article.content).toContain('Timeline')
+    expect(article.title.length).toBeGreaterThan(0)
+    expect(readArticle('<html><body><p>Hi</p></body></html>', URL_)).toBeNull()
   })
 })

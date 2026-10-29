@@ -61,22 +61,63 @@ export function parseByline(byline: string): Author[] {
     })
 }
 
-export function captureWebPage(html: string, url: string): WebCapture | null {
+/** The article Readability finds in a page: its HTML (untrusted) and what it says about itself. */
+export interface WebArticle {
+  title: string
+  byline: string
+  authors: Author[]
+  site: string
+  date?: string
+  /** The article's HTML as Readability returns it: untrusted, to be sanitized before it is shown or printed. */
+  content: string
+}
+
+/** The page's article, or null when there is none worth keeping (a login wall, a page that is all script). */
+export function readArticle(html: string, url: string): WebArticle | null {
   const { document } = parseHTML(html)
   const article = new Readability(document as unknown as Document).parse()
   if (!article?.content || (article.textContent ?? '').trim().length < MIN_ARTICLE_CHARS) return null
-  const markdown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-' }).turndown(article.content).trim()
   const date = article.publishedTime?.match(/^\d{4}-\d{2}-\d{2}/)?.[0]
   const site = article.siteName?.trim() || new URL(url).hostname.replace(/^www\./, '')
-  const authors = article.byline ? parseByline(article.byline) : []
+  const byline = article.byline?.trim() ?? ''
+  return { title: article.title?.trim() || site, byline, authors: byline ? parseByline(byline) : [], site, date, content: article.content }
+}
+
+export function captureWebPage(html: string, url: string): WebCapture | null {
+  const article = readArticle(html, url)
+  if (!article) return null
+  const markdown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-' }).turndown(article.content).trim()
   return {
-    title: article.title?.trim() || site,
-    authors,
-    site,
-    date,
-    year: date ? Number(date.slice(0, 4)) : undefined,
+    title: article.title,
+    authors: article.authors,
+    site: article.site,
+    date: article.date,
+    year: article.date ? Number(article.date.slice(0, 4)) : undefined,
     markdown
   }
+}
+
+/** Query parameters that only track where a visitor came from. */
+const TRACKING_PARAM = /^(utm_\w+|fbclid|gclid|dclid|msclkid|mc_cid|mc_eid|igshid|yclid|_hsenc|_hsmi|ref|ref_src|source|sk)$/i
+
+/**
+ * A page URL in the form two captures of the same page share: http and https alike, host without «www.», no
+ * fragment, no tracking parameters, the rest sorted, no trailing slash. Null for anything but http/https.
+ */
+export function normalizePageUrl(url: string): string | null {
+  let u: URL
+  try {
+    u = new URL(url.trim())
+  } catch {
+    return null
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
+  const params = [...u.searchParams.entries()].filter(([k]) => !TRACKING_PARAM.test(k)).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  const query = params.length ? `?${new URLSearchParams(params).toString()}` : ''
+  const host = u.hostname.toLowerCase().replace(/^www\./, '')
+  const port = u.port ? `:${u.port}` : ''
+  const path = u.pathname.replace(/\/+$/, '')
+  return `${host}${port}${path}${query}`
 }
 
 /** The content.md of a captured page: its title, where it came from, and its readable text. */

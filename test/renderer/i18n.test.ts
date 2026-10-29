@@ -23,6 +23,7 @@ import { SYNC_STATES } from '../../src/renderer/lib/sync'
 import { FACET_SUGGESTION_KINDS, SUGGESTION_VALIDITIES } from '../../src/shared/facetSuggestions'
 import { CITATION_STATES } from '../../src/shared/chat'
 import { ACTION_RISKS, ACTION_TOOLS, DENIAL_REASONS } from '../../src/shared/chatActions'
+import { CAPTURE_PDF_MODES } from '../../src/shared/capture'
 
 const lookup = (path: string): unknown => path.split('.').reduce<unknown>((node, key) => (node as Record<string, unknown> | undefined)?.[key], es)
 const JOB_STATES: JobState[] = ['queued', 'running', 'done', 'failed', 'cancelled']
@@ -33,6 +34,7 @@ describe('es.json covers every code the UI can receive', () => {
   it.each([
     ...USER_ERROR_CODES.map((c) => `errors.${c}`),
     ...TEXT_STATUSES.map((s) => `text_status.${s}`),
+    ...CAPTURE_PDF_MODES.map((m) => `capture.pdf_mode.${m}`),
     ...JOB_OUTCOMES.map((s) => `jobs.outcome.${s}`),
     ...JOB_STATES.map((s) => `jobs.state.${s}`),
     ...PDF_POLICIES.map((p) => `settings.pdf_policy.${p}`),

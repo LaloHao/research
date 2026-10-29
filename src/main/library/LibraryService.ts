@@ -16,7 +16,7 @@ import { HttpError, isOpenAlexUrl, type HttpClient } from '../ingest/http'
 import { findIdentifiersInText, normalizeDoi, parseInput } from '../ingest/identifiers'
 import type { MetadataSource } from '../ingest/MetadataResolver'
 import type { ResolvedMetadata } from '../ingest/types'
-import { bareWebMetadata, captureWebPage, findScholarlyIds, webContent, webMetadata } from '../ingest/web'
+import { bareWebMetadata, captureWebPage, findScholarlyIds, normalizePageUrl, webContent, webMetadata } from '../ingest/web'
 import { sha256 } from '../project/atomicWrite'
 import { ConflictError, type ReadResult } from '../project/errors'
 import type { ProjectStore } from '../project/ProjectStore'
@@ -153,12 +153,51 @@ export class LibraryService {
    * one; summaries are left as they are. Serialized with ingests so a merge never races with it.
    */
   attachPdf(id: string, path: string, { replace }: { replace: boolean }, signal?: AbortSignal): Promise<{ status: 'pdf_attached'; paperId: string }> {
-    const run = this.addQueue.then(() => this.attachNow(id, path, replace, signal))
+    const run = this.addQueue.then(() => this.attachNow(id, () => readPdfFile(path), replace, signal))
     this.addQueue = run.catch(() => undefined)
     return run
   }
 
-  private async attachNow(id: string, path: string, replace: boolean, signal?: AbortSignal): Promise<{ status: 'pdf_attached'; paperId: string }> {
+  /**
+   * «Actualizar su PDF» from the app's browser: a page captured again replaces the PDF of the paper it already is,
+   * exactly as «Reemplazar PDF» (summaries stay; the new text is indexed).
+   */
+  replaceCapturedPdf(id: string, pdf: Uint8Array): Promise<{ status: 'pdf_attached'; paperId: string }> {
+    const run = this.addQueue.then(() =>
+      this.attachNow(
+        id,
+        async () => {
+          if (!isPdf(pdf)) throw new UserFacingError('not_a_pdf')
+          return pdf
+        },
+        true
+      )
+    )
+    this.addQueue = run.catch(() => undefined)
+    return run
+  }
+
+  /**
+   * The library paper whose URL is this page's (compared normalized: scheme, «www.», fragment, tracking parameters and
+   * a trailing slash don't count); null when there is none. Reads each paper.yaml: the index keeps no URLs.
+   */
+  async findByUrl(url: string): Promise<string | null> {
+    const wanted = normalizePageUrl(url)
+    if (!wanted) return null
+    for (const { id } of this.deps.cache.dedupeEntries()) {
+      const read = await this.deps.store.readPaper(id).catch(() => null)
+      const own = read?.ok ? read.value.identifiers.url : undefined
+      if (own && normalizePageUrl(own) === wanted) return id
+    }
+    return null
+  }
+
+  private async attachNow(
+    id: string,
+    load: () => Promise<Uint8Array>,
+    replace: boolean,
+    signal?: AbortSignal
+  ): Promise<{ status: 'pdf_attached'; paperId: string }> {
     const { store, extractor } = this.deps
     try {
       signal?.throwIfAborted()
@@ -166,11 +205,11 @@ export class LibraryService {
       const before = await store.readPaper(id)
       if (!before.ok) throw new UserFacingError('file_problem')
       if (store.resolvePdf(id) && !replace) throw new UserFacingError('pdf_exists')
-      const bytes = await readPdfFile(path)
+      const bytes = await load()
       // Parsed before anything is written: a corrupt file leaves the paper as it was.
       const text = await extractor.extract(bytes)
       signal?.throwIfAborted()
-      // A file the user chose can't be downloaded again: it always goes in the paper folder, and a cached copy would only shadow nothing.
+      // A file the user chose or captured can't be downloaded again: it always goes in the paper folder, and a cached copy would only shadow nothing.
       const sha = await store.writePdf(id, bytes, { redownloadable: false })
       this.extracted.set(sha, text)
       try {
