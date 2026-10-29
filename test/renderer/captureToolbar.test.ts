@@ -47,7 +47,7 @@ describe('capture toolbar: the main button', () => {
     expect(main).toMatchObject({ action: 'update', text: 'Actualizar PDF de he2017drain' })
     expect(target).toMatchObject({ hidden: false, text: 'Recaptura: he2017drain' })
     expect(target.title).toContain('he2017drain')
-    expect(status.text).toContain('he2017drain')
+    expect(status).toMatchObject({ tone: 'info', text: 'Lo que captures aquí reemplaza su PDF.' })
     // The bound paper wins over whatever else the page may be.
     expect(updateTarget({ target: 'he2017drain', known: 'other2020x' })).toBe('he2017drain')
     expect(view({ target: 'he2017drain', known: 'other2020x' }).main.text).toBe('Actualizar PDF de he2017drain')
