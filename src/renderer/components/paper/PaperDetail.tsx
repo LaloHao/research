@@ -9,6 +9,7 @@ import { paperTabs, type Tab } from '../../lib/paperTabs'
 import { AttachPdfStatus, useAttachPdf } from './AttachPdf'
 import { ContentView, type ContentFocus } from './ContentView'
 import { MetadataCompletion } from './MetadataCompletion'
+import { MetadataEditor } from './MetadataEditor'
 import { NotesEditor } from './NotesEditor'
 import { PdfViewer, type PdfFocus } from './PdfViewer'
 import { RelationsTab } from './RelationsTab'
@@ -244,6 +245,7 @@ export function PaperDetail({
         {paper.metadata_status === 'incomplete' && (
           <MetadataCompletion paperId={id} hasIdentifier={Boolean(paper.identifiers.doi || paper.identifiers.arxiv)} />
         )}
+        <MetadataEditor key={id} paper={paper} />
         {onRemoved && <RemovePaper id={id} title={paper.title} onRemoved={onRemoved} />}
       </header>
       <nav className="tabs">

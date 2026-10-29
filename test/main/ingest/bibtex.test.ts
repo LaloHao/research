@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildFallbackEntry, buildOnlineEntry, escapeLatex, rekeyBibtex } from '../../../src/main/ingest/bibtex'
+import { bibType, buildFallbackEntry, buildOnlineEntry, escapeLatex, rekeyBibtex, setBibFields } from '../../../src/main/ingest/bibtex'
 
 // Shapes returned by doi.org content negotiation: Crossref (leading space, one line) and DataCite (URL as key).
 const CROSSREF = ' @inproceedings{He_2017, title={Drain: An Online Log Parsing Approach with Fixed Depth Tree}, year={2017} }'
@@ -67,5 +67,28 @@ describe('buildFallbackEntry', () => {
     expect(entry).toContain('@inproceedings{he2017drain,')
     expect(entry).toContain('booktitle = {ICWS}')
     expect(entry).not.toContain('author')
+  })
+})
+
+describe('setBibFields', () => {
+  it('replaces, adds and removes fields; the key and every other field stay as written', () => {
+    const entry = ' @inproceedings{He_2017, title={Drain: {An} Online Log Parser}, pages = "1--8", year=2017, month = jun, publisher={IEEE} }'
+    const next = setBibFields(entry, { TITLE: { value: 'Drain & Co' }, year: null, booktitle: { value: 'ICWS' } })
+    expect(next).toBe(
+      '@inproceedings{He_2017,\n  title = {Drain \\& Co},\n  pages = "1--8",\n  month = jun,\n  publisher = {IEEE},\n  booktitle = {ICWS}\n}'
+    )
+    expect(bibType(next)).toBe('inproceedings')
+  })
+
+  it('keeps raw values unescaped, and concatenations as written', () => {
+    const entry = '@online{acme2024logs,\n  title = {Logs},\n  note = "a" # b,\n  url = {https://acme.test/x}\n}'
+    expect(setBibFields(entry, { url: { value: 'https://acme.test/y_z?a=1', raw: true } })).toBe(
+      '@online{acme2024logs,\n  title = {Logs},\n  note = "a" # b,\n  url = {https://acme.test/y_z?a=1}\n}'
+    )
+  })
+
+  it('refuses text that is not an entry', () => {
+    expect(() => setBibFields('title = {x}', { title: null })).toThrow()
+    expect(bibType('nope')).toBeNull()
   })
 })

@@ -79,14 +79,111 @@ export function captureWebPage(html: string, url: string): WebCapture | null {
   }
 }
 
+/** The content.md of a captured page: its title, where it came from, and its readable text. */
+export function webContent(capture: WebCapture, url: string): string {
+  return `# ${capture.title}\n\nSource: ${url}\n\n${capture.markdown}\n`
+}
+
 export function webMetadata(capture: WebCapture, url: string): ResolvedMetadata {
   return {
     kind: 'web',
     title: capture.title,
     authors: capture.authors,
     year: capture.year,
+    venue: capture.site,
     identifiers: { url },
     web: { site: capture.site, date: capture.date },
     complete: true
+  }
+}
+
+/** Words a URL slug lowercases that have a fixed spelling. */
+const KNOWN_CASING = new Map(
+  [
+    'AI', 'API', 'APIs', 'AWS', 'BERT', 'ChatGPT', 'CNN', 'CPU', 'CSS', 'CSV', 'DevOps', 'GAN', 'GANs', 'GitHub', 'GPT', 'GPU',
+    'HTML', 'HTTP', 'iOS', 'IoT', 'JavaScript', 'JSON', 'LLM', 'LLMs', 'LSTM', 'ML', 'MLOps', 'NLP', 'NER', 'OpenAI', 'PDF',
+    'PyTorch', 'RAG', 'REST', 'RNN', 'SaaS', 'SQL', 'TensorFlow', 'TypeScript', 'UI', 'URL', 'UX', 'XML', 'YAML'
+  ].map((w) => [w.toLowerCase(), w])
+)
+
+/** Lowercase in a title unless first or last (English title case). */
+const MINOR_WORDS = new Set([
+  'a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', 'from', 'in', 'into', 'nor', 'of', 'on', 'or', 'over', 'so', 'the', 'to',
+  'up', 'via', 'vs', 'with', 'yet'
+])
+
+/** A trailing id such as Medium's `298978fea764` or a numeric post id. */
+const TRAILING_ID = /^(?=[0-9a-f]*\d)[0-9a-f]{8,}$|^\d{5,}$/i
+
+function titleCase(words: string[]): string {
+  return words
+    .map((word, i) => {
+      // A word the URL already capitalized keeps its spelling.
+      if (/[A-Z]/.test(word)) return word
+      const known = KNOWN_CASING.get(word)
+      if (known) return known
+      if (i > 0 && i < words.length - 1 && MINOR_WORDS.has(word)) return word
+      return word.charAt(0).toUpperCase() + word.slice(1)
+    })
+    .join(' ')
+}
+
+function slugWords(segment: string): string[] {
+  let text = segment
+  try {
+    text = decodeURIComponent(segment)
+  } catch {
+    // A malformed escape keeps the segment as it is.
+  }
+  const words = text
+    .replace(/\.(html?|php|aspx?|jsp)$/i, '')
+    .split(/[-_+\s.]+/)
+    .filter(Boolean)
+  if (words.length > 1 && TRAILING_ID.test(words[words.length - 1])) words.pop()
+  return words.some((w) => /\p{L}/u.test(w)) && !(words.length === 1 && TRAILING_ID.test(words[0])) ? words : []
+}
+
+/**
+ * A title guessed from the URL of a page the app could not read: the last path segment with words (trailing id and
+ * extension removed), title-cased; the site when the path has none. «how-to-validate-…-298978fea764/» → «How to Validate …».
+ */
+export function slugTitle(url: string): string {
+  const u = new URL(url)
+  const segments = u.pathname.split('/').filter(Boolean).reverse()
+  for (const segment of segments) {
+    const words = slugWords(segment)
+    // A one- or two-letter segment (Medium's /p/) is not a title.
+    if (words.join('').replace(/[^\p{L}]/gu, '').length >= 3 && !/^(index|default)$/i.test(words.join(''))) return titleCase(words)
+  }
+  return u.hostname.replace(/^www\./, '')
+}
+
+/** A page's own title without the site name after a separator: «Title | Towards Data Science» → «Title». */
+export function cleanPageTitle(title: string): string {
+  const parts = title.replace(/\s+/g, ' ').trim().split(/\s+[|–—·•]\s+|\s+-\s+/)
+  const first = parts[0]?.trim() ?? ''
+  return first.length >= 10 || parts.length === 1 ? first : title.replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * Metadata of a page whose article could not be extracted (a login wall, a page that is all script): its own title
+ * (og:title or <title>) or one guessed from the URL, the site, and nothing else; marked incomplete for the user to fill in.
+ */
+export function bareWebMetadata(html: string | null, url: string): ResolvedMetadata {
+  let title = ''
+  if (html) {
+    const { document } = parseHTML(html)
+    const og = document.querySelector('meta[property="og:title"]')?.getAttribute('content') ?? ''
+    title = cleanPageTitle(og || document.querySelector('title')?.textContent || '')
+  }
+  const site = new URL(url).hostname.replace(/^www\./, '')
+  return {
+    kind: 'web',
+    title: title || slugTitle(url),
+    authors: [],
+    venue: site,
+    identifiers: { url },
+    web: { site },
+    complete: false
   }
 }

@@ -57,12 +57,25 @@ En la barra de arriba de la biblioteca puedes:
 
 - **Pegar un DOI, un ID de arXiv o una URL** y tocar «Agregar». También acepta un id de OpenAlex (`W2741809807` o `https://openalex.org/W2741809807`); es lo que usa «Agregar» en Candidatos para los trabajos sin DOI. Con una URL que no sea DOI ni arXiv, la app mira qué hay detrás: si sirve un PDF, se agrega como PDF; si la página tiene un DOI o un ID de arXiv, se usa ese identificador; si no, se guarda como página web (literatura gris), con su texto legible si lo encuentra, y si no, avisa que «La página no tiene un artículo legible.».
 - **Arrastrar uno o varios PDFs** a la biblioteca.
+- **Abrir una URL en el navegador de la app** con «Abrir en navegador», junto a «Agregar»; ver «Sitios que bloquean las descargas» más abajo.
 
 La app completa los metadatos automáticamente a partir del identificador. Si el paper queda con «Los metadatos están incompletos.», puedes pegar un DOI o ID de arXiv en el aviso y tocar «Completar», o tocar «Reintentar» si ya tenía uno.
 
 Al agregar un paper (o completar sus metadatos), la app consulta en segundo plano sus referencias en OpenAlex (ver «Citas y candidatos»); no consume cuota de Claude.
 
 Agregar un identificador o PDF que ya está en la biblioteca actualiza el paper existente en vez de duplicarlo («ya estaba en la biblioteca» / «actualizado» en el panel de actividad). Un PDF que sueltas en la biblioteca se asocia por el DOI o el ID de arXiv impreso en él, o por su título: si no coincide con ninguno, se crea un paper nuevo, y si el paper ya tiene PDF, el que soltaste se ignora. Para darle su PDF a un paper concreto, usa su pestaña PDF (ver «Adjuntar o reemplazar un PDF» más abajo).
+
+### Sitios que bloquean las descargas
+
+Algunos sitios (muchos blogs y revistas detrás de Cloudflare u otra protección contra bots, páginas que piden iniciar sesión, páginas que arman todo con scripts) rechazan las descargas de la app. «Agregar» falla entonces con «El sitio bloquea las descargas automáticas (HTTP 403)…», nunca con el aviso de la clave de API de OpenAlex, que solo aparece cuando quien rechaza es OpenAlex. La app nunca intenta saltarse la protección de un sitio; en cambio:
+
+- **El navegador de la app.** En el panel de actividad, la entrada fallida tiene «Abrir en el navegador de la app»; con cualquier URL también puedes escribirla junto a «Agregar» y tocar «Abrir en navegador». Se abre una ventana con la página y una barra (atrás, adelante, recargar, el título y la dirección de la página). Navégala como en cualquier navegador: si el sitio muestra una verificación («Verifica que eres humano»), resuélvela tú; inicia sesión si hace falta. Cuando la página muestre el artículo, toca «Agregar a la biblioteca». La app lee la página tal como está en ese momento y la imprime a PDF: si la página nombra un DOI o un ID de arXiv, el paper se agrega por ese identificador con el PDF impreso; si no, queda como página web con su texto legible (pestaña Contenido) y el PDF impreso (pestañas PDF y Texto, búsqueda). Si no se puede extraer un artículo, el paper queda con el título de la propia página (o uno deducido de su URL) y «Los metadatos están incompletos.»: complétalos con «Editar metadatos». «Cancelar» cierra la ventana sin agregar nada.
+  La ventana está separada de la app: la página corre aislada, sin acceso a tus archivos ni a la app, se niega todo permiso (cámara, micrófono, notificaciones, ubicación…) y las descargas están bloqueadas (descarga un archivo de ese sitio desde tu propio navegador). Las cookies y sesiones iniciadas ahí se conservan entre usos en una sesión propia, separada de la de la app.
+- **Imprimir a PDF desde tu navegador.** Abre la página en tu navegador, usa Ctrl+P → «Guardar como PDF» y suelta el archivo en la biblioteca (un paper nuevo, con el título del PDF) o en la pestaña PDF o Contenido de un paper (ver más abajo).
+
+### Editar metadatos
+
+«Editar metadatos», bajo el título del paper en su detalle, abre un formulario con el título, los autores (uno por línea, «Apellido, Nombre»; una organización tal cual), el año (en una página web, su fecha como `AAAA`, `AAAA-MM` o `AAAA-MM-DD`, que fija el año), la revista o evento (en una página web, su sitio) y la URL. «Guardar» escribe `paper.yaml` y los mismos campos en la entrada BibTeX del paper, conservando todos los demás (páginas, volumen, editorial…), y actualiza `exports/library.bib`. La clave de cita nunca cambia. Justo después de guardar, «Deshacer» devuelve lo que cambió la edición, siempre que `paper.yaml` no haya cambiado desde entonces. Completar título, autores y año marca los metadatos como completos.
 
 ### Adjuntar o reemplazar un PDF
 
@@ -592,6 +605,12 @@ Pasa sobre todo en Windows, que no deja mover una carpeta con un archivo abierto
 
 **«Ese paper ya no está en la papelera (quizás ya se restauró).»**
 «Deshacer» o «Restaurar» llegaron tarde: el paper ya volvió a la biblioteca (desde aquí o desde otro equipo).
+
+**«El sitio bloquea las descargas automáticas…»**
+El sitio respondió a la app con protección contra bots o con un 401/403. Abre la página en el navegador de la app o guárdala como PDF desde tu navegador (ver «Sitios que bloquean las descargas»).
+
+**«El servidor negó el acceso…»** / **«OpenAlex negó el acceso…»**
+Un servidor rechazó una consulta. Solo el de OpenAlex apunta a tu clave de API de OpenAlex (Ajustes → Aplicación); con cualquier otro servidor, reintenta más tarde o agrega el paper de otra forma.
 
 **El paper es demasiado largo**
 El botón para resumir se deshabilita y aparece «Forzar», que resume usando solo el comienzo del texto hasta el tamaño máximo configurado (ver «Tamaño máximo de entrada» en Ajustes → Claude). El resumen queda marcado como hecho con texto truncado.

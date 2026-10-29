@@ -24,6 +24,7 @@ import {
 import { API_PORTS } from '../shared/localApi'
 import { RENDERER_ERROR_KINDS } from '../shared/ipc'
 import { CANDIDATE_DIRECTIONS, OPENALEX_ID } from '../shared/relations'
+import { METADATA_DATE } from '../shared/library'
 import { PDF_POLICIES } from '../shared/schemas'
 import { AUTO_SYNC_MINUTES, CLOSE_DECISIONS, CONFLICT_CHOICES, CONFLICT_ID, CONFLICT_VERSION, isRemoteUrl } from '../shared/sync'
 import { AUTO_SUGGEST_FACETS_AFTER_MAX, ExtractionFormSchema, FacetDefSchema, LLM_MODELS, ThesisContextSchema } from '../shared/summary'
@@ -62,8 +63,33 @@ const protocolDraftSchema = ProtocolDraftSchema.extend({
 }).strict()
 
 /** Validators for arguments arriving from the renderer: anything unexpected is rejected before it reaches the app. */
+/** An http(s) address for the app's browser window. */
+const webUrlSchema = z
+  .string()
+  .max(4000)
+  .refine((v) => {
+    try {
+      return ['http:', 'https:'].includes(new URL(v.trim()).protocol)
+    } catch {
+      return false
+    }
+  }, 'Not an http(s) URL')
+  .transform((v) => v.trim())
+
+const metadataText = (max: number) => z.string().max(max)
+
 export const ipcArgs = {
   paperId: paperIdSchema,
+  webUrl: webUrlSchema,
+  /** «Editar metadatos»: only the fields the user changed; null removes one. */
+  metadataEdit: z.strictObject({
+    title: metadataText(1000).optional(),
+    authors: z.array(z.strictObject({ family: metadataText(300), given: metadataText(300).optional() })).max(500).optional(),
+    year: z.number().int().min(1000).max(2999).nullable().optional(),
+    date: z.string().regex(METADATA_DATE).nullable().optional(),
+    venue: metadataText(1000).nullable().optional(),
+    url: webUrlSchema.nullable().optional()
+  }),
   projectName: z.string().trim().min(1),
   text: z.string(),
   optionalText: z.string().optional(),

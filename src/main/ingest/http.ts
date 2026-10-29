@@ -9,7 +9,9 @@ export class HttpError extends Error {
     /** Response headers, e.g. OpenAlex's x-ratelimit-* and Retry-After. */
     readonly headers: Headers | null = null,
     /** The server's own explanation (the `message` of a JSON error answer, e.g. OpenAlex's), at most 500 characters. */
-    readonly detail: string | null = null
+    readonly detail: string | null = null,
+    /** The answer is a bot-protection page or header (Cloudflare, Akamai, …): the site refuses automated clients. */
+    readonly challenge: boolean = false
   ) {
     super(`HTTP ${status} for ${url}`)
     this.name = 'HttpError'
@@ -89,6 +91,31 @@ function redactKey(url: string): string {
   }
 }
 
+/**
+ * Headers that bot protection (Cloudflare, Akamai, Imperva, DataDome, PerimeterX, AWS WAF, Sucuri, DDoS-Guard) puts on
+ * the answer it gives a client it refuses. The app never tries to get past it: it only says so.
+ */
+export function botProtectionHeaders(headers: Headers | null): boolean {
+  if (!headers) return false
+  if (headers.has('cf-mitigated') || headers.has('x-datadome') || headers.has('x-sucuri-id') || headers.has('x-amzn-waf-action')) return true
+  if (/captcha|challenge/i.test(headers.get('x-px-block') ?? '') || headers.has('x-iinfo')) return true
+  const server = (headers.get('server') ?? '').toLowerCase()
+  return /akamaighost|ddos-guard/.test(server)
+}
+
+/** Bodies of challenge and block pages: Cloudflare's «Just a moment…», Imperva, DataDome and PerimeterX captchas. */
+const CHALLENGE_BODY = /cf-chl-|challenge-platform|cf-browser-verification|<title>\s*(just a moment|attention required)|_incapsula_resource|captcha-delivery\.com|px-captcha|access denied<\/title>/i
+
+/** The answer looks like bot protection: its headers say so, or (when read) its body is a challenge or block page. */
+export function looksLikeBotProtection(status: number, headers: Headers | null, body: string | null = null): boolean {
+  if (![401, 403, 429, 503].includes(status)) return false
+  if (botProtectionHeaders(headers)) return true
+  const server = (headers?.get('server') ?? '').toLowerCase()
+  // Cloudflare answers its blocks with a 403 or a 503 challenge; a 429 or 401 from it is the origin's own.
+  if (server === 'cloudflare' && (status === 403 || status === 503)) return true
+  return body !== null && CHALLENGE_BODY.test(body)
+}
+
 export const MAX_ERROR_DETAIL = 500
 const MAX_ERROR_BODY = 64 * 1024
 
@@ -121,9 +148,18 @@ async function readBounded(res: Response, max: number): Promise<string | null> {
  * It is shown and logged, so the app's own secrets (`secrets`, e.g. the API key and contact email a server may echo)
  * and anything shaped like a credential are removed first.
  */
-async function errorDetail(res: Response, secrets: readonly string[]): Promise<string | null> {
+async function errorDetail(res: Response, secrets: readonly string[]): Promise<{ detail: string | null; challenge: boolean }> {
+  let body: string | null = null
   try {
-    const body = await readBounded(res, MAX_ERROR_BODY)
+    body = await readBounded(res, MAX_ERROR_BODY)
+  } catch {
+    // An unreadable body says nothing.
+  }
+  return { detail: jsonMessage(body, secrets), challenge: looksLikeBotProtection(res.status, res.headers, body) }
+}
+
+function jsonMessage(body: string | null, secrets: readonly string[]): string | null {
+  try {
     if (body === null) return null
     const parsed = JSON.parse(body) as unknown
     const message = typeof parsed === 'object' && parsed !== null ? (parsed as { message?: unknown }).message : undefined
@@ -235,17 +271,19 @@ export class HttpClient {
           expire(bodyTimeoutMs ?? headerTimeoutMs)
           return res
         }
-        if (!RETRYABLE.has(res.status)) {
+        // A bot challenge answers the same to every retry: give up on it at once.
+        if (!RETRYABLE.has(res.status) || looksLikeBotProtection(res.status, res.headers)) {
           // The body is only read for the answer that is given up on: it says why (e.g. OpenAlex's invalid query).
           expire(headerTimeoutMs)
-          throw new HttpError(res.status, redactKey(url), res.headers, await errorDetail(res, this.secrets()))
+          const { detail, challenge } = await errorDetail(res, this.secrets())
+          throw new HttpError(res.status, redactKey(url), res.headers, detail, challenge)
         }
         lastError = new HttpError(res.status, redactKey(url), res.headers)
         if (openalexBudgetSpent(lastError as HttpError)) throw lastError
         const retryAfter = Number(res.headers.get('retry-after'))
         if (Number.isFinite(retryAfter) && retryAfter > 0) retryAfterMs = Math.min(retryAfter * 1000, MAX_RETRY_AFTER_MS)
       } catch (error) {
-        if (error instanceof HttpError && (!RETRYABLE.has(error.status) || openalexBudgetSpent(error))) {
+        if (error instanceof HttpError && (!RETRYABLE.has(error.status) || error.challenge || openalexBudgetSpent(error))) {
           // A cancellation while the error body was read is not a failure worth logging.
           if (!signal?.aborted) logFailure(url, error, attempt + 1)
           throw error

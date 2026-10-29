@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import type { ChatStreamUpdate } from '../../shared/chat'
 import type { DraftStreamUpdate } from '../../shared/writing/draft'
 import type { JobSpec } from '../../shared/jobs'
-import type { PaperDetail } from '../../shared/library'
+import type { MetadataEdit, PaperDetail } from '../../shared/library'
 import type { ReviewItem } from '../../shared/summary'
 import type { DeletePlan, RestoreOutcome, TrashEntry, TrashOutcome, TrashTarget } from '../../shared/trash'
 import { IndexCache } from '../cache/IndexCache'
@@ -46,7 +46,7 @@ import { SyncService } from '../sync/SyncService'
 import { DraftService } from '../writing/DraftService'
 import { CiteChecker } from '../writing/CiteChecker'
 import { WritingService } from '../writing/WritingService'
-import { DEFAULT_DEVICE_ID, LibraryService } from './LibraryService'
+import { DEFAULT_DEVICE_ID, LibraryService, type IngestOutcome } from './LibraryService'
 
 /** The per-device automatic sync settings, read at every tick. */
 export interface AutoSyncOptions {
@@ -521,6 +521,26 @@ export class ProjectSession {
 
   detail(id: string): Promise<PaperDetail> {
     return this.track(this.library.detail(id))
+  }
+
+  /** A page added from the app's browser: ingested like any paper, then summarized, cited and embedded as after «Agregar». */
+  ingestCapture(capture: { url: string; html: string; pdf: Uint8Array | null }): Promise<IngestOutcome> {
+    return this.track(
+      (async () => {
+        const outcome = await this.library.ingestCapture(capture)
+        if (outcome.status !== 'duplicate') await afterIngest(this.services(), outcome.paperId)
+        return outcome
+      })()
+    )
+  }
+
+  /** «Editar metadatos»; the token undoes it. */
+  editMetadata(id: string, edit: MetadataEdit): Promise<string | null> {
+    return this.track(this.library.editMetadata(id, edit))
+  }
+
+  revertMetadata(token: string): Promise<void> {
+    return this.track(this.library.revertMetadata(token))
   }
 
   /** «Quitar de la biblioteca»; the neighbours of the moved papers are updated afterwards. */

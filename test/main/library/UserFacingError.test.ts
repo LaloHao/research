@@ -44,9 +44,25 @@ describe('toUserFacing', () => {
     expect(toUserFacing(new HttpError(400, 'https://api.crossref.org/works/x', null, 'bad')).message).toBe('request_rejected: HTTP 400: bad')
     expect(toUserFacing(new HttpError(422, 'https://x.test/a')).message).toBe('request_rejected: HTTP 422')
     expect(toUserFacing(new HttpError(403, 'https://x.test/a')).message).toBe('access_denied: HTTP 403')
-    expect(toUserFacing(new HttpError(401, 'https://api.openalex.org/works')).code).toBe('access_denied')
+    expect(toUserFacing(new HttpError(401, 'https://api.openalex.org/works')).code).toBe('openalex_access_denied')
     expect(toUserFacing(new HttpError(410, 'https://x.test/a')).code).toBe('not_found')
     expect(toUserFacing(new HttpError(503, 'https://x.test/a')).message).toBe('server_error: HTTP 503')
+  })
+
+  it('names the OpenAlex key only for OpenAlex, and bot protection as a blocked site', () => {
+    const h = (o: Record<string, string>): Headers => new Headers(o)
+    expect(toUserFacing(new HttpError(403, 'https://api.openalex.org/works/W1', null, 'Invalid API key')).message).toBe(
+      'openalex_access_denied: HTTP 403: Invalid API key'
+    )
+    expect(toUserFacing(new HttpError(403, 'https://api.crossref.org/works/x')).code).toBe('access_denied')
+    expect(toUserFacing(new HttpError(403, 'https://doi.org/10.1/x')).code).toBe('access_denied')
+    const blog = 'https://towardsdatascience.com/how-to-validate-298978fea764/'
+    for (const status of [401, 403, 429, 503]) {
+      const blocked = toUserFacing(new HttpError(status, blog, h({ server: 'cloudflare', 'cf-mitigated': 'challenge' }), null, true))
+      expect(blocked.message).toBe(`site_blocked: HTTP ${status}`)
+    }
+    // A 429 that is not a challenge stays a rate limit.
+    expect(toUserFacing(new HttpError(429, blog, h({ server: 'cloudflare' }))).code).toBe('rate_limited')
   })
 
   it('keeps real network failures as network errors', () => {

@@ -41,9 +41,11 @@ function fromHttp(error: HttpError): UserFacingError {
   const withDetail = error.detail ? `${http}: ${error.detail}` : http
   const make = (code: UserErrorCode, detail: string | null = null): UserFacingError => new UserFacingError(code, { cause: error, detail })
   if (status === 404 || status === 410) return make('not_found')
-  if (status === 429) return make(isOpenAlexDailyLimit(error) ? 'openalex_limit' : 'rate_limited')
   if (status === 400 && isOpenAlexSearch(error.url)) return make('search_query_invalid', error.detail ?? http)
-  if (status === 401 || status === 403) return make('access_denied', withDetail)
+  // A site behind bot protection refuses any app, whatever it asks for: only a browser gets the page.
+  if (error.challenge) return make('site_blocked', http)
+  if (status === 429) return make(isOpenAlexDailyLimit(error) ? 'openalex_limit' : 'rate_limited')
+  if (status === 401 || status === 403) return make(isOpenAlexUrl(error.url) ? 'openalex_access_denied' : 'access_denied', withDetail)
   if (status >= 500) return make('server_error', withDetail)
   return make('request_rejected', withDetail)
 }

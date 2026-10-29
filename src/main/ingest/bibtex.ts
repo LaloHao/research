@@ -106,3 +106,84 @@ export function buildFallbackEntry(p: {
     ['url', p.url, true]
   ])
 }
+
+interface RawField {
+  name: string
+  /** The value as written: `{…}`, `"…"`, a bare word, or a `#` concatenation of them. */
+  value: string
+}
+
+/** Reads one value token at `i`: braced, quoted or bare; returns its end. */
+function valueEnd(entry: string, i: number): number {
+  if (entry[i] === '{') {
+    let depth = 0
+    for (let j = i; j < entry.length; j++) {
+      if (entry[j] === '{') depth++
+      else if (entry[j] === '}' && --depth === 0) return j + 1
+    }
+    return entry.length
+  }
+  if (entry[i] === '"') {
+    let depth = 0
+    for (let j = i + 1; j < entry.length; j++) {
+      if (entry[j] === '{') depth++
+      else if (entry[j] === '}') depth--
+      else if (entry[j] === '"' && depth === 0) return j + 1
+    }
+    return entry.length
+  }
+  const bare = /^[^,}#\s]*/.exec(entry.slice(i))![0]
+  return i + bare.length
+}
+
+/** The head (`@type{key`) and the fields of an entry, values as written; null when it is not an entry. */
+function parseRawEntry(entry: string): { type: string; key: string; fields: RawField[] } | null {
+  const head = entry.match(HEAD)
+  if (!head) return null
+  const fields: RawField[] = []
+  let i = head[0].length
+  for (;;) {
+    const m = /^[\s,]*([A-Za-z][\w:-]*)\s*=\s*/.exec(entry.slice(i))
+    if (!m) break
+    i += m[0].length
+    const start = i
+    for (;;) {
+      i = valueEnd(entry, i)
+      const more = /^\s*#\s*/.exec(entry.slice(i))
+      if (!more) break
+      i += more[0].length
+    }
+    fields.push({ name: m[1], value: entry.slice(start, i).trim() })
+  }
+  return { type: head[1], key: head[2], fields }
+}
+
+/**
+ * The entry with these fields set (a braced value; `raw` values are not escaped) or removed (null). Every other
+ * field keeps its value as written and the key never changes; the entry comes back one field per line. Field names
+ * match case-insensitively. Throws when `entry` is not a BibTeX entry.
+ */
+export function setBibFields(entry: string, changes: Record<string, { value: string; raw?: boolean } | null>): string {
+  const parsed = parseRawEntry(entry)
+  if (!parsed) throw new Error('Not a BibTeX entry')
+  const pending = new Map(Object.entries(changes).map(([name, change]) => [name.toLowerCase(), change]))
+  const braced = (c: { value: string; raw?: boolean }): string => `{${c.raw ? c.value : escapeLatex(c.value)}}`
+  const lines: string[] = []
+  for (const field of parsed.fields) {
+    const name = field.name.toLowerCase()
+    if (!pending.has(name)) {
+      lines.push(`  ${field.name} = ${field.value}`)
+      continue
+    }
+    const change = pending.get(name)!
+    pending.delete(name)
+    if (change) lines.push(`  ${field.name} = ${braced(change)}`)
+  }
+  for (const [name, change] of pending) if (change) lines.push(`  ${name} = ${braced(change)}`)
+  return `@${parsed.type}{${parsed.key},\n${lines.join(',\n')}\n}`
+}
+
+/** The entry's type, lowercase (`article`, `online`, …); null when it is not an entry. */
+export function bibType(entry: string): string | null {
+  return entry.match(HEAD)?.[1].toLowerCase() ?? null
+}

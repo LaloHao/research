@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { captureWebPage, findScholarlyIds, parseByline, webMetadata } from '../../../src/main/ingest/web'
+import { bareWebMetadata, captureWebPage, cleanPageTitle, findScholarlyIds, parseByline, slugTitle, webMetadata } from '../../../src/main/ingest/web'
 
 const fx = (name: string): string => readFileSync(new URL(`../../fixtures/web/${name}`, import.meta.url), 'utf8')
 const URL_ = 'https://eng.acme.test/posts/database-outage'
@@ -85,5 +85,52 @@ describe('webMetadata', () => {
       web: { site: 'Acme Engineering', date: '2024-03-01' },
       complete: true
     })
+  })
+})
+
+describe('slugTitle', () => {
+  it.each([
+    [
+      'https://towardsdatascience.com/how-to-validate-openai-gpt-model-performance-with-text-summarization-298978fea764/',
+      'How to Validate OpenAI GPT Model Performance with Text Summarization'
+    ],
+    ['https://medium.com/@ana/a-guide-to-the-llm-stack-1a2b3c4d5e6f', 'A Guide to the LLM Stack'],
+    ['https://blog.acme.test/2024/05/why_logs_matter.html', 'Why Logs Matter'],
+    ['https://news.acme.test/story/123456', 'Story'],
+    ['https://acme.test/posts/Sanitizing-Logs-With-NER', 'Sanitizing Logs With NER'],
+    ['https://acme.test/es/c%C3%B3mo-anonimizar-logs', 'Cómo Anonimizar Logs'],
+    ['https://www.acme.test/', 'acme.test'],
+    ['https://acme.test/p/298978fea764', 'acme.test']
+  ])('%s → %s', (url, title) => {
+    expect(slugTitle(url)).toBe(title)
+  })
+})
+
+describe('cleanPageTitle', () => {
+  it('drops the site name after a separator, unless the rest is too short to be a title', () => {
+    expect(cleanPageTitle('How to Validate GPT Models | Towards Data Science')).toBe('How to Validate GPT Models')
+    expect(cleanPageTitle('Postmortem of the database outage - Acme Engineering')).toBe('Postmortem of the database outage')
+    expect(cleanPageTitle('Home | Acme')).toBe('Home | Acme')
+    expect(cleanPageTitle('  Self-Attention   explained ')).toBe('Self-Attention explained')
+  })
+})
+
+describe('bareWebMetadata', () => {
+  it('takes the page title (og:title first) and the site, incomplete', () => {
+    const html = '<html><head><title>Ignored | Site</title><meta property="og:title" content="Logs at scale - Acme Blog"></head><body></body></html>'
+    expect(bareWebMetadata(html, 'https://www.acme.test/logs-at-scale')).toEqual({
+      kind: 'web',
+      title: 'Logs at scale',
+      authors: [],
+      venue: 'acme.test',
+      identifiers: { url: 'https://www.acme.test/logs-at-scale' },
+      web: { site: 'acme.test' },
+      complete: false
+    })
+  })
+
+  it('guesses the title from the URL when the page has none', () => {
+    expect(bareWebMetadata('<html><body>…</body></html>', 'https://acme.test/why-logs-matter-0a1b2c3d4e5f').title).toBe('Why Logs Matter')
+    expect(bareWebMetadata(null, 'https://acme.test/why-logs-matter').title).toBe('Why Logs Matter')
   })
 })

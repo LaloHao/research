@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { HttpClient, HttpError, type FetchFn } from '../../../src/main/ingest/http'
+import { HttpClient, HttpError, looksLikeBotProtection, type FetchFn } from '../../../src/main/ingest/http'
 import { toUserFacing } from '../../../src/main/library/UserFacingError'
 import { appLog, MemorySink } from '../../../src/main/log/appLog'
 import { routeFetch } from '../../helpers/fakeFetch'
@@ -226,5 +226,59 @@ describe('HttpClient and OpenAlex', () => {
     const http = new HttpClient({ fetch, sleep: sleeper().sleep })
     await http.text('https://api.crossref.org/works/x', 'text/plain')
     expect(fetch.count()).toBe(2)
+  })
+})
+
+describe('bot protection', () => {
+  const blog = 'https://towardsdatascience.com/how-to-validate-298978fea764/'
+  const challenge = (status: number, headers: Record<string, string>, body = ''): FetchFn & { count: () => number } => {
+    let n = 0
+    const fn: FetchFn = async () => {
+      n++
+      return new Response(body, { status, headers })
+    }
+    return Object.assign(fn, { count: () => n })
+  }
+
+  it('recognizes Cloudflare, Akamai, DataDome and challenge pages, and nothing else', () => {
+    const h = (o: Record<string, string>): Headers => new Headers(o)
+    expect(looksLikeBotProtection(403, h({ server: 'cloudflare', 'cf-mitigated': 'challenge' }))).toBe(true)
+    expect(looksLikeBotProtection(503, h({ server: 'cloudflare' }))).toBe(true)
+    expect(looksLikeBotProtection(403, h({ server: 'AkamaiGHost' }))).toBe(true)
+    expect(looksLikeBotProtection(403, h({ 'x-datadome': 'protected' }))).toBe(true)
+    expect(looksLikeBotProtection(403, h({}), '<html><head><title>Just a moment...</title></head></html>')).toBe(true)
+    expect(looksLikeBotProtection(403, h({}), '<script src="/cdn-cgi/challenge-platform/h/b/orchestrate"></script>')).toBe(true)
+    // Not an error status bot protection uses, or nothing that says so.
+    expect(looksLikeBotProtection(404, h({ server: 'cloudflare', 'cf-mitigated': 'challenge' }))).toBe(false)
+    expect(looksLikeBotProtection(429, h({ server: 'cloudflare' }))).toBe(false)
+    expect(looksLikeBotProtection(403, h({ server: 'nginx' }), '{"message":"forbidden"}')).toBe(false)
+    expect(looksLikeBotProtection(403, null)).toBe(false)
+  })
+
+  it('gives up on a challenge at once, without retrying, and marks the error', async () => {
+    const { sleep, delays } = sleeper()
+    const fetch = challenge(503, { server: 'cloudflare', 'cf-mitigated': 'challenge', 'content-type': 'text/html' }, '<title>Just a moment...</title>')
+    const http = new HttpClient({ fetch, sleep })
+    const error = await http.get(blog, 'text/html').catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(HttpError)
+    expect((error as HttpError).challenge).toBe(true)
+    expect(fetch.count()).toBe(1)
+    expect(delays).toEqual([])
+    expect(toUserFacing(error).code).toBe('site_blocked')
+  })
+
+  it('reads a 403 challenge page from its body', async () => {
+    const fetch = challenge(403, { 'content-type': 'text/html' }, '<html><title>Attention Required! | Cloudflare</title></html>')
+    const error = (await new HttpClient({ fetch }).get(blog, 'text/html').catch((e: unknown) => e)) as HttpError
+    expect(error.challenge).toBe(true)
+  })
+
+  it('still retries an ordinary 503', async () => {
+    const { sleep } = sleeper()
+    const fetch = challenge(503, { server: 'nginx' })
+    const error = (await new HttpClient({ fetch, sleep, retries: 2 }).get(blog, 'text/html').catch((e: unknown) => e)) as HttpError
+    expect(fetch.count()).toBe(3)
+    expect(error.challenge).toBe(false)
+    expect(toUserFacing(error).code).toBe('server_error')
   })
 })

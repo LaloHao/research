@@ -1,8 +1,9 @@
+import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { authorsLabel } from '../../shared/format'
-import type { IngestStatus, PaperDetail, PaperRow } from '../../shared/library'
+import type { IngestStatus, MetadataEdit, PaperDetail, PaperRow } from '../../shared/library'
 import type { Paper } from '../../shared/schemas'
 import type { ExtractionFile, FacetDef } from '../../shared/summary'
 import type { DeletePlan, RestoreConflict, RestoreOutcome, TrashEntry, TrashOutcome, TrashProblem, TrashTarget } from '../../shared/trash'
@@ -11,11 +12,11 @@ import { chunkSegments } from '../extract/chunker'
 import { isTextless, type PdfExtractor, type PdfText } from '../extract/PdfExtractor'
 import { rekeyBibtex } from '../ingest/bibtex'
 import { baseCitekey, uniqueCitekey } from '../ingest/citekey'
-import type { HttpClient } from '../ingest/http'
+import { HttpError, isOpenAlexUrl, type HttpClient } from '../ingest/http'
 import { findIdentifiersInText, normalizeDoi, parseInput } from '../ingest/identifiers'
 import type { MetadataSource } from '../ingest/MetadataResolver'
 import type { ResolvedMetadata } from '../ingest/types'
-import { captureWebPage, findScholarlyIds, webMetadata } from '../ingest/web'
+import { bareWebMetadata, captureWebPage, findScholarlyIds, webContent, webMetadata } from '../ingest/web'
 import { sha256 } from '../project/atomicWrite'
 import { ConflictError, type ReadResult } from '../project/errors'
 import type { ProjectStore } from '../project/ProjectStore'
@@ -23,6 +24,7 @@ import { loadForm } from '../summary/extractionForm'
 import { currentThesisHash, indexSummary } from '../summary/SummaryService'
 import { entryFitsFacet, thesisRelationOutdated } from '../summary/merge'
 import { buildPaper, compact } from './buildPaper'
+import { applyMetadataEdit } from './metadataEdit'
 import { findDuplicate, mergePapers, samePaperContent } from './dedupe'
 import { mergeNotes, planMergeFile } from './trashMerge'
 import { toUserFacing, UserFacingError } from './UserFacingError'
@@ -81,6 +83,8 @@ interface AddExtras {
   signal?: AbortSignal
 }
 
+const MAX_METADATA_UNDO = 100
+
 const HTML_ACCEPT = 'text/html,application/xhtml+xml,application/pdf;q=0.9'
 
 export class LibraryService {
@@ -89,6 +93,8 @@ export class LibraryService {
   private readonly reading = new Map<string, Promise<Uint8Array | null>>()
   /** Text extracted during an ingest, keyed by PDF sha256, so indexing the new paper does not parse it again. */
   private readonly extracted = new Map<string, PdfText>()
+  /** Undo token of a metadata edit → the paper before it and the hash of what it wrote. */
+  private readonly metadataUndo = new Map<string, { id: string; before: Paper; hash: string }>()
   private bibRun: Promise<void> | null = null
   private bibNext: Promise<void> | null = null
   private addQueue: Promise<unknown> = Promise.resolve()
@@ -680,7 +686,13 @@ export class LibraryService {
 
   protected async ingestUrl(url: string, signal?: AbortSignal): Promise<IngestOutcome> {
     // The URL may serve a large PDF: allow the download timeout for its body.
-    const res = await this.deps.http.get(url, HTML_ACCEPT, signal, this.deps.http.downloadTimeoutMs)
+    const res = await this.deps.http.get(url, HTML_ACCEPT, signal, this.deps.http.downloadTimeoutMs).catch((error: unknown) => {
+      // A web page that refuses the app (bot protection, or a plain 401/403) opens in the app's browser instead.
+      if (error instanceof HttpError && (error.status === 401 || error.status === 403) && !isOpenAlexUrl(error.url)) {
+        throw new UserFacingError('site_blocked', { cause: error, detail: `HTTP ${error.status}` })
+      }
+      throw error
+    })
     if ((res.headers.get('content-type') ?? '').includes('application/pdf')) {
       return this.ingestPdfBytes(new Uint8Array(await res.arrayBuffer()), basename(new URL(url).pathname), url, signal)
     }
@@ -690,7 +702,91 @@ export class LibraryService {
     if (ids.arxiv) return this.add(await this.deps.resolver.byArxiv(ids.arxiv, signal), { signal })
     const capture = captureWebPage(html, url)
     if (!capture) throw new UserFacingError('unreadable_page')
-    return this.add(webMetadata(capture, url), { content: `# ${capture.title}\n\nSource: ${url}\n\n${capture.markdown}\n`, signal })
+    return this.add(webMetadata(capture, url), { content: webContent(capture, url), signal })
+  }
+
+  /**
+   * A page the user opened in the app's browser and added from there: its HTML and final URL (untrusted, like any
+   * downloaded page) and the PDF the browser printed of it. A DOI or arXiv id on the page takes the identifier path
+   * (the PDF goes with it); otherwise it is a web page with its readable text, or with only its title when the
+   * article cannot be extracted (incomplete metadata). Same dedupe, key and write as any ingest.
+   */
+  async ingestCapture(capture: { url: string; html: string; pdf: Uint8Array | null }, signal?: AbortSignal): Promise<IngestOutcome> {
+    try {
+      const { url, html } = capture
+      const pdf = capture.pdf && isPdf(capture.pdf) ? capture.pdf : undefined
+      const ids = findScholarlyIds(html)
+      let meta: ResolvedMetadata | null = null
+      if (ids.doi) meta = await this.deps.resolver.byDoi(ids.doi, signal).catch(() => null)
+      if (!meta && ids.arxiv) meta = await this.deps.resolver.byArxiv(ids.arxiv, signal).catch(() => null)
+      let content: string | undefined
+      if (!meta) {
+        const page = captureWebPage(html, url)
+        meta = page ? webMetadata(page, url) : bareWebMetadata(html, url)
+        if (page) content = webContent(page, url)
+      }
+      if (!pdf) return await this.add(meta, { content, signal })
+      // Parsed before anything is written, and kept so indexing the new paper does not parse it again.
+      const text = await this.deps.extractor.extract(pdf)
+      const sha = sha256(pdf)
+      this.extracted.set(sha, text)
+      try {
+        return await this.add(meta, { pdf, content, signal })
+      } finally {
+        this.extracted.delete(sha)
+      }
+    } catch (error) {
+      if (signal?.aborted) throw error
+      throw toUserFacing(error)
+    }
+  }
+
+  /**
+   * «Editar metadatos»: title, authors, year or date, venue (a web page's site) and URL as the user typed them. The
+   * BibTeX entry gets the same fields (its key and every other field stay); library.bib follows. The citation key
+   * never changes. Returns the token «Deshacer» sends back; null when the edit changed nothing.
+   */
+  editMetadata(id: string, edit: MetadataEdit): Promise<string | null> {
+    return this.serial(async () => {
+      try {
+        return await this.editNow(id, edit)
+      } catch (error) {
+        throw toUserFacing(error)
+      }
+    })
+  }
+
+  private async editNow(id: string, edit: MetadataEdit): Promise<string | null> {
+    const { store } = this.deps
+    const read = await store.readPaper(id)
+    if (!read.ok) throw new UserFacingError('file_problem')
+    const before = read.value
+    const next = applyMetadataEdit(before, edit)
+    // Nothing to write, nothing to undo.
+    if (samePaperContent(before, next)) return null
+    const hash = await store.writePaper({ ...next, updated_at: this.now().toISOString() }, read.hash)
+    const token = randomUUID()
+    this.metadataUndo.set(token, { id, before, hash })
+    while (this.metadataUndo.size > MAX_METADATA_UNDO) this.metadataUndo.delete(this.metadataUndo.keys().next().value!)
+    await this.afterWrite(id)
+    return token
+  }
+
+  /** «Deshacer» of a metadata edit: only while paper.yaml is still what that edit wrote; the token is spent either way. */
+  revertMetadata(token: string): Promise<void> {
+    return this.serial(async () => {
+      const change = this.metadataUndo.get(token)
+      this.metadataUndo.delete(token)
+      try {
+        if (!change) throw new UserFacingError('undo_unavailable')
+        const read = await this.deps.store.readPaper(change.id)
+        if (!read.ok || read.hash !== change.hash) throw new UserFacingError('undo_unavailable')
+        await this.deps.store.writePaper({ ...change.before, updated_at: this.now().toISOString() }, read.hash)
+        await this.afterWrite(change.id)
+      } catch (error) {
+        throw toUserFacing(error)
+      }
+    })
   }
 
   protected async ingestPdfBytes(bytes: Uint8Array, fileName: string, sourceUrl: string | undefined, signal?: AbortSignal): Promise<IngestOutcome> {
