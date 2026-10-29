@@ -77,9 +77,10 @@ describe('buildReaderHtml', () => {
     expect(html).not.toMatch(/<script/i)
   })
 
-  it('drops a first heading that repeats the title', () => {
-    const html = buildReaderHtml(article, '<h1>Postmortem:  the &lt;database&gt; outage</h1><p>Body</p>', source)
+  it('drops a first heading that repeats the title and a first paragraph that repeats the byline', () => {
+    const html = buildReaderHtml(article, '<h1>Postmortem:  the &lt;database&gt; outage</h1><p>By Jane Roe &amp; Ann Lee</p><p>Body</p>', source)
     expect(html.match(/<h1>/g)).toHaveLength(1)
+    expect(html).toContain('<main><p>Body</p></main>')
   })
 
   it('builds the reader view of a real article: header from Readability, sanitized content', () => {

@@ -47,16 +47,20 @@ body { position: static !important; }
 
 /**
  * Run in an isolated world (the page's scripts can't see or change it): marks every fixed or sticky element whose
- * id, class or aria-label names a cookie, consent, GDPR or privacy banner. Only marks; returns how many.
+ * id, class or aria-label names a cookie, consent, GDPR or privacy banner, and every fixed element without text that
+ * covers most of the window (the dimmed backdrop such a dialog lays over the page). Only marks; returns how many.
  */
 export const MARK_FIXED_OVERLAYS = `(() => {
   const name = ${OVERLAY_NAME.toString()};
+  const area = window.innerWidth * window.innerHeight;
   let marked = 0;
   for (const el of document.querySelectorAll('body *')) {
-    const label = [el.id, typeof el.className === 'string' ? el.className : '', el.getAttribute('aria-label') || ''].join(' ');
-    if (!name.test(label)) continue;
     const position = getComputedStyle(el).position;
     if (position !== 'fixed' && position !== 'sticky') continue;
+    const label = [el.id, typeof el.className === 'string' ? el.className : '', el.getAttribute('aria-label') || ''].join(' ');
+    const box = el.getBoundingClientRect();
+    const backdrop = position === 'fixed' && area > 0 && box.width * box.height >= 0.8 * area && (el.textContent || '').trim().length === 0;
+    if (!name.test(label) && !backdrop) continue;
     el.setAttribute('${HIDE_ATTRIBUTE}', '');
     marked++;
   }

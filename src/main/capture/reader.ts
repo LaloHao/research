@@ -64,7 +64,6 @@ function imageSource(img: El): string {
 function keepAttribute(name: string, value: string): boolean {
   if (NUMERIC.has(name)) return NUMBER.test(value.trim())
   if (name === 'scope') return SCOPES.has(value.trim().toLowerCase())
-  if (name === 'reversed') return true
   return true
 }
 
@@ -176,12 +175,16 @@ export interface ReaderSource {
 /**
  * The document printed as the paper's PDF: a header with the site, title, byline, date, source URL and access date,
  * then the article (already sanitized). Everything from the page is escaped or comes from `sanitizeArticle`. A first
- * heading that repeats the title is left out.
+ * heading that repeats the title, and a first paragraph that repeats the byline, are left out.
  */
 export function buildReaderHtml(article: Pick<WebArticle, 'title' | 'byline' | 'site' | 'date'>, content: string, source: ReaderSource): string {
   const { document } = parseHTML(`<!DOCTYPE html><html><head></head><body>${content}</body></html>`)
   const first = document.body.querySelector('h1, h2')
   if (first && normalized(first.textContent ?? '') === normalized(article.title)) first.remove()
+  const byline = normalized(article.byline)
+  const lead = document.body.querySelector('p')
+  const leadText = normalized(lead?.textContent ?? '')
+  if (lead && byline && (leadText === byline || leadText === `by ${byline}`)) lead.remove()
   const accessed = source.accessed.toISOString().slice(0, 10)
   const line = (cls: string, text: string): string => (text.trim() ? `<p class="${cls}">${escapeHtml(text.trim())}</p>` : '')
   return [

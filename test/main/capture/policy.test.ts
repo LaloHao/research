@@ -222,6 +222,8 @@ describe('readCapture', () => {
     // Only hiding: nothing in what runs in the page clicks a button.
     expect(MARK_FIXED_OVERLAYS).not.toMatch(/click|submit|accept/i)
     expect(MARK_FIXED_OVERLAYS).toMatch(/position !== 'fixed' && position !== 'sticky'/)
+    // The empty full-window backdrop of a dialog goes too.
+    expect(MARK_FIXED_OVERLAYS).toMatch(/0\.8 \* area && \(el\.textContent \|\| ''\)\.trim\(\)\.length === 0/)
   })
 
   it('marks only fixed or sticky elements named like a consent banner', () => {
