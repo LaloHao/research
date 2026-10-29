@@ -1,5 +1,5 @@
 import type { CitationsStatus } from './relations'
-import type { Paper } from './schemas'
+import type { Author, Paper } from './schemas'
 import type { ExtractionFile, ExtractionForm, SummaryFile, SummaryStatus } from './summary'
 
 export const TEXT_STATUSES = ['pending', 'ok', 'no_text', 'no_source', 'error'] as const
@@ -101,6 +101,8 @@ export const USER_ERROR_CODES = [
   'outline_too_large',
   'cite_check_budget',
   'access_denied',
+  'openalex_access_denied',
+  'site_blocked',
   'rate_limited',
   'server_error',
   'unknown'
@@ -147,6 +149,25 @@ export function parseOutcome(message: string): { outcome: string; params: Record
 /** Why a paper.yaml cannot be read; each has a translation under `paper.problem_kinds.<kind>`. */
 export const FILE_PROBLEM_KINDS = ['conflict_markers', 'invalid_yaml', 'invalid_schema'] as const
 export type FileProblemKind = (typeof FILE_PROBLEM_KINDS)[number]
+
+/** A web page's publication date as «Editar metadatos» takes it: YYYY, YYYY-MM or YYYY-MM-DD. */
+export const METADATA_DATE = /^\d{4}(-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?)?$/
+
+/**
+ * «Editar metadatos»: the fields the user changed (undefined: left as is; null: removed). `date` is a web page's
+ * publication date (YYYY, YYYY-MM or YYYY-MM-DD) and sets the year with it.
+ */
+export interface MetadataEdit {
+  title?: string
+  authors?: Author[]
+  year?: number | null
+  date?: string | null
+  venue?: string | null
+  url?: string | null
+}
+
+/** A metadata edit: `undoToken` is what «Deshacer» sends back (null when nothing changed). */
+export type MetadataEditResult = { ok: true; undoToken: string | null } | { ok: false; error: string }
 
 export const INGEST_STATUSES = ['added', 'merged', 'duplicate'] as const
 export type IngestStatus = (typeof INGEST_STATUSES)[number]

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'"
+    />
+    <title>Research</title>
+  </head>
+  <body class="capture-body">
+    <div class="capture-bar">
+      <button id="back" class="small" type="button"></button>
+      <button id="forward" class="small" type="button"></button>
+      <button id="reload" class="small" type="button"></button>
+      <div class="capture-where">
+        <span id="title" class="capture-title"></span>
+        <span id="url" class="capture-url muted"></span>
+      </div>
+      <span id="status" class="capture-status muted" role="status"></span>
+      <button id="add" class="primary small" type="button"></button>
+      <button id="cancel" class="small" type="button"></button>
+    </div>
+    <script type="module" src="./capture/main.ts"></script>
+  </body>
+</html>

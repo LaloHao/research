@@ -18,6 +18,11 @@ describe('preload imports', () => {
     expect(runtimeImports(await src('shared/ipc.ts'))).toEqual([])
   })
 
+  it('gives the app browser toolbar a preload that loads only electron and the dependency-free shared/capture', async () => {
+    expect(runtimeImports(await src('preload/capture.ts')).sort()).toEqual(['../shared/capture', 'electron'])
+    expect(runtimeImports(await src('shared/capture.ts'))).toEqual([])
+  })
+
   it('pushes chat answers on one channel, named the same from shared/chat', () => {
     expect(CHAT_STREAM_CHANNEL).toBe('chat:stream')
     expect(fromChat).toBe(CHAT_STREAM_CHANNEL)

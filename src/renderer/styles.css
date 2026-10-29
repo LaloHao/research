@@ -464,3 +464,14 @@ button.danger { color: var(--error); border-color: var(--error); }
 .writing-check-sentence p { margin: 2px 0 0; }
 .writing-check-quote { margin: 2px 0 0; padding-left: 8px; border-left: 2px solid var(--border); font-size: 12px; }
 .writing-evidence { position: fixed; top: 0; right: 0; bottom: 0; width: 45%; z-index: 20; background: var(--surface); border-left: 1px solid var(--border); display: flex; flex-direction: column; overflow: auto; box-shadow: -4px 0 16px rgb(0 0 0 / 0.15); }
+
+/* The toolbar of the app's browser window (capture.html); the page is a view below it. */
+.capture-body { margin: 0; overflow: hidden; }
+.capture-bar { display: flex; align-items: center; gap: 6px; height: 48px; box-sizing: border-box; padding: 0 10px; background: var(--bg); border-bottom: 1px solid var(--border); }
+.capture-where { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.2; }
+.capture-title, .capture-url { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.capture-url { font-size: 0.8em; }
+.capture-status { max-width: 40%; font-size: 0.85em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.metadata-editor { display: flex; flex-direction: column; gap: 8px; max-width: 760px; padding: 10px 0; }
+.metadata-editor label { display: flex; flex-direction: column; gap: 2px; font-size: 0.9em; }
+.metadata-editor label.grow { flex: 1; }

@@ -9,6 +9,32 @@ describe('IPC argument validation', () => {
     }
   })
 
+  it('accepts only http(s) addresses for the app browser', () => {
+    expect(arg(ipcArgs.webUrl, ' https://towardsdatascience.com/x ', 'url')).toBe('https://towardsdatascience.com/x')
+    for (const bad of ['file:///etc/passwd', 'javascript:alert(1)', 'towardsdatascience.com', '', 3, null, `https://a.test/${'x'.repeat(4000)}`]) {
+      expect(() => arg(ipcArgs.webUrl, bad, 'url')).toThrow()
+    }
+  })
+
+  it('accepts a metadata edit of known fields only', () => {
+    const edit = { title: 'T', authors: [{ family: 'Roe', given: 'Jane' }], year: 2024, date: '2024-05', venue: null, url: 'https://acme.test/x' }
+    expect(arg(ipcArgs.metadataEdit, edit, 'edit')).toEqual(edit)
+    expect(arg(ipcArgs.metadataEdit, {}, 'edit')).toEqual({})
+    for (const bad of [
+      { id: 'other' },
+      { title: 5 },
+      { authors: [{ family: 'Roe', orcid: 'x' }] },
+      { year: 20245 },
+      { year: 2024.5 },
+      { date: '2024-13-01' },
+      { date: '05/2024' },
+      { url: 'file:///etc/passwd' },
+      null
+    ]) {
+      expect(() => arg(ipcArgs.metadataEdit, bad, 'edit')).toThrow()
+    }
+  })
+
   it('checks strings, numbers and lists', () => {
     expect(arg(ipcArgs.hash, null, 'hash')).toBeNull()
     expect(() => arg(ipcArgs.text, 5, 'text')).toThrow()

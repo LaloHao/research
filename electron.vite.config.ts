@@ -28,9 +28,19 @@ export default defineConfig({
       }
     }
   },
-  preload: { plugins: [externalizeDepsPlugin()] },
+  preload: {
+    plugins: [externalizeDepsPlugin()],
+    build: {
+      // The app's browser window has its own toolbar preload: out/preload/capture.js.
+      rollupOptions: { input: { index: resolve(__dirname, 'src/preload/index.ts'), capture: resolve(__dirname, 'src/preload/capture.ts') } }
+    }
+  },
   renderer: {
     root: resolve(__dirname, 'src/renderer'),
-    plugins: [react(), devCsp()]
+    plugins: [react(), devCsp()],
+    build: {
+      // capture.html: the toolbar of the app's browser window.
+      rollupOptions: { input: { index: resolve(__dirname, 'src/renderer/index.html'), capture: resolve(__dirname, 'src/renderer/capture.html') } }
+    }
   }
 })

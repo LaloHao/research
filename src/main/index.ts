@@ -4,6 +4,7 @@ import { CHAT_STREAM_CHANNEL } from '../shared/chat'
 import { API_OPEN_PAPER_CHANNEL, DRAFT_STREAM_CHANNEL, eventChannel, IPC } from '../shared/ipc'
 import type { CloseDecision } from '../shared/sync'
 import { AppController } from './AppController'
+import { CaptureWindow } from './capture/CaptureWindow'
 import { confirmClose, createQuitFlow, once } from './closeFlow'
 import { UtilityEmbeddingRuntime } from './embeddings/UtilityEmbeddingRuntime'
 import { waitForFlush } from './flush'
@@ -166,6 +167,8 @@ function createWindow(): BrowserWindow {
   })
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
+    // The app's browser window goes with the app's window.
+    capture?.close()
   })
   // External links (including mailto, e.g. from readable web content) open in the system
   // browser/mail client; dropped files must not navigate the window.
@@ -185,6 +188,25 @@ function focusMainWindow(): void {
   mainWindow.focus()
 }
 
+let capture: CaptureWindow | null = null
+
+/** «Abrir en el navegador de la app»: created on first use; a captured page goes to the open project. */
+function captureWindow(): { open(url: string): void } {
+  return {
+    open: (url) => {
+      capture ??= new CaptureWindow({
+        preload: join(__dirname, '../preload/capture.js'),
+        loadToolbar: (win) =>
+          process.env.ELECTRON_RENDERER_URL ? win.loadURL(`${process.env.ELECTRON_RENDERER_URL}/capture.html`) : win.loadFile(join(__dirname, '../renderer/capture.html')),
+        ingest: (page) => controller.requireSession().ingestCapture(page),
+        // The library list shows the new paper (library-changed); the app comes back to the front.
+        onAdded: () => focusMainWindow()
+      })
+      capture.open(url)
+    }
+  }
+}
+
 /** The renderer only needs to copy to the clipboard; every other permission (camera, geolocation, …) is denied. */
 const ALLOWED_PERMISSIONS = new Set(['clipboard-sanitized-write'])
 
@@ -194,7 +216,7 @@ function start(): void {
 
   app.whenReady().then(async () => {
     session.defaultSession.setPermissionRequestHandler((_contents, permission, callback) => callback(ALLOWED_PERMISSIONS.has(permission)))
-    registerIpc(controller, () => mainWindow)
+    registerIpc(controller, () => mainWindow, captureWindow())
     try {
       await controller.init()
     } catch (error) {

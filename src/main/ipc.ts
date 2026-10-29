@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
-import type { UserErrorCode } from '../shared/library'
+import type { MetadataEditResult, UserErrorCode } from '../shared/library'
 import type { OpenAlexCount } from '../shared/mapping'
 import type { CountResult } from '../shared/relations'
 import type { FormImpact } from '../shared/summary'
@@ -121,7 +121,12 @@ async function projectResult(action: () => Promise<ProjectInfo | null>): Promise
   }
 }
 
-export function registerIpc(app: AppController, getWindow: () => BrowserWindow | null): void {
+/** The app's browser window («Abrir en el navegador de la app»). */
+export interface AppBrowser {
+  open(url: string): void
+}
+
+export function registerIpc(app: AppController, getWindow: () => BrowserWindow | null, browser: AppBrowser): void {
   ipcMain.handle(
     IPC.appOpenLogs,
     (): Promise<ActionResult> =>
@@ -194,6 +199,27 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
       type: 'update_metadata',
       paperId: arg(ipcArgs.paperId, paperId, 'id'),
       input: arg(ipcArgs.optionalText, input, 'input')
+    })
+  })
+  ipcMain.handle(IPC.libraryEditMetadata, async (_e, rawId: unknown, rawEdit: unknown): Promise<MetadataEditResult> => {
+    const id = arg(ipcArgs.paperId, rawId, 'id')
+    const edit = arg(ipcArgs.metadataEdit, rawEdit, 'edit')
+    try {
+      return { ok: true, undoToken: await app.requireSession().editMetadata(id, edit) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
+  })
+  ipcMain.handle(IPC.libraryRevertMetadata, (_e, rawToken: unknown): Promise<ActionResult> => {
+    const token = arg(ipcArgs.undoToken, rawToken, 'token')
+    return actionResult(() => app.requireSession().revertMetadata(token))
+  })
+  ipcMain.handle(IPC.libraryOpenInBrowser, (_e, rawUrl: unknown): Promise<ActionResult> => {
+    const url = arg(ipcArgs.webUrl, rawUrl, 'url')
+    return actionResult(async () => {
+      // A capture needs a project to go to.
+      app.requireSession()
+      browser.open(url)
     })
   })
   ipcMain.handle(IPC.libraryReadPdf, async (_e, rawId: unknown) => {

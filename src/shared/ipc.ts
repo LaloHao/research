@@ -2,7 +2,7 @@ import type { ChatConversation, ChatListQuery, ChatSendRequest, ChatStreamUpdate
 import type { ChatTools } from './chatActions'
 import type { FacetSuggestionList, FacetSuggestPlan, SuggestionEdit } from './facetSuggestions'
 import type { JobRecord } from './jobs'
-import type { PaperDetail, PaperRow, UserErrorCode } from './library'
+import type { MetadataEdit, MetadataEditResult, PaperDetail, PaperRow, UserErrorCode } from './library'
 import type {
   DecideRequest,
   ImportOutcome,
@@ -60,6 +60,9 @@ export const IPC = {
   libraryAttachPdf: 'library:attach-pdf',
   libraryChoosePdf: 'library:choose-pdf',
   libraryUpdateMetadata: 'library:update-metadata',
+  libraryEditMetadata: 'library:edit-metadata',
+  libraryRevertMetadata: 'library:revert-metadata',
+  libraryOpenInBrowser: 'library:open-in-browser',
   libraryReadPdf: 'library:read-pdf',
   libraryReadNotes: 'library:read-notes',
   libraryWriteNotes: 'library:write-notes',
@@ -306,6 +309,11 @@ export interface ResearchApi {
     /** Asks for a PDF file; null when the user cancels. */
     choosePdf(): Promise<string | null>
     updateMetadata(id: string, input?: string): Promise<void>
+    /** «Editar metadatos»: writes the changed fields (and the BibTeX entry); the token is what «Deshacer» sends back. */
+    editMetadata(id: string, edit: MetadataEdit): Promise<MetadataEditResult>
+    revertMetadata(undoToken: string): Promise<ActionResult>
+    /** «Abrir en el navegador de la app»: the user browses the page there and adds it from its toolbar. */
+    openInBrowser(url: string): Promise<ActionResult>
     readPdf(id: string): Promise<PdfReadResult>
     readNotes(id: string): Promise<{ text: string; hash: string | null }>
     writeNotes(id: string, text: string, hash: string | null): Promise<NotesWriteResult>
