@@ -1,3 +1,4 @@
+import type { DesktopStatus } from './desktop'
 import type { ChatConversation, ChatListQuery, ChatSendRequest, ChatStreamUpdate, ChatSummary } from './chat'
 import type { ChatTools } from './chatActions'
 import type { FacetSuggestionList, FacetSuggestPlan, SuggestionEdit } from './facetSuggestions'
@@ -193,6 +194,8 @@ export const IPC = {
   closeDecision: 'window:close-decision',
   flushDone: 'window:flush-done',
   appOpenLogs: 'app:open-logs',
+  appDesktopStatus: 'app:desktop-status',
+  appSetAutostart: 'app:set-autostart',
   localApiStatus: 'local-api:status',
   localApiCopyToken: 'local-api:copy-token',
   localApiRegenerateToken: 'local-api:regenerate-token',
@@ -229,6 +232,10 @@ export type ResearchEvent =
   | 'mappings-changed'
   | 'flush-request'
   | 'close-request'
+  /** Settings changed outside the window (the tray's «API local»). */
+  | 'settings-changed'
+  /** The tray's «Sincronizar ahora» needs the Sync view (conflicts, an error, nothing set up). */
+  | 'open-sync'
 
 export const eventChannel = (event: ResearchEvent): string => `event:${event}`
 
@@ -567,6 +574,10 @@ export interface ResearchApi {
   app: {
     /** «Abrir carpeta de registros»: the folder of main.log, in the system's file manager. */
     openLogs(): Promise<ActionResult>
+    /** Settings → Aplicación → «Bandeja y arranque»: whether the tray is there, and «Iniciar con la sesión». */
+    desktopStatus(): Promise<DesktopStatus>
+    /** Writes or removes the autostart entry; refused (rejects) in development or off Linux. */
+    setAutostart(enabled: boolean): Promise<DesktopStatus>
   }
   /** Settings → Aplicación → «API local» (turned on and off with `settings.set`). The token never reaches the window. */
   localApi: {

@@ -59,6 +59,16 @@ describe('IPC argument validation', () => {
     expect(() => arg(ipcArgs.settingsPatch, { contactEmail: 1 }, 'patch')).toThrow()
   })
 
+  it('lets the renderer set the tray settings, but never the one-time hint flag', () => {
+    expect(arg(ipcArgs.settingsPatch, { closeToTray: false, startHidden: true }, 'patch')).toEqual({ closeToTray: false, startHidden: true })
+    for (const bad of [{ closeToTray: 'no' }, { startHidden: 1 }, { trayHintShown: true }, { autostart: true }]) {
+      expect(() => arg(ipcArgs.settingsPatch, bad, 'patch')).toThrow()
+    }
+    // «Iniciar con la sesión» takes a plain boolean.
+    expect(arg(ipcArgs.flag, true, 'enabled')).toBe(true)
+    for (const bad of ['true', 1, null, undefined]) expect(() => arg(ipcArgs.flag, bad, 'enabled')).toThrow()
+  })
+
   it('accepts the OpenAlex API key in the settings patch', () => {
     expect(arg(ipcArgs.settingsPatch, { openalexApiKey: 'k' }, 'patch')).toEqual({ openalexApiKey: 'k' })
     expect(() => arg(ipcArgs.settingsPatch, { openalexApiKey: 3 }, 'patch')).toThrow()

@@ -1719,5 +1719,45 @@
       "retry": "Reintentar",
       "cost": "Costó {{cost}}"
     }
+  },
+  "tray": {
+    "show": "Mostrar ventana",
+    "hide": "Ocultar ventana",
+    "no_project": "Sin proyecto abierto",
+    "project": "Proyecto: {{name}}",
+    "add_clipboard": "Agregar desde el portapapeles",
+    "browse_clipboard": "Abrir en el navegador de la app",
+    "sync_line": "Sincronización: {{status}}",
+    "sync_now": "Sincronizar ahora",
+    "jobs_one": "{{count}} trabajo en curso",
+    "jobs_other": "{{count}} trabajos en curso",
+    "failed_one": "{{count}} trabajo falló",
+    "failed_other": "{{count}} trabajos fallaron",
+    "api_on": "API local: encendida",
+    "api_off": "API local: apagada",
+    "open_project": "Abrir proyecto…",
+    "quit": "Salir",
+    "notify": {
+      "no_identifier": "El portapapeles no tiene un DOI, arXiv o URL",
+      "no_url": "El portapapeles no tiene una URL http(s)",
+      "added": "Se agregó a la cola: lo verás en Actividad.",
+      "no_project": "Abre un proyecto primero.",
+      "open_failed": "No se pudo abrir el proyecto.",
+      "hint_title": "research sigue en la bandeja",
+      "hint_body": "La API local y los trabajos siguen activos. Para salir del todo usa «Salir» en el ícono de la bandeja o Ctrl+Q."
+    },
+    "settings": {
+      "title": "Bandeja y arranque",
+      "close_to_tray": "Al cerrar la ventana, seguir en la bandeja",
+      "close_to_tray_help": "Cerrar la ventana la oculta: la app sigue en la bandeja con la API local y los trabajos en marcha. «Salir» en la bandeja o Ctrl+Q la cierran del todo.",
+      "tray_unavailable": "No se encontró una bandeja del sistema: cerrar la ventana sale de la app.",
+      "start_hidden": "Iniciar oculto en la bandeja",
+      "start_hidden_help": "Al arrancar no se muestra la ventana; ábrela desde el ícono de la bandeja. También con la opción --hidden. Si no hay bandeja, la ventana se muestra igual.",
+      "autostart": "Iniciar con la sesión",
+      "autostart_help": "Escribe {{file}} para que el escritorio abra la app al iniciar sesión.",
+      "autostart_dev": "La app corre en modo desarrollo (pnpm dev): no hay un ejecutable estable que arrancar, así que no escribe la entrada. Con una versión empaquetada funciona. Si quieres, compila con «pnpm build» y agrega tú esta línea al inicio automático de tu sesión (arranca la última compilación):",
+      "autostart_unsupported": "Solo disponible en Linux (inicio automático XDG).",
+      "autostart_failed": "No se pudo cambiar el inicio automático."
+    }
   }
 }

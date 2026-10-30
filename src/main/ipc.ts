@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { recaptureUrl } from '../shared/capture'
+import type { DesktopStatus } from '../shared/desktop'
 import type { MetadataEditResult, UserErrorCode } from '../shared/library'
 import type { OpenAlexCount } from '../shared/mapping'
 import type { CountResult } from '../shared/relations'
@@ -56,7 +57,7 @@ async function actionResult(action: () => Promise<unknown>): Promise<ActionResul
   }
 }
 
-async function pickFolder(window: BrowserWindow | null, create: boolean): Promise<string | null> {
+export async function pickFolder(window: BrowserWindow | null, create: boolean): Promise<string | null> {
   const options: Electron.OpenDialogOptions = { properties: create ? ['openDirectory', 'createDirectory'] : ['openDirectory'] }
   const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
   return result.canceled ? null : (result.filePaths[0] ?? null)
@@ -128,7 +129,15 @@ export interface AppBrowser {
   open(url: string, target?: string): void
 }
 
-export function registerIpc(app: AppController, getWindow: () => BrowserWindow | null, browser: AppBrowser): void {
+/** The tray and «Iniciar con la sesión» (Settings → Aplicación). */
+export interface DesktopIpc {
+  status(): DesktopStatus
+  setAutostart(enabled: boolean): Promise<DesktopStatus>
+}
+
+export function registerIpc(app: AppController, getWindow: () => BrowserWindow | null, browser: AppBrowser, desktop: DesktopIpc): void {
+  ipcMain.handle(IPC.appDesktopStatus, () => desktop.status())
+  ipcMain.handle(IPC.appSetAutostart, (_e, rawEnabled: unknown) => desktop.setAutostart(arg(ipcArgs.flag, rawEnabled, 'enabled')))
   ipcMain.handle(
     IPC.appOpenLogs,
     (): Promise<ActionResult> =>

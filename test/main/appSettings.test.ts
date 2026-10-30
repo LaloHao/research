@@ -28,7 +28,10 @@ describe('app settings', () => {
       apiEnabled: false,
       apiPort: 47823,
       apiAllowCostly: false,
-      capturePdfMode: 'reader'
+      capturePdfMode: 'reader',
+      closeToTray: true,
+      startHidden: false,
+      trayHintShown: false
     })
     expect(await loadSettings(file)).toMatchObject({ contactEmail: 'me@uni.test', lastProjectPath: '/tmp/thesis' })
     await writeFile(file, JSON.stringify({ contactEmail: 42, lastProjectPath: '/x', extra: true }))
@@ -75,5 +78,17 @@ describe('app settings', () => {
       await writeFile(file, JSON.stringify({ capturePdfMode: bad }))
       expect((await loadSettings(file)).capturePdfMode).toBe('reader')
     }
+  })
+
+  it('keeps the tray settings: closing to the tray on by default, starting hidden off, the hint not shown yet', async () => {
+    const file = join(await tmpDir(), 'settings.json')
+    expect(await loadSettings(file)).toMatchObject({ closeToTray: true, startHidden: false, trayHintShown: false })
+    await writeFile(file, JSON.stringify({ closeToTray: false, startHidden: true, trayHintShown: true }))
+    expect(await loadSettings(file)).toMatchObject({ closeToTray: false, startHidden: true, trayHintShown: true })
+    await writeFile(file, JSON.stringify({ closeToTray: 'no', startHidden: 1, trayHintShown: null }))
+    expect(await loadSettings(file)).toMatchObject({ closeToTray: true, startHidden: false, trayHintShown: false })
+    const settings = { ...(await loadSettings(file)), closeToTray: false, trayHintShown: true }
+    await saveSettings(file, settings)
+    expect(await loadSettings(file)).toEqual(settings)
   })
 })

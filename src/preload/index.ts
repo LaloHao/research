@@ -205,7 +205,9 @@ const api: ResearchApi = {
     init: (url) => ipcRenderer.invoke(IPC.syncInit, url)
   },
   app: {
-    openLogs: () => ipcRenderer.invoke(IPC.appOpenLogs)
+    openLogs: () => ipcRenderer.invoke(IPC.appOpenLogs),
+    desktopStatus: () => ipcRenderer.invoke(IPC.appDesktopStatus),
+    setAutostart: (enabled) => ipcRenderer.invoke(IPC.appSetAutostart, enabled)
   },
   localApi: {
     status: () => ipcRenderer.invoke(IPC.localApiStatus),

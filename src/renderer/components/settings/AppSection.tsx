@@ -5,6 +5,7 @@ import { errorText } from '../../lib/errorText'
 import { parseSyncMinutes } from '../../lib/sync'
 import { LocalApiSection } from './LocalApiSection'
 import { ModelsSection } from './ModelsSection'
+import { TraySection } from './TraySection'
 
 type SettingsPatch = Parameters<typeof window.research.settings.set>[0]
 type Field = 'contactEmail' | 'openalexApiKey' | 'autoSync' | 'autoSyncMinutes'
@@ -162,6 +163,7 @@ export function AppSection({ onSaved }: { onSaved: () => void }): React.JSX.Elem
       )}
       <ModelsSection />
       <LocalApiSection onSaved={onSaved} />
+      <TraySection onSaved={onSaved} />
       <h3>{t('settings.logs')}</h3>
       <div className="field">
         <button type="button" disabled={openingLogs} onClick={openLogs}>
