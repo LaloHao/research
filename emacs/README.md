@@ -161,6 +161,8 @@ Errors from the app are shown in Spanish, like the app (no project open, the API
 
 ## Doom Emacs setup
 
+With evil (Doom's default), `C-u` scrolls up: the universal argument this README writes as `C-u` is `SPC u` there (`C-u C-u` is `SPC u SPC u`), e.g. `SPC u SPC m w ?` asks about the paragraph only.
+
 With the `biblio` module (citar) and org-cite export to LaTeX with biblatex/biber, add to `packages.el`:
 
 ```elisp
