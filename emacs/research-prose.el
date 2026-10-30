@@ -22,15 +22,23 @@
 ;; - INFLESZ readability per paragraph, below a threshold;
 ;; - term consistency (`research-prose-term-groups' and `#+PROSE_TERMS:');
 ;; - acronyms of the thesis' `acronimos.tex' written bare instead of with
-;;   `\gls{KEY}', and `\gls{KEY}' of an undefined acronym.
+;;   `\gls{KEY}', and `\gls{KEY}' of an undefined acronym;
+;; - uppercase words that look like an acronym but are not defined there.
 ;;
 ;; Org markup and what is not prose are ignored: headings, keywords, drawers,
-;; src/example/export/comment/quote blocks, tables, comment lines, LaTeX
+;; src/example/export/comment/quote blocks, tables (but for the acronym
+;; checks, since a table exports to LaTeX too), comment lines, LaTeX
 ;; commands, environments and math, citations `[cite:…]', link targets,
 ;; macros, verbatim and code.
 ;;
 ;; `research-prose-check' checks the buffer (or the region) once;
 ;; `research-prose-mode' keeps the checks on while you write.
+;;
+;; Acronyms are the only thing it ever writes, and only on request:
+;; `research-prose-gls-at-point' turns the bare acronym at point into
+;; `\gls{KEY}', `research-prose-gls-fix' walks them all like `query-replace',
+;; `research-prose-auto-gls-mode' converts one as you finish typing it, and
+;; `research-prose-add-acronym' adds an undefined one to `acronimos.tex'.
 
 ;;; Code:
 
@@ -48,7 +56,7 @@
   :prefix "research-prose-")
 
 (defconst research-prose--all-checks
-  '(long-sentence repetition filler gerund adverb passive readability terms acronyms)
+  '(long-sentence repetition filler gerund adverb passive readability terms acronyms new-acronyms)
   "Every check, in the order they run.")
 
 (defcustom research-prose-checks research-prose--all-checks
@@ -61,7 +69,8 @@
               (const :tag "Pasiva perifrástica" passive)
               (const :tag "Legibilidad INFLESZ" readability)
               (const :tag "Coherencia de términos" terms)
-              (const :tag "Acrónimos y \\gls" acronyms)))
+              (const :tag "Acrónimos y \\gls" acronyms)
+              (const :tag "Siglas sin definir en acronimos.tex" new-acronyms)))
 
 (defcustom research-prose-max-sentence-words 40
   "A sentence with more words than this is flagged."
@@ -106,6 +115,26 @@ flagged.  A file adds its own groups with keyword lines such as
 directory and its parents (`locate-dominating-file').  The first one found
 is read: its `\\newacronym{KEY}{SHORT}{LONG}' define the acronyms."
   :type '(repeat string))
+
+(defcustom research-prose-acronym-ignore '("OK" "TODO" "DONE" "NB" "PS" "FAQ")
+  "Uppercase words never noted as undefined acronyms (check `new-acronyms').
+Roman numerals (II to XXXIX) are never noted either."
+  :type '(repeat string))
+
+(defcustom research-prose-gls-capitalize t
+  "Whether a converted acronym that starts a sentence becomes `\\Gls'.
+When non-nil, `research-prose-gls-at-point', `research-prose-gls-fix' and
+`research-prose-auto-gls-mode' write `\\Gls{KEY}' (`\\Glspl{KEY}') for an
+acronym at the start of a sentence, a paragraph, a list item or a table
+cell: the first use of an acronym is expanded to its long form, which
+must then start with a capital.  When nil, always `\\gls'."
+  :type 'boolean)
+
+(defcustom research-prose-auto-gls t
+  "Whether `research-prose-maybe-enable' turns on the auto \\gls too.
+That is `research-prose-auto-gls-mode': with it, in thesis files a
+defined acronym becomes `\\gls{KEY}' as soon as you finish typing it."
+  :type 'boolean)
 
 (defcustom research-prose-skipped-blocks '("src" "example" "export" "comment" "quote" "verse")
   "Org blocks (#+begin_NAME) whose content is not checked."
@@ -269,6 +298,7 @@ label) and leftover braces become spaces; a link's description stays."
     (setq s (research-prose--blank-matches s "\\\\\\[\\(?:.\\|\n\\)*?\\\\\\]"))
     (setq s (research-prose--blank-matches s "\\$\\$\\(?:.\\|\n\\)*?\\$\\$"))
     (setq s (research-prose--blank-matches s "\\$[^ \t\n$]\\(?:[^$\n]*?[^ \t\n$]\\)?\\$"))
+    (setq s (research-prose--blank-matches s "\\\\new\\(?:acronym\\|glossaryentry\\)\\(?:\\[[^]]*\\]\\)?\\(?:{[^}]*}\\)+"))
     (setq s (research-prose--blank-matches s research-prose--argument-commands))
     (setq s (research-prose--blank-matches s "\\\\[a-zA-Z]+\\*?\\(?:\\[[^]\n]*\\]\\)?"))
     (setq s (research-prose--blank-matches s "\\\\[^a-zA-Z \t\n]"))
@@ -276,21 +306,24 @@ label) and leftover braces become spaces; a link's description stays."
     (setq s (research-prose--blank-matches s "^[ \t]*\\(?:[-+]\\|[0-9]+[.)]\\)[ \t]+\\(?:\\[[ X-]\\][ \t]+\\)?"))
     s))
 
-(defun research-prose--paragraphs (beg end)
+(defun research-prose--paragraphs (beg end &optional tables)
   "The prose paragraphs between BEG and END, as (START . END) positions.
 Lines that are not prose (headings, keywords, drawers, skipped blocks and
 environments, tables, comments, display math, lone LaTeX commands) end a
-paragraph, as blank lines do; a list item starts a new one."
+paragraph, as blank lines do; a list item starts a new one.  With TABLES,
+each row of an Org table (not its rules) is a paragraph of its own too."
   (let ((case-fold-search t) out start last block)
     (save-excursion
       (goto-char beg)
       (forward-line 0)
       (while (< (point) end)
         (let* ((bol (point)) (eol (line-end-position))
-               (prose nil))
+               (prose nil) (row nil))
           (cond
            (block
             (when (looking-at block) (setq block nil)))
+           ((and tables (looking-at "^[ \t]*|") (not (looking-at "^[ \t]*|[-+]")))
+            (setq row t))
            ((looking-at "^[ \t]*#\\+begin_\\([a-zA-Z0-9]+\\)")
             (when (member (downcase (match-string 1)) research-prose-skipped-blocks)
               (setq block (concat "^[ \t]*#\\+end_" (regexp-quote (match-string 1)) "\\b"))))
@@ -317,7 +350,8 @@ paragraph, as blank lines do; a list item starts a new one."
             (setq start nil))
           (if prose
               (setq start (or start bol) last (min eol end))
-            (when start (push (cons start last) out) (setq start nil)))
+            (when start (push (cons start last) out) (setq start nil))
+            (when row (push (cons bol (min eol end)) out)))
           (forward-line 1)
           (when (and (= (point) eol) (= eol (point-max))) (goto-char end))))
       (when start (push (cons start last) out)))
@@ -657,38 +691,103 @@ Reads `\\newacronym[...]{KEY}{SHORT}{LONG}' (and, as a defined key only,
               (cons (cons file (cons mtime table)) (assoc-delete-all file research-prose--acronym-cache)))
         table))))
 
-(defun research-prose--acronyms (paragraphs)
-  "Flag bare defined acronyms and `\\gls' of undefined keys in PARAGRAPHS.
-Each paragraph is (START TEXT RAW): RAW is the buffer text, TEXT masked."
+(defun research-prose--acronym-shorts (table)
+  "TABLE's acronyms by how they are written: a hash from SHORT to KEY.
+A key with an uppercase letter, and every key in upper case, count as
+written forms too."
+  (let ((shorts (make-hash-table :test #'equal)))
+    (maphash (lambda (key short)
+               (unless (string-empty-p short) (puthash short key shorts))
+               (when (string-match-p "[[:upper:]]" key) (puthash key key shorts))
+               (unless (gethash (upcase key) shorts) (puthash (upcase key) key shorts)))
+             table)
+    shorts))
+
+(defun research-prose--acronym-lookup (token shorts)
+  "(KEY . PLURAL) when TOKEN is a defined acronym of SHORTS, else nil.
+PLURAL is non-nil when TOKEN is the short form followed by «s» (LLMs)."
+  (let ((key (gethash token shorts)))
+    (cond (key (cons key nil))
+          ((and (string-suffix-p "s" token)
+                (setq key (gethash (substring token 0 -1) shorts)))
+           (cons key t)))))
+
+(defconst research-prose--acronym-regexp "\\<[[:upper:]][[:upper:][:digit:]]+s?\\>"
+  "An uppercase word that may be an acronym, with an optional plural «s».")
+
+(defun research-prose--sentence-start-p (text index)
+  "Whether the word at INDEX of the masked paragraph TEXT starts a sentence.
+At the start of the paragraph (or list item), after . ! ? or …, or at the
+start of a table cell; opening quotes and parentheses in between are
+skipped."
+  (let ((i index))
+    (while (and (> i 0) (memq (aref text (1- i)) '(?\s ?\t ?\n ?« ?\" ?“ ?‘ ?' ?\( ?¿ ?¡)))
+      (cl-decf i))
+    (or (= i 0) (and (memq (aref text (1- i)) '(?. ?! ?? ?… ?|)) t))))
+
+(defun research-prose--acronym-tokens (paragraphs shorts)
+  "The uppercase words of PARAGRAPHS ((START TEXT RAW) ...), outside non-prose.
+Each is (BEG END TOKEN KEY PLURAL CAPITAL), in buffer order: KEY is nil
+when SHORTS does not define it, PLURAL non-nil for SHORT + «s», CAPITAL
+non-nil when it starts a sentence.  Run with `research-prose--syntax-table'."
+  (let ((case-fold-search nil) out)
+    (dolist (p paragraphs)
+      (let ((base (nth 0 p)) (text (nth 1 p)) (pos 0))
+        (while (string-match research-prose--acronym-regexp text pos)
+          (let* ((b (match-beginning 0)) (e (match-end 0))
+                 (token (match-string 0 text))
+                 (hit (research-prose--acronym-lookup token shorts)))
+            (push (list (+ base b) (+ base e) token (car hit) (cdr hit)
+                        (research-prose--sentence-start-p text b))
+                  out)
+            (setq pos e)))))
+    (nreverse out)))
+
+(defun research-prose--acronym-candidate-p (token)
+  "Whether the undefined TOKEN looks like an acronym worth defining.
+2 to 8 uppercase letters or digits (plus a plural «s»), not a Roman
+numeral, not in `research-prose-acronym-ignore'."
+  (let* ((case-fold-search nil)
+         (base (if (string-suffix-p "s" token) (substring token 0 -1) token)))
+    (and (<= 2 (length base) 8)
+         (not (string-match-p "\\`X\\{0,3\\}\\(?:IX\\|IV\\|VI\\{0,3\\}\\|I\\{0,3\\}\\)\\'" base))
+         (not (member base research-prose-acronym-ignore))
+         (not (member token research-prose-acronym-ignore)))))
+
+(defun research-prose--gls-command (key plural capital)
+  "The `\\gls' command for KEY: plural with PLURAL, capitalized with CAPITAL."
+  (format "\\%s%s{%s}" (if (and capital research-prose-gls-capitalize) "Gls" "gls") (if plural "pl" "") key))
+
+(defun research-prose--acronyms (paragraphs checks)
+  "Run the acronym CHECKS over PARAGRAPHS.
+Flag bare defined acronyms and `\\gls' of undefined keys (`acronyms') and
+undefined acronym-like words (`new-acronyms').  Each paragraph is (START
+TEXT RAW): RAW is the buffer text, TEXT masked."
   (when-let* ((file (research-prose--acronym-file)))
     (let* ((table (research-prose-read-acronyms file))
            (name (file-name-nondirectory file))
-           (shorts (make-hash-table :test #'equal))
+           (shorts (research-prose--acronym-shorts table))
            (case-fold-search nil))
-      (maphash (lambda (key short)
-                 (unless (string-empty-p short) (puthash short key shorts))
-                 (when (string-match-p "[[:upper:]]" key) (puthash key key shorts))
-                 (puthash (upcase key) key shorts))
-               table)
-      (dolist (p paragraphs)
-        (let ((base (nth 0 p)) (text (nth 1 p)) (raw (nth 2 p)) (pos 0))
-          (while (string-match "\\<[[:upper:]][[:upper:][:digit:]]+s?\\>" text pos)
-            (let* ((token (match-string 0 text))
-                   (key (or (gethash token shorts)
-                            (and (string-suffix-p "s" token) (gethash (substring token 0 -1) shorts)))))
-              (when key
-                (research-prose--add (+ base (match-beginning 0)) (+ base (match-end 0)) :warning 'acronyms
-                                     (format "Acrónimo «%s» sin \\gls: está definido en %s. Escríbelo \\gls{%s} (\\glspl{%s} en plural) para que el glosario lo desarrolle la primera vez y lo enlace."
-                                             token name key key)))
-              (setq pos (match-end 0))))
-          (setq pos 0)
-          (while (string-match "\\\\\\(?:[Gg]ls[a-zA-Z]*\\|acr[a-zA-Z]*\\)\\*?\\(?:\\[[^]]*\\]\\)?{\\([^}]+\\)}" raw pos)
-            (let ((key (string-trim (match-string 1 raw))))
-              (unless (gethash key table)
-                (research-prose--add (+ base (match-beginning 0)) (+ base (match-end 0)) :error 'acronyms
-                                     (format "\\gls{%s} no está definido en %s: la compilación lo mostrará como un error. ¿Falta el \\newacronym o la clave es otra?"
-                                             key name))))
-            (setq pos (match-end 0))))))))
+      (dolist (tk (research-prose--acronym-tokens paragraphs shorts))
+        (pcase-let ((`(,b ,e ,token ,key ,plural ,capital) tk))
+          (cond ((and key (memq 'acronyms checks))
+                 (research-prose--add b e :warning 'acronyms
+                                      (format "Acrónimo «%s» sin \\gls: está definido en %s. Escríbelo %s para que el glosario lo desarrolle la primera vez y lo enlace (research-prose-gls-at-point lo convierte; research-prose-gls-fix, todos)."
+                                              token name (research-prose--gls-command key plural capital))))
+                ((and (not key) (memq 'new-acronyms checks) (research-prose--acronym-candidate-p token))
+                 (research-prose--add b e :note 'new-acronyms
+                                      (format "«%s» parece una sigla, pero no está en %s. Si lo es, research-prose-add-acronym la define (pide la forma larga) y la convierte en \\gls; si no, agrégala a research-prose-acronym-ignore."
+                                              token name))))))
+      (when (memq 'acronyms checks)
+        (dolist (p paragraphs)
+          (let ((base (nth 0 p)) (raw (nth 2 p)) (pos 0))
+            (while (string-match "\\\\\\(?:[Gg]ls[a-zA-Z]*\\|acr[a-zA-Z]*\\)\\*?\\(?:\\[[^]]*\\]\\)?{\\([^}]+\\)}" raw pos)
+              (let ((key (string-trim (match-string 1 raw))))
+                (unless (gethash key table)
+                  (research-prose--add (+ base (match-beginning 0)) (+ base (match-end 0)) :error 'acronyms
+                                       (format "\\gls{%s} no está definido en %s: la compilación lo mostrará como un error. ¿Falta el \\newacronym o la clave es otra?"
+                                               key name))))
+              (setq pos (match-end 0)))))))))
 
 ;;;; Running the checks
 
@@ -706,12 +805,16 @@ A list of (BEG END TYPE TEXT CHECK), in buffer order."
          (end (or end (point-max)))
          (research-prose--diags nil)
          (checks research-prose-checks)
-         (paragraphs
-          (with-syntax-table research-prose--syntax-table
-            (mapcar (lambda (p)
-                      (let ((raw (buffer-substring-no-properties (car p) (cdr p))))
-                        (list (car p) (research-prose-mask raw) raw)))
-                    (research-prose--paragraphs beg end))))
+         (acronyms (or (memq 'acronyms checks) (memq 'new-acronyms checks)))
+         ;; Table rows only for the acronym checks: a table exports to LaTeX too.
+         (all (with-syntax-table research-prose--syntax-table
+                (mapcar (lambda (p)
+                          (let ((raw (buffer-substring-no-properties (car p) (cdr p))))
+                            (list (car p) (research-prose-mask raw) raw)))
+                        (research-prose--paragraphs beg end acronyms))))
+         (paragraphs (if acronyms
+                         (cl-remove-if (lambda (p) (string-match-p "\\`[ \t]*|" (nth 2 p))) all)
+                       all))
          (terms (and (memq 'repetition checks) (research-prose--term-words))))
     (with-syntax-table research-prose--syntax-table
       (dolist (p paragraphs)
@@ -725,7 +828,7 @@ A list of (BEG END TYPE TEXT CHECK), in buffer order."
           (when (memq 'passive checks) (research-prose--passive text base))
           (when (memq 'readability checks) (research-prose--readability text base sentences))))
       (when (memq 'terms checks) (research-prose--terms paragraphs))
-      (when (memq 'acronyms checks) (research-prose--acronyms paragraphs)))
+      (when acronyms (research-prose--acronyms all checks)))
     (sort research-prose--diags (lambda (a b) (or (< (car a) (car b)) (and (= (car a) (car b)) (< (cadr a) (cadr b))))))))
 
 (defvar-local research-prose--scope nil
@@ -799,8 +902,262 @@ one with an acronym file of `research-prose-acronym-files' above it."
 
 ;;;###autoload
 (defun research-prose-maybe-enable ()
-  "Turn on `research-prose-mode' in a thesis file (for `org-mode-hook')."
-  (when (research-prose-thesis-file-p) (research-prose-mode 1)))
+  "Turn on `research-prose-mode' in a thesis file (for `org-mode-hook').
+And `research-prose-auto-gls-mode' too, when `research-prose-auto-gls'."
+  (when (research-prose-thesis-file-p)
+    (research-prose-mode 1)
+    (when research-prose-auto-gls (research-prose-auto-gls-mode 1))))
+
+;;;; Converting acronyms
+
+(defun research-prose--in-acronym-file-p ()
+  "Whether the buffer visits the thesis' acronym file itself."
+  (let ((file (research-prose--acronym-file)))
+    (and file buffer-file-name (file-equal-p file buffer-file-name))))
+
+(defun research-prose--acronym-file-or-error ()
+  "The thesis' acronym file, or a user error when there is none."
+  (or (research-prose--acronym-file)
+      (user-error "No encontré %s en la carpeta de este archivo ni arriba de ella"
+                  (string-join research-prose-acronym-files " ni "))))
+
+(defun research-prose--tokens-in (beg end)
+  "The uppercase prose words between BEG and END.
+As (BEG END TOKEN KEY PLURAL CAPITAL), see `research-prose--acronym-tokens'.
+Every paragraph is found from the start of the buffer, so that BEG inside
+a block or a drawer is recognized as such.  Nil without an acronym file."
+  (when-let* ((file (research-prose--acronym-file)))
+    (let ((shorts (research-prose--acronym-shorts (research-prose-read-acronyms file))))
+      (with-syntax-table research-prose--syntax-table
+        (let ((paragraphs
+               (cl-loop for p in (research-prose--paragraphs (point-min) (point-max) t)
+                        when (and (>= (cdr p) beg) (<= (car p) end))
+                        collect (let ((raw (buffer-substring-no-properties (car p) (cdr p))))
+                                  (list (car p) (research-prose-mask raw) raw)))))
+          (cl-remove-if-not (lambda (tk) (and (>= (nth 0 tk) beg) (<= (nth 1 tk) end)))
+                            (research-prose--acronym-tokens paragraphs shorts)))))))
+
+(defun research-prose--token-at (pos)
+  "The uppercase prose word around POS (it may end at POS), or nil."
+  (save-excursion
+    (goto-char pos)
+    (cl-find-if (lambda (tk) (<= (nth 0 tk) pos (nth 1 tk)))
+                (research-prose--tokens-in (line-beginning-position) (line-end-position)))))
+
+(defun research-prose--convert (token-info)
+  "Replace the acronym of TOKEN-INFO with its `\\gls'.
+TOKEN-INFO is (BEG END TOKEN KEY PLURAL CAPITAL).  Returns the command written."
+  (pcase-let ((`(,b ,e ,_token ,key ,plural ,capital) token-info))
+    (let ((command (research-prose--gls-command key plural capital)))
+      (save-excursion
+        (goto-char b)
+        (delete-region b e)
+        (insert command))
+      command)))
+
+(defun research-prose--refresh ()
+  "Recheck the buffer when `research-prose-mode' is on."
+  (when (and (bound-and-true-p research-prose-mode) (bound-and-true-p flymake-mode) (fboundp 'flymake-start))
+    (flymake-start)))
+
+;;;###autoload
+(defun research-prose-gls-at-point ()
+  "Write the bare acronym at point as `\\gls{KEY}' (`\\glspl{KEY}' for its plural).
+The acronym at point is the one the Flymake diagnostic at point is about.
+It is matched on its short form in the acronym file
+\(`\\newacronym{KEY}{SHORT}{LONG}') and written with its KEY; at the start
+of a sentence it becomes `\\Gls' (see `research-prose-gls-capitalize').
+An undefined acronym is offered to `research-prose-add-acronym'."
+  (interactive)
+  (research-prose--acronym-file-or-error)
+  (when (research-prose--in-acronym-file-p)
+    (user-error "Este es el archivo de acrónimos: aquí no se convierte nada"))
+  (let ((tk (research-prose--token-at (point))))
+    (cond
+     ((null tk) (user-error "No hay un acrónimo en el punto (o está donde no es prosa: código, cita, comando de LaTeX…)"))
+     ((nth 3 tk)
+      (let ((command (research-prose--convert tk)))
+        (research-prose--refresh)
+        (message "«%s» → %s" (nth 2 tk) command)))
+     ((y-or-n-p (format "«%s» no está en %s. ¿Agregarlo? "
+                        (nth 2 tk) (file-name-nondirectory (research-prose--acronym-file))))
+      (call-interactively #'research-prose-add-acronym)))))
+
+(defvar research-prose-gls-fix-read-function #'research-prose--gls-fix-read
+  "Function that asks about one conversion of `research-prose-gls-fix'.
+Called with the prompt; returns ?y, ?n, ?! or ?q.")
+
+(defun research-prose--gls-fix-read (prompt)
+  "Read the answer to PROMPT: y (or SPC), n (or DEL), ! or q (or RET)."
+  (pcase (read-char-choice prompt '(?y ?n ?! ?q ?\s ?\d ?\r))
+    (?\s ?y) (?\d ?n) (?\r ?q) (c c)))
+
+;;;###autoload
+(defun research-prose-gls-fix (&optional beg end)
+  "Write the bare acronyms of the region or buffer as `\\gls', asking each time.
+BEG and END delimit the region.  Like `query-replace': y (or SPC)
+converts this one, n (or DEL) skips it, ! converts it and the rest
+without asking, q (or RET) stops.  What is not
+prose is skipped, as in the checks (code, examples, comments, `#+' lines,
+headings, citations, link targets, LaTeX commands such as an existing
+`\\gls{…}', math, verbatim); table rows are included.  The whole run is
+one undo step."
+  (interactive (if (use-region-p) (list (region-beginning) (region-end))))
+  (research-prose--acronym-file-or-error)
+  (when (research-prose--in-acronym-file-p)
+    (user-error "Este es el archivo de acrónimos: aquí no se convierte nada"))
+  (let* ((beg (or beg (point-min))) (end (or end (point-max)))
+         (found (cl-remove-if-not (lambda (tk) (nth 3 tk)) (research-prose--tokens-in beg end)))
+         (items (mapcar (lambda (tk) (cons (cons (copy-marker (nth 0 tk)) (copy-marker (nth 1 tk))) tk)) found))
+         (overlay (make-overlay (point) (point)))
+         (converted 0) (skipped 0) all)
+    (overlay-put overlay 'face 'query-replace)
+    (overlay-put overlay 'priority 1000)
+    (unwind-protect
+        (with-undo-amalgamate
+          (catch 'quit
+            (dolist (item items)
+              (let* ((b (marker-position (caar item))) (e (marker-position (cdar item)))
+                     (tk (append (list b e) (nthcdr 2 (cdr item)))))
+                (when (equal (buffer-substring-no-properties b e) (nth 2 tk))
+                  (let ((answer
+                         (if all ?y
+                           (move-overlay overlay b e)
+                           (goto-char e)
+                           (funcall research-prose-gls-fix-read-function
+                                    (format "¿Convertir «%s» en %s? (y sí, n no, ! todos, q salir) "
+                                            (nth 2 tk) (apply #'research-prose--gls-command (nthcdr 3 tk)))))))
+                    (pcase answer
+                      (?! (setq all t) (research-prose--convert tk) (cl-incf converted))
+                      (?y (research-prose--convert tk) (cl-incf converted))
+                      (?q (throw 'quit nil))
+                      (_ (cl-incf skipped)))))))))
+      (delete-overlay overlay)
+      (dolist (item items) (set-marker (caar item) nil) (set-marker (cdar item) nil)))
+    (research-prose--refresh)
+    (message (if found "Acrónimos: %d convertidos a \\gls, %d sin tocar" "Acrónimos: ninguno escrito sin \\gls")
+             converted (- (length found) converted))
+    converted))
+
+;;;; Auto conversion
+
+(defconst research-prose--auto-gls-triggers '(?\s ?\t ?\n ?. ?, ?\; ?: ?! ?? ?\) ?» ?” ?’ ?\")
+  "Characters that, typed after an acronym, end it.")
+
+(defconst research-prose--auto-gls-before "[ \t\n(«\"“‘'¿¡—]"
+  "Characters that may come right before an acronym converted as you type.
+Anything else (`{', `[', `=', `~', `$', `\\', `@', `:', `/'…) may start
+markup not finished yet, so the acronym is left alone.")
+
+(defun research-prose--auto-gls ()
+  "Convert the defined acronym just typed before the character at point.
+For `post-self-insert-hook' in `research-prose-auto-gls-mode'."
+  (when (and (memq (char-before) research-prose--auto-gls-triggers)
+             (> (point) (1+ (point-min))))
+    (let ((end (1- (point))) (case-fold-search nil) beg token)
+      (save-excursion
+        (goto-char end)
+        (with-syntax-table research-prose--syntax-table
+          (when (and (looking-back "\\<[[:upper:]][[:upper:][:digit:]]+s?" (line-beginning-position) t)
+                     (= (match-end 0) end))
+            (setq beg (match-beginning 0) token (match-string-no-properties 0)))))
+      (when (and beg
+                 (or (= beg (point-min))
+                     (string-match-p research-prose--auto-gls-before (string (char-before beg)))))
+        (when-let* ((file (research-prose--acronym-file))
+                    ((research-prose--acronym-lookup token (research-prose--acronym-shorts (research-prose-read-acronyms file))))
+                    ((not (research-prose--in-acronym-file-p)))
+                    (tk (cl-find-if (lambda (tk) (and (= (nth 0 tk) beg) (= (nth 1 tk) end) (nth 3 tk)))
+                                    (research-prose--tokens-in beg end))))
+          ;; Its own undo step: one undo brings the acronym back and keeps what was typed.
+          (undo-boundary)
+          (research-prose--convert tk))))))
+
+;;;###autoload
+(define-minor-mode research-prose-auto-gls-mode
+  "Write a defined acronym as `\\gls{KEY}' as soon as you finish typing it.
+After a space, a newline or punctuation, a bare acronym of the thesis'
+acronym file just typed becomes `\\gls{KEY}' (`\\glspl{KEY}' for its
+plural, `\\Gls' at the start of a sentence), unless it is where the
+checks see no prose (code, comments, `#+' lines, headings, citations,
+links, LaTeX, math, verbatim) or right after a character that may open
+markup.  `undo' right after it brings the bare acronym back.  Never in the
+acronym file itself.  `research-prose-maybe-enable' turns it on in thesis
+files when `research-prose-auto-gls' is non-nil."
+  :lighter " gls"
+  (if research-prose-auto-gls-mode
+      (add-hook 'post-self-insert-hook #'research-prose--auto-gls nil t)
+    (remove-hook 'post-self-insert-hook #'research-prose--auto-gls t)))
+
+;;;; Adding acronyms
+
+(defun research-prose--insert-acronym-definition (key short long)
+  "Insert `\\newacronym{KEY}{SHORT}{LONG}' into the current acronym file buffer.
+In order of key when the definitions are sorted, else after the last one
+\(or at the end); comments and everything else are kept."
+  (save-excursion
+    (save-restriction
+      (widen)
+      (goto-char (point-min))
+      (let ((case-fold-search nil) entries)
+        (while (re-search-forward "^[ \t]*\\\\newacronym\\(?:\\[[^]]*\\]\\)?{\\([^}]+\\)}" nil t)
+          (push (cons (downcase (string-trim (match-string-no-properties 1))) (line-beginning-position)) entries))
+        (setq entries (nreverse entries))
+        (let* ((sorted (cl-loop for (a b) on entries while b always (not (string< (car b) (car a)))))
+               (next (and sorted (cl-find-if (lambda (e) (string< (downcase key) (car e))) entries))))
+          (cond (next (goto-char (cdr next)))
+                (entries (goto-char (cdr (car (last entries)))) (forward-line 1))
+                (t (goto-char (point-max))))
+          (when (and (eobp) (not (bolp))) (insert "\n"))
+          (insert (format "\\newacronym{%s}{%s}{%s}\n" key short long)))))))
+
+;;;###autoload
+(defun research-prose-add-acronym (short long &optional key)
+  "Define the acronym SHORT, with LONG form and KEY, in the thesis' acronym file.
+Appends `\\newacronym{KEY}{SHORT}{LONG}' (in order when the file is sorted by
+key), saves the file (your buffer, if you have it open) and offers to
+convert the acronym at point.  Interactively, SHORT defaults to the
+uppercase word at point (without a plural «s») and KEY to SHORT in lower
+case."
+  (interactive
+   (let* ((file (research-prose--acronym-file-or-error))
+          (at (let ((tk (research-prose--token-at (point))))
+                (and tk (let ((token (nth 2 tk)))
+                          (if (and (string-suffix-p "s" token) (> (length token) 2)) (substring token 0 -1) token)))))
+          (short (string-trim (read-string (format-prompt "Sigla" at) nil nil at)))
+          (long (string-trim (read-string (format "Forma larga de %s (en %s): " short (file-name-nondirectory file)))))
+          (key (string-trim (read-string (format-prompt "Clave" (downcase short)) nil nil (downcase short)))))
+     (list short long key)))
+  (let* ((file (research-prose--acronym-file-or-error))
+         (key (if (or (null key) (string-empty-p key)) (downcase short) key))
+         (table (research-prose-read-acronyms file))
+         (name (file-name-nondirectory file)))
+    (when (or (string-empty-p short) (string-empty-p long))
+      (user-error "La sigla y la forma larga no pueden quedar vacías"))
+    (when (string-match-p "[{}\\\\%,]" key)
+      (user-error "La clave «%s» no puede llevar llaves, barras, comas ni %%" key))
+    (when (gethash key table)
+      (user-error "La clave «%s» ya está definida en %s" key name))
+    (when-let* ((other (gethash short (research-prose--acronym-shorts table))))
+      (user-error "«%s» ya está definido en %s como \\gls{%s}" short name other))
+    (let* ((visiting (find-buffer-visiting file))
+           (modified (and visiting (buffer-modified-p visiting)))
+           (buffer (or visiting (find-file-noselect file))))
+      (with-current-buffer buffer
+        (research-prose--insert-acronym-definition key short long)
+        (when (or (not modified)
+                  (y-or-n-p (format "%s tenía cambios sin guardar; ¿guardarlo con todo? " name)))
+          (save-buffer)))
+      (unless visiting (kill-buffer buffer)))
+    (setq research-prose--acronym-cache (assoc-delete-all file research-prose--acronym-cache))
+    (message "Agregado \\newacronym{%s}{%s}{%s} a %s" key short long name)
+    (let ((tk (and (not (research-prose--in-acronym-file-p)) (research-prose--token-at (point)))))
+      (when (and tk (equal (nth 3 tk) key)
+                 (y-or-n-p (format "¿Convertir «%s» en %s? " (nth 2 tk) (apply #'research-prose--gls-command (nthcdr 3 tk)))))
+        (research-prose--convert tk)))
+    (research-prose--refresh)
+    key))
+
 
 (provide 'research-prose)
 ;;; research-prose.el ends here

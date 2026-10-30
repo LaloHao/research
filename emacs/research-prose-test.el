@@ -182,9 +182,255 @@
               (should (equal (research-prose-test--found 'acronyms)
                              '((acronyms :warning "LLMs") (acronyms :warning "PII")
                                (acronyms :error "\\gls{old}") (acronyms :error "\\glspl{xyz}"))))
-              (should (string-match-p "Escríbelo \\\\gls{llm}" (car (research-prose-test--messages 'acronyms)))))
+              (should (string-match-p "Escríbelo \\\\glspl{llm}" (car (research-prose-test--messages 'acronyms)))))
             (set-buffer-modified-p nil)))
       (delete-directory root t))))
+
+;;;; Acronyms: conversion and definition
+
+(defconst research-prose-test--defs
+  (concat "% Acrónimos de la tesis\n"
+          "\\newacronym{llm}{LLM}{modelo de lenguaje grande}\n"
+          "\\newacronym{ner}{REN}{reconocimiento de entidades nombradas}\n"
+          "\\newacronym{pii}{PII}{información personal identificable}\n")
+  "A sorted acronym file: the key of REN is ner.")
+
+(defmacro research-prose-test--thesis (defs text &rest body)
+  "Run BODY in an Org buffer visiting cap1.org with TEXT, next to an acronimos.tex holding DEFS.
+The variable `root' is the folder."
+  (declare (indent 2))
+  `(let* ((root (file-name-as-directory (make-temp-file "research-prose" t)))
+          (research-prose--acronym-cache nil)
+          (research-prose-acronym-files '("acronimos.tex"))
+          (research-prose-gls-capitalize t)
+          (research-prose-term-groups nil))
+     (unwind-protect
+         (progn
+           (with-temp-file (expand-file-name "acronimos.tex" root) (insert ,defs))
+           (with-temp-buffer
+             (setq buffer-file-name (expand-file-name "cap1.org" root))
+             (insert ,text)
+             (org-mode)
+             (buffer-enable-undo)
+             (goto-char (point-min))
+             (unwind-protect (progn ,@body)
+               (set-buffer-modified-p nil)
+               (setq buffer-file-name nil))))
+       (delete-directory root t))))
+
+(defun research-prose-test--goto (text &optional nth)
+  "Put point inside the NTH (1 by default) occurrence of TEXT."
+  (goto-char (point-min))
+  (search-forward text nil nil (or nth 1))
+  (goto-char (1+ (match-beginning 0))))
+
+(defun research-prose-test--text ()
+  (buffer-substring-no-properties (point-min) (point-max)))
+
+(defmacro research-prose-test--answering (answers &rest body)
+  "Run BODY with `research-prose-gls-fix' reading ANSWERS (chars) in turn; the prompts go to `prompts'."
+  (declare (indent 1))
+  `(let* ((queue (copy-sequence ,answers))
+          (prompts nil)
+          (research-prose-gls-fix-read-function
+           (lambda (prompt) (push prompt prompts) (or (pop queue) ?q))))
+     ,@body))
+
+(ert-deftest research-prose-test-gls-at-point ()
+  (research-prose-test--thesis research-prose-test--defs
+      "Los LLMs y el REN tratan PII. LLM gana; el llm no.\n"
+    (research-prose-test--goto "LLMs")
+    (research-prose-gls-at-point)
+    (research-prose-test--goto "REN")
+    (research-prose-gls-at-point)
+    ;; At the end of the word, as after typing it.
+    (research-prose-test--goto "PII")
+    (forward-word)
+    (research-prose-gls-at-point)
+    (research-prose-test--goto "LLM gana")
+    (research-prose-gls-at-point)
+    (should (equal (research-prose-test--text)
+                   "Los \\glspl{llm} y el \\gls{ner} tratan \\gls{pii}. \\Gls{llm} gana; el llm no.\n"))
+    (research-prose-test--goto "llm no")
+    (should-error (research-prose-gls-at-point) :type 'user-error))
+  (research-prose-test--thesis research-prose-test--defs "Fin. LLMs al inicio.\n"
+    (let ((research-prose-gls-capitalize nil))
+      (research-prose-test--goto "LLMs")
+      (research-prose-gls-at-point)
+      (should (equal (research-prose-test--text) "Fin. \\glspl{llm} al inicio.\n")))))
+
+(ert-deftest research-prose-test-gls-at-point-undefined-offers-to-add ()
+  (research-prose-test--thesis research-prose-test--defs "El HTTP falla.\n"
+    (research-prose-test--goto "HTTP")
+    (let (asked)
+      (cl-letf (((symbol-function 'y-or-n-p) (lambda (prompt) (setq asked prompt) nil)))
+        (research-prose-gls-at-point))
+      (should (string-match-p "«HTTP» no está en acronimos.tex" asked)))
+    (should (equal (research-prose-test--text) "El HTTP falla.\n"))))
+
+(ert-deftest research-prose-test-gls-fix-asks-like-query-replace ()
+  (let ((text "LLM uno, REN dos, PII tres, LLMs cuatro, REN cinco.\n"))
+    ;; y n ! : the rest without asking.
+    (research-prose-test--thesis research-prose-test--defs text
+      (research-prose-test--answering '(?y ?n ?!)
+        (should (= (research-prose-gls-fix) 4))
+        (should (= (length prompts) 3))
+        (should (string-match-p "¿Convertir «LLM» en \\\\Gls{llm}?" (car (last prompts)))))
+      (should (equal (research-prose-test--text)
+                     "\\Gls{llm} uno, REN dos, \\gls{pii} tres, \\glspl{llm} cuatro, \\gls{ner} cinco.\n"))
+      ;; The whole run is one undo step.
+      (undo-boundary)
+      (let ((last-command nil)) (undo))
+      (should (equal (research-prose-test--text) text)))
+    ;; q stops.
+    (research-prose-test--thesis research-prose-test--defs text
+      (research-prose-test--answering '(?y ?q)
+        (should (= (research-prose-gls-fix) 1)))
+      (should (equal (research-prose-test--text)
+                     "\\Gls{llm} uno, REN dos, PII tres, LLMs cuatro, REN cinco.\n")))
+    ;; Only the region.
+    (research-prose-test--thesis research-prose-test--defs text
+      (research-prose-test--answering '(?! )
+        (should (= (research-prose-gls-fix 10 30) 2)))
+      (should (equal (research-prose-test--text)
+                     "LLM uno, \\gls{ner} dos, \\gls{pii} tres, LLMs cuatro, REN cinco.\n")))))
+
+(ert-deftest research-prose-test-gls-fix-skips-what-is-not-prose ()
+  (research-prose-test--thesis research-prose-test--defs
+      (concat "#+title: El LLM\n"
+              "* LLM en un encabezado\n"
+              "#+begin_src python\nLLM = 1\n#+end_src\n"
+              "#+begin_example\nLLM\n#+end_example\n"
+              "# LLM en un comentario\n"
+              ": LLM en ancho fijo\n"
+              "Prosa con LLM, [cite:@LLM2020], [[file:LLM.org][el archivo]], \\gls{llm}, \\acrshort{llm}, $LLM$, =LLM=, ~LLM~ y \\newacronym{x}{LLM}{y}.\n"
+              "| LLM | PII |\n|-----+-----|\n| REN | x   |\n")
+    (research-prose-test--answering '(?!)
+      (should (= (research-prose-gls-fix) 4)))
+    (should (string-match-p (regexp-quote "Prosa con \\gls{llm}, [cite:@LLM2020], [[file:LLM.org][el archivo]], \\gls{llm}, \\acrshort{llm}, $LLM$, =LLM=, ~LLM~ y \\newacronym{x}{LLM}{y}.")
+                            (research-prose-test--text)))
+    (should (string-match-p (regexp-quote "| \\Gls{llm} | \\Gls{pii} |\n|-----+-----|\n| \\Gls{ner} | x   |")
+                            (research-prose-test--text)))
+    (should (string-prefix-p "#+title: El LLM\n* LLM en un encabezado\n#+begin_src python\nLLM = 1\n#+end_src\n#+begin_example\nLLM\n#+end_example\n# LLM en un comentario\n: LLM en ancho fijo\n"
+                             (research-prose-test--text)))))
+
+(defun research-prose-test--type (string)
+  "Type STRING as `self-insert-command' would, one command per character."
+  (dolist (c (string-to-list string))
+    (let ((last-command-event c) (this-command 'self-insert-command))
+      (self-insert-command 1))
+    (undo-boundary)))
+
+(ert-deftest research-prose-test-auto-gls-mode ()
+  (research-prose-test--thesis research-prose-test--defs ""
+    (research-prose-auto-gls-mode 1)
+    (research-prose-test--type "Los LLMs y el REN")
+    (should (equal (research-prose-test--text) "Los \\glspl{llm} y el REN"))
+    (research-prose-test--type ".")
+    (should (equal (research-prose-test--text) "Los \\glspl{llm} y el \\gls{ner}."))
+    ;; One undo brings the acronym back and keeps the typed character.
+    (let ((last-command nil)) (undo))
+    (should (equal (research-prose-test--text) "Los \\glspl{llm} y el REN."))
+    (goto-char (point-max))
+    (research-prose-test--type " LLM\nPII =LLM= [[LLM] $LLM$ HTTP ")
+    (should (equal (research-prose-test--text)
+                   "Los \\glspl{llm} y el REN. \\Gls{llm}\n\\Gls{pii} =LLM= [[LLM] $LLM$ HTTP "))
+    (research-prose-auto-gls-mode -1)
+    (research-prose-test--type "LLM ")
+    (should (string-suffix-p "HTTP LLM " (research-prose-test--text))))
+  ;; Not inside a source block.
+  (research-prose-test--thesis research-prose-test--defs "#+begin_src python\n\n#+end_src\n"
+    (research-prose-auto-gls-mode 1)
+    (forward-line 1)
+    (research-prose-test--type "x = LLM ")
+    (should (equal (research-prose-test--text) "#+begin_src python\nx = LLM \n#+end_src\n"))))
+
+(ert-deftest research-prose-test-never-in-the-acronym-file ()
+  (research-prose-test--thesis research-prose-test--defs "Nada.\n"
+    (with-temp-buffer
+      (setq buffer-file-name (expand-file-name "acronimos.tex" root))
+      (insert "% LLM aquí\nEl LLM ")
+      (research-prose-auto-gls-mode 1)
+      (research-prose-test--type "PII ")
+      (should (equal (research-prose-test--text) "% LLM aquí\nEl LLM PII "))
+      (goto-char 15)
+      (should-error (research-prose-gls-at-point) :type 'user-error)
+      (should-error (research-prose-gls-fix) :type 'user-error)
+      (set-buffer-modified-p nil)
+      (setq buffer-file-name nil))))
+
+(ert-deftest research-prose-test-add-acronym ()
+  (research-prose-test--thesis research-prose-test--defs "El HTTP falla.\n"
+    (research-prose-test--goto "HTTP")
+    (let (asked)
+      (cl-letf (((symbol-function 'y-or-n-p) (lambda (prompt) (setq asked prompt) t)))
+        (should (equal (research-prose-add-acronym "HTTP" "protocolo de transferencia de hipertexto") "http")))
+      (should (string-match-p "¿Convertir «HTTP» en \\\\gls{http}?" asked)))
+    (should (equal (research-prose-test--text) "El \\gls{http} falla.\n"))
+    ;; Sorted file: in order of key; the comment stays.
+    (should (equal (with-temp-buffer (insert-file-contents (expand-file-name "acronimos.tex" root)) (buffer-string))
+                   (concat "% Acrónimos de la tesis\n"
+                           "\\newacronym{http}{HTTP}{protocolo de transferencia de hipertexto}\n"
+                           "\\newacronym{llm}{LLM}{modelo de lenguaje grande}\n"
+                           "\\newacronym{ner}{REN}{reconocimiento de entidades nombradas}\n"
+                           "\\newacronym{pii}{PII}{información personal identificable}\n")))
+    ;; The cache knows it at once.
+    (should (equal (gethash "http" (research-prose-read-acronyms (expand-file-name "acronimos.tex" root)))
+                   "HTTP"))
+    (should-error (research-prose-add-acronym "HTTP" "otra vez") :type 'user-error)
+    (should-error (research-prose-add-acronym "XYZ" "otra" "llm") :type 'user-error))
+  ;; Unsorted file: after the last definition (saving in the file's mode may add a final newline).
+  (research-prose-test--thesis "\\newacronym{zz}{ZZ}{zeta}\n\\newacronym{aa}{AA}{a}\n% fin\n" "Texto.\n"
+    (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+      (research-prose-add-acronym "API" "interfaz de programación" "api"))
+    (should (equal (with-temp-buffer (insert-file-contents (expand-file-name "acronimos.tex" root)) (buffer-string))
+                   "\\newacronym{zz}{ZZ}{zeta}\n\\newacronym{aa}{AA}{a}\n\\newacronym{api}{API}{interfaz de programación}\n% fin\n")))
+  ;; The user's own buffer of the file is the one changed and saved.
+  (research-prose-test--thesis research-prose-test--defs "Texto.\n"
+    (let ((own (find-file-noselect (expand-file-name "acronimos.tex" root))))
+      (unwind-protect
+          (progn
+            (research-prose-add-acronym "API" "interfaz" nil)
+            (should (buffer-live-p own))
+            (should-not (buffer-modified-p own))
+            (should (string-match-p "newacronym{api}{API}{interfaz}" (with-current-buffer own (buffer-string)))))
+        (kill-buffer own)))))
+
+(ert-deftest research-prose-test-undefined-acronyms-are-noted ()
+  (research-prose-test--thesis research-prose-test--defs
+      "El HTTP y las APIs del siglo XXI, OK, el LLM y \\gls{llm}; la parte II y la ABCDEFGHI.\n"
+    (let ((research-prose-checks '(new-acronyms)))
+      (should (equal (research-prose-test--found) '((new-acronyms :note "HTTP") (new-acronyms :note "APIs"))))
+      (should (string-match-p "research-prose-add-acronym" (car (research-prose-test--messages 'new-acronyms)))))
+    (let ((research-prose-checks '(acronyms)))
+      (should (equal (research-prose-test--found) '((acronyms :warning "LLM")))))))
+
+(ert-deftest research-prose-test-acronym-checks-include-table-rows ()
+  (research-prose-test--thesis research-prose-test--defs "Prosa.\n\n| LLM | cabe mencionar |\n|-----+---|\n"
+    (let ((research-prose-checks research-prose--all-checks))
+      ;; Only the acronym check looks at tables.
+      (should (equal (research-prose-test--found) '((acronyms :warning "LLM"))))
+      (should (string-match-p "Escríbelo \\\\Gls{llm}" (car (research-prose-test--messages 'acronyms)))))))
+
+(ert-deftest research-prose-test-add-acronym-to-a-file-without-definitions ()
+  (research-prose-test--thesis "% vacío" "Texto.\n"
+    (research-prose-add-acronym "API" "interfaz")
+    (should (equal (with-temp-buffer (insert-file-contents (expand-file-name "acronimos.tex" root)) (buffer-string))
+                   "% vacío\n\\newacronym{api}{API}{interfaz}\n"))))
+
+(ert-deftest research-prose-test-maybe-enable-turns-on-auto-gls ()
+  (research-prose-test--thesis research-prose-test--defs "Texto.\n"
+    (let ((research-prose-thesis-directories nil))
+      (let ((research-prose-auto-gls nil))
+        (research-prose-maybe-enable)
+        (should research-prose-mode)
+        (should-not research-prose-auto-gls-mode))
+      (let ((research-prose-auto-gls t))
+        (research-prose-maybe-enable)
+        (should research-prose-auto-gls-mode))
+      (research-prose-mode -1)
+      (research-prose-auto-gls-mode -1)
+      (flymake-mode -1))))
 
 (ert-deftest research-prose-test-checks-can-be-turned-off ()
   (research-prose-test--in "Cabe mencionar que los datos fueron analizados."
