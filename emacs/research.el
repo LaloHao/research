@@ -33,11 +33,13 @@
 ;; `yes-or-no-p'.  The tutor's never write your text: they point, explain, ask,
 ;; outline, or offer options of one sentence for you to choose from.
 ;;
-;; `research-ask' (`?' in the command map) sends the region, paragraph,
-;; section or file with your question: Claude gives its opinion (what to
-;; change and why, and questions) without rewriting your text unless you allow
-;; a proposed version for that question.  The answer streams into
-;; `*research-ask*' and is a conversation of the app's Chat view.
+;; `research-ask' (`?' in the command map) sends the selection (evil's
+;; visual one too), else the whole file, with your question (C-u: the
+;; paragraph, C-u C-u: the section), plus the chapter and the thesis outline
+;; as background: Claude gives its opinion (what to change and why, and
+;; questions) without rewriting your text unless you allow a proposed version
+;; for that question.  The answer streams into `*research-ask*' and is a
+;; conversation of the app's Chat view.
 ;;
 ;; `research-prose-check' (research-prose.el, `l' in the command map) checks
 ;; Spanish academic prose locally, without the app; `g', `G', `A' and `T'
@@ -1330,25 +1332,45 @@ excerpt jumps to it.  Shows the estimated cost and asks first."
 
 ;;;; Asking Claude about what you write
 
-;; `research-ask' sends a passage (the region, the paragraph, the section or
-;; the file) with your question; Claude answers as a reader of your thesis:
-;; what works, what to change and why, and questions.  It does not rewrite
-;; your text unless you allow a proposed rewrite for that question.  The
-;; answer streams into `*research-ask*'; your buffer is never touched.
+;; `research-ask' sends a passage (the selection, else the whole file; the
+;; paragraph or the section with a prefix) with your question, and as
+;; background the chapter it is in and the outline of the whole thesis;
+;; Claude answers as a reader of your thesis: what works, what to change and
+;; why, and questions.  It does not rewrite your text unless you allow a
+;; proposed rewrite for that question.  The answer streams into
+;; `*research-ask*'; your buffer is never touched.
 
 (declare-function org-get-outline-path "org")
+(declare-function evil-visual-state-p "evil-states")
+(defvar evil-visual-beginning)
+(defvar evil-visual-end)
+(defvar evil-visual-selection)
 
 (defcustom research-ask-poll-interval 2
   "Seconds between two looks at the answer `research-ask' is following."
   :type 'number)
 
 (defconst research--ask-max-chars 30000
-  "The most characters `research-ask' sends.")
+  "The most characters of the passage `research-ask' sends.")
+
+(defconst research--ask-chapter-max-chars 80000
+  "The most characters of the chapter `research-ask' sends as background.
+A longer file goes as a window of `research--ask-chapter-margin'
+characters around the passage.")
+
+(defconst research--ask-chapter-margin 20000
+  "Characters of a long chapter sent before and after the passage.")
+
+(defconst research--ask-outline-max-chars 30000
+  "The most characters of the thesis outline `research-ask' sends.")
+
+(defconst research--ask-thesis-file "tesis.org"
+  "The thesis' main file, whose `#+INCLUDE' lines give the outline.")
 
 (defvar research--ask-history nil "Questions asked with `research-ask'.")
 
 (defconst research--ask-scopes
-  '(("region" . "región") ("paragraph" . "párrafo") ("subtree" . "sección") ("file" . "archivo completo"))
+  '(("region" . "selección") ("file" . "capítulo/archivo") ("paragraph" . "párrafo") ("subtree" . "sección"))
   "What `research-ask' sends, in Spanish.")
 
 (defconst research--ask-modes
@@ -1364,8 +1386,11 @@ excerpt jumps to it.  Shows the estimated cost and asks first."
 
 (defvar-local research--ask-state nil
   "The conversation of this `*research-ask*' buffer: a plist with `:id',
-`:timer', `:failures' and, for the question being answered, the markers
-`:status' and `:answer' (each a cons of start and end).")
+`:timer', `:failures', where the passage is (`:source' buffer, `:path',
+`:scope', `:beg' and `:end' markers, `:pos' and `:end-pos' numbers), so a
+follow-up sends its background again, and, for the question being
+answered, the markers `:status' and `:answer' (each a cons of start and
+end).")
 
 (defvar research-ask-mode-map
   (let ((map (make-sparse-keymap)))
@@ -1383,19 +1408,70 @@ excerpt jumps to it.  Shows the estimated cost and asks first."
   (setq buffer-read-only t)
   (add-hook 'kill-buffer-hook #'research--ask-forget nil t))
 
-(defun research--ask-scope (arg)
-  "What `research-ask' sends with prefix ARG: (SCOPE BEG . END).
-The active region; else with \\[universal-argument] \\[universal-argument]
-the whole file, with \\[universal-argument] the Org subtree at point, and
-otherwise the paragraph at point."
-  (cond ((use-region-p) (cons "region" (cons (region-beginning) (region-end))))
-        ((equal arg '(16)) (cons "file" (cons (point-min) (point-max))))
-        (arg (let ((bounds (research--section-bounds)))
-               (cons (if (and (= (car bounds) (point-min)) (= (cdr bounds) (point-max))
-                              (not (save-excursion (goto-char (point-min)) (looking-at-p "\\*+ "))))
-                         "file" "subtree")
-                     bounds)))
-        (t (cons "paragraph" (research--paragraph-bounds)))))
+(defun research--ask-visual-bounds (beg end type)
+  "The (BEG . END) of a visual selection of TYPE; whole lines when `line'."
+  (let ((from (min beg end)) (to (max beg end)))
+    (if (not (eq type 'line))
+        (cons from to)
+      (save-excursion
+        (cons (progn (goto-char from) (line-beginning-position))
+              (progn (goto-char to)
+                     (if (and (bolp) (> to from)) (point) (min (point-max) (1+ (line-end-position))))))))))
+
+(defun research--ask-selection ()
+  "The (BEG . END) of the selection, or nil.
+Evil's visual selection (whole lines when it is line-wise), else the
+active region.  Read when the command starts: reading the question in the
+minibuffer must not lose it."
+  (let ((bounds
+         (cond ((and (fboundp 'evil-visual-state-p) (evil-visual-state-p)
+                     (bound-and-true-p evil-visual-beginning) (bound-and-true-p evil-visual-end))
+                (research--ask-visual-bounds evil-visual-beginning evil-visual-end
+                                             (bound-and-true-p evil-visual-selection)))
+               ((use-region-p) (cons (region-beginning) (region-end))))))
+    (and bounds (< (car bounds) (cdr bounds)) bounds)))
+
+(defun research--ask-subtree ()
+  "The Org subtree at point as (SCOPE BEG . END): \"file\" outside any heading."
+  (let ((bounds (research--section-bounds)))
+    (cons (if (and (= (car bounds) (point-min)) (= (cdr bounds) (point-max))
+                   (not (save-excursion (goto-char (point-min)) (looking-at-p "\\*+ "))))
+              "file" "subtree")
+          bounds)))
+
+(defun research--ask-scope (arg &optional selection)
+  "What `research-ask' focuses on with prefix ARG: (SCOPE BEG . END).
+SELECTION (a cons of bounds) when there is one; else with
+\\[universal-argument] \\[universal-argument] the Org subtree at point,
+with \\[universal-argument] the paragraph at point, and otherwise the whole
+file."
+  (cond (selection (cons "region" selection))
+        ((equal arg '(16)) (research--ask-subtree))
+        (arg (cons "paragraph" (research--paragraph-bounds)))
+        (t (cons "file" (cons (point-min) (point-max))))))
+
+(defun research--ask-fit (scope)
+  "SCOPE, or the part of the file to ask about when the file is too long.
+Returns (SCOPE . NOTICE).  The whole file longer than
+`research--ask-max-chars' becomes the Org section at point (else the
+paragraph), the file going as background; NOTICE says so.  Any other
+scope too long is a `user-error'."
+  (let ((size (- (cddr scope) (cadr scope))))
+    (cond ((<= size research--ask-max-chars) (cons scope nil))
+          ((not (equal (car scope) "file"))
+           (user-error "El texto tiene %d caracteres y se envían hasta %d: selecciona una parte más corta"
+                       size research--ask-max-chars))
+          (t
+           (let* ((subtree (research--ask-subtree))
+                  (part (if (and (equal (car subtree) "subtree") (<= (- (cddr subtree) (cadr subtree)) research--ask-max-chars))
+                            subtree
+                          (cons "paragraph" (research--paragraph-bounds)))))
+             (when (> (- (cddr part) (cadr part)) research--ask-max-chars)
+               (user-error "El archivo tiene %d caracteres y se envían hasta %d: selecciona una parte más corta"
+                           size research--ask-max-chars))
+             (cons part (format "El archivo tiene %d caracteres (se envían hasta %d): pregunto por %s y el archivo va como contexto."
+                                size research--ask-max-chars
+                                (if (equal (car part) "subtree") "la sección en el punto" "el párrafo en el punto"))))))))
 
 (defun research--ask-section (pos)
   "The heading path of POS in an Org buffer, as `A › B'; \"\" elsewhere."
@@ -1405,6 +1481,140 @@ otherwise the paragraph at point."
              (when-let* ((path (ignore-errors (org-get-outline-path t t))))
                (mapconcat #'substring-no-properties path " › "))))
       ""))
+
+;;;;; Background: the chapter and the thesis outline
+
+(defun research--ask-chapter (scope beg end)
+  "The chapter around the passage BEG..END of SCOPE: (TEXT . CUT), or nil.
+Nil when the passage is the whole file.  The whole (widened) buffer, or
+when longer than `research--ask-chapter-max-chars' the whole lines
+`research--ask-chapter-margin' characters around the passage, CUT t."
+  (unless (equal scope "file")
+    (save-restriction
+      (widen)
+      (if (<= (- (point-max) (point-min)) research--ask-chapter-max-chars)
+          (cons (buffer-substring-no-properties (point-min) (point-max)) nil)
+        (save-excursion
+          (let ((from (progn (goto-char (max (point-min) (- beg research--ask-chapter-margin))) (line-beginning-position)))
+                (to (progn (goto-char (min (point-max) (+ end research--ask-chapter-margin))) (line-end-position))))
+            (cons (buffer-substring-no-properties from to) t)))))))
+
+(defun research--ask-thesis-main (file)
+  "The thesis' main file for FILE, or nil.
+`research--ask-thesis-file' in a folder above FILE, or in the project's
+root (the folder of `.doc-review.json')."
+  (when file
+    (seq-some (lambda (marker)
+                (when-let* ((dir (locate-dominating-file file marker))
+                            (main (expand-file-name research--ask-thesis-file dir)))
+                  (and (file-readable-p main) main)))
+              (list research--ask-thesis-file ".doc-review.json"))))
+
+(defconst research--ask-heading-regexp
+  "^\\(?:\\(\\*+\\)[ \t]+\\(.*\\)\\|[ \t]*#\\+[Ii][Nn][Cc][Ll][Uu][Dd][Ee]:[ \t]*\"\\([^\"]+\\)\"\\(.*\\)\\)$"
+  "An Org heading (stars, title) or an `#+INCLUDE' line (file, options).")
+
+(defun research--ask-headings (text name current root seen)
+  "The headings of the Org TEXT, the files it includes inside ROOT followed.
+NAME is TEXT's file; CURRENT is (TRUENAME TEXT HEADING-POS) of the file
+being written (its text is the buffer's, maybe unsaved).  SEEN holds the
+truenames already read.  Returns a list of (LEVEL TITLE NAME MARK): MARK
+is `file' for a heading of the current file, `here' for the heading of
+the passage."
+  (let ((dir (file-name-directory name)) headings)
+    (with-temp-buffer
+      (insert text)
+      (goto-char (point-min))
+      (let ((case-fold-search nil))
+        (while (re-search-forward research--ask-heading-regexp nil t)
+          (if (match-beginning 1)
+              (let ((title (replace-regexp-in-string "[ \t]+:[[:alnum:]_@#%:]+:[ \t]*\\'" "" (match-string-no-properties 2))))
+                (push (list (- (match-end 1) (match-beginning 1)) (string-trim title) name
+                            (and (equal name (car current))
+                                 (if (eql (match-beginning 0) (nth 2 current)) 'here 'file)))
+                      headings))
+            (let* ((target (replace-regexp-in-string "::.*\\'" "" (match-string-no-properties 3)))
+                   (options (match-string-no-properties 4))
+                   (path (and dir (not (file-name-absolute-p target)) (string-suffix-p ".org" target)
+                              (expand-file-name target dir)))
+                   (true (and path (file-readable-p path) (file-truename path))))
+              (when (and true (file-in-directory-p true root) (not (member true seen)) (< (length seen) 50))
+                (let* ((included (research--ask-headings
+                                  (if (equal true (car current))
+                                      (nth 1 current)
+                                    (with-temp-buffer (insert-file-contents true) (buffer-string)))
+                                  true current root (cons true seen)))
+                       (minlevel (and (string-match ":minlevel[ \t]+\\([0-9]+\\)" options)
+                                      (string-to-number (match-string 1 options))))
+                       (shift (if (and minlevel included) (- minlevel (apply #'min (mapcar #'car included))) 0)))
+                  (dolist (h included) (push (cons (max 1 (+ (car h) shift)) (cdr h)) headings)))))))))
+    (nreverse headings)))
+
+(defun research--ask-outline-text (headings root current)
+  "HEADINGS as the `outline' sent to Claude, and how many: (TEXT . COUNT).
+Each file's name (relative to ROOT) on its own line before its headings;
+CURRENT, the truename of the file being written, marked as such."
+  (let ((lines nil) (size 0) (shown 0) (last nil) (total (length headings)))
+    (catch 'full
+      (dolist (h headings)
+        (let* ((file (nth 2 h))
+               (head (unless (equal file last)
+                       (format "[file: %s%s]" (if root (file-relative-name file root) (file-name-nondirectory file))
+                               (if (equal file current) " — current file" ""))))
+               (line (concat (make-string (min (car h) 10) ?*) " " (truncate-string-to-width (nth 1 h) 200)
+                             (if (eq (nth 3 h) 'here) "  ← the passage is here" "")))
+               (more (+ (length line) 1 (if head (1+ (length head)) 0))))
+          (when (> (+ size more) (- research--ask-outline-max-chars 100))
+            (throw 'full nil))
+          (when head (push head lines) (setq last file))
+          (push line lines)
+          (setq size (+ size more) shown (1+ shown)))))
+    (when (< shown total)
+      (push (format "… (%d more headings not shown)" (- total shown)) lines))
+    (cons (string-join (nreverse lines) "\n") shown)))
+
+(defun research--ask-outline (scope beg file)
+  "The thesis outline for the passage at BEG (SCOPE): (TEXT . COUNT).
+FILE is the buffer's file (or nil).  The headings of the thesis' main
+file and of the files its `#+INCLUDE' lines name (inside its folder),
+this buffer's headings from its text; when there is no main file, or it
+does not include this one, this buffer's headings too.  Nil without
+headings."
+  (save-restriction
+    (widen)
+    (let* ((org (or (derived-mode-p 'org-mode) (and file (string-suffix-p ".org" file))))
+           (here (and org (not (equal scope "file"))
+                      (save-excursion (goto-char beg) (end-of-line)
+                                      (when (re-search-backward "^\\*+[ \t]" nil t) (point)))))
+           (name (if file (file-truename file) (buffer-name)))
+           (current (list name (if org (buffer-substring-no-properties (point-min) (point-max)) "") here))
+           (main (research--ask-thesis-main file))
+           (root (and main (file-name-directory (file-truename main))))
+           (headings (when main
+                       (let ((true (file-truename main)))
+                         (research--ask-headings (if (equal true name) (nth 1 current)
+                                                   (with-temp-buffer (insert-file-contents true) (buffer-string)))
+                                                 true current root (list true))))))
+      (unless (seq-some (lambda (h) (nth 3 h)) headings)
+        (setq headings (append headings (research--ask-headings (nth 1 current) name current (or root default-directory) (list name)))))
+      (when headings
+        (research--ask-outline-text headings root name)))))
+
+(defun research--ask-context (scope beg end file)
+  "The background of the passage BEG..END (SCOPE) of this buffer, from FILE.
+Returns (ARGUMENTS . DESCRIPTION): the `ask' arguments (chapter,
+chapter_truncated, outline) and their Spanish description for the
+header."
+  (let* ((chapter (research--ask-chapter scope beg end))
+         (outline (research--ask-outline scope beg file))
+         (parts (delq nil
+                      (list (and chapter (format "capítulo (%d caracteres%s)" (length (car chapter))
+                                                 (if (cdr chapter) ", recortado alrededor del pasaje" "")))
+                            (and outline (format "índice de la tesis (%d títulos)" (cdr outline)))))))
+    (cons (append (and chapter `((chapter . ,(car chapter))))
+                  (and chapter (cdr chapter) '((chapter_truncated . t)))
+                  (and outline `((outline . ,(car outline)))))
+          (if parts (string-join parts " e ") "ninguno"))))
 
 (defun research--ask-read-mode ()
   "\"rewrite\" when the user explicitly allows a proposed rewrite, else \"opinion\"."
@@ -1419,13 +1629,19 @@ otherwise the paragraph at point."
     (when (string-empty-p question) (user-error "Escribe una pregunta"))
     question))
 
-(defun research--ask-start (arguments)
+(defun research--ask-start (arguments &optional notice)
   "Ask the app for the plan of ARGUMENTS, confirm it and start the answer.
-Returns the conversation id, or nil when declined."
+NOTICE, when given, goes before the plan in the question.  Returns the
+conversation id, or nil when declined."
   (let ((plan (research-call "ask" arguments)))
     (when (and (consp plan) (alist-get 'answering plan))
       (user-error "Claude todavía está respondiendo en esta conversación: espera o detén la respuesta con `s'"))
-    (if (not (and (consp plan) (alist-get 'confirmation_required plan) (yes-or-no-p (research--plan-prompt plan))))
+    (if (not (and (consp plan) (alist-get 'confirmation_required plan)
+                  (yes-or-no-p (concat (if notice (concat notice " ") "")
+                                       (if (alist-get 'input_chars plan)
+                                           (format "Se envían %d caracteres (pasaje y contexto). " (alist-get 'input_chars plan))
+                                         "")
+                                       (research--plan-prompt plan)))))
         (progn (message "Cancelado") nil)
       (condition-case err
           (alist-get 'conversation_id (research-call "ask" (append arguments '((confirmed . t)))))
@@ -1435,52 +1651,68 @@ Returns the conversation id, or nil when declined."
            (signal (car err) (cdr err))))))))
 
 ;;;###autoload
-(defun research-ask (question mode &optional arg)
+(defun research-ask (question mode &optional arg selection)
   "Ask Claude, through the app, QUESTION about what you are writing.
-Sends the active region, else the paragraph at point; with
-\\[universal-argument] (ARG) the current Org subtree (a chapter or
-section), with \\[universal-argument] \\[universal-argument] the whole
-file, with the file's name and the heading path.  MODE is \"opinion\"
-\(default: Claude comments, critiques, suggests and asks; it does not
-rewrite your passage) or \"rewrite\" (only when you allow it: Claude may
-also propose a version, set apart as its own).  Shows the estimated cost
-and asks first.  The answer streams into `*research-ask*' (your buffer is
-never changed), and is a conversation of the app's Chat view: there `f'
-asks a follow-up, `c' opens the citation at point in the app, `a' opens
-the conversation in the app, `s' stops the answer and `q' closes."
-  (interactive (list (research--ask-read-question) (research--ask-read-mode) current-prefix-arg))
+The passage is SELECTION (interactively, the active region or evil's
+visual selection, read when the command starts), else the whole file;
+with \[universal-argument] (ARG) the paragraph at point, with
+\[universal-argument] \[universal-argument] the current Org subtree.  A
+file longer than the passage limit is asked about by its section at point,
+the echo area says so.  With the file's name and the heading path, and as
+background (not the focus) the chapter (the whole file, or a window
+around the passage when very long) and the thesis outline: the headings
+of tesis.org and the files it includes.  MODE is \"opinion\" (default:
+Claude comments, critiques, suggests and asks; it does not rewrite your
+passage) or \"rewrite\" (only when you allow it: Claude may also propose
+a version, set apart as its own).  Shows the estimated cost and asks
+first.  The answer streams into `*research-ask*' (your buffer is never
+changed), and is a conversation of the app's Chat view: there `f' asks a
+follow-up (with the chapter and outline as they are then), `c' opens the
+citation at point in the app, `a' opens the conversation in the app, `s'
+stops the answer and `q' closes."
+  (interactive
+   (let ((selection (research--ask-selection)))
+     (list (research--ask-read-question) (research--ask-read-mode) current-prefix-arg selection)))
   (research--with-errors
-    (let* ((scope (research--ask-scope arg))
+    (let* ((fit (research--ask-fit (research--ask-scope arg selection)))
+           (scope (car fit))
+           (notice (cdr fit))
            (beg (cadr scope))
-           (text (buffer-substring-no-properties beg (cddr scope)))
+           (end (cddr scope))
+           (text (buffer-substring-no-properties beg end))
            (file (if buffer-file-name (file-name-nondirectory buffer-file-name) (buffer-name)))
            (section (research--ask-section beg)))
       (when (string-empty-p (string-trim text)) (user-error "No hay texto que enviar aquí"))
-      (when (> (length text) research--ask-max-chars)
-        (user-error "El texto tiene %d caracteres y se envían hasta %d: selecciona una parte más corta"
-                    (length text) research--ask-max-chars))
       (let ((buffer (get-buffer "*research-ask*")))
         (when (and buffer (plist-get (buffer-local-value 'research--ask-state buffer) :timer))
           (user-error "Claude todavía está respondiendo en `*research-ask*': espera o detén la respuesta con `s'")))
-      (when-let* ((id (research--ask-start `((question . ,question) (text . ,text) (file . ,file)
-                                             (section . ,section) (scope . ,(car scope)) (mode . ,mode)))))
-        (let ((buffer (get-buffer-create "*research-ask*")))
-          (with-current-buffer buffer
-            (research--ask-forget)
-            (research-ask-mode)
-            (setq research--ask-state (list :id id :failures 0))
-            (let ((inhibit-read-only t))
-              (erase-buffer)
-              (insert (propertize (format "Preguntar a Claude — %s\n" (string-join (seq-remove #'string-empty-p (list file section)) " › "))
-                                  'face 'bold)
-                      (propertize (format "Alcance: %s (%d caracteres)\n" (research--label (car scope) research--ask-scopes) (length text))
-                                  'face 'shadow)
-                      (propertize "f: otra pregunta · c: abrir la cita · a: abrir en la app · s: detener · q: cerrar\n"
-                                  'face 'shadow))))
-          (research--ask-begin buffer question mode)
-          (display-buffer buffer '((display-buffer-in-side-window) (side . right) (window-width . 0.45)))
-          (message "Claude está respondiendo en `*research-ask*' (s lo detiene)")
-          id)))))
+      (let* ((context (research--ask-context (car scope) beg end buffer-file-name))
+             (source (current-buffer))
+             (place (list :source source :path buffer-file-name :scope (car scope)
+                          :beg (copy-marker beg) :end (copy-marker end t) :pos beg :end-pos end)))
+        (when-let* ((id (research--ask-start `((question . ,question) (text . ,text) (file . ,file)
+                                               (section . ,section) (scope . ,(car scope)) (mode . ,mode)
+                                               ,@(car context))
+                                             notice)))
+          (let ((buffer (get-buffer-create "*research-ask*")))
+            (with-current-buffer buffer
+              (research--ask-forget)
+              (research-ask-mode)
+              (setq research--ask-state (append (list :id id :failures 0) place))
+              (let ((inhibit-read-only t))
+                (erase-buffer)
+                (insert (propertize (format "Preguntar a Claude — %s\n" (string-join (seq-remove #'string-empty-p (list file section)) " › "))
+                                    'face 'bold)
+                        (propertize (format "Alcance: %s (%d caracteres) · contexto: %s\n"
+                                            (research--label (car scope) research--ask-scopes) (length text) (cdr context))
+                                    'face 'shadow)
+                        (if notice (propertize (concat notice "\n") 'face 'warning) "")
+                        (propertize "f: otra pregunta · c: abrir la cita · a: abrir en la app · s: detener · q: cerrar\n"
+                                    'face 'shadow))))
+            (research--ask-begin buffer question mode)
+            (display-buffer buffer '((display-buffer-in-side-window) (side . right) (window-width . 0.45)))
+            (message "%sClaude está respondiendo en `*research-ask*' (s lo detiene)" (if notice (concat notice " ") ""))
+            id))))))
 
 (defun research--ask-begin (buffer question mode)
   "Add QUESTION (MODE) to BUFFER and follow its answer on a timer."
@@ -1588,9 +1820,28 @@ the conversation in the app, `s' stops the answer and `q' closes."
     (user-error "Esto no es una respuesta de `research-ask'"))
   research--ask-state)
 
+(defun research--ask-fresh-context (state)
+  "The `ask' arguments of the background of STATE's passage, as it is now.
+From its buffer when still open, else from its file; nil when neither."
+  (let ((buffer (plist-get state :source))
+        (path (plist-get state :path))
+        (scope (plist-get state :scope)))
+    (cond ((buffer-live-p buffer)
+           (with-current-buffer buffer
+             (let ((beg (marker-position (plist-get state :beg)))
+                   (end (marker-position (plist-get state :end))))
+               (car (research--ask-context scope (min beg end) (max beg end) buffer-file-name)))))
+          ((and path (file-readable-p path))
+           (with-temp-buffer
+             (insert-file-contents path)
+             (let ((beg (min (plist-get state :pos) (point-max)))
+                   (end (min (plist-get state :end-pos) (point-max))))
+               (car (research--ask-context scope beg end path))))))))
+
 (defun research-ask-follow-up (question mode)
   "Ask Claude a follow-up QUESTION (MODE) in this buffer's conversation.
-The passage is the one the conversation started with."
+The passage is the one the conversation started with; the chapter and
+the thesis outline go again as they are now (you may have edited them)."
   (interactive
    (progn
      (when (plist-get (research--ask-buffer-state) :timer)
@@ -1600,7 +1851,8 @@ The passage is the one the conversation started with."
     (let ((state (research--ask-buffer-state)))
       (when (plist-get state :timer)
         (user-error "Claude todavía está respondiendo: espera o detén la respuesta con `s'"))
-      (when (research--ask-start `((question . ,question) (conversation_id . ,(plist-get state :id)) (mode . ,mode)))
+      (when (research--ask-start `((question . ,question) (conversation_id . ,(plist-get state :id)) (mode . ,mode)
+                                   ,@(research--ask-fresh-context state)))
         (research--ask-begin (current-buffer) question mode)
         (goto-char (point-max))
         (message "Claude está respondiendo (s lo detiene)")))))

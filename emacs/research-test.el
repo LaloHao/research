@@ -16,6 +16,11 @@
 
 (defvar research-test--requests nil "The requests sent: (URL HEADERS BODY-AS-LISP).")
 
+;; Evil's visual state, bound dynamically by the tests whether or not evil is loaded.
+(defvar evil-visual-beginning)
+(defvar evil-visual-end)
+(defvar evil-visual-selection)
+
 (defun research-test--result (value &optional error)
   "A JSON-RPC answer whose tool result is VALUE.
 VALUE is JSON-encoded unless a string; the result is an error when ERROR."
@@ -732,7 +737,8 @@ ON-RUN runs in the buffer before the confirmed call answers."
                       ((symbol-function 'read-char-choice) (lambda (prompt &rest _) (push prompt prompts) ?\r))
                       ((symbol-function 'yes-or-no-p) (lambda (prompt) (push prompt prompts) t))
                       ((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
-              (should (equal (call-interactively #'research-ask) research-test--ask-id)))
+              (let ((current-prefix-arg '(4)))
+                (should (equal (call-interactively #'research-ask) research-test--ask-id))))
             (should (string-match-p "(y/N)" (cadr prompts)))
             (should (string-match-p "chat con sonnet: costo estimado \\$0\\.10" (car prompts)))
             ;; The plan and the run send the same: the paragraph, its file and heading path, opinion.
@@ -742,11 +748,16 @@ ON-RUN runs in the buffer before the confirmed call answers."
               (should (equal (alist-get 'scope run) "paragraph"))
               (should (equal (alist-get 'section run) "Capítulo 2 › Parsers"))
               (should (equal (alist-get 'mode run) "opinion"))
-              (should (equal (alist-get 'question run) "¿Se sostiene?")))
+              (should (equal (alist-get 'question run) "¿Se sostiene?"))
+              ;; As background, the whole file (the chapter) and its outline, the passage's section marked.
+              (should (equal (alist-get 'chapter run) research-test--ask-doc))
+              (should-not (alist-get 'chapter_truncated run))
+              (should (string-match-p "\\`\\[file: .*current file\\]\n\\* Capítulo 2\n\\*\\* Parsers  ← the passage is here\n\\*\\* Otra\\'"
+                                      (alist-get 'outline run))))
             (with-current-buffer "*research-ask*"
               (should (derived-mode-p 'org-mode))
               (should buffer-read-only)
-              (should (string-match-p "Alcance: párrafo" (buffer-string)))
+              (should (string-match-p "Alcance: párrafo (53 caracteres) · contexto: capítulo (109 caracteres) e índice de la tesis (3 títulos)" (buffer-string)))
               (should (string-match-p "\\* ¿Se sostiene\\?\nModo: opinión (sin reescribir tu texto) · respondiendo…" (buffer-string))))
             (funcall poll)
             (with-current-buffer "*research-ask*"
@@ -815,33 +826,215 @@ ON-RUN runs in the buffer before the confirmed call answers."
               (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "¿Y si lo reescribes?"))
                         ((symbol-function 'read-char-choice) (lambda (&rest _) ?y)))
                 (call-interactively #'research-ask-follow-up))
-              (should (equal (cl-remove 'confirmed (car asked) :key #'car)
-                             `((question . "¿Y si lo reescribes?") (conversation_id . ,research-test--ask-id) (mode . "rewrite"))))
+              (let ((follow (cl-remove 'confirmed (car asked) :key #'car)))
+                (should (equal (cl-remove 'outline follow :key #'car)
+                               `((question . "¿Y si lo reescribes?") (conversation_id . ,research-test--ask-id) (mode . "rewrite"))))
+                ;; The whole file was the passage: no chapter, the outline again.
+                (should (string-match-p "^\\*\\* Parsers$" (alist-get 'outline follow))))
               (should (string-match-p "\\* ¿Y si lo reescribes\\?\nModo: propuesta de redacción permitida · respondiendo…" (buffer-string)))
               (funcall poll)
               (should (= 2 (how-many "^Citas:" (point-min) (point-max))))
               (should (string-match-p "\\* Q1\n.*US\\$0\\.04" (buffer-string))))))))))
 
-(ert-deftest research-test-ask-scopes-region-subtree-and-file ()
+(ert-deftest research-test-ask-scopes-selection-file-paragraph-and-subtree ()
   (research-test--with-ask-buffer
-    (should (equal (research--ask-scope nil) (cons "paragraph" (research--paragraph-bounds))))
-    (let ((subtree (research--ask-scope '(4))))
+    ;; No selection: the whole file; C-u the paragraph; C-u C-u the subtree.
+    (should (equal (research--ask-scope nil) (cons "file" (cons (point-min) (point-max)))))
+    (should (equal (research--ask-scope '(4)) (cons "paragraph" (research--paragraph-bounds))))
+    (let ((subtree (research--ask-scope '(16))))
       (should (equal (car subtree) "subtree"))
       (should (equal (buffer-substring-no-properties (cadr subtree) (cddr subtree))
                      "** Parsers\nPrimer párrafo.\n\nDrain es el mejor [cite:@he2017drain].\nSigue la idea.\n\n")))
-    (should (equal (research--ask-scope '(16)) (cons "file" (cons (point-min) (point-max)))))
     (should (equal (research--ask-section (point)) "Capítulo 2 › Parsers"))
+    ;; A selection wins over any prefix.
+    (should (equal (research--ask-scope '(16) (cons 1 5)) (cons "region" (cons 1 5))))
+    ;; The active region is the selection; an empty one is none.
     (transient-mark-mode 1)
     (set-mark (point-min))
     (goto-char 5)
     (activate-mark)
-    (should (equal (research--ask-scope '(16)) (cons "region" (cons (point-min) 5))))
-    (deactivate-mark))
-  ;; Without headings, C-u is the whole file and the section is empty.
+    (should (equal (research--ask-selection) (cons (point-min) 5)))
+    (deactivate-mark)
+    (should-not (research--ask-selection)))
+  ;; Without headings, C-u C-u is the whole file and the section is empty.
   (with-temp-buffer
     (insert "Solo texto.\n")
-    (should (equal (research--ask-scope '(4)) (cons "file" (cons (point-min) (point-max)))))
+    (should (equal (research--ask-scope '(16)) (cons "file" (cons (point-min) (point-max)))))
     (should (equal (research--ask-section (point)) ""))))
+
+(ert-deftest research-test-ask-evil-visual-selection-whole-lines-when-line-wise ()
+  (with-temp-buffer
+    (insert "uno dos\ntres cuatro\ncinco\n")
+    ;; Character-wise: the bounds as they are; line-wise: whole lines, already whole lines kept.
+    (should (equal (research--ask-visual-bounds 3 12 'char) (cons 3 12)))
+    (should (equal (research--ask-visual-bounds 12 3 'line) (cons 1 21)))
+    (should (equal (research--ask-visual-bounds 1 21 'line) (cons 1 21)))
+    (should (equal (research--ask-visual-bounds 23 27 'line) (cons 21 (point-max))))
+    ;; Evil's visual state (stubbed when evil is not loaded) wins over the region.
+    (cl-letf (((symbol-function 'evil-visual-state-p) (lambda (&rest _) t)))
+      (let ((evil-visual-beginning (copy-marker 5))
+            (evil-visual-end (copy-marker 14))
+            (evil-visual-selection 'line))
+        (should (equal (research--ask-selection) (cons 1 21)))
+        (setq evil-visual-selection 'char)
+        (should (equal (research--ask-selection) (cons 5 14)))))))
+
+(ert-deftest research-test-ask-reads-the-selection-before-the-question ()
+  ;; Asking for the question (the minibuffer, or evil leaving visual state) must not lose it.
+  (let (asked)
+    (research-test--with-app
+        (lambda (_tool args) (push args asked) (research-test--ask-plan))
+      (research-test--with-ask-buffer
+        (transient-mark-mode 1)
+        (goto-char (point-min))
+        (search-forward "Primer")
+        (set-mark (match-beginning 0))
+        (activate-mark)
+        (cl-letf (((symbol-function 'read-string) (lambda (&rest _) (deactivate-mark) "Q"))
+                  ((symbol-function 'read-char-choice) (lambda (&rest _) ?n))
+                  ((symbol-function 'yes-or-no-p) (lambda (_) nil))
+                  ((symbol-function 'message) #'ignore))
+          (call-interactively #'research-ask))
+        (should (equal (alist-get 'scope (car asked)) "region"))
+        (should (equal (alist-get 'text (car asked)) "Primer"))
+        (should (equal (alist-get 'chapter (car asked)) research-test--ask-doc))))))
+
+(defun research-test--long-doc (size)
+  "An Org document of about SIZE characters: a short section among long ones."
+  (let ((filler (concat (make-string 70 ?x) "\n")))
+    (concat "* Largo uno\n" (apply #'concat (make-list (/ size 2 71) filler))
+            "* Corto\nEl párrafo corto.\n"
+            "* Largo dos\n" (apply #'concat (make-list (/ size 2 71) filler)))))
+
+(ert-deftest research-test-ask-a-long-file-asks-about-the-section-and-sends-the-file-as-background ()
+  (let (asked prompts messages)
+    (research-test--with-app
+        (lambda (_tool args) (push args asked) (research-test--ask-plan '(input_chars . 45000)))
+      (with-temp-buffer
+        (org-mode)
+        (insert (research-test--long-doc 45000))
+        (goto-char (point-min))
+        (search-forward "párrafo corto")
+        (cl-letf (((symbol-function 'yes-or-no-p) (lambda (prompt) (push prompt prompts) nil))
+                  ((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+          (research-ask "Q" "opinion"))
+        (let ((run (car asked)))
+          (should (equal (alist-get 'scope run) "subtree"))
+          (should (equal (alist-get 'text run) "* Corto\nEl párrafo corto.\n"))
+          (should (equal (alist-get 'chapter run) (buffer-string)))
+          (should-not (alist-get 'chapter_truncated run)))
+        (should (string-match-p "\\`El archivo tiene [0-9]+ caracteres (se envían hasta 30000): pregunto por la sección en el punto y el archivo va como contexto\\. Se envían 45000 caracteres (pasaje y contexto)\\. chat con sonnet"
+                                (car prompts)))))))
+
+(ert-deftest research-test-ask-a-very-long-chapter-goes-as-a-window-around-the-passage ()
+  (let (asked)
+    (research-test--with-app
+        (lambda (_tool args) (push args asked) (research-test--ask-plan))
+      (with-temp-buffer
+        (org-mode)
+        (insert (research-test--long-doc 200000))
+        (goto-char (point-min))
+        (search-forward "párrafo corto")
+        (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) nil))
+                  ((symbol-function 'message) #'ignore))
+          (research-ask "Q" "opinion" '(4)))
+        (let* ((run (car asked)) (chapter (alist-get 'chapter run)))
+          (should (equal (alist-get 'text run) "El párrafo corto."))
+          (should (eq (alist-get 'chapter_truncated run) t))
+          (should (string-match-p "\\`x+\n\\(?:.*\n\\)*\\* Corto\nEl párrafo corto\\.\n\\* Largo dos\n" chapter))
+          (should (<= (length chapter) (+ 40000 18 142)))
+          (should (<= (length chapter) research--ask-chapter-max-chars)))))))
+
+(ert-deftest research-test-ask-outline-follows-tesis-org-and-its-includes ()
+  (let* ((root (make-temp-file "research-thesis" t))
+         (chapter (expand-file-name "capitulos/cap2.org" root)))
+    (unwind-protect
+        (progn
+          (make-directory (file-name-directory chapter))
+          (with-temp-file (expand-file-name "tesis.org" root)
+            (insert "#+TITLE: Tesis\n* Introducción :intro:\n"
+                    "#+INCLUDE: \"capitulos/cap2.org\" :minlevel 2\n"
+                    "#+include: \"../fuera.org\"\n#+INCLUDE: \"/etc/otro.org\"\n#+INCLUDE: \"tesis.org\"\n"
+                    "* Conclusiones\n"))
+          (with-temp-file (expand-file-name "../fuera.org" root) (insert "* Fuera\n"))
+          (with-temp-file chapter (insert "* Estado del arte\n** Parsers\nTexto.\n"))
+          (with-temp-buffer
+            (org-mode)
+            ;; The buffer's text (unsaved) is read, not the file's.
+            (insert "* Estado del arte\n** Parsers\nTexto.\n** Nuevo\n")
+            (goto-char (point-min))
+            (search-forward "Texto")
+            (let ((outline (research--ask-outline "paragraph" (point) chapter)))
+              (should (equal (car outline)
+                             (concat "[file: tesis.org]\n* Introducción\n"
+                                     "[file: capitulos/cap2.org — current file]\n** Estado del arte\n*** Parsers  ← the passage is here\n*** Nuevo\n"
+                                     "[file: tesis.org]\n* Conclusiones")))
+              (should (= (cdr outline) 5)))
+            ;; The whole file as the passage: no section marked.
+            (should-not (string-match-p "←" (car (research--ask-outline "file" (point-min) chapter))))
+            ;; A file tesis.org does not include goes at the end; without tesis.org, only this file.
+            (let ((other (expand-file-name "otro.org" root)))
+              (should (string-match-p "\n\\[file: otro\\.org — current file\\]\n\\* Estado del arte\n\\*\\* Parsers  ← the passage is here\n\\*\\* Nuevo\\'"
+                                      (car (research--ask-outline "paragraph" (point) other)))))
+            (delete-file (expand-file-name "tesis.org" root))
+            (should (equal (car (research--ask-outline "paragraph" (point) chapter))
+                           "[file: cap2.org — current file]\n* Estado del arte\n** Parsers  ← the passage is here\n** Nuevo"))
+            ;; The project's root (.doc-review.json) also finds tesis.org.
+            (with-temp-file (expand-file-name "tesis.org" root) (insert "* Raíz\n"))
+            (should (equal (research--ask-thesis-main chapter) (expand-file-name "tesis.org" root)))))
+      (delete-directory root t)
+      (ignore-errors (delete-file (expand-file-name "../fuera.org" root))))))
+
+(ert-deftest research-test-ask-outline-is-capped ()
+  (with-temp-buffer
+    (org-mode)
+    (dotimes (i 2000) (insert (format "* Título número %d con algo de texto\n" i)))
+    (let ((outline (research--ask-outline "file" (point-min) nil)))
+      (should (<= (length (car outline)) research--ask-outline-max-chars))
+      (should (< (cdr outline) 2000))
+      (should (string-match-p (format "\n… (%d more headings not shown)\\'" (- 2000 (cdr outline))) (car outline))))))
+
+(ert-deftest research-test-ask-follow-up-sends-the-background-as-it-is-now ()
+  (let (poll asked)
+    (research-test--with-app
+        (lambda (tool args)
+          (pcase tool
+            ("ask" (push args asked)
+             (if (alist-get 'confirmed args)
+                 (research-test--result `((conversation_id . ,research-test--ask-id) (status . "running")))
+               (research-test--ask-plan)))
+            ("ask_status" (research-test--result research-test--ask-done))))
+      (research-test--with-draft-timer poll
+        (research-test--with-ask-buffer
+          (let ((source (current-buffer))
+                (file (make-temp-file "research-chapter" nil ".org")))
+            (unwind-protect
+                (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "Q"))
+                          ((symbol-function 'read-char-choice) (lambda (&rest _) ?n))
+                          ((symbol-function 'yes-or-no-p) (lambda (_) t))
+                          ((symbol-function 'message) #'ignore))
+                  (research-ask "Q1" "opinion" '(4))
+                  (funcall poll)
+                  ;; The user edits the chapter, then asks again: the passage stays, the background is fresh.
+                  (goto-char (point-max))
+                  (insert "** Nueva sección\nOtra idea.\n")
+                  (goto-char (point-min))
+                  (insert "Antes.\n")
+                  (with-current-buffer "*research-ask*" (call-interactively #'research-ask-follow-up))
+                  (let ((follow (car asked)))
+                    (should-not (alist-get 'text follow))
+                    (should (equal (alist-get 'chapter follow) (with-current-buffer source (buffer-string))))
+                    (should (string-match-p "\\*\\* Parsers  ← the passage is here\n\\*\\* Otra\n\\*\\* Nueva sección\\'" (alist-get 'outline follow))))
+                  (funcall poll)
+                  ;; Its buffer gone, the file is read from disk.
+                  (with-temp-file file (insert "* Del disco\nTexto.\n"))
+                  (with-current-buffer "*research-ask*"
+                    (setq research--ask-state (plist-put (plist-put research--ask-state :source nil) :path file))
+                    (setq research--ask-state (plist-put (plist-put research--ask-state :pos 14) :end-pos 19))
+                    (call-interactively #'research-ask-follow-up))
+                  (should (equal (alist-get 'chapter (car asked)) "* Del disco\nTexto.\n"))
+                  (should (string-match-p "\\* Del disco  ← the passage is here\\'" (alist-get 'outline (car asked)))))
+              (delete-file file))))))))
 
 (ert-deftest research-test-ask-refuses-and-cancels-before-starting ()
   (research-test--with-app
