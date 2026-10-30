@@ -13,7 +13,7 @@ import { waitForFlush } from './flush'
 import { pickFolder, registerIpc } from './ipc'
 import { arg, ipcArgs } from './ipcArgs'
 import { appLog, consoleConfig, RotatingFileSink, StreamConsole } from './log/appLog'
-import { autostartStatus, setAutostart, type LaunchInfo } from './tray/autostart'
+import { autostartStatus, refreshAutostart, setAutostart, type AutostartOptions, type LaunchInfo } from './tray/autostart'
 import { closeAction, startHidden } from './tray/closeBehavior'
 import { trayText } from './tray/strings'
 import { runTrayAction } from './tray/trayActions'
@@ -74,6 +74,7 @@ const controller = new AppController(
   (event) => {
     mainWindow?.webContents.send(eventChannel(event))
     if (event !== 'jobs-changed') syncSnapshot = null
+    if (event === 'settings-changed') syncAutostart()
     tray.refresh()
   },
   { embeddings },
@@ -203,7 +204,7 @@ function createWindow(): BrowserWindow {
     }
   })
   win.on('ready-to-show', () => {
-    if (showRequested || !startHidden({ argv: process.argv, setting: controller.getSettings().startHidden, trayAvailable: tray.available() })) win.show()
+    if (showRequested || !startHidden({ argv: process.argv, trayAvailable: tray.available() })) win.show()
   })
   // The tray's «Mostrar/Ocultar ventana», and failed jobs count as seen once the window is looked at.
   win.on('show', () => tray.refresh(0))
@@ -291,6 +292,32 @@ async function showTrayHint(): Promise<void> {
   if (controller.getSettings().trayHintShown) return
   notify(trayText('tray.notify.hint_body'), trayText('tray.notify.hint_title'))
   await controller.setSettings({ trayHintShown: true }).catch((error: unknown) => console.error('settings', error))
+}
+
+function autostartOptions(): AutostartOptions {
+  return { icon: APP_ICON(), hidden: controller.getSettings().startHidden }
+}
+
+let autostartStarted = false
+/** Writes to the autostart entry one at a time: a refresh never brings back an entry just turned off. */
+let autostartWrites: Promise<unknown> = Promise.resolve()
+
+function queueAutostart<T>(write: () => Promise<T>): Promise<T> {
+  const next = autostartWrites.then(write)
+  autostartWrites = next.catch(() => undefined)
+  return next
+}
+
+/**
+ * «Iniciar oculto en la bandeja» lives in the autostart entry (`--hidden`): an existing entry follows the setting.
+ * Only once the settings are loaded (the first `settings-changed` may come from `init`).
+ */
+function syncAutostart(): void {
+  if (!autostartStarted) return
+  queueAutostart(() => refreshAutostart(launchInfo(), autostartOptions())).catch((error: unknown) => {
+    console.error('autostart', error)
+    appLog.warn('autostart_refresh_failed', { error })
+  })
 }
 
 /** How the app was launched, for «Iniciar con la sesión». */
@@ -441,10 +468,10 @@ function start(): void {
     session.defaultSession.setPermissionRequestHandler((_contents, permission, callback) => callback(ALLOWED_PERMISSIONS.has(permission)))
     applyMenu()
     registerIpc(controller, () => mainWindow, captureWindow(), {
-      status: () => ({ trayAvailable: tray.available(), autostart: autostartStatus(launchInfo()) }),
+      status: () => ({ trayAvailable: tray.available(), autostart: autostartStatus(launchInfo(), controller.getSettings().startHidden) }),
       setAutostart: async (enabled) => {
-        await setAutostart(launchInfo(), enabled, APP_ICON())
-        return { trayAvailable: tray.available(), autostart: autostartStatus(launchInfo()) }
+        const status = await queueAutostart(() => setAutostart(launchInfo(), enabled, autostartOptions()))
+        return { trayAvailable: tray.available(), autostart: status }
       }
     })
     // Before the window: whether it may start hidden depends on the tray being there (only the first check is awaited).
@@ -457,6 +484,9 @@ function start(): void {
       console.error('startup', error)
       appLog.error('startup_failed', { error })
     } finally {
+      // An entry written by an older version (or before the setting changed elsewhere) catches up.
+      autostartStarted = true
+      syncAutostart()
       mainWindow = createWindow()
       windowStarted = true
     }

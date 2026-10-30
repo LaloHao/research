@@ -231,7 +231,7 @@
 - «Failed jobs not yet seen»: the latest 200 jobs are checked; a failure counts as seen when the window is shown and focused (on X11, clicking the tray icon may or may not move the focus away from the window, which only changes whether a left click hides it or brings it to the front).
 - Without a notification daemon, Electron may still report notifications as supported; the message is then lost (the tooltip fallback only applies where Electron says there are none).
 - Autostart writes an entry only for a packaged build (the AppImage); `pnpm dev` users get the documented command line. An AppImage is launched through `$APPIMAGE`, the file actually run: turned on from an AppImage outside `~/Applications` (e.g. `dist/`), the entry points there and breaks when that file goes (the app does not prefer the installed copy). Its Icon is the theme name `research`, which only resolves after `scripts/install-appimage.sh`. macOS and Windows have no autostart here (the option says so).
-- «Iniciar oculto en la bandeja» applies to every launch, the launcher's too: with it on, opening the app from the application menu leaves it in the tray (a second launch while it runs does show the window). Making it apply only to the session start (`--hidden` in the entry's Exec) would be a behavior change.
+- «Iniciar oculto en la bandeja» lives in the autostart entry (`--hidden` in its Exec): the app rewrites an existing entry when the option changes and at startup when it differs, so changes made to `~/.config/autostart/research.desktop` by hand are lost then. A desktop that copies the entry elsewhere (some session managers) keeps its old copy.
 
 ## Packaging technical minutiae
 

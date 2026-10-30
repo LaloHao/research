@@ -20,10 +20,12 @@ describe('closing the window', () => {
 })
 
 describe('starting hidden', () => {
-  it('stays hidden with --hidden or the setting, only with a tray', () => {
-    expect(startHidden({ argv: ['electron', '.', '--hidden'], setting: false, trayAvailable: true })).toBe(true)
-    expect(startHidden({ argv: ['electron', '.'], setting: true, trayAvailable: true })).toBe(true)
-    expect(startHidden({ argv: ['electron', '.'], setting: false, trayAvailable: true })).toBe(false)
-    expect(startHidden({ argv: ['electron', '.', '--hidden'], setting: true, trayAvailable: false })).toBe(false)
+  it('stays hidden with --hidden, only with a tray', () => {
+    expect(startHidden({ argv: ['electron', '.', '--hidden'], trayAvailable: true })).toBe(true)
+    expect(startHidden({ argv: ['electron', '.', '--hidden'], trayAvailable: false })).toBe(false)
+  })
+
+  it('shows the window on a launch without --hidden (the setting only reaches the autostart entry)', () => {
+    expect(startHidden({ argv: ['/home/me/Applications/research.AppImage'], trayAvailable: true })).toBe(false)
   })
 })

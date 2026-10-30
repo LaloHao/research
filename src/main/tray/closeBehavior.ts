@@ -10,7 +10,11 @@ export function closeAction(state: { closeToTray: boolean; trayAvailable: boolea
 /** The flag that starts the app with its window hidden (e.g. from the session's autostart). */
 export const HIDDEN_FLAG = '--hidden'
 
-/** The window stays hidden at launch with `--hidden` or «Iniciar oculto en la bandeja» — but only with a tray to bring it back. */
-export function startHidden(state: { argv: readonly string[]; setting: boolean; trayAvailable: boolean }): boolean {
-  return state.trayAvailable && (state.setting || state.argv.includes(HIDDEN_FLAG))
+/**
+ * The window stays hidden at launch with `--hidden` — but only with a tray to bring it back. «Iniciar oculto en la
+ * bandeja» does not hide by itself: it puts the flag in the autostart entry, so a launch from the menu or a terminal
+ * always shows the window.
+ */
+export function startHidden(state: { argv: readonly string[]; trayAvailable: boolean }): boolean {
+  return state.trayAvailable && state.argv.includes(HIDDEN_FLAG)
 }
