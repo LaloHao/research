@@ -34,6 +34,20 @@ pnpm dev
 
 Full user guide (what the app does, how to add papers, summaries, review mode, each setting, project files): [`docs/guide.md`](docs/guide.md).
 
+## Install as an app (AppImage, Linux)
+
+```bash
+pnpm install
+pnpm dist                        # builds dist/research-<version>-x86_64.AppImage
+./scripts/install-appimage.sh    # installs it for your user
+```
+
+The install script copies the AppImage to `~/Applications/research.AppImage` (replacing the previous one in a single step), adds the launcher `~/.local/share/applications/research.desktop` and the icon (`~/.local/share/icons/hicolor/<size>/apps/research.png`). Then open «research» from the application menu, and, if you want it at login, turn on Settings → Aplicación → «Iniciar con la sesión» from that copy.
+
+To update: quit the app (tray → «Salir», or Ctrl+Q), then `git pull`, `pnpm install`, `pnpm dist` and `./scripts/install-appimage.sh` again. The path stays the same, so the launcher and the autostart entry keep working. The settings, the local model and the log stay in `~/.config/research` (shared with `pnpm dev`).
+
+AppImages need FUSE (`libfuse2` on Ubuntu 24.04). Without it, run `~/Applications/research.AppImage --appimage-extract-and-run`.
+
 ## Development
 
 ```bash
