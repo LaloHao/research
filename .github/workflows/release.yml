@@ -1,0 +1,82 @@
+name: Release
+
+# TODO: pin every action by commit SHA (uses: owner/action@<sha> # vX). Not done
+# yet: no SHAs were available offline (the user's other workflows use tags too).
+
+# A pushed tag vX.Y.Z (scripts/release.sh makes one) builds the AppImage and publishes the GitHub release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Only this job writes, and only to create the release.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Every commit and tag: the notes list the commits since the previous tag.
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Check the tag against package.json
+        id: version
+        run: |
+          tag="$GITHUB_REF_NAME"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::$tag is not a release tag (vX.Y.Z)"
+            exit 1
+          fi
+          version="$(node -p "require('./package.json').version")"
+          if [[ "$tag" != "v$version" ]]; then
+            echo "::error::tag $tag does not match package.json version $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "name=research-$version-x86_64.AppImage" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == *-* ]]; then echo "prerelease=true" >> "$GITHUB_OUTPUT"; else echo "prerelease=false" >> "$GITHUB_OUTPUT"; fi
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends emacs-nox
+      - run: pnpm test:emacs
+
+      # electron-builder never publishes (`--publish never` in the dist script); the release is made below.
+      - name: Build the AppImage
+        run: pnpm dist
+
+      - name: SHA-256
+        env:
+          NAME: ${{ steps.version.outputs.name }}
+        run: |
+          cd dist
+          test -f "$NAME"
+          sha256sum "$NAME" > "$NAME.sha256"
+          cat "$NAME.sha256"
+
+      - name: Release notes
+        run: scripts/release-notes.sh "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ steps.version.outputs.name }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          flags=()
+          if [[ "$PRERELEASE" == true ]]; then flags+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" "dist/$NAME" "dist/$NAME.sha256" \
+            --verify-tag --title "research $GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md" "${flags[@]}"

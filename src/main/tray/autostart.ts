@@ -1,8 +1,9 @@
 import { existsSync } from 'node:fs'
-import { rm } from 'node:fs/promises'
+import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AutostartStatus } from '../../shared/desktop'
 import { atomicWrite } from '../project/atomicWrite'
+import { HIDDEN_FLAG } from './closeBehavior'
 
 /** How the running app was launched, as Electron reports it. */
 export interface LaunchInfo {
@@ -46,11 +47,13 @@ export function shellArg(arg: string): string {
 /**
  * What the entry launches. A packaged build launches its own executable (the AppImage when there is one). In
  * development there is nothing stable: the entry is never written; the user gets the command that runs the last
- * `pnpm build` with the repository's Electron, to add by hand if they want.
+ * `pnpm build` with the repository's Electron, to add by hand if they want. With «Iniciar oculto en la bandeja»
+ * (`hidden`) the command carries `--hidden`: only the session start is hidden, never a launch from the menu.
  */
-export function launchCommand(info: LaunchInfo): { kind: 'packaged'; exec: string } | { kind: 'dev'; command: string } {
-  if (info.isPackaged) return { kind: 'packaged', exec: execArg(info.appImage || info.execPath) }
-  return { kind: 'dev', command: `${shellArg(info.devElectron ?? info.execPath)} ${shellArg(info.appPath)}` }
+export function launchCommand(info: LaunchInfo, hidden = false): { kind: 'packaged'; exec: string } | { kind: 'dev'; command: string } {
+  const flag = hidden ? ` ${HIDDEN_FLAG}` : ''
+  if (info.isPackaged) return { kind: 'packaged', exec: `${execArg(info.appImage || info.execPath)}${flag}` }
+  return { kind: 'dev', command: `${shellArg(info.devElectron ?? info.execPath)} ${shellArg(info.appPath)}${flag}` }
 }
 
 /** The XDG autostart entry for a packaged build's `exec`. */
@@ -68,9 +71,9 @@ export function autostartEntry(exec: string, icon: string | null): string {
   return `${lines.join('\n')}\n`
 }
 
-export function autostartStatus(info: LaunchInfo): AutostartStatus {
+export function autostartStatus(info: LaunchInfo, hidden = false): AutostartStatus {
   const file = autostartFile(info)
-  const launch = launchCommand(info)
+  const launch = launchCommand(info, hidden)
   return {
     supported: file !== null,
     packaged: launch.kind === 'packaged',
@@ -80,20 +83,54 @@ export function autostartStatus(info: LaunchInfo): AutostartStatus {
   }
 }
 
+/** The icon name scripts/install-appimage.sh puts in the user's icon theme (~/.local/share/icons/hicolor). */
+export const THEME_ICON = 'research'
+
+/**
+ * The entry's Icon. An AppImage's files live in a mount that goes away with the app: the entry names the theme icon
+ * instead. An icon inside the app's archive cannot be read by the desktop either.
+ */
+export function entryIcon(info: LaunchInfo, icon: string | null): string | null {
+  if (info.isPackaged && info.appImage) return THEME_ICON
+  return icon && !icon.includes('.asar') ? icon : null
+}
+
+/** What the entry is written with: the app's icon and «Iniciar oculto en la bandeja». */
+export interface AutostartOptions {
+  icon: string | null
+  hidden: boolean
+}
+
 /**
  * «Iniciar con la sesión»: writes or removes the entry. Turning it on is refused where it could not work (not Linux,
  * or a development run); turning it off always removes the file.
  */
-export async function setAutostart(info: LaunchInfo, enabled: boolean, icon: string | null): Promise<AutostartStatus> {
+export async function setAutostart(info: LaunchInfo, enabled: boolean, options: AutostartOptions): Promise<AutostartStatus> {
   const file = autostartFile(info)
   if (!file) throw new Error('Autostart is only supported on Linux')
   if (!enabled) {
     await rm(file, { force: true })
-    return autostartStatus(info)
+    return autostartStatus(info, options.hidden)
   }
-  const launch = launchCommand(info)
+  const launch = launchCommand(info, options.hidden)
   if (launch.kind !== 'packaged') throw new Error('Autostart needs a packaged build')
-  // An icon inside the app's archive cannot be read by the desktop.
-  await atomicWrite(file, autostartEntry(launch.exec, icon && !icon.includes('.asar') ? icon : null))
-  return autostartStatus(info)
+  await atomicWrite(file, autostartEntry(launch.exec, entryIcon(info, options.icon)))
+  return autostartStatus(info, options.hidden)
+}
+
+/**
+ * Keeps an existing entry in line with the settings: after «Iniciar oculto en la bandeja» changes (its Exec gains or
+ * loses `--hidden`) and at startup (an entry written by an older version). Nothing happens without an entry, in
+ * development (an entry left by a packaged build is not this run's to rewrite), or when the entry is already right.
+ * Returns whether the file was written.
+ */
+export async function refreshAutostart(info: LaunchInfo, options: AutostartOptions): Promise<boolean> {
+  const file = autostartFile(info)
+  if (!file || !existsSync(file)) return false
+  const launch = launchCommand(info, options.hidden)
+  if (launch.kind !== 'packaged') return false
+  const entry = autostartEntry(launch.exec, entryIcon(info, options.icon))
+  if ((await readFile(file, 'utf8').catch(() => null)) === entry) return false
+  await atomicWrite(file, entry)
+  return true
 }

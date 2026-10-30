@@ -34,14 +34,60 @@ pnpm dev
 
 Full user guide (what the app does, how to add papers, summaries, review mode, each setting, project files): [`docs/guide.md`](docs/guide.md).
 
+## Install as an app (AppImage, Linux)
+
+### From a release
+
+Each release on the [Releases page](https://github.com/LaloHao/research/releases) has `research-<version>-x86_64.AppImage` and its `.sha256`. The install script downloads the latest one, checks its SHA-256 and installs it (no checkout needed; it needs `curl`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/LaloHao/research/master/scripts/install-appimage.sh | bash -s -- --release
+# or from a checkout:
+./scripts/install-appimage.sh --release            # the latest release
+./scripts/install-appimage.sh --release v0.2.0     # a given one
+```
+
+By hand instead: download both files from the Releases page, check with `sha256sum -c research-<version>-x86_64.AppImage.sha256`, then run `./scripts/install-appimage.sh path/to/research-<version>-x86_64.AppImage` (or just `chmod +x` it and run it, without the launcher).
+
+The install script copies the AppImage to `~/Applications/research.AppImage` (replacing the previous one in a single step), adds the launcher `~/.local/share/applications/research.desktop` and the icon (`~/.local/share/icons/hicolor/<size>/apps/research.png`, taken from the AppImage). Then open «research» from the application menu, and, if you want it at login, turn on Settings → Aplicación → «Iniciar con la sesión» from that copy (with «Iniciar oculto en la bandeja», the session start leaves it in the tray).
+
+To update: quit the app (tray → «Salir», or Ctrl+Q) and run the same command again (`--release` installs the newest release). The path stays the same, so the launcher and the autostart entry keep working. The settings, the local model and the log stay in `~/.config/research` (shared with `pnpm dev`).
+
+### Building it yourself
+
+```bash
+pnpm install
+pnpm dist                        # builds dist/research-<version>-x86_64.AppImage
+./scripts/install-appimage.sh    # installs the newest one in dist/ for your user
+```
+
+To update a local build: quit the app, then `git pull`, `pnpm install`, `pnpm dist` and `./scripts/install-appimage.sh` again.
+
+AppImages need FUSE (`libfuse2` on Ubuntu 24.04). Without it, run `~/Applications/research.AppImage --appimage-extract-and-run`.
+
 ## Development
 
 ```bash
 pnpm test        # tests (no network)
 pnpm typecheck
 pnpm check       # both
+pnpm test:emacs  # the Emacs packages' ERT tests (EMACS=/path/to/emacs to pick one)
 ./scripts/record-fixtures.sh   # re-record the tests' HTTP fixtures
 ```
+
+CI (`.github/workflows/ci.yml`) runs `pnpm check` and `pnpm test:emacs` on every push to master and every pull request.
+
+### Cutting a release
+
+From a clean, up-to-date master:
+
+```bash
+pnpm release 0.2.0          # scripts/release.sh: sets package.json's version, commits «Release v0.2.0», tags v0.2.0
+git push origin master
+git push origin v0.2.0      # the Release workflow takes it from here
+```
+
+The tag starts `.github/workflows/release.yml`: it checks that the tag matches package.json's version, runs `pnpm check` and `pnpm test:emacs`, builds the AppImage, and publishes the GitHub release with `research-<version>-x86_64.AppImage`, its `.sha256` and notes listing the commits since the previous tag (`scripts/release-notes.sh`) plus the install command. A version like `0.2.0-rc.1` makes a pre-release. The Emacs packages (`emacs/*.el`) keep their own `Version:` header. Before pushing, `git tag -d v0.2.0 && git reset --hard HEAD~1` undoes it.
 
 ### Evaluation against real Claude
 

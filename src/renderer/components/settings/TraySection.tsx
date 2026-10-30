@@ -28,6 +28,8 @@ export function TraySection({ onSaved }: { onSaved: () => void }): React.JSX.Ele
     window.research.settings.set({ [flag]: value }).then(
       (s) => {
         setFlags({ closeToTray: s.closeToTray, startHidden: s.startHidden })
+        // «Iniciar oculto» changes the autostart entry (and the development command shown below).
+        if (flag === 'startHidden') window.research.app.desktopStatus().then(setDesktop, () => undefined)
         onSaved()
       },
       () => {
