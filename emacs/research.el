@@ -1105,6 +1105,16 @@ changed it meanwhile); \\[research-alternatives-keep] keeps yours.")
   (let ((prev (cl-find-if (lambda (p) (< p (point))) (reverse (research--alternative-starts)))))
     (when prev (goto-char prev))))
 
+(defun research--alternatives-close ()
+  "Close the alternatives buffer: quit its window when shown, else kill it.
+`quit-window' alone acts on the selected window, which need not show this
+buffer (e.g. when called from another window or in batch)."
+  (let* ((buffer (current-buffer))
+         (window (get-buffer-window buffer)))
+    (if window
+        (quit-window t window)
+      (kill-buffer buffer))))
+
 (defun research-alternatives-choose ()
   "Put the alternative at point in place of the sentence, if it is unchanged."
   (interactive)
@@ -1119,13 +1129,13 @@ changed it meanwhile); \\[research-alternatives-keep] keeps yours.")
           (goto-char beg)
           (delete-region beg end)
           (insert alternative)))
-      (quit-window t)
+      (research--alternatives-close)
       (message "Oración reemplazada (deshaz con %s en el búfer)" (substitute-command-keys "\\[undo]")))))
 
 (defun research-alternatives-keep ()
   "Close the alternatives and keep your sentence."
   (interactive)
-  (quit-window t)
+  (research--alternatives-close)
   (message "Conservas tu oración"))
 
 ;;;###autoload
