@@ -45,7 +45,11 @@ export const ChatWritingSchema = z.looseObject({
   section: z.string().max(MAX_WRITING_SECTION),
   scope: z.enum(WRITING_SCOPES),
   mode: z.enum(WRITING_MODES),
-  passage: z.string().min(1).max(MAX_WRITING_PASSAGE)
+  /** Counted in characters (code points), as the editor that sent it counts them. */
+  passage: z
+    .string()
+    .min(1)
+    .refine((s) => [...s].length <= MAX_WRITING_PASSAGE)
 })
 export type ChatWriting = z.infer<typeof ChatWritingSchema>
 /** A writing conversation as the list shows it: where its passage is, without the passage. */

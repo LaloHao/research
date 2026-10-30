@@ -133,7 +133,7 @@ describe('local API: ask (Claude’s opinion on a passage)', () => {
   })
 
   it('refuses before spending: no passage, a passage in a follow-up, an unknown or non-editor conversation, a passage too long', async () => {
-    const { provider, chats, ctx } = await project([chatAnswer('ok')])
+    const { provider, chats, ctx } = await project([chatAnswer('ok'), chatAnswer('ok')])
     const server = await serve(ctx)
     expect((await call(server, 'ask', { question: 'Q' })).text).toMatch(/^invalid: /)
     expect((await call(server, 'ask', { question: 'Q', conversation_id: '20200101-000000-ffff' })).text).toMatch(/^not_found: /)
@@ -142,7 +142,11 @@ describe('local API: ask (Claude’s opinion on a passage)', () => {
     expect((await call(server, 'ask', { question: 'Q', conversation_id: library, confirmed: true })).text).toMatch(/^invalid: .*not started with ask/)
     expect((await call(server, 'ask', { question: 'Q', conversation_id: library, text: 'x' })).text).toMatch(/^invalid: /)
     expect((await call(server, 'ask', { question: 'Q', text: 'é'.repeat(30_001) })).isError).toBe(true)
-    expect(provider.chatCalls).toHaveLength(1)
+    // 30 000 characters outside the BMP are 60 000 UTF-16 units: still accepted and written.
+    await ok(server, 'ask', { question: 'Q', text: '😀'.repeat(30_000), confirmed: true })
+    await chats.idle()
+    expect(chats.list().find((c) => c.writing)?.writing).toMatchObject({ scope: 'region', file: '' })
+    expect(provider.chatCalls).toHaveLength(2)
   })
 
   it('ask_status follows a running answer; ask_stop keeps what arrived as stopped; a second question meanwhile is busy', async () => {
