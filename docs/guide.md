@@ -106,7 +106,7 @@ Attaching runs as a job in the activity panel («Adjuntar PDF a <key>» (Attach 
 
 Each paper gets a **citation key** (its folder under `papers/`) that never changes, even if you edit its metadata. It can be copied with the «Copiar» (Copy) button next to the key, in the paper's detail.
 
-The app keeps `exports/library.bib` with the BibTeX of every paper, ready to cite from LaTeX or org-cite. It's a generated file: don't edit it by hand.
+The app keeps `exports/library.bib` with the BibTeX of every paper, ready to cite from LaTeX or org-cite. Months are written as the standard macros (`jun`, `oct`…), since sources like Crossref give `month=June` or `month=Oct`, which Biber doesn't understand. It's a generated file: don't edit it by hand.
 
 ## Library
 

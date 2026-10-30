@@ -5,7 +5,41 @@ const HEAD = /^\s*@(\w+)\s*\{\s*([^,\s]*)\s*,/
 export function rekeyBibtex(entry: string, key: string): string {
   const m = entry.match(HEAD)
   if (!m) throw new Error('Not a BibTeX entry')
-  return entry.replace(HEAD, () => `@${m[1]}{${key},`).trim()
+  return normalizeBibMonth(entry.replace(HEAD, () => `@${m[1]}{${key},`).trim())
+}
+
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+// English and Spanish month names and their common abbreviations (Crossref writes `month=June`, `month=Oct`).
+const MONTH_NAMES: Record<string, number> = Object.fromEntries(
+  [
+    ['january', 'jan', 'enero', 'ene'],
+    ['february', 'feb', 'febrero'],
+    ['march', 'mar', 'marzo'],
+    ['april', 'apr', 'abril', 'abr'],
+    ['may', 'mayo'],
+    ['june', 'jun', 'junio'],
+    ['july', 'jul', 'julio'],
+    ['august', 'aug', 'agosto', 'ago'],
+    ['september', 'sep', 'sept', 'septiembre', 'setiembre', 'set'],
+    ['october', 'oct', 'octubre'],
+    ['november', 'nov', 'noviembre'],
+    ['december', 'dec', 'diciembre', 'dic']
+  ].flatMap((names, i) => names.map((n) => [n, i + 1]))
+)
+
+const MONTH_FIELD = /(\bmonth\s*=\s*)(\{\s*([^{}]*?)\s*\}|"\s*([^"]*?)\s*"|([A-Za-z]+\.?|\d+))/i
+
+/**
+ * `month` as BibTeX/biblatex expect it: the standard macro (`jun`), unbraced, for a month name or abbreviation in
+ * English or Spanish, in any case, braced, quoted or bare (`June`, `{Oct}`, `"sept."`); a number 1–12 becomes its
+ * macro too. Anything else (a range, a season) is left as it was.
+ */
+export function normalizeBibMonth(entry: string): string {
+  return entry.replace(MONTH_FIELD, (whole, lead: string, _v, braced?: string, quoted?: string, bare?: string) => {
+    const raw = (braced ?? quoted ?? bare ?? '').trim().replace(/\.$/, '').toLowerCase()
+    const n = /^\d+$/.test(raw) ? Number(raw) : MONTH_NAMES[raw]
+    return n && n >= 1 && n <= 12 ? `${lead}${MONTHS[n - 1]}` : whole
+  })
 }
 
 const SPECIAL: Record<string, string> = {

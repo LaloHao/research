@@ -92,3 +92,32 @@ describe('setBibFields', () => {
     expect(bibType('nope')).toBeNull()
   })
 })
+
+describe('normalizeBibMonth', () => {
+  it('turns month names, abbreviations and numbers into the standard macro', async () => {
+    const { normalizeBibMonth } = await import('../../../src/main/ingest/bibtex')
+    const cases: [string, string][] = [
+      ['@inproceedings{k, title={T}, year={2017}, month=June, pages={33–40} }', '@inproceedings{k, title={T}, year={2017}, month=jun, pages={33–40} }'],
+      ['@article{k, month=Oct, year={2026}}', '@article{k, month=oct, year={2026}}'],
+      ['@article{k,\n  month = {September},\n}', '@article{k,\n  month = sep,\n}'],
+      ['@article{k, month = "sept.", year=2020}', '@article{k, month = sep, year=2020}'],
+      ['@article{k, month = {6}}', '@article{k, month = jun}'],
+      ['@article{k, month = {junio}}', '@article{k, month = jun}'],
+      ['@article{k, month = jun}', '@article{k, month = jun}']
+    ]
+    for (const [input, expected] of cases) expect(normalizeBibMonth(input)).toBe(expected)
+  })
+
+  it('leaves what it cannot read, and other fields named like month, alone', async () => {
+    const { normalizeBibMonth } = await import('../../../src/main/ingest/bibtex')
+    expect(normalizeBibMonth('@article{k, month = {Spring}}')).toBe('@article{k, month = {Spring}}')
+    expect(normalizeBibMonth('@article{k, month = {13}}')).toBe('@article{k, month = {13}}')
+    expect(normalizeBibMonth('@article{k, bimonth = {June}}')).toBe('@article{k, bimonth = {June}}')
+    expect(normalizeBibMonth('@article{k, title={x}}')).toBe('@article{k, title={x}}')
+  })
+
+  it('applies through rekeyBibtex, so library.bib and every export get it', async () => {
+    const { rekeyBibtex } = await import('../../../src/main/ingest/bibtex')
+    expect(rekeyBibtex('@article{old, month=June}', 'new2024')).toBe('@article{new2024, month=jun}')
+  })
+})

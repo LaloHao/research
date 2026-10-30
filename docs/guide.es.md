@@ -106,7 +106,7 @@ Adjuntar corre como un trabajo en el panel de actividad («Adjuntar PDF a <clave
 
 Cada paper recibe una **clave de cita** (su carpeta en `papers/`) que nunca cambia, aunque edites sus metadatos. Se puede copiar con el botón «Copiar» junto a la clave, en el detalle del paper.
 
-La app mantiene `exports/library.bib` con el BibTeX de todos los papers, listo para citar desde LaTeX u org-cite. Es un archivo generado: no lo edites a mano.
+La app mantiene `exports/library.bib` con el BibTeX de todos los papers, listo para citar desde LaTeX u org-cite. Los meses se escriben con las macros estándar (`jun`, `oct`…), porque fuentes como Crossref dan `month=June` o `month=Oct`, que Biber no entiende. Es un archivo generado: no lo edites a mano.
 
 ## Biblioteca
 
