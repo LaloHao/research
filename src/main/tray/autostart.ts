@@ -80,6 +80,18 @@ export function autostartStatus(info: LaunchInfo): AutostartStatus {
   }
 }
 
+/** The icon name scripts/install-appimage.sh puts in the user's icon theme (~/.local/share/icons/hicolor). */
+export const THEME_ICON = 'research'
+
+/**
+ * The entry's Icon. An AppImage's files live in a mount that goes away with the app: the entry names the theme icon
+ * instead. An icon inside the app's archive cannot be read by the desktop either.
+ */
+export function entryIcon(info: LaunchInfo, icon: string | null): string | null {
+  if (info.isPackaged && info.appImage) return THEME_ICON
+  return icon && !icon.includes('.asar') ? icon : null
+}
+
 /**
  * «Iniciar con la sesión»: writes or removes the entry. Turning it on is refused where it could not work (not Linux,
  * or a development run); turning it off always removes the file.
@@ -93,7 +105,6 @@ export async function setAutostart(info: LaunchInfo, enabled: boolean, icon: str
   }
   const launch = launchCommand(info)
   if (launch.kind !== 'packaged') throw new Error('Autostart needs a packaged build')
-  // An icon inside the app's archive cannot be read by the desktop.
-  await atomicWrite(file, autostartEntry(launch.exec, icon && !icon.includes('.asar') ? icon : null))
+  await atomicWrite(file, autostartEntry(launch.exec, entryIcon(info, icon)))
   return autostartStatus(info)
 }

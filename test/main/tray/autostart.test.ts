@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { autostartEntry, autostartFile, autostartStatus, execArg, launchCommand, setAutostart, shellArg, type LaunchInfo } from '../../../src/main/tray/autostart'
+import { autostartEntry, autostartFile, autostartStatus, entryIcon, execArg, launchCommand, setAutostart, shellArg, type LaunchInfo } from '../../../src/main/tray/autostart'
 import { tmpDir } from '../../helpers/tmp'
 
 const info = (over: Partial<LaunchInfo> = {}): LaunchInfo => ({
@@ -73,6 +73,15 @@ describe('autostart entry', () => {
     const launch = info({ configHome: await tmpDir() })
     await setAutostart(launch, true, '/opt/research/resources/app.asar/resources/icons/icon-256.png')
     expect(await readFile(join(launch.configHome!, 'autostart', 'research.desktop'), 'utf8')).not.toContain('Icon=')
+  })
+
+  it('names the theme icon when running from an AppImage (its files go away with its mount)', async () => {
+    const launch = info({ configHome: await tmpDir(), appImage: '/home/me/Applications/research.AppImage', execPath: '/tmp/.mount_researXYZ/research' })
+    await setAutostart(launch, true, '/tmp/.mount_researXYZ/resources/resources/icons/icon-256.png')
+    expect(await readFile(join(launch.configHome!, 'autostart', 'research.desktop'), 'utf8')).toContain(
+      'Exec=/home/me/Applications/research.AppImage\nIcon=research\n'
+    )
+    expect(entryIcon(info({ isPackaged: false, appImage: '/x.AppImage' }), '/repo/resources/icons/icon-256.png')).toBe('/repo/resources/icons/icon-256.png')
   })
 
   it('refuses to write an entry in development or off Linux, but still removes one', async () => {

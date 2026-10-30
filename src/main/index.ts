@@ -49,8 +49,11 @@ let windowStarted = false
 /** Something asked for the window before it existed: it shows even when the app starts hidden. */
 let showRequested = false
 
-/** The icons live in resources/ next to package.json (scripts/render-icons.sh makes the PNGs from the SVGs). */
-const resource = (...parts: string[]): string => join(app.getAppPath(), 'resources', ...parts)
+/**
+ * The icons live in resources/ next to package.json (scripts/render-icons.sh makes the PNGs from the SVGs). A packaged
+ * build ships them outside app.asar (electron-builder's extraResources), where the desktop can read them too.
+ */
+const resource = (...parts: string[]): string => join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'resources', ...parts)
 const APP_ICON = (): string => resource('icons', 'icon-256.png')
 
 /** A tray image at 1x (24 px) and 2x (48 px): the desktop picks what its panel needs. */

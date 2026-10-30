@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "description": "Personal desktop app for thesis research: paper library, BibTeX, summaries, relations and systematic mapping",
+  "author": "Eduardo V. <lalohao@gmail.com>",
+  "desktopName": "research.desktop",
   "main": "./out/main/index.js",
   "type": "commonjs",
   "engines": {
@@ -12,6 +14,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "dist": "electron-vite build && electron-builder --linux AppImage --x64",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
@@ -48,10 +51,60 @@
     "@types/turndown": "5.0.6",
     "@vitejs/plugin-react": "4.7.0",
     "electron": "41.10.7",
+    "electron-builder": "26.18.0",
     "electron-vite": "5.0.0",
     "pdf-lib": "1.17.1",
     "typescript": "6.0.3",
     "vite": "7.3.7",
     "vitest": "4.1.11"
+  },
+  "build": {
+    "appId": "dev.lalohao.research",
+    "productName": "research",
+    "executableName": "research",
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "directories": {
+      "output": "dist",
+      "buildResources": "resources"
+    },
+    "files": [
+      "out/**",
+      "package.json",
+      "!**/*.map",
+      "!**/node_modules/onnxruntime-web/**",
+      "!**/node_modules/onnxruntime-node/bin/napi-v6/{darwin,win32}/**",
+      "!**/node_modules/onnxruntime-node/bin/napi-v6/linux/arm64/**"
+    ],
+    "extraResources": [
+      {
+        "from": "resources",
+        "to": "resources",
+        "filter": [
+          "icon.svg",
+          "icons/**",
+          "tray/**"
+        ]
+      }
+    ],
+    "asarUnpack": [
+      "**/*.node",
+      "**/node_modules/onnxruntime-node/bin/**",
+      "**/node_modules/@img/**"
+    ],
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "resources/icons/icon-512.png",
+      "category": "Office",
+      "synopsis": "Paper library and thesis research",
+      "syncDesktopName": true
+    },
+    "npmRebuild": false
   }
 }
