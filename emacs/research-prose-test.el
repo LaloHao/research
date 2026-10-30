@@ -359,6 +359,30 @@ The variable `root' is the folder."
       (set-buffer-modified-p nil)
       (setq buffer-file-name nil))))
 
+(ert-deftest research-prose-test-spanish-plural ()
+  (dolist (case '(("modelo de lenguaje de gran tamaño" . "modelos de lenguaje de gran tamaño")
+                  ("inteligencia artificial" . "inteligencias artificiales")
+                  ("interfaz de programación de aplicaciones" . "interfaces de programación de aplicaciones")
+                  ("análisis de causa raíz" . "análisis de causa raíz")
+                  ("red neuronal" . "redes neuronales")
+                  ("Reglamento General de Protección de Datos" . "Reglamentos Generales de Protección de Datos")
+                  ("algoritmo" . "algoritmos")))
+    (should (equal (research-prose-spanish-plural (car case)) (cdr case)))))
+
+(ert-deftest research-prose-test-add-acronym-long-plural ()
+  (research-prose-test--thesis "\\newacronym{zz}{ZZ}{zeta}\n" "Texto.\n"
+    (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+      ;; A plural that glossaries wouldn't build by itself is written as longplural …
+      (research-prose-add-acronym "LLM" "modelo de lenguaje de gran tamaño" "llm" "modelos de lenguaje de gran tamaño")
+      ;; … and one that is just «s» more is left to glossaries.
+      (research-prose-add-acronym "SO" "sistema operativo" "so" "sistema operativos")
+      (research-prose-add-acronym "UI" "interfaz" "ui" "interfazs"))
+    (let ((text (with-temp-buffer (insert-file-contents (expand-file-name "acronimos.tex" root)) (buffer-string))))
+      (should (string-match-p (regexp-quote "\\newacronym[longplural={modelos de lenguaje de gran tamaño}]{llm}{LLM}{modelo de lenguaje de gran tamaño}") text))
+      (should (string-match-p (regexp-quote "\\newacronym{ui}{UI}{interfaz}") text))
+      ;; The reader still knows the acronyms defined with an optional argument.
+      (should (equal (gethash "llm" (research-prose-read-acronyms (expand-file-name "acronimos.tex" root))) "LLM")))))
+
 (ert-deftest research-prose-test-add-acronym ()
   (research-prose-test--thesis research-prose-test--defs "El HTTP falla.\n"
     (research-prose-test--goto "HTTP")
