@@ -40,7 +40,9 @@
 ;; `*research-ask*' and is a conversation of the app's Chat view.
 ;;
 ;; `research-prose-check' (research-prose.el, `l' in the command map) checks
-;; Spanish academic prose locally, without the app.
+;; Spanish academic prose locally, without the app; `g', `G', `A' and `T'
+;; write the thesis' acronyms as \gls (at point, all of them asking, a new
+;; one in acronimos.tex, as you type).
 ;;
 ;; Pure Emacs Lisp: url.el for HTTP and the native JSON parser.
 
@@ -1641,6 +1643,10 @@ The passage is the one the conversation started with."
     (define-key map (kbd "r") #'research-reverse-outline)
     (define-key map (kbd "q") #'research-rq-coverage)
     (define-key map (kbd "l") #'research-prose-check)
+    (define-key map (kbd "g") #'research-prose-gls-at-point)
+    (define-key map (kbd "G") #'research-prose-gls-fix)
+    (define-key map (kbd "A") #'research-prose-add-acronym)
+    (define-key map (kbd "T") #'research-prose-auto-gls-mode)
     (define-key map (kbd "?") #'research-ask)
     map)
   "The research commands, under `research-keymap-prefix' in `research-mode'.")
@@ -1648,6 +1654,14 @@ The passage is the one the conversation started with."
 
 (autoload 'research-prose-check "research-prose"
   "Check the prose of the region or the buffer (Spanish academic prose, local)." t)
+(autoload 'research-prose-gls-at-point "research-prose"
+  "Write the bare acronym at point as \\gls{KEY}." t)
+(autoload 'research-prose-gls-fix "research-prose"
+  "Write the bare acronyms of the region or buffer as \\gls, asking each time." t)
+(autoload 'research-prose-add-acronym "research-prose"
+  "Define an acronym in the thesis' acronym file." t)
+(autoload 'research-prose-auto-gls-mode "research-prose"
+  "Write a defined acronym as \\gls{KEY} as soon as you finish typing it." t)
 
 (defvar research-mode-map
   (let ((map (make-sparse-keymap)))

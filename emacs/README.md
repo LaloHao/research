@@ -79,7 +79,11 @@ rewrite.
 | --- | --- | --- |
 | `research-prose-check` | `C-c r l` | Checks the region (or the buffer) once and shows the diagnostics with Flymake; the echo area counts them per check. |
 | `research-prose-mode` | | Minor mode: keeps the checks on while you write (Flymake runs them when you pause). |
-| `research-prose-maybe-enable` | | For `org-mode-hook`: turns the mode on in thesis files only (see `research-prose-thesis-directories`). |
+| `research-prose-maybe-enable` | | For `org-mode-hook`: turns the mode on in thesis files only (see `research-prose-thesis-directories`), and `research-prose-auto-gls-mode` too unless `research-prose-auto-gls` is nil. |
+| `research-prose-gls-at-point` | `C-c r g` | Writes the bare acronym at point (the one of the Flymake warning at point; point may be right after it) as `\gls{KEY}`, `\glspl{KEY}` for its plural (`LLMs`), `\Gls`/`\Glspl` at the start of a sentence. On an undefined acronym, offers `research-prose-add-acronym`. |
+| `research-prose-gls-fix` | `C-c r G` | Walks every bare defined acronym of the region (or the buffer) like `query-replace`, highlighting each: `y`/`SPC` converts it, `n`/`DEL` skips it, `!` converts it and the rest, `q`/`RET` stops. The whole run is one undo step. |
+| `research-prose-add-acronym` | `C-c r A` | Defines an acronym in the thesis' `acronimos.tex`: asks for the short form (the uppercase word at point by default, without a plural «s»), the long form and the key (the short form in lower case by default), inserts `\newacronym{KEY}{SHORT}{LONG}` in key order when the file is sorted (after the last definition otherwise; comments are kept), saves the file (your buffer of it if you have it open, asking first when it had unsaved changes) and offers to convert the acronym at point. |
+| `research-prose-auto-gls-mode` | `C-c r T` | Minor mode (toggle): a defined acronym becomes `\gls{KEY}` as soon as you finish typing it (space, newline or punctuation). `undo` right after brings the bare acronym back and keeps what you typed. |
 
 The checks (each one can be turned off in `research-prose-checks`):
 
@@ -103,7 +107,32 @@ The checks (each one can be turned off in `research-prose-checks`):
 - **Acronyms**: the thesis' `acronimos.tex` (`research-prose-acronym-files`, found in the file's folder or above it
   with `locate-dominating-file`) is read for `\newacronym{KEY}{SHORT}{LONG}`. A defined acronym written bare (`LLM`,
   `LLMs`) is a warning (write `\gls{llm}`); a `\gls{X}` (or `\Gls`, `\glspl`, `\acrshort`…) of an undefined key is an
-  error.
+  error. The acronym is matched on its short form and written with its key: with `\newacronym{ner}{REN}{…}`, `REN`
+  becomes `\gls{ner}`.
+- **Undefined acronyms** (`new-acronyms`): an uppercase word of 2 to 8 letters or digits (plus a plural «s») that is not
+  in `acronimos.tex` is a note suggesting `research-prose-add-acronym`. Roman numerals (II to XXXIX) and the words of
+  `research-prose-acronym-ignore` (`OK`, `TODO`, `DONE`, `NB`, `PS`, `FAQ`) are never noted.
+
+The acronym checks also look at table rows (a table exports to LaTeX, so an acronym there needs `\gls` too).
+
+### Acronyms as `\gls`
+
+The four acronym commands are the only ones that write into your text, and only acronyms:
+
+- With `research-prose-auto-gls-mode` (on by default in thesis files: `research-prose-auto-gls`), typing `Los LLMs `
+  leaves `Los \glspl{llm} `. It does nothing where the checks see no prose, nor right after a character that may open
+  markup not finished yet (`{`, `[`, `=`, `~`, `$`, `\`, `@`, `:`, `/`…), nor in `acronimos.tex` itself. Turn it off for
+  a buffer with `C-c r T`, or everywhere with `(setq research-prose-auto-gls nil)`.
+- For text already written, `C-c r G` walks every bare acronym; `C-c r g` converts the one at point.
+- **Case**: at the start of a sentence, a paragraph, a list item or a table cell the command is `\Gls` (`\Glspl`): the
+  first use of an acronym is expanded to its long form («modelo de lenguaje grande (LLM)»), which must then start with a
+  capital. Set `research-prose-gls-capitalize` to nil to always write `\gls`.
+- What is skipped is what the checks skip (headings, `#+` lines, drawers, `src`/`example`/`export`/`comment`/`quote`/`verse`
+  blocks, comments, fixed-width lines, LaTeX environments, math, LaTeX commands with their arguments such as an existing
+  `\gls{…}` or a `\newacronym`, citations `[cite:…]`, link targets, verbatim and code); table rows are converted.
+  Headings are never converted: `\gls` in a section title goes into the table of contents and the PDF bookmarks.
+- An undefined acronym: `C-c r A` on it (or `C-c r g`, which offers it) asks for its long form, adds it to `acronimos.tex`
+  and converts it.
 
 What is not prose is ignored: headings, `#+` keyword lines, drawers, `src`/`example`/`export`/`comment`/`quote`/`verse`
 blocks, tables, comment lines, fixed-width lines, LaTeX environments (math, figures, tables, listings), display and
@@ -127,7 +156,8 @@ Errors from the app are shown in Spanish, like the app (no project open, the API
   `research-prose-repetition-min-length`, `research-prose-max-gerunds`, `research-prose-max-mente-adverbs`,
   `research-prose-readability-threshold`, `research-prose-readability-min-words`, `research-prose-term-groups`,
   `research-prose-filler-phrases`, `research-prose-acronym-files`, `research-prose-skipped-blocks`,
-  `research-prose-skipped-environments`, `research-prose-thesis-directories` (`M-x customize-group RET research-prose`).
+  `research-prose-skipped-environments`, `research-prose-thesis-directories`, `research-prose-acronym-ignore`,
+  `research-prose-gls-capitalize`, `research-prose-auto-gls` (`M-x customize-group RET research-prose`).
 
 ## Doom Emacs setup
 
@@ -148,11 +178,14 @@ and to `config.el`:
 
 ;; Local prose checks while you write, in the thesis' Org files only.
 (use-package! research-prose
-  :commands (research-prose-mode research-prose-check)
+  :commands (research-prose-mode research-prose-check research-prose-gls-at-point research-prose-gls-fix
+             research-prose-add-acronym research-prose-auto-gls-mode)
   :hook (org-mode . research-prose-maybe-enable)
   :init
   ;; The thesis' folders; without them, any Org file with an acronimos.tex above it.
-  (setq research-prose-thesis-directories '("~/thesis/")))
+  (setq research-prose-thesis-directories '("~/thesis/"))
+  ;; Acronyms become \gls{KEY} as you type them (nil to keep only the commands).
+  (setq research-prose-auto-gls t))
 
 (map! :after research
       :map (org-mode-map latex-mode-map LaTeX-mode-map markdown-mode-map)
@@ -174,12 +207,17 @@ and to `config.el`:
        :desc "Reverse outline"        "r" #'research-reverse-outline
        :desc "RQ coverage"            "q" #'research-rq-coverage
        :desc "Prose check (local)"    "l" #'research-prose-check
+       :desc "Acronym at point → \\gls" "g" #'research-prose-gls-at-point
+       :desc "All acronyms → \\gls"   "G" #'research-prose-gls-fix
+       :desc "Add acronym"            "A" #'research-prose-add-acronym
+       :desc "Auto \\gls on/off"       "T" #'research-prose-auto-gls-mode
        :desc "Preguntar a Claude"     "?" #'research-ask))
 ```
 
 Then run `doom sync` and restart Emacs (run `doom sync` again after updating the repository). In an Org buffer,
 `SPC m w c` inserts a citation, `SPC m w l` checks the prose of the buffer and `SPC m w t` asks the tutor about the
-paragraph. The prefix is `w` (writing) because Org already uses `SPC m r` for refiling.
+paragraph; `SPC m w g` writes the acronym at point as `\gls`, `SPC m w G` walks them all, `SPC m w A` adds one to
+`acronimos.tex` and `SPC m w T` toggles the conversion as you type. The prefix is `w` (writing) because Org already uses `SPC m r` for refiling.
 
 The `.bib` that `research-bibtex-for-file` writes is the same the app's «Redacción → BibTeX» builds, so it can be the
 file of `#+bibliography:` that org-cite exports to biblatex (`#+cite_export: biblatex`) and biber reads; let the command
