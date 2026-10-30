@@ -34,6 +34,8 @@ export function App(): React.JSX.Element {
     void flushAll().finally(() => window.research.flushDone())
   })
   const openSync = useCallback(() => setView('sync'), [])
+  // The tray's «Sincronizar ahora» when the sync needs explaining (conflicts, an error, nothing set up).
+  useEvent('open-sync', openSync)
   // While «Hay cambios sin sincronizar» shows, nothing behind it can be edited: the edits were flushed before asking.
   const [closePrompt, setClosePrompt] = useState(false)
 

@@ -21,6 +21,12 @@ export interface AppSettings {
   apiAllowCostly: boolean
   /** How the app's browser makes a page's PDF (its toolbar sets it): the reader view by default. */
   capturePdfMode: CapturePdfMode
+  /** «Al cerrar la ventana, seguir en la bandeja»: closing the window hides it while the tray is there; on by default. */
+  closeToTray: boolean
+  /** «Iniciar oculto en la bandeja»: the window stays hidden at launch (also with `--hidden`) while the tray is there. */
+  startHidden: boolean
+  /** The one-time «research sigue en la bandeja» was shown; set by the main process only. */
+  trayHintShown: boolean
 }
 
 export const DEFAULT_SETTINGS: Omit<AppSettings, 'deviceId'> = {
@@ -32,5 +38,8 @@ export const DEFAULT_SETTINGS: Omit<AppSettings, 'deviceId'> = {
   apiEnabled: false,
   apiPort: DEFAULT_API_PORT,
   apiAllowCostly: false,
-  capturePdfMode: 'reader'
+  capturePdfMode: 'reader',
+  closeToTray: true,
+  startHidden: false,
+  trayHintShown: false
 }

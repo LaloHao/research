@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- research: the tray icon (attention). One flat colour that reads on light and dark panels. -->
+  <g fill="#6366f1">
+    <path d="M1.5 4.6C4.4 3.3 7.9 3.4 11.2 5.2V20.2C7.9 18.6 4.4 18.5 1.5 19.7Z"/>
+    <path d="M22.5 4.6C19.6 3.3 16.1 3.4 12.8 5.2V20.2C16.1 18.6 19.6 18.5 22.5 19.7Z"/>
+  </g>
+  <circle cx="18.6" cy="18.6" r="4.6" fill="#ef4444" stroke="#ffffff" stroke-width="1.4"/>
+</svg>

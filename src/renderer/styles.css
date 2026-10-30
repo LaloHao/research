@@ -484,3 +484,11 @@ button.danger { color: var(--error); border-color: var(--error); }
 .metadata-editor { display: flex; flex-direction: column; gap: 8px; max-width: 760px; padding: 10px 0; }
 .metadata-editor label { display: flex; flex-direction: column; gap: 2px; font-size: 0.9em; }
 .metadata-editor label.grow { flex: 1; }
+
+/* «Iniciar con la sesión» in development: the command line to copy, wrapped anywhere and selected whole. */
+.autostart-command {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}

@@ -87,6 +87,7 @@ export class AppController {
     // A full new interval starts on a reschedule: saving the same values again must not push the next sync back.
     if (before.autoSync !== this.settings.autoSync || before.autoSyncMinutes !== this.settings.autoSyncMinutes) this.session?.rescheduleSync()
     await this.applyApi()
+    this.emit('settings-changed')
     return this.settings
   }
 

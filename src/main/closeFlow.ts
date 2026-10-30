@@ -67,6 +67,8 @@ export interface QuitFlow {
    * sin sincronizar» is still open joins that same prompt instead of skipping it.
    */
   isLeavingConfirmed(): boolean
+  /** A quit chain is confirming or shutting down (the window's ✕ must then join it, never hide the window to the tray). */
+  isQuitting(): boolean
 }
 
 /** The quit state machine shared by the window's `close` handler and `before-quit`/`window-all-closed`. */
@@ -103,5 +105,5 @@ export function createQuitFlow(deps: QuitDeps): QuitFlow {
     return true
   }
 
-  return { beforeQuit, isLeavingConfirmed: () => leavingConfirmed }
+  return { beforeQuit, isLeavingConfirmed: () => leavingConfirmed, isQuitting: () => quitting }
 }

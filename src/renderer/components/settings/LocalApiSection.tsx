@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { API_PORTS, type LocalApiStatus } from '../../../shared/localApi'
+import { useEvent } from '../../hooks/useEvent'
 import { errorText } from '../../lib/errorText'
 
 type Patch = Parameters<typeof window.research.settings.set>[0]
@@ -25,6 +26,8 @@ export function LocalApiSection({ onSaved }: { onSaved: () => void }): React.JSX
     )
   }, [t])
   useEffect(refresh, [refresh])
+  // The tray turns the API on and off too.
+  useEvent('settings-changed', refresh)
 
   const save = (patch: Patch): void => {
     setBusy(true)

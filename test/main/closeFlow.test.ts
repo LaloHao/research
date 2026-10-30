@@ -178,6 +178,17 @@ describe('createQuitFlow', () => {
     await tick()
   })
 
+  it('reports a quit under way (the tray must not hide the window then) until it is cancelled', async () => {
+    const { deps, resolveLeave } = deferredQuitDeps()
+    const flow = createQuitFlow(deps)
+    expect(flow.isQuitting()).toBe(false)
+    flow.beforeQuit()
+    expect(flow.isQuitting()).toBe(true)
+    resolveLeave(false)
+    await tick()
+    expect(flow.isQuitting()).toBe(false)
+  })
+
   it('a cancelled quit never confirms leaving or calls quit(), and a later quit can ask again', async () => {
     const { deps, calls, resolveLeave } = deferredQuitDeps()
     const flow = createQuitFlow(deps)

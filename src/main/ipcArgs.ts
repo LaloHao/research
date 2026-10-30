@@ -107,7 +107,9 @@ export const ipcArgs = {
     autoSyncMinutes: z.number().int().min(AUTO_SYNC_MINUTES.min).max(AUTO_SYNC_MINUTES.max).optional(),
     apiEnabled: z.boolean().optional(),
     apiPort: z.number().int().min(API_PORTS.min).max(API_PORTS.max).optional(),
-    apiAllowCostly: z.boolean().optional()
+    apiAllowCostly: z.boolean().optional(),
+    closeToTray: z.boolean().optional(),
+    startHidden: z.boolean().optional()
   }),
   projectPatch: z.strictObject({
     name: z.string().trim().min(1).optional(),

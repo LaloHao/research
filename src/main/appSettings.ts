@@ -13,6 +13,8 @@ const validMinutes = (value: unknown): value is number =>
 
 const validPort = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= API_PORTS.min && value <= API_PORTS.max
 
+const flag = (value: unknown, fallback: boolean): boolean => (typeof value === 'boolean' ? value : fallback)
+
 export async function loadSettings(file: string): Promise<AppSettings> {
   let parsed: unknown
   try {
@@ -31,7 +33,10 @@ export async function loadSettings(file: string): Promise<AppSettings> {
     apiEnabled: typeof raw.apiEnabled === 'boolean' ? raw.apiEnabled : DEFAULT_SETTINGS.apiEnabled,
     apiPort: validPort(raw.apiPort) ? raw.apiPort : DEFAULT_SETTINGS.apiPort,
     apiAllowCostly: typeof raw.apiAllowCostly === 'boolean' ? raw.apiAllowCostly : DEFAULT_SETTINGS.apiAllowCostly,
-    capturePdfMode: isCapturePdfMode(raw.capturePdfMode) ? raw.capturePdfMode : DEFAULT_SETTINGS.capturePdfMode
+    capturePdfMode: isCapturePdfMode(raw.capturePdfMode) ? raw.capturePdfMode : DEFAULT_SETTINGS.capturePdfMode,
+    closeToTray: flag(raw.closeToTray, DEFAULT_SETTINGS.closeToTray),
+    startHidden: flag(raw.startHidden, DEFAULT_SETTINGS.startHidden),
+    trayHintShown: flag(raw.trayHintShown, DEFAULT_SETTINGS.trayHintShown)
   }
 }
 
