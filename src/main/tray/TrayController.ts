@@ -63,6 +63,7 @@ export class TrayController {
   private readonly failures = new FailureWatch()
   private projectRoot: string | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
+  private dueAt = 0
   private variant: TrayVariant | null = null
   private rendering: Promise<void> | null = null
   private again = false
@@ -90,10 +91,16 @@ export class TrayController {
     return this.tray !== null
   }
 
-  /** Schedules a refresh (debounced). */
+  /**
+   * Schedules a refresh. A refresh already due sooner covers this one, so a stream of job progress updates refreshes
+   * every `delay` instead of postponing the refresh forever.
+   */
   refresh(delay = this.deps.debounceMs ?? 400): void {
     if (!this.tray) return
+    const due = Date.now() + delay
+    if (this.timer && this.dueAt <= due) return
     if (this.timer) clearTimeout(this.timer)
+    this.dueAt = due
     this.timer = setTimeout(() => {
       this.timer = null
       void this.render()
@@ -123,7 +130,8 @@ export class TrayController {
     if (!this.tray) return
     this.tray.setToolTip(text)
     this.sayingUntil = Date.now() + ms
-    this.refresh(ms)
+    // Puts the status back once the message has had its time (other refreshes meanwhile leave the message alone).
+    setTimeout(() => this.refresh(0), ms).unref?.()
   }
 
   destroy(): void {

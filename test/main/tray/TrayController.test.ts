@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { MenuItemConstructorOptions } from 'electron'
 import { TrayController, type TraySnapshot } from '../../../src/main/tray/TrayController'
 import type { TrayActionId } from '../../../src/main/tray/trayModel'
@@ -122,5 +122,33 @@ describe('tray controller', () => {
     controller.destroy()
     expect(tray().destroyed).toBe(true)
     expect(controller.available()).toBe(false)
+  })
+
+  it('refreshes during a stream of changes instead of postponing it forever', async () => {
+    vi.useFakeTimers()
+    try {
+      let renders = 0
+      const controller = new TrayController({
+        createTray: (image) => new FakeTray(image),
+        buildMenu: (template) => template,
+        icon: (variant) => variant,
+        snapshot: async () => {
+          renders++
+          return snapshot()
+        },
+        act: () => undefined,
+        debounceMs: 400
+      })
+      controller.create()
+      await vi.advanceTimersByTimeAsync(10)
+      renders = 0
+      for (let i = 0; i < 10; i++) {
+        controller.refresh()
+        await vi.advanceTimersByTimeAsync(100)
+      }
+      expect(renders).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
