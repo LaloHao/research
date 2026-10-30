@@ -34,15 +34,32 @@ Guía completa de uso (qué hace la app, cómo agregar papers, resúmenes, modo 
 
 ## Instalar como aplicación (AppImage, Linux)
 
+### Desde una versión publicada
+
+Cada versión en la [página de Releases](https://github.com/LaloHao/research/releases) trae `research-<versión>-x86_64.AppImage` y su `.sha256`. El script de instalación descarga la más reciente, comprueba su SHA-256 y la instala (no necesita el repositorio; sí `curl`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/LaloHao/research/master/scripts/install-appimage.sh | bash -s -- --release
+# o desde el repositorio:
+./scripts/install-appimage.sh --release            # la versión más reciente
+./scripts/install-appimage.sh --release v0.2.0     # una en particular
+```
+
+A mano: descarga los dos archivos de la página de Releases, compruébala con `sha256sum -c research-<versión>-x86_64.AppImage.sha256` y ejecuta `./scripts/install-appimage.sh ruta/a/research-<versión>-x86_64.AppImage` (o simplemente dale `chmod +x` y ábrela, sin lanzador).
+
+El script copia la AppImage a `~/Applications/research.AppImage` (reemplaza la anterior en un solo paso), agrega el lanzador `~/.local/share/applications/research.desktop` y el ícono (`~/.local/share/icons/hicolor/<tamaño>/apps/research.png`, sacado de la AppImage). Después abre «research» desde el menú de aplicaciones y, si la quieres al iniciar sesión, activa Ajustes → Aplicación → «Iniciar con la sesión» desde esa copia (con «Iniciar oculto en la bandeja», al iniciar la sesión queda en la bandeja).
+
+Para actualizar: sal de la app (bandeja → «Salir», o Ctrl+Q) y vuelve a correr el mismo comando (`--release` instala la versión más reciente). La ruta no cambia, así que el lanzador y la entrada de inicio automático siguen funcionando. Los ajustes, el modelo local y el registro quedan en `~/.config/research` (los mismos que con `pnpm dev`).
+
+### Compilarla tú
+
 ```bash
 pnpm install
 pnpm dist                        # genera dist/research-<versión>-x86_64.AppImage
-./scripts/install-appimage.sh    # la instala para tu usuario
+./scripts/install-appimage.sh    # instala para tu usuario la más reciente de dist/
 ```
 
-El script copia la AppImage a `~/Applications/research.AppImage` (reemplaza la anterior en un solo paso), agrega el lanzador `~/.local/share/applications/research.desktop` y el ícono (`~/.local/share/icons/hicolor/<tamaño>/apps/research.png`). Después abre «research» desde el menú de aplicaciones y, si la quieres al iniciar sesión, activa Ajustes → Aplicación → «Iniciar con la sesión» desde esa copia.
-
-Para actualizar: sal de la app (bandeja → «Salir», o Ctrl+Q), luego `git pull`, `pnpm install`, `pnpm dist` y otra vez `./scripts/install-appimage.sh`. La ruta no cambia, así que el lanzador y la entrada de inicio automático siguen funcionando. Los ajustes, el modelo local y el registro quedan en `~/.config/research` (los mismos que con `pnpm dev`).
+Para actualizar una compilación local: sal de la app, luego `git pull`, `pnpm install`, `pnpm dist` y otra vez `./scripts/install-appimage.sh`.
 
 Las AppImage necesitan FUSE (`libfuse2` en Ubuntu 24.04). Sin él, ejecuta `~/Applications/research.AppImage --appimage-extract-and-run`.
 
@@ -52,8 +69,23 @@ Las AppImage necesitan FUSE (`libfuse2` en Ubuntu 24.04). Sin él, ejecuta `~/Ap
 pnpm test        # pruebas (sin red)
 pnpm typecheck
 pnpm check       # ambas
+pnpm test:emacs  # las pruebas ERT de los paquetes de Emacs (EMACS=/ruta/a/emacs para elegir uno)
 ./scripts/record-fixtures.sh   # vuelve a grabar las respuestas HTTP de las pruebas
 ```
+
+La CI (`.github/workflows/ci.yml`) corre `pnpm check` y `pnpm test:emacs` en cada push a master y en cada pull request.
+
+### Publicar una versión
+
+Desde master limpio y al día:
+
+```bash
+pnpm release 0.2.0          # scripts/release.sh: pone la versión en package.json, commitea «Release v0.2.0» y etiqueta v0.2.0
+git push origin master
+git push origin v0.2.0      # de aquí sigue el workflow Release
+```
+
+La etiqueta arranca `.github/workflows/release.yml`: comprueba que coincida con la versión de package.json, corre `pnpm check` y `pnpm test:emacs`, compila la AppImage y publica la versión en GitHub con `research-<versión>-x86_64.AppImage`, su `.sha256` y notas con los commits desde la etiqueta anterior (`scripts/release-notes.sh`) más el comando de instalación. Una versión como `0.2.0-rc.1` queda como pre-release. Los paquetes de Emacs (`emacs/*.el`) llevan su propio encabezado `Version:`. Antes de hacer push, `git tag -d v0.2.0 && git reset --hard HEAD~1` lo deshace.
 
 ### Evaluación con Claude real
 

@@ -51,6 +51,8 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends emacs-nox
+      - run: pnpm test:emacs
 
       # electron-builder never publishes (`--publish never` in the dist script); the release is made below.
       - name: Build the AppImage
