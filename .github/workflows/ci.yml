@@ -1,0 +1,32 @@
+name: CI
+
+# TODO: pin every action by commit SHA (uses: owner/action@<sha> # vX). Not done
+# yet: no SHAs were available offline (the user's other workflows use tags too).
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The pnpm version comes from package.json's packageManager.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Typecheck and the unit tests. They never reach the network; git is on the runner, and the tests that need
+      # git-lfs or dbus-send check for them.
+      - run: pnpm check
+      # The Emacs packages' ERT tests (emacs/). Ubuntu 24.04's Emacs is 29.3; research.el needs 29.1.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends emacs-nox
+      - run: pnpm test:emacs
