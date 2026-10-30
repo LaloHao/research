@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- research: the app icon (window, launcher). An open book on the app's accent colour. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#4338ca"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#bg)"/>
+  <g transform="translate(38.4 38.4) scale(7.4667)" fill="#ffffff">
+    <path d="M2.5 5.6C5.2 4.4 8.4 4.5 11.25 6.1V19.6C8.4 18.1 5.2 18 2.5 19.1Z"/>
+    <path d="M21.5 5.6C18.8 4.4 15.6 4.5 12.75 6.1V19.6C15.6 18.1 18.8 18 21.5 19.1Z"/>
+  </g>
+  <g stroke="#6366f1" stroke-width="5" stroke-linecap="round" opacity="0.55">
+    <path d="M70 102C84 98 98 99 110 104M70 124C84 120 98 121 110 126M70 146C84 142 98 143 110 148"/>
+    <path d="M186 102C172 98 158 99 146 104M186 124C172 120 158 121 146 126M186 146C172 142 158 143 146 148"/>
+  </g>
+</svg>
