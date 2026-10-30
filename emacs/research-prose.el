@@ -1091,8 +1091,43 @@ files when `research-prose-auto-gls' is non-nil."
 
 ;;;; Adding acronyms
 
-(defun research-prose--insert-acronym-definition (key short long)
+(defconst research-prose--plural-stop-words
+  '("de" "del" "para" "con" "en" "a" "al" "por" "sobre" "entre" "sin" "y" "o" "e" "u" "la" "el" "los" "las")
+  "Words that end the noun group a Spanish long form's plural changes.")
+
+(defun research-prose--pluralize-word (word)
+  "WORD in Spanish plural, by the usual spelling rules (a heuristic)."
+  (let ((case-fold-search nil)
+        (lower (downcase word)))
+    (cond
+     ((string-empty-p word) word)
+     ;; Already plural or invariant (análisis, crisis, tórax): unstressed -s/-x.
+     ((and (string-match-p "[sx]\\'" lower) (> (length lower) 3)) word)
+     ((string-match-p "[aeiouáéó]\\'" lower) (concat word "s"))
+     ((string-match-p "[íú]\\'" lower) (concat word "es"))
+     ((string-match-p "z\\'" lower) (concat (substring word 0 -1) (if (equal (substring word -1) "Z") "CES" "ces")))
+     ;; -ión, -án, -én, -ín, -ón, -ún lose the written accent: información → informaciones.
+     ((string-match "\\([áéíóú]\\)\\([ns]\\)\\'" word)
+      (let ((plain (cdr (assoc (match-string 1 word) '(("á" . "a") ("é" . "e") ("í" . "i") ("ó" . "o") ("ú" . "u"))))))
+        (concat (substring word 0 (match-beginning 1)) plain (match-string 2 word) "es")))
+     (t (concat word "es")))))
+
+(defun research-prose-spanish-plural (long)
+  "Plural of the Spanish LONG form: the words before the first preposition,
+article or conjunction (the noun and its adjectives) go to plural:
+«modelo de lenguaje de gran tamaño» → «modelos de lenguaje de gran tamaño»,
+«inteligencia artificial» → «inteligencias artificiales»."
+  (let ((words (split-string long " " t)) (done nil) out)
+    (dolist (w words)
+      (if (or done (member (downcase w) research-prose--plural-stop-words))
+          (progn (setq done t) (push w out))
+        (push (research-prose--pluralize-word w) out)))
+    (string-join (nreverse out) " ")))
+
+(defun research-prose--insert-acronym-definition (key short long &optional long-plural)
   "Insert `\\newacronym{KEY}{SHORT}{LONG}' into the current acronym file buffer.
+With LONG-PLURAL (and when it isn't just LONG plus «s», which is what
+glossaries does by itself), the line carries `[longplural={LONG-PLURAL}]'.
 In order of key when the definitions are sorted, else after the last one
 \(or at the end); comments and everything else are kept."
   (save-excursion
@@ -1109,11 +1144,18 @@ In order of key when the definitions are sorted, else after the last one
                 (entries (goto-char (cdr (car (last entries)))) (forward-line 1))
                 (t (goto-char (point-max))))
           (when (and (eobp) (not (bolp))) (insert "\n"))
-          (insert (format "\\newacronym{%s}{%s}{%s}\n" key short long)))))))
+          (insert (if (and long-plural (not (string-empty-p long-plural))
+                           (not (equal long-plural (concat long "s"))))
+                      (format "\\newacronym[longplural={%s}]{%s}{%s}{%s}\n" long-plural key short long)
+                    (format "\\newacronym{%s}{%s}{%s}\n" key short long))))))))
 
 ;;;###autoload
-(defun research-prose-add-acronym (short long &optional key)
+(defun research-prose-add-acronym (short long &optional key long-plural)
   "Define the acronym SHORT, with LONG form and KEY, in the thesis' acronym file.
+LONG-PLURAL is the long form's plural (glossaries' `longplural', used by
+`\\glspl'); interactively it is asked with a Spanish guess
+\(`research-prose-spanish-plural'), since glossaries would otherwise just
+append «s» («modelo de lenguaje de gran tamaños»).
 Appends `\\newacronym{KEY}{SHORT}{LONG}' (in order when the file is sorted by
 key), saves the file (your buffer, if you have it open) and offers to
 convert the acronym at point.  Interactively, SHORT defaults to the
@@ -1126,8 +1168,10 @@ case."
                           (if (and (string-suffix-p "s" token) (> (length token) 2)) (substring token 0 -1) token)))))
           (short (string-trim (read-string (format-prompt "Sigla" at) nil nil at)))
           (long (string-trim (read-string (format "Forma larga de %s (en %s): " short (file-name-nondirectory file)))))
+          (guess (research-prose-spanish-plural long))
+          (long-plural (string-trim (read-string (format-prompt "Plural de la forma larga (para \\glspl)" guess) nil nil guess)))
           (key (string-trim (read-string (format-prompt "Clave" (downcase short)) nil nil (downcase short)))))
-     (list short long key)))
+     (list short long key long-plural)))
   (let* ((file (research-prose--acronym-file-or-error))
          (key (if (or (null key) (string-empty-p key)) (downcase short) key))
          (table (research-prose-read-acronyms file))
@@ -1144,7 +1188,7 @@ case."
            (modified (and visiting (buffer-modified-p visiting)))
            (buffer (or visiting (find-file-noselect file))))
       (with-current-buffer buffer
-        (research-prose--insert-acronym-definition key short long)
+        (research-prose--insert-acronym-definition key short long long-plural)
         (when (or (not modified)
                   (y-or-n-p (format "%s tenía cambios sin guardar; ¿guardarlo con todo? " name)))
           (save-buffer)))
