@@ -89,7 +89,7 @@ export function TraySection({ onSaved }: { onSaved: () => void }): React.JSX.Ele
         {autostart?.supported && !autostart.packaged && (
           <>
             <small className="muted">{t('tray.settings.autostart_dev')}</small>
-            {autostart.devCommand && <code className="small">{autostart.devCommand}</code>}
+            {autostart.devCommand && <code className="small autostart-command">{autostart.devCommand}</code>}
           </>
         )}
       </div>

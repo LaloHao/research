@@ -15,6 +15,8 @@ export interface LaunchInfo {
   appPath: string
   /** `$APPIMAGE` when running from an AppImage: execPath then points inside its temporary mount. */
   appImage?: string
+  /** In development: the repository's Electron by a path that survives an Electron update (node_modules/electron/…). */
+  devElectron?: string
   /** `$XDG_CONFIG_HOME` (falls back to `~/.config`). */
   configHome?: string
   home: string
@@ -48,7 +50,7 @@ export function shellArg(arg: string): string {
  */
 export function launchCommand(info: LaunchInfo): { kind: 'packaged'; exec: string } | { kind: 'dev'; command: string } {
   if (info.isPackaged) return { kind: 'packaged', exec: execArg(info.appImage || info.execPath) }
-  return { kind: 'dev', command: `${shellArg(info.execPath)} ${shellArg(info.appPath)}` }
+  return { kind: 'dev', command: `${shellArg(info.devElectron ?? info.execPath)} ${shellArg(info.appPath)}` }
 }
 
 /** The XDG autostart entry for a packaged build's `exec`. */

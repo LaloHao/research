@@ -29,6 +29,7 @@ describe('autostart entry', () => {
   it('offers a command line (never an entry) in development', () => {
     const dev = info({ isPackaged: false, execPath: '/home/me/research/node_modules/electron/dist/electron', appPath: "/home/me/my research" })
     expect(launchCommand(dev)).toEqual({ kind: 'dev', command: "/home/me/research/node_modules/electron/dist/electron '/home/me/my research'" })
+    expect(launchCommand({ ...dev, devElectron: '/r/node_modules/electron/dist/electron' })).toMatchObject({ command: "/r/node_modules/electron/dist/electron '/home/me/my research'" })
     expect(shellArg("it's")).toBe(`'it'\\''s'`)
   })
 

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, clipboard, ipcMain, Menu, nativeImage, Notification, session, shell, Tray, type IpcMainEvent, type NativeImage } from 'electron'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { CHAT_STREAM_CHANNEL } from '../shared/chat'
 import { API_OPEN_CHAT_CHANNEL, API_OPEN_PAPER_CHANNEL, DRAFT_STREAM_CHANNEL, eventChannel, IPC } from '../shared/ipc'
@@ -45,6 +46,8 @@ function startLog(): void {
 let mainWindow: BrowserWindow | null = null
 /** The first window was created: from then on the tray (or a second launch) may bring one back. */
 let windowStarted = false
+/** Something asked for the window before it existed: it shows even when the app starts hidden. */
+let showRequested = false
 
 /** The icons live in resources/ next to package.json (scripts/render-icons.sh makes the PNGs from the SVGs). */
 const resource = (...parts: string[]): string => join(app.getAppPath(), 'resources', ...parts)
@@ -194,7 +197,7 @@ function createWindow(): BrowserWindow {
     }
   })
   win.on('ready-to-show', () => {
-    if (!startHidden({ argv: process.argv, setting: controller.getSettings().startHidden, trayAvailable: tray.available() })) win.show()
+    if (showRequested || !startHidden({ argv: process.argv, setting: controller.getSettings().startHidden, trayAvailable: tray.available() })) win.show()
   })
   // The tray's «Mostrar/Ocultar ventana», and failed jobs count as seen once the window is looked at.
   win.on('show', () => tray.refresh(0))
@@ -243,8 +246,11 @@ function focusMainWindow(): void {
 
 /** Brings the window back (from the tray too); creates it if it is gone. */
 function showMainWindow(): void {
-  // Before the first window exists (a second launch while this one still starts), that window shows on its own.
-  if (!windowStarted) return
+  // Before the first window exists (a second launch while this one still starts): that window shows, even if hidden.
+  if (!windowStarted) {
+    showRequested = true
+    return
+  }
   if (!mainWindow || mainWindow.isDestroyed()) mainWindow = createWindow()
   focusMainWindow()
 }
@@ -273,6 +279,7 @@ function launchInfo(): LaunchInfo {
     execPath: process.execPath,
     appPath: app.getAppPath(),
     appImage: process.env.APPIMAGE,
+    devElectron: [join(app.getAppPath(), 'node_modules', 'electron', 'dist', 'electron')].find((path) => existsSync(path)),
     configHome: process.env.XDG_CONFIG_HOME,
     home: app.getPath('home')
   }
