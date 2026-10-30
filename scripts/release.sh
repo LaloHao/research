@@ -16,7 +16,8 @@ tag="v$version"
 
 cd "$(dirname "$0")/.."
 [[ "$(git branch --show-current)" == master ]] || die "Release from master (this is '$(git branch --show-current)')."
-[[ -z "$(git status --porcelain)" ]] || die "The working tree has changes: commit or stash them first."
+# Untracked files (local notes, specs and plans that are never committed) do not count.
+[[ -z "$(git status --porcelain --untracked-files=no)" ]] || die "The working tree has changes: commit or stash them first."
 ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null || die "Tag $tag already exists."
 
 current="$(node -p "require('./package.json').version")"
