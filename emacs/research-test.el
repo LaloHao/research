@@ -678,6 +678,211 @@ ON-RUN runs in the buffer before the confirmed call answers."
               (should (looking-at "La sanitización")))
             (kill-buffer "*research RQ coverage*")))))))
 
+;;;; Asking Claude
+
+(defconst research-test--ask-id "20261029-120000-a1b2")
+
+(defconst research-test--ask-doc
+  "* Capítulo 2\n** Parsers\nPrimer párrafo.\n\nDrain es el mejor [cite:@he2017drain].\nSigue la idea.\n\n** Otra\nFin.\n")
+
+(defun research-test--ask-plan (&rest extra)
+  "A plan of `ask' with EXTRA fields."
+  (research-test--result (append '((confirmation_required . t) (operation . "chat") (model . "sonnet") (estimate_usd . 0.1)
+                                   (cap_usd . 0.5) (month_spent_usd . 0) (month_cap_usd . :null) (answering . :false))
+                                 extra)))
+
+(defconst research-test--ask-done
+  '((conversation_id . "20261029-120000-a1b2") (status . "done") (mode . "opinion")
+    (text . "*Bien*: la idea se apoya en [he2017drain, p. 1] pero falta [zhu2020loghub].")
+    (citations . [((start . 29) (end . 48) (key . "he2017drain") (page . 1) (quote . "Drain parses log messages online") (state . "found") (verified . t))
+                  ((start . 60) (end . 75) (key . "zhu2020loghub") (page . :null) (quote . "A dataset") (state . "not_found") (verified . :false))])
+    (unverified . 1) (costUsd . 0.04) (conversation_cost_usd . 0.04) (model . "claude-sonnet-5")))
+
+(defmacro research-test--with-ask-buffer (&rest body)
+  "Run BODY in an Org buffer holding `research-test--ask-doc', point in its second paragraph."
+  (declare (indent 0))
+  `(with-temp-buffer
+     (org-mode)
+     (insert research-test--ask-doc)
+     (set-buffer-modified-p nil)
+     (goto-char (point-min))
+     (search-forward "mejor")
+     (unwind-protect (progn ,@body)
+       (when (get-buffer "*research-ask*") (kill-buffer "*research-ask*")))))
+
+(ert-deftest research-test-ask-sends-the-paragraph-and-streams-the-answer-without-touching-the-buffer ()
+  (let ((statuses (list '((conversation_id . "20261029-120000-a1b2") (status . "running") (text . "*Bien*: la idea") (tools . 1))
+                        research-test--ask-done))
+        poll asked messages)
+    (research-test--with-app
+        (lambda (tool args)
+          (pcase tool
+            ("ask"
+             (push args asked)
+             (if (alist-get 'confirmed args)
+                 (research-test--result `((conversation_id . ,research-test--ask-id) (status . "running") (costUsd . 0) (model . "sonnet")))
+               (research-test--ask-plan '(mode . "opinion"))))
+            ("ask_status"
+             (should (equal args `((conversation_id . ,research-test--ask-id))))
+             (research-test--result (pop statuses)))))
+      (research-test--with-draft-timer poll
+        (research-test--with-ask-buffer
+          (let ((before (buffer-string)) prompts)
+            (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "¿Se sostiene?"))
+                      ((symbol-function 'read-char-choice) (lambda (prompt &rest _) (push prompt prompts) ?\r))
+                      ((symbol-function 'yes-or-no-p) (lambda (prompt) (push prompt prompts) t))
+                      ((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+              (should (equal (call-interactively #'research-ask) research-test--ask-id)))
+            (should (string-match-p "(y/N)" (cadr prompts)))
+            (should (string-match-p "chat con sonnet: costo estimado \\$0\\.10" (car prompts)))
+            ;; The plan and the run send the same: the paragraph, its file and heading path, opinion.
+            (let ((run (car asked)))
+              (should (equal (cl-remove 'confirmed (cadr asked) :key #'car) (cl-remove 'confirmed run :key #'car)))
+              (should (equal (alist-get 'text run) "Drain es el mejor [cite:@he2017drain].\nSigue la idea."))
+              (should (equal (alist-get 'scope run) "paragraph"))
+              (should (equal (alist-get 'section run) "Capítulo 2 › Parsers"))
+              (should (equal (alist-get 'mode run) "opinion"))
+              (should (equal (alist-get 'question run) "¿Se sostiene?")))
+            (with-current-buffer "*research-ask*"
+              (should (derived-mode-p 'org-mode))
+              (should buffer-read-only)
+              (should (string-match-p "Alcance: párrafo" (buffer-string)))
+              (should (string-match-p "\\* ¿Se sostiene\\?\nModo: opinión (sin reescribir tu texto) · respondiendo…" (buffer-string))))
+            (funcall poll)
+            (with-current-buffer "*research-ask*"
+              (should (string-match-p "respondiendo…\n\n\\*Bien\\*: la idea\\'" (buffer-string))))
+            (cl-letf (((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+              (funcall poll))
+            (should-not (plist-get (buffer-local-value 'research--ask-state (get-buffer "*research-ask*")) :timer))
+            (with-current-buffer "*research-ask*"
+              (should (string-match-p "Modo: opinión (sin reescribir tu texto) · US\\$0\\.04 (conversación US\\$0\\.04)" (buffer-string)))
+              (should (string-match-p "pero falta \\[zhu2020loghub\\]\\.\n\nCitas:\n- \\[he2017drain, p\\. 1\\] verificada: «Drain parses log messages online»\n- \\[zhu2020loghub\\] sin verificar: «A dataset»\n" (buffer-string)))
+              (goto-char (point-min))
+              (search-forward "[he2017")
+              (should (equal (alist-get 'key (get-text-property (point) 'research-ask-citation)) "he2017drain"))
+              (should (eq (get-text-property (point) 'face) 'link))
+              (search-forward "[zhu2020")
+              (should (eq (get-text-property (point) 'face) 'warning)))
+            (should (string-match-p "2 citas, 1 sin verificar" (car messages)))
+
+            ;; The user's buffer is never changed.
+            (should (equal (buffer-string) before))
+            (should-not (buffer-modified-p))))))))
+
+(ert-deftest research-test-ask-follow-up-stop-citation-and-conversation-in-the-app ()
+  (let (poll asked opened)
+    (research-test--with-app
+        (lambda (tool args)
+          (pcase tool
+            ("ask"
+             (push args asked)
+             (if (alist-get 'confirmed args)
+                 (research-test--result `((conversation_id . ,research-test--ask-id) (status . "running")))
+               (research-test--ask-plan)))
+            ("ask_status" (research-test--result research-test--ask-done))
+            ("ask_stop" (push (cons tool args) opened) (research-test--result `((conversation_id . ,research-test--ask-id) (stopping . t))))
+            ((or "open_in_app" "open_chat_in_app") (push (cons tool args) opened) (research-test--result '((opened . t))))))
+      (research-test--with-draft-timer poll
+        (research-test--with-ask-buffer
+          (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "Q1"))
+                    ((symbol-function 'read-char-choice) (lambda (&rest _) ?n))
+                    ((symbol-function 'yes-or-no-p) (lambda (_) t))
+                    ((symbol-function 'message) #'ignore))
+            (call-interactively #'research-ask)
+            (with-current-buffer "*research-ask*"
+              ;; While it answers, another question is refused before asking the app anything.
+              (let ((sent (length research-test--requests)))
+                (should-error (call-interactively #'research-ask-follow-up) :type 'user-error)
+                (should (= (length research-test--requests) sent)))
+              (should (eq (key-binding (kbd "s")) #'research-ask-stop))
+              (research-ask-stop)
+              (should (equal (car opened) `("ask_stop" (conversation_id . ,research-test--ask-id))))
+              (funcall poll)
+              ;; `c' on a citation opens its paper at the page with the quote; `a' the conversation.
+              (goto-char (point-min))
+              (search-forward "[he2017")
+              (should (eq (key-binding (kbd "c")) #'research-ask-open-citation))
+              (research-ask-open-citation)
+              (should (equal (car opened) '("open_in_app" (key . "he2017drain") (page . 1) (quote . "Drain parses log messages online"))))
+              (search-forward "\n- [zhu")
+              (research-ask-open-citation)
+              (should (equal (car opened) '("open_in_app" (key . "zhu2020loghub") (quote . "A dataset"))))
+              (goto-char (point-min))
+              (should-error (research-ask-open-citation) :type 'user-error)
+              (research-ask-open-in-app)
+              (should (equal (car opened) `("open_chat_in_app" (conversation_id . ,research-test--ask-id))))
+              ;; `f': a follow-up in the same conversation, without the passage; a rewrite only when allowed.
+              (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "¿Y si lo reescribes?"))
+                        ((symbol-function 'read-char-choice) (lambda (&rest _) ?y)))
+                (call-interactively #'research-ask-follow-up))
+              (should (equal (cl-remove 'confirmed (car asked) :key #'car)
+                             `((question . "¿Y si lo reescribes?") (conversation_id . ,research-test--ask-id) (mode . "rewrite"))))
+              (should (string-match-p "\\* ¿Y si lo reescribes\\?\nModo: propuesta de redacción permitida · respondiendo…" (buffer-string)))
+              (funcall poll)
+              (should (= 2 (how-many "^Citas:" (point-min) (point-max))))
+              (should (string-match-p "\\* Q1\n.*US\\$0\\.04" (buffer-string))))))))))
+
+(ert-deftest research-test-ask-scopes-region-subtree-and-file ()
+  (research-test--with-ask-buffer
+    (should (equal (research--ask-scope nil) (cons "paragraph" (research--paragraph-bounds))))
+    (let ((subtree (research--ask-scope '(4))))
+      (should (equal (car subtree) "subtree"))
+      (should (equal (buffer-substring-no-properties (cadr subtree) (cddr subtree))
+                     "** Parsers\nPrimer párrafo.\n\nDrain es el mejor [cite:@he2017drain].\nSigue la idea.\n\n")))
+    (should (equal (research--ask-scope '(16)) (cons "file" (cons (point-min) (point-max)))))
+    (should (equal (research--ask-section (point)) "Capítulo 2 › Parsers"))
+    (transient-mark-mode 1)
+    (set-mark (point-min))
+    (goto-char 5)
+    (activate-mark)
+    (should (equal (research--ask-scope '(16)) (cons "region" (cons (point-min) 5))))
+    (deactivate-mark))
+  ;; Without headings, C-u is the whole file and the section is empty.
+  (with-temp-buffer
+    (insert "Solo texto.\n")
+    (should (equal (research--ask-scope '(4)) (cons "file" (cons (point-min) (point-max)))))
+    (should (equal (research--ask-section (point)) ""))))
+
+(ert-deftest research-test-ask-refuses-and-cancels-before-starting ()
+  (research-test--with-app
+      (lambda (tool args)
+        (should (equal tool "ask"))
+        (should-not (alist-get 'confirmed args))
+        (research-test--ask-plan))
+    (research-test--with-ask-buffer
+      (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) nil))
+                ((symbol-function 'message) #'ignore))
+        (should-not (research-ask "Q" "opinion"))
+        (should-not (get-buffer "*research-ask*")))
+      (erase-buffer)
+      (insert "\n\n\n")
+      (goto-char 2)
+      (should-error (research-ask "Q" "opinion") :type 'user-error)
+      (let ((long (make-string 30001 ?a)))
+        (erase-buffer)
+        (insert long)
+        (goto-char 10)
+        (should-error (research-ask "Q" "opinion" '(16)) :type 'user-error))
+      (should (= 1 (length research-test--requests))))))
+
+(ert-deftest research-test-ask-shows-why-an-answer-failed ()
+  (let (poll messages)
+    (research-test--with-app
+        (lambda (tool args)
+          (pcase tool
+            ("ask" (if (alist-get 'confirmed args) (research-test--result `((conversation_id . ,research-test--ask-id))) (research-test--ask-plan)))
+            ("ask_status" (research-test--result `((conversation_id . ,research-test--ask-id) (status . "error") (error . "chat_message_budget"))))))
+      (research-test--with-draft-timer poll
+        (research-test--with-ask-buffer
+          (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) t))
+                    ((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+            (research-ask "Q" "rewrite")
+            (funcall poll)
+            (with-current-buffer "*research-ask*"
+              (should (string-match-p "Modo: propuesta de redacción permitida · sin respuesta: se alcanzó el tope por mensaje de chat" (buffer-string)))
+              (should-not (plist-get research--ask-state :timer)))
+            (should (string-match-p "Claude no respondió" (car messages)))))))))
+
 ;;;; Minor mode
 
 (ert-deftest research-test-mode-binds-the-commands ()
@@ -691,6 +896,7 @@ ON-RUN runs in the buffer before the confirmed call answers."
     (should (eq (key-binding (kbd "C-c r r")) #'research-reverse-outline))
     (should (eq (key-binding (kbd "C-c r q")) #'research-rq-coverage))
     (should (eq (key-binding (kbd "C-c r l")) #'research-prose-check))
+    (should (eq (key-binding (kbd "C-c r ?")) #'research-ask))
     (should (commandp 'research-prose-check))
     (research-mode -1)
     (should-not (eq (key-binding (kbd "C-c r c")) #'research-insert-citation))))
