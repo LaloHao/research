@@ -222,3 +222,14 @@
 - A decision made on a queue the window hasn't reloaded yet replaces, without showing a conflict, a decision on the same record that a sync brought meanwhile. Nothing is lost (decisions are append-only, and the replaced one is in `decisions.yaml`); a fix is to send the decision on screen and refuse with `conflict` when the heads differ.
 - The PRISMA exclusion reasons and other labels use each criterion's current wording, not the wording of the protocol version the decision was made with; 5b's reports should name the version (`criterionText` with the decision's `protocol_version`).
 - A large mapping sends every queue row (abstracts included) over IPC on each reload of the screening list; the files are parsed only when their text changes, but a paginated queue would cut the transfer.
+
+## Tray technical minutiae
+
+- No recent projects in the tray menu: the app only remembers the last project (`lastProjectPath`); a recent-projects list would need a new setting.
+- The tray needs a StatusNotifierItem host on Linux: the app asks the session bus for `org.kde.StatusNotifierWatcher` (with `dbus-send`) at startup and retries every 2 s for a minute; a tray that only speaks XEmbed counts as none (closing then quits, the safe side). If the panel goes away later (plasmashell restarts, a session without a panel), the app still believes the tray is there and closing hides the window; launching the app again brings it back (single instance).
+- Electron sets only the SNI tooltip's title, so on KDE all the tooltip lines show in its title. Linux tray menus can't be rebuilt as they open, so the menu and tooltip are rebuilt on the app's events (debounced 400 ms) and every minute (for «Sincronizado hace N min»); the sync status is read again after any change but a job's, or after 30 s.
+- «Failed jobs not yet seen»: the latest 200 jobs are checked; a failure counts as seen when the window is shown and focused (on X11, clicking the tray icon may or may not move the focus away from the window, which only changes whether a left click hides it or brings it to the front).
+- Without a notification daemon, Electron may still report notifications as supported; the message is then lost (the tooltip fallback only applies where Electron says there are none).
+- Autostart writes an entry only for a packaged build; the repository has no packaging yet (no electron-builder config), so in practice `pnpm dev` users get the documented command line. An AppImage is launched through `$APPIMAGE`. macOS and Windows have no autostart here (the option says so).
+- Only tested headless on Linux (Xvfb with a stand-in StatusNotifierWatcher on a private session bus); not on macOS (where closing the last window doesn't quit anyway) or Windows.
+

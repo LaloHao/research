@@ -483,6 +483,27 @@ y a `config.el`:
 
 y luego `doom sync`: `SPC m w` reúne los comandos (`w` de escritura, porque Org usa `SPC m r` para reubicar; `SPC m w g` convierte el acrónimo del punto, `SPC m w G` todos, `SPC m w A` agrega uno, `SPC m w T` activa o desactiva la conversión al escribir) y `research-prose-mode` y `research-prose-auto-gls-mode` se activan en los archivos Org de la carpeta de tu tesis. `emacs/README.md` (en inglés) tiene todos los comandos, opciones y teclas.
 
+## Bandeja y arranque
+
+Mientras la app corre, pone un ícono en la bandeja del sistema (en KDE Plasma y otros escritorios con bandeja StatusNotifierItem). El ícono es un libro; un punto ámbar indica trabajos en cola o en curso, y uno rojo, algo que revisar: conflictos de sincronización esperando tu decisión, o trabajos que fallaron desde la última vez que miraste la ventana (cuentan como vistos cuando la ventana se muestra y tiene el foco; los fallos de antes de abrir la app no cuentan). Al pasar el ratón muestra el proyecto, el estado de la sincronización, los trabajos en curso y si la API local está encendida.
+
+El clic izquierdo muestra la ventana, o la oculta si ya está al frente. El menú del clic derecho:
+
+- **«Mostrar ventana» / «Ocultar ventana»**.
+- **El nombre del proyecto** y **«Agregar desde el portapapeles»**: si el portapapeles tiene un DOI, un id de arXiv u OpenAlex o una dirección http(s), se agrega igual que desde la casilla «Agregar» (un trabajo que aparece en Actividad); si no, una notificación dice «El portapapeles no tiene un DOI, arXiv o URL». El portapapeles solo se lee al elegir la opción, solo se usa para eso y nunca se escribe en el registro.
+- **«Abrir en el navegador de la app»**: abre la dirección http(s) del portapapeles en el navegador de la app, para capturar la página (ver «Sitios que bloquean las descargas»).
+- **El estado de la sincronización** y **«Sincronizar ahora»**: lo mismo que el botón ⟳ del riel. Sincroniza en el acto cuando puede; si el repositorio no tiene remoto, hay conflictos pendientes, o la sincronización falla o termina en conflictos, la ventana se abre en la vista Sincronización. Desactivado mientras el proyecto no está en un repositorio git o hay una sincronización en curso.
+- **«N trabajos en curso»**, cuando los hay.
+- **«API local: encendida/apagada»**: enciende o apaga la API local, igual que el interruptor de Ajustes → Aplicación.
+- **«Abrir proyecto…»**: el mismo selector de carpeta que la pantalla de bienvenida.
+- **«Salir»**: cierra la app de verdad, como antes lo hacía cerrar la ventana: guarda las ediciones pendientes, pregunta «Hay cambios sin sincronizar» cuando corresponde (la ventana vuelve para preguntarlo), los trabajos en curso vuelven a la cola y la API local se detiene.
+
+**Cerrar la ventana** con «Al cerrar la ventana, seguir en la bandeja» (activado por defecto) solo la oculta: la app sigue corriendo detrás del ícono, con la API local (Emacs sigue funcionando), los trabajos y la sincronización automática. La primera vez, una notificación avisa «research sigue en la bandeja». Para salir, usa «Salir» en el menú de la bandeja o Ctrl+Q (menú File → Quit). Si no hay bandeja (un escritorio sin ella, o no se pudo crear el ícono), cerrar la ventana sale de la app como antes, para que nunca quede corriendo sin nada en pantalla; Ajustes → Aplicación lo indica. Si la app arranca antes que el panel (al iniciar sesión), el ícono aparece en cuanto el panel está listo; hasta entonces cerrar sale.
+
+**Abrir la app otra vez** mientras corre (desde un lanzador, la terminal o el inicio de sesión) trae la ventana de la que ya está abierta, también si estaba oculta en la bandeja.
+
+**Iniciar con la sesión**: «Iniciar con la sesión» (Ajustes → Aplicación, Linux) escribe `~/.config/autostart/research.desktop` (o bajo `$XDG_CONFIG_HOME`), que KDE, GNOME y otros escritorios XDG lanzan al iniciar sesión; al desactivarlo se borra. Necesita una versión empaquetada (un ejecutable al que apuntar). Con `pnpm dev` no lo hay, así que la app no escribe la entrada: explica por qué y muestra una línea de comando que arranca la última compilación (`pnpm build`) con el Electron del repositorio, que puedes agregar tú al inicio automático de tu sesión. «Iniciar oculto en la bandeja» arranca sin mostrar la ventana (igual que lanzar con `--hidden`); sin bandeja, la ventana se muestra igual.
+
 ## Ajustes
 
 Los ajustes se organizan en pestañas, navegables con ←/→/Inicio/Fin; la app recuerda la última pestaña abierta. La mayoría de los campos se guardan solos al salir de ellos (de inmediato en selectores y casillas) y muestran «Guardado»; el editor del formulario de extracción es la excepción — ahí los cambios quedan pendientes hasta tocar «Guardar cambios» (ver «Formulario» abajo).
@@ -565,6 +586,7 @@ Debajo del editor está la sección «Sugerencias de Claude» (ver «Facetas sug
 - **Modelos locales**: el modelo de similitud de contenido (multilingual-e5-small, unos 470 MB) corre en tu equipo. Muestra si está descargado y cuánto ocupa, con «Descargar» (el avance se ve en Actividad) y «Borrar». Se guarda en la carpeta de datos de la app, nunca en el proyecto, así que cada equipo lo descarga una vez. La descarga corre como un trabajo del proyecto abierto (hace falta tener uno abierto); si cierras el proyecto o la app a mitad de camino, se retoma la próxima vez que abras ese proyecto. «Borrar» cancela los cálculos de similitud que estaban en cola.
 - **Sincronizar automáticamente** y **Cada (minutos)**: la sincronización automática con git (ver «Sincronizar con git»), al abrir el proyecto y cada 5 a 120 minutos (10 por defecto). Es un ajuste de este equipo; no se guarda en `project.yaml`.
 - **API local**: deja que un editor de este equipo (Emacs, con `emacs/research.el`) use las herramientas de redacción; viene desactivada, con su puerto, «Copiar token», «Regenerar token» y «Permitir operaciones con costo desde la API». Ver «Desde Emacs (API local)» en «Redacción».
+- **Bandeja y arranque**: «Al cerrar la ventana, seguir en la bandeja» (activado por defecto), «Iniciar oculto en la bandeja» e «Iniciar con la sesión». Ver «Bandeja y arranque».
 - **Abrir carpeta de registros**: abre en tu explorador de archivos la carpeta del registro de la app, `main.log` (ver «Problemas comunes»).
 - **Cerrar proyecto**: vuelve a la pantalla de bienvenida para crear o abrir otro proyecto.
 

@@ -483,6 +483,27 @@ and to `config.el`:
 
 then `doom sync`: `SPC m w` holds the commands (`w` for writing, since Org uses `SPC m r` for refiling; `SPC m w g` converts the acronym at point, `SPC m w G` all of them, `SPC m w A` adds one, `SPC m w T` toggles the conversion as you type) and `research-prose-mode` and `research-prose-auto-gls-mode` turn on in the Org files under your thesis folder. `emacs/README.md` has every command, option and key.
 
+## Tray and session start
+
+While the app runs it puts an icon in the system tray (on KDE Plasma and other desktops with a StatusNotifierItem tray). The icon is a book; an amber dot means jobs are queued or running, a red dot means something needs a look: sync conflicts waiting for a decision, or jobs that failed since you last looked at the window (they count as seen once the window is shown and focused; failures from before the app started don't count). Hovering shows the project, the sync status, the jobs in progress and whether the local API is on.
+
+Left click shows the window, or hides it when it's already in front. The right-click menu:
+
+- **«Mostrar ventana» / «Ocultar ventana»** (Show / Hide window).
+- **The project's name**, and **«Agregar desde el portapapeles»** (Add from the clipboard): if the clipboard holds a DOI, an arXiv or OpenAlex id or an http(s) address, it's added exactly as from the «Agregar» box (a job that shows in Activity); otherwise a notification says «El portapapeles no tiene un DOI, arXiv o URL» (The clipboard has no DOI, arXiv or URL). The clipboard is read only when you pick the item, used only for that, and never written to the log.
+- **«Abrir en el navegador de la app»** (Open in the app's browser): opens the http(s) address in the clipboard in the app's browser, to capture the page (see "Sites that block downloads").
+- **The sync status** and **«Sincronizar ahora»** (Sync now): the same as the rail's ⟳ button. It syncs right away when it can; if the repository has no remote, conflicts are waiting, or the sync fails or ends in conflicts, the window opens on the Sync view. Disabled while the project isn't in a git repository or a sync is running.
+- **«N trabajos en curso»** (N jobs in progress), when there are some.
+- **«API local: encendida/apagada»** (Local API: on/off): turns the local API on or off, the same as the switch in Settings → App.
+- **«Abrir proyecto…»** (Open project…): the same folder picker as the welcome screen.
+- **«Salir»** (Quit): quits for real, the same as closing the window used to: pending edits are saved, «Hay cambios sin sincronizar» (There are unsynced changes) is asked when it applies (the window comes back to ask it), running jobs go back to the queue and the local API stops.
+
+**Closing the window** with «Al cerrar la ventana, seguir en la bandeja» (Keep running in the tray when the window closes; on by default) only hides it: the app keeps running behind the tray icon, with the local API (so Emacs keeps working), the jobs and the automatic sync. The first time, a notification says «research sigue en la bandeja» (research is still in the tray). To quit, use «Salir» in the tray menu or Ctrl+Q (File → Quit). If there is no tray (a desktop without one, or the icon couldn't be created), closing the window quits as before, so the app never ends up running with nothing on screen; Settings → App says so. If the app starts before the panel (at login), the icon appears as soon as the panel is up; until then closing quits.
+
+**Opening the app again** while it runs (from a launcher, the terminal or the session start) brings back the window of the one already running, also when it was hidden in the tray.
+
+**Starting with the session**: «Iniciar con la sesión» (Start with the session; Settings → App, Linux) writes `~/.config/autostart/research.desktop` (or under `$XDG_CONFIG_HOME`), which KDE, GNOME and other XDG desktops launch at login; turning it off deletes it. It needs a packaged build (an executable to point at). Under `pnpm dev` there isn't one, so the app doesn't write the entry; it explains why and shows a command line that runs the last `pnpm build` with the repository's Electron, which you can add to your session's autostart yourself. «Iniciar oculto en la bandeja» (Start hidden in the tray) starts without showing the window (the same as launching with `--hidden`); without a tray the window shows anyway.
+
 ## Settings
 
 Settings are organized in tabs.
@@ -567,6 +588,7 @@ Below the editor is the «Sugerencias de Claude» (Claude's suggestions) section
 - **Modelos locales** (Local models): the content-similarity model (multilingual-e5-small, about 470 MB) runs on your machine. Shows whether it's downloaded and how much space it takes, with «Descargar» (Download; progress shows in Activity) and «Borrar» (Delete). It's stored in the app's data folder, never in the project, so each machine downloads it once. The download runs as a job of the open project (one must be open); if you close the project or the app midway, it resumes the next time you open that project. «Borrar» (Delete) cancels the similarity computations still queued.
 - **Sincronizar automáticamente** (Sync automatically) and **Cada (minutos)** (Every (minutes)): the automatic git sync (see "Syncing with git"), when the project opens and every 5 to 120 minutes (10 by default). It's a per-device setting, not stored in `project.yaml`.
 - **«API local»** (Local API): lets an editor on this computer (Emacs, with `emacs/research.el`) use the writing tools; off by default, with its port, «Copiar token», «Regenerar token» and «Permitir operaciones con costo desde la API». See "From Emacs (local API)" under "Writing".
+- **«Bandeja y arranque»** (Tray and start): «Al cerrar la ventana, seguir en la bandeja» (Keep running in the tray when the window closes; on by default), «Iniciar oculto en la bandeja» (Start hidden in the tray) and «Iniciar con la sesión» (Start with the session). See "Tray and session start".
 - **«Abrir carpeta de registros»** (Open log folder): opens the folder of the app's log, `main.log`, in your file manager (see "Common problems").
 - **Cerrar proyecto** (Close project): returns to the welcome screen to create or open another project.
 
