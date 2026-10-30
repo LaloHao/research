@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Research Connector: opciones</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body class="options">
+  <header><img src="icons/icon-32.png" alt="" width="24" height="24"><h1>Research Connector</h1></header>
+  <section>
+    <h2>Vincular con Research</h2>
+    <p class="muted">En Research abre Ajustes → Aplicación → «Extensión del navegador», pulsa «Vincular extensión» y escribe aquí el código. Después confirma en la ventana de Research.</p>
+    <form id="pair-form" class="row">
+      <input id="code" autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX" maxlength="12" aria-label="Código de vinculación">
+      <button type="submit" id="pair">Vincular</button>
+    </form>
+    <p id="pair-status" role="status"></p>
+    <div class="row">
+      <button type="button" id="test">Probar conexión</button>
+      <button type="button" id="forget">Desvincular</button>
+    </div>
+    <p id="test-status" role="status"></p>
+  </section>
+  <section>
+    <h2>Dirección de la API local</h2>
+    <p class="muted">La de Research en este equipo; cámbiala solo si cambiaste el puerto en Ajustes → Aplicación → API local. La extensión solo se conecta a 127.0.0.1 o localhost.</p>
+    <form id="url-form" class="row">
+      <input id="api-url" spellcheck="false" aria-label="Dirección de la API local">
+      <button type="submit">Guardar</button>
+    </form>
+    <p id="url-status" role="status"></p>
+  </section>
+  <section>
+    <h2>Atajo de teclado</h2>
+    <p class="muted">Alt+Mayús+R agrega la pestaña actual sin abrir la ventana emergente (el icono muestra ✓ o !). Puedes cambiarlo en la página de atajos de extensiones del navegador.</p>
+  </section>
+  <script src="options.js"></script>
+</body>
+</html>
