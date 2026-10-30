@@ -31,6 +31,28 @@
     "opened": "Abierto desde el editor",
     "close": "Cerrar"
   },
+  "extension": {
+    "title": "Extensión del navegador",
+    "intro": "Con la extensión «Research Connector» para Firefox o Chrome agregas a la biblioteca la página que tienes abierta en tu navegador, con tu sesión (accesos de tu universidad, verificaciones ya pasadas). Habla solo con esta app por la API local, con un token propio que solo sirve para capturar.",
+    "needs_api": "Activa la API local (arriba) para vincular o usar la extensión.",
+    "pair": "Vincular extensión",
+    "code_label": "Código para la extensión:",
+    "code_help": "Escríbelo en las opciones de la extensión. Vale una sola vez y caduca en {{minutes}}:{{seconds}}. Después confirma aquí.",
+    "cancel": "Cancelar",
+    "paired": "Extensiones vinculadas",
+    "none": "Ninguna todavía.",
+    "since": "vinculada el {{date}}",
+    "last_used": "último uso {{date}}",
+    "revoke": "Revocar",
+    "revoke_confirm": "¿Revocar esta extensión? Deja de poder agregar páginas al instante; para volver a usarla tendrás que vincularla de nuevo.",
+    "browsers": { "firefox": "Firefox", "chrome": "Chrome" },
+    "confirm": {
+      "title": "¿Vincular la extensión de {{browser}}?",
+      "body": "Una extensión del navegador envió el código de vinculación. Si fuiste tú, acepta: podrá agregar páginas a tu biblioteca y nada más. Si no la estás vinculando ahora, rechaza.",
+      "accept": "Aceptar",
+      "reject": "Rechazar"
+    }
+  },
   "settings": {
     "title": "Ajustes",
     "saved": "Guardado",

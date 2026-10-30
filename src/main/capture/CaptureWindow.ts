@@ -20,7 +20,7 @@ import {
   toolbarWindowOptions,
   type PageCapture
 } from './policy'
-import { loadReaderDocument, printReaderPdf, readerDocument } from './print'
+import { loadReaderDocument, printReaderPdf, readerDocument, sessionImageFetcher } from './print'
 
 export interface CaptureWindowDeps {
   /** The toolbar's preload script. */
@@ -252,7 +252,7 @@ export class CaptureWindow {
   private capture(page: Electron.WebContents): Promise<PageCapture> {
     return readCapture(page, {
       mode: this.state.pdfMode,
-      printReader: (html, url) => printReaderPdf(html, url, session.fromPartition(CAPTURE_PARTITION))
+      printReader: (html, url) => printReaderPdf(html, url, sessionImageFetcher(session.fromPartition(CAPTURE_PARTITION), url))
     })
   }
 
@@ -355,7 +355,7 @@ export class CaptureWindow {
     let document: string | null = null
     try {
       const html = isWebUrl(url) ? await readPageHtml(page) : ''
-      document = html ? await readerDocument(html, url, session.fromPartition(CAPTURE_PARTITION)) : null
+      document = html ? await readerDocument(html, url, sessionImageFetcher(session.fromPartition(CAPTURE_PARTITION), url)) : null
     } catch {
       document = null
     }

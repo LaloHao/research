@@ -492,3 +492,5 @@ button.danger { color: var(--error); border-color: var(--error); }
   overflow-wrap: anywhere;
   user-select: all;
 }
+/* Settings → «Extensión del navegador»: the pairing code, typed by hand in the extension. */
+.pairing-code { font-family: ui-monospace, "DejaVu Sans Mono", monospace; font-size: 20px; letter-spacing: 0.12em; }

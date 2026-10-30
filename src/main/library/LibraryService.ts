@@ -45,6 +45,15 @@ function visibleExtraction(extraction: ExtractionFile | null, facets: FacetDef[]
   return { ...extraction, facets: filtered }
 }
 
+/** A captured page (the app's browser or the browser extension): untrusted HTML, its final URL, a PDF of it. */
+export interface CaptureInput {
+  url: string
+  html: string
+  pdf: Uint8Array | null
+  /** A DOI or arXiv id the browser extension found on the page (already normalized). */
+  ids?: { doi?: string; arxiv?: string }
+}
+
 export interface IngestOutcome {
   status: IngestStatus
   paperId: string
@@ -750,11 +759,12 @@ export class LibraryService {
    * (the PDF goes with it); otherwise it is a web page with its readable text, or with only its title when the
    * article cannot be extracted (incomplete metadata). Same dedupe, key and write as any ingest.
    */
-  async ingestCapture(capture: { url: string; html: string; pdf: Uint8Array | null }, signal?: AbortSignal): Promise<IngestOutcome> {
+  async ingestCapture(capture: CaptureInput, signal?: AbortSignal): Promise<IngestOutcome> {
     try {
       const { url, html } = capture
       const pdf = capture.pdf && isPdf(capture.pdf) ? capture.pdf : undefined
-      const ids = findScholarlyIds(html)
+      // Identifiers the browser extension read from the page come first; the page's own meta tags fill the rest.
+      const ids = { ...findScholarlyIds(html), ...compact(capture.ids ?? {}) }
       let meta: ResolvedMetadata | null = null
       if (ids.doi) meta = await this.deps.resolver.byDoi(ids.doi, signal).catch(() => null)
       if (!meta && ids.arxiv) meta = await this.deps.resolver.byArxiv(ids.arxiv, signal).catch(() => null)
@@ -774,6 +784,19 @@ export class LibraryService {
       } finally {
         this.extracted.delete(sha)
       }
+    } catch (error) {
+      if (signal?.aborted) throw error
+      throw toUserFacing(error)
+    }
+  }
+
+  /**
+   * A PDF the browser extension downloaded with the user's session (a PDF tab): as a dropped PDF, its identifiers read
+   * from its first pages, with the URL it came from.
+   */
+  async ingestPdfData(bytes: Uint8Array, fileName: string, sourceUrl: string, signal?: AbortSignal): Promise<IngestOutcome> {
+    try {
+      return await this.ingestPdfBytes(bytes, fileName, sourceUrl, signal)
     } catch (error) {
       if (signal?.aborted) throw error
       throw toUserFacing(error)

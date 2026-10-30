@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { ChatStreamUpdate } from '../shared/chat'
-import { API_OPEN_CHAT_CHANNEL, API_OPEN_PAPER_CHANNEL, CHAT_STREAM_CHANNEL, DRAFT_STREAM_CHANNEL, eventChannel, IPC, type ResearchApi } from '../shared/ipc'
+import { API_OPEN_CHAT_CHANNEL, API_OPEN_PAPER_CHANNEL, CHAT_STREAM_CHANNEL, DRAFT_STREAM_CHANNEL, eventChannel, EXTENSION_PAIRING_CHANNEL, IPC, type ResearchApi } from '../shared/ipc'
+import type { PairingRequest } from '../shared/extension'
 import type { ApiOpenPaper } from '../shared/localApi'
 import type { DraftStreamUpdate } from '../shared/writing/draft'
 
@@ -224,6 +225,19 @@ const api: ResearchApi = {
       }
       ipcRenderer.on(API_OPEN_CHAT_CHANNEL, handler)
       return () => ipcRenderer.removeListener(API_OPEN_CHAT_CHANNEL, handler)
+    }
+  },
+  extension: {
+    status: () => ipcRenderer.invoke(IPC.extensionStatus),
+    startPairing: () => ipcRenderer.invoke(IPC.extensionStartPairing),
+    cancelPairing: () => ipcRenderer.invoke(IPC.extensionCancelPairing),
+    answerPairing: (id, accepted) => ipcRenderer.invoke(IPC.extensionAnswerPairing, id, accepted),
+    pendingPairing: () => ipcRenderer.invoke(IPC.extensionPendingPairing),
+    revoke: (id) => ipcRenderer.invoke(IPC.extensionRevoke, id),
+    onPairingRequest: (callback) => {
+      const handler = (_e: Electron.IpcRendererEvent, request: PairingRequest | null): void => callback(request)
+      ipcRenderer.on(EXTENSION_PAIRING_CHANNEL, handler)
+      return () => ipcRenderer.removeListener(EXTENSION_PAIRING_CHANNEL, handler)
     }
   },
   log: {

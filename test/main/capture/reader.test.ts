@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { readArticle } from '../../../src/main/ingest/web'
-import { buildReaderHtml, embedImages, isPrivateHost, READER_CSP, sanitizeArticle, sniffImage } from '../../../src/main/capture/reader'
+import { buildReaderHtml, embedImages, isPrivateHost, READER_CSP, sanitizeArticle, sniffImage, suppliedImageFetcher } from '../../../src/main/capture/reader'
 
 const BASE = 'https://blog.acme.test/posts/outage/'
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3])
@@ -119,6 +119,17 @@ describe('embedImages', () => {
     const many = await embedImages('<img src="https://cdn.acme.test/1.png"><img src="https://cdn.acme.test/2.png"><img src="https://cdn.acme.test/3.png">', BASE, fetcher, { count: 2, bytes: 100, total: 1000 })
     expect(many.match(/<img/g)).toHaveLength(2)
     expect(asked).toHaveLength(2)
+  })
+
+  it('embeds the images the browser extension sent, matched by URL, and drops the rest', async () => {
+    const fetcher = suppliedImageFetcher([
+      { url: 'https://cdn.acme.test/a.png#frag', data: PNG },
+      { url: 'not a url', data: JPEG }
+    ])
+    const html = await embedImages('<img src="https://cdn.acme.test/a.png"><img src="https://cdn.acme.test/b.png">', BASE, fetcher)
+    expect(html).toBe(`<img src="data:image/png;base64,${Buffer.from(PNG).toString('base64')}">`)
+    // Larger than what is left of the limits: left out like a fetched one.
+    expect(await fetcher('https://cdn.acme.test/a.png', PNG.byteLength - 1)).toBeNull()
   })
 
   it('tells raster images by their bytes and private hosts by their address', () => {

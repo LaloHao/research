@@ -46,7 +46,7 @@ import { SyncService } from '../sync/SyncService'
 import { DraftService } from '../writing/DraftService'
 import { CiteChecker } from '../writing/CiteChecker'
 import { WritingService } from '../writing/WritingService'
-import { DEFAULT_DEVICE_ID, LibraryService, type IngestOutcome } from './LibraryService'
+import { DEFAULT_DEVICE_ID, LibraryService, type CaptureInput, type IngestOutcome } from './LibraryService'
 
 /** The per-device automatic sync settings, read at every tick. */
 export interface AutoSyncOptions {
@@ -524,10 +524,21 @@ export class ProjectSession {
   }
 
   /** A page added from the app's browser: ingested like any paper, then summarized, cited and embedded as after «Agregar». */
-  ingestCapture(capture: { url: string; html: string; pdf: Uint8Array | null }): Promise<IngestOutcome> {
+  ingestCapture(capture: CaptureInput): Promise<IngestOutcome> {
     return this.track(
       (async () => {
         const outcome = await this.library.ingestCapture(capture)
+        if (outcome.status !== 'duplicate') await afterIngest(this.services(), outcome.paperId)
+        return outcome
+      })()
+    )
+  }
+
+  /** A PDF tab sent by the browser extension: ingested like a dropped PDF, then summarized, cited and embedded. */
+  ingestPdfData(bytes: Uint8Array, fileName: string, sourceUrl: string): Promise<IngestOutcome> {
+    return this.track(
+      (async () => {
+        const outcome = await this.library.ingestPdfData(bytes, fileName, sourceUrl)
         if (outcome.status !== 'duplicate') await afterIngest(this.services(), outcome.paperId)
         return outcome
       })()
