@@ -5,6 +5,7 @@ import { CHAT_STREAM_CHANNEL } from '../shared/chat'
 import { API_OPEN_CHAT_CHANNEL, API_OPEN_PAPER_CHANNEL, DRAFT_STREAM_CHANNEL, eventChannel, IPC } from '../shared/ipc'
 import type { CloseDecision } from '../shared/sync'
 import { AppController } from './AppController'
+import { appMenuTemplate, hideAction } from './appMenu'
 import { CaptureWindow } from './capture/CaptureWindow'
 import { confirmClose, createQuitFlow, once } from './closeFlow'
 import { UtilityEmbeddingRuntime } from './embeddings/UtilityEmbeddingRuntime'
@@ -193,6 +194,8 @@ function createWindow(): BrowserWindow {
     show: false,
     title: 'Research',
     icon: APP_ICON(),
+    // The menu bar stays visible: «Archivo → Ocultar en la bandeja» is the way out on window managers without a ✕.
+    autoHideMenuBar: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: true,
@@ -256,6 +259,22 @@ function showMainWindow(): void {
   }
   if (!mainWindow || mainWindow.isDestroyed()) mainWindow = createWindow()
   focusMainWindow()
+}
+
+/** «Archivo → Ocultar en la bandeja» (Ctrl+W): the main window goes to the tray; the app's browser window closes. */
+function hideFocusedWindow(focused: unknown): void {
+  const win = focused instanceof BrowserWindow && !focused.isDestroyed() ? focused : null
+  const action = hideAction({ trayAvailable: tray.available(), focusedIsMain: win !== null && win === mainWindow, hasFocused: win !== null })
+  if (action === 'close-focused') win?.close()
+  else if (action === 'hide-main' && mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+    mainWindow.hide()
+    void showTrayHint()
+  }
+}
+
+/** The menu bar; built again once the tray exists (its item is disabled until then). */
+function applyMenu(): void {
+  Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate({ trayAvailable: tray.available(), dev: !app.isPackaged }, { hideWindow: hideFocusedWindow, quit: () => app.quit() })))
 }
 
 /** A desktop notification; where there is none, the tray's tooltip carries the text for a moment. */
@@ -374,6 +393,7 @@ async function startTray(): Promise<void> {
   const attempt = async (): Promise<boolean> => {
     if ((await trayHost(process.platform)) === 'no') return false
     if (!tray.create()) appLog.warn('tray_unavailable', { reason: 'create_failed' })
+    applyMenu()
     return true
   }
   if (await attempt()) return
@@ -419,6 +439,7 @@ function start(): void {
 
   app.whenReady().then(async () => {
     session.defaultSession.setPermissionRequestHandler((_contents, permission, callback) => callback(ALLOWED_PERMISSIONS.has(permission)))
+    applyMenu()
     registerIpc(controller, () => mainWindow, captureWindow(), {
       status: () => ({ trayAvailable: tray.available(), autostart: autostartStatus(launchInfo()) }),
       setAutostart: async (enabled) => {

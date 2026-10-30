@@ -14,6 +14,8 @@ describe('tray texts', () => {
     const keys = ['show', 'hide', 'no_project', 'add_clipboard', 'browse_clipboard', 'sync_line', 'sync_now', 'api_on', 'api_off', 'open_project', 'quit']
     const notify = ['no_identifier', 'no_url', 'added', 'no_project', 'open_failed', 'hint_title', 'hint_body']
     for (const key of [...keys.map((k) => `tray.${k}`), ...notify.map((k) => `tray.notify.${k}`)]) expect(trayText(key)).not.toBe(key)
+    const menu = ['file', 'hide_to_tray', 'quit', 'edit', 'undo', 'redo', 'cut', 'copy', 'paste', 'select_all', 'view', 'reload', 'dev_tools', 'reset_zoom', 'zoom_in', 'zoom_out', 'fullscreen']
+    for (const key of menu.map((k) => `tray.app_menu.${k}`)) expect(trayText(key)).not.toBe(key)
     for (const key of ['tray.jobs', 'tray.failed']) expect(trayText(key, { count: 2 })).not.toBe(key)
   })
 })
