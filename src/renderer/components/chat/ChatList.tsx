@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import type { ChatSummary } from '../../../shared/chat'
-import { chatTitle, costText, splitArchived } from '../../lib/chat'
+import { chatTitle, costText, splitArchived, writingPlace } from '../../lib/chat'
 
 interface ChatListProps {
   list: ChatSummary[]
@@ -27,7 +27,11 @@ export function ChatList({ list, selected, onSelect, onNew, query, onQueryChange
         <span className="muted small">
           {c.problem
             ? t('chat.problem')
-            : [c.scope === 'library' ? t('chat.library_scope') : (c.paperTitle ?? c.scope.paper), c.updatedAt.slice(0, 10), costText(c.costUsd)].join(' · ')}
+            : [
+                c.writing ? writingPlace(t, c.writing) : c.scope === 'library' ? t('chat.library_scope') : (c.paperTitle ?? c.scope.paper),
+                c.updatedAt.slice(0, 10),
+                costText(c.costUsd)
+              ].join(' · ')}
         </span>
       </button>
     </li>

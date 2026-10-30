@@ -3,6 +3,7 @@ import type { ApiOpenPaper } from '../../shared/localApi'
 import type { CostOperation } from '../../shared/summary'
 import type { WritingPlan } from '../../shared/writing/api'
 import type { IndexCache } from '../cache/IndexCache'
+import type { ChatService } from '../chats/ChatService'
 import { operationPlan, runCappedOperation, type CappedDeps } from '../llm/cappedOperation'
 import type { LibraryTools } from '../mcp/libraryTools'
 import type { ProjectStore } from '../project/ProjectStore'
@@ -23,8 +24,12 @@ export interface ApiContext {
   drafts: Pick<DraftService, 'run' | 'open' | 'stop' | 'progress' | 'outcome' | 'apiDraft'>
   /** Budget, ledger and caps, for `operationPlan` and `runCappedOperation`. */
   capped: CappedDeps
+  /** «Preguntar a Claude» from the editor: its conversations are the Chat view's. */
+  chats: Pick<ChatService, 'send' | 'stop' | 'open' | 'list' | 'progress' | 'outcome' | 'answering'>
   /** Focuses the app's window and shows the paper at that page, the quote highlighted. */
   openInApp: (request: ApiOpenPaper) => void
+  /** Focuses the app's window and opens the conversation in the Chat view. */
+  openChatInApp: (chatId: string) => void
 }
 
 /**

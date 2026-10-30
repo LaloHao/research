@@ -19,6 +19,7 @@ import {
   streamAction,
   takeBuffered,
   withCitationLinks,
+  writingPlace,
   type LiveAnswer
 } from '../../src/renderer/lib/chat'
 import { normalizeExcerpt, type ChatStreamUpdate, type ChatSummary } from '../../src/shared/chat'
@@ -117,6 +118,12 @@ describe('composer and selections', () => {
 })
 
 describe('lists and labels', () => {
+  it('names where the passage of an editor conversation is', () => {
+    const w = { source: 'emacs' as const, file: 'ch2.org', section: 'Intro › Logs', scope: 'paragraph' as const, mode: 'opinion' as const }
+    expect(writingPlace(t, w)).toBe('chat.writing.from_editor {"place":"ch2.org › Intro › Logs"}')
+    expect(writingPlace(t, { ...w, file: '', section: '' })).toBe('chat.writing.from_editor {"place":"chat.writing.no_file"}')
+  })
+
   it('names a sync copy after the machine it came from', () => {
     expect(chatTitle(t, { title: 'Drain', copyOf: null })).toBe('Drain')
     expect(chatTitle(t, { title: 'Drain', copyOf: { machine: 'desktop' } })).toBe('chat.copy_title {"title":"Drain","machine":"desktop"}')

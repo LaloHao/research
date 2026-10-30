@@ -35,6 +35,17 @@ describe('mergeChatText', () => {
     expect(merged.meta).toMatchObject({ actions: true, sync: true })
   })
 
+  it("keeps an editor conversation's passage, the mode from the machine that asked last", () => {
+    const writing = { source: 'emacs' as const, file: 'ch2.org', section: 'Intro', scope: 'paragraph' as const, mode: 'opinion' as const, passage: 'A passage.\n\n=======\n<<<<<<< HEAD\n---\nmore' }
+    const base = chatFile(BASE.messages, { writing })
+    // The passage reads back exactly, conflict-marker and frontmatter look-alikes included.
+    expect(read(text(base)).meta.writing).toEqual(writing)
+    const ours = chatFile([...BASE.messages, Q2, A2], { writing: { ...writing, mode: 'rewrite' }, updated_at: '2026-10-11T13:00:05.000Z' })
+    const theirs = chatFile(BASE.messages, { writing, title: 'Renamed', updated_at: '2026-10-11T12:30:00.000Z', updated_on: 'desktop' })
+    const merged = read(mergeChatText({ base: text(base), ours: text(ours), theirs: text(theirs) })!.text)
+    expect(merged.meta).toMatchObject({ title: 'Renamed', writing: { ...writing, mode: 'rewrite' } })
+  })
+
   it('splits a conversation whose two machines recorded different actions after the same question', () => {
     const ours = chatFile([...BASE.messages, Q2, actionMessage({ at: '2026-10-11T13:00:02.000Z' })], { updated_at: '2026-10-11T13:00:05.000Z' })
     const theirs = chatFile([...BASE.messages, Q2, actionMessage({ at: '2026-10-11T13:00:03.000Z', id: 'ffeedd' })], { updated_at: '2026-10-11T13:00:06.000Z', updated_on: 'desktop' })

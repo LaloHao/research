@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, session, shell, type IpcMainEvent } from 'electron'
 import { join } from 'node:path'
 import { CHAT_STREAM_CHANNEL } from '../shared/chat'
-import { API_OPEN_PAPER_CHANNEL, DRAFT_STREAM_CHANNEL, eventChannel, IPC } from '../shared/ipc'
+import { API_OPEN_CHAT_CHANNEL, API_OPEN_PAPER_CHANNEL, DRAFT_STREAM_CHANNEL, eventChannel, IPC } from '../shared/ipc'
 import type { CloseDecision } from '../shared/sync'
 import { AppController } from './AppController'
 import { CaptureWindow } from './capture/CaptureWindow'
@@ -59,6 +59,11 @@ const controller = new AppController(
       if (!mainWindow || mainWindow.isDestroyed()) return
       focusMainWindow()
       mainWindow.webContents.send(API_OPEN_PAPER_CHANNEL, request)
+    },
+    openChatInApp: (chatId) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return
+      focusMainWindow()
+      mainWindow.webContents.send(API_OPEN_CHAT_CHANNEL, chatId)
     }
   }
 )

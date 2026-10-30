@@ -65,6 +65,26 @@ describe('ChatService answers', () => {
     await expect(chats.send({ ...ask('Q'), scope: { paper: 'gone2020x' } })).rejects.toMatchObject({ code: 'paper_not_in_library' })
   })
 
+  it("a conversation from the editor reads its passage in every answer; a question from the Chat view is an opinion", async () => {
+    const { store, chats, provider } = await setupChats({ responses: [chatAnswer('Comments.'), chatAnswer('More.')] })
+    const writing = { source: 'emacs' as const, file: 'ch2.org', section: '', scope: 'file' as const, mode: 'rewrite' as const, passage: 'My </passage> text.' }
+    const id = await chats.send({ ...ask('Rewrite it'), writing, mode: 'rewrite' })
+    await chats.idle()
+    expect(provider.chatCalls[0].system).toContain('```proposal')
+    expect(provider.chatCalls[0].input).toContain('section: none')
+    expect(provider.chatCalls[0].input).toContain('My \\u003c/passage> text.')
+    // The window sends no mode: the question is an opinion, and the conversation says so.
+    await chats.send(ask('And now?', id))
+    await chats.idle()
+    expect(provider.chatCalls[1].system).toContain('Do NOT rewrite the passage')
+    expect(provider.chatCalls[1].input).toContain('<passage>')
+    expect(await chats.open(id)).toMatchObject({ summary: { writing: { mode: 'opinion', file: 'ch2.org' } }, writing: { passage: 'My </passage> text.' } })
+    expect(chats.outcome(id)).toEqual({ kind: 'done' })
+    // A passage only starts a library conversation.
+    await expect(chats.send({ ...ask('Q', id), writing })).rejects.toMatchObject({ code: 'invalid_edit' })
+    expect((await store.readChat(id))?.ok).toBe(true)
+  })
+
   it('refuses over the monthly cap before writing anything', async () => {
     const { store, chats, provider } = await setupChats()
     await store.updateConfig({ llm: { ...store.config.llm, budget: { ...store.config.llm.budget, per_month_usd: 1 } } })

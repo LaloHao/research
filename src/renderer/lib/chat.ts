@@ -169,6 +169,12 @@ export function chatTitle(t: TFunction, s: Pick<ChatSummary, 'title' | 'copyOf'>
   return t('chat.copy_title', { title: s.title, machine: s.copyOf.machine ?? t('chat.other_machine') })
 }
 
+/** «desde Emacs: <archivo> › <sección>»: where the passage of a conversation started from the editor is. */
+export function writingPlace(t: TFunction, w: NonNullable<ChatSummary['writing']>): string {
+  const place = [w.file || t('chat.writing.no_file'), w.section].filter(Boolean).join(' › ')
+  return t('chat.writing.from_editor', { place })
+}
+
 export function costText(usd: number): string {
   return `$${usd.toFixed(usd > 0 && usd < 0.01 ? 4 : 2)}`
 }

@@ -15,10 +15,11 @@ import { appLog, setLogSecrets } from './log/appLog'
 import { libraryTools } from './mcp/libraryTools'
 import { ProjectError } from './project/errors'
 
-/** Where the local API keeps api.json, and how it shows a paper in the window. */
+/** Where the local API keeps api.json, and how it shows a paper or a conversation in the window. */
 export interface ApiHost {
   dir: string
   openInApp: (request: ApiOpenPaper) => void
+  openChatInApp: (chatId: string) => void
 }
 
 /** App-level state: settings plus the one open project. Electron-free so it can be tested. */
@@ -212,7 +213,9 @@ export class AppController {
       writing: session.writing,
       drafts: session.drafts,
       capped: session.capped,
-      openInApp: host.openInApp
+      chats: session.chats,
+      openInApp: host.openInApp,
+      openChatInApp: host.openChatInApp
     }
   }
 

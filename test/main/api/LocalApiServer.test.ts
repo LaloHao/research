@@ -36,7 +36,10 @@ async function project() {
     // No draft tool is called here (claudeTools.test.ts has them).
     drafts: {} as ApiContext['drafts'],
     capped: { budget, ledger, limits },
-    openInApp: (r) => void opened.push(r)
+    // No ask tool is called here (askTools.test.ts has them).
+    chats: {} as ApiContext['chats'],
+    openInApp: (r) => void opened.push(r),
+    openChatInApp: () => undefined
   }
   return { store, cache, ctx, opened, ledger }
 }

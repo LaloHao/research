@@ -23,9 +23,9 @@ const instant = (s: string): number => {
 /** Whether `short` is the start of `long`: the same messages, in order. */
 const isPrefix = (short: ChatMessage[], long: ChatMessage[]): boolean => short.length <= long.length && short.every((m, i) => isDeepStrictEqual(m, long[i]))
 
-type MergedField = 'title' | 'model' | 'archived' | 'actions' | 'sync'
+type MergedField = 'title' | 'model' | 'archived' | 'actions' | 'sync' | 'writing'
 
-/** title, model, archived and the switches: changed on one machine only → that machine's value; on both → the newest `updated_at`'s. */
+/** title, model, archived, the switches and an editor conversation's passage (its mode): changed on one machine only → that machine's value; on both → the newest `updated_at`'s. */
 function mergeMeta(base: ChatMeta | null, ours: ChatMeta, theirs: ChatMeta): ChatMeta {
   const newer = instant(theirs.updated_at) > instant(ours.updated_at) ? theirs : ours
   const pick = <K extends MergedField>(key: K): ChatMeta[K] => {
@@ -47,6 +47,9 @@ function mergeMeta(base: ChatMeta | null, ours: ChatMeta, theirs: ChatMeta): Cha
     sync: pick('sync'),
     updated_at: newer.updated_at
   }
+  const writing = pick('writing')
+  if (writing === undefined) delete meta.writing
+  else meta.writing = writing
   if (newer.updated_on === undefined) delete meta.updated_on
   else meta.updated_on = newer.updated_on
   return meta
