@@ -171,6 +171,17 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
   })
   ipcMain.handle(IPC.localApiRegenerateToken, () => app.regenerateApiToken())
 
+  ipcMain.handle(IPC.extensionStatus, () => app.extensionStatus())
+  ipcMain.handle(IPC.extensionStartPairing, () => app.startExtensionPairing())
+  ipcMain.handle(IPC.extensionCancelPairing, () => app.cancelExtensionPairing())
+  ipcMain.handle(IPC.extensionPendingPairing, () => app.pendingExtensionPairing())
+  ipcMain.handle(IPC.extensionAnswerPairing, (event, rawId: unknown, rawAccepted: unknown) => {
+    // Only the main window's «Aceptar» pairs an extension.
+    if (event.sender !== getWindow()?.webContents) throw new Error('Refused')
+    app.answerExtensionPairing(arg(ipcArgs.extensionId, rawId, 'id'), arg(ipcArgs.flag, rawAccepted, 'accepted'))
+  })
+  ipcMain.handle(IPC.extensionRevoke, (_e, rawId: unknown) => app.revokeExtension(arg(ipcArgs.extensionId, rawId, 'id')))
+
   ipcMain.handle(IPC.settingsGet, () => app.getSettings())
   ipcMain.handle(IPC.settingsSet, (_e, patch: unknown) => app.setSettings(arg(ipcArgs.settingsPatch, patch, 'patch')))
 

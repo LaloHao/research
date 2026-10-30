@@ -2,11 +2,12 @@ import { app, BrowserWindow, clipboard, ipcMain, Menu, nativeImage, Notification
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { CHAT_STREAM_CHANNEL } from '../shared/chat'
-import { API_OPEN_CHAT_CHANNEL, API_OPEN_PAPER_CHANNEL, DRAFT_STREAM_CHANNEL, eventChannel, IPC } from '../shared/ipc'
+import { API_OPEN_CHAT_CHANNEL, API_OPEN_PAPER_CHANNEL, DRAFT_STREAM_CHANNEL, eventChannel, EXTENSION_PAIRING_CHANNEL, IPC } from '../shared/ipc'
 import type { CloseDecision } from '../shared/sync'
 import { AppController } from './AppController'
 import { appMenuTemplate, hideAction } from './appMenu'
 import { CaptureWindow } from './capture/CaptureWindow'
+import { printReaderPdf } from './capture/print'
 import { confirmClose, createQuitFlow, once } from './closeFlow'
 import { UtilityEmbeddingRuntime } from './embeddings/UtilityEmbeddingRuntime'
 import { waitForFlush } from './flush'
@@ -98,7 +99,15 @@ const controller = new AppController(
       if (!mainWindow || mainWindow.isDestroyed()) return
       focusMainWindow()
       mainWindow.webContents.send(API_OPEN_CHAT_CHANNEL, chatId)
-    }
+    },
+    // «¿Vincular la extensión…?»: the window comes to the front (from the tray too) to ask.
+    showPairingRequest: (request) => {
+      if (request) showMainWindow()
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(EXTENSION_PAIRING_CHANNEL, request)
+    },
+    // The same hidden, script-less print window as the app browser's reader PDF, with the extension's images.
+    printReader: (html, url, fetchImage) => printReaderPdf(html, url, fetchImage),
+    version: app.getVersion()
   }
 )
 

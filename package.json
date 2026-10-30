@@ -17,14 +17,17 @@
     "dist": "electron-vite build && electron-builder --linux AppImage --x64 --publish never",
     "release": "scripts/release.sh",
     "preview": "electron-vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.extension.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "eval:summaries": "vitest run --config vitest.eval.config.mts test/eval/summaries.eval.ts",
     "eval:similarity": "vitest run --config vitest.eval.config.mts test/eval/similarity.eval.ts",
     "eval:relations": "vitest run --config vitest.eval.config.mts test/eval/relations.eval.ts",
     "test:emacs": "${EMACS:-emacs} --batch -L emacs -l emacs/research-test.el -l emacs/research-prose-test.el -f ert-run-tests-batch-and-exit",
-    "check": "pnpm typecheck && pnpm test"
+    "check": "pnpm typecheck && pnpm test",
+    "ext:build": "node extension/build.mjs",
+    "ext:package": "node extension/build.mjs --zip",
+    "ext:lint": "node extension/build.mjs && web-ext lint --source-dir extension/dist/firefox --self-hosted"
   },
   "dependencies": {
     "@huggingface/transformers": "4.3.1",
@@ -54,10 +57,12 @@
     "electron": "41.10.7",
     "electron-builder": "26.18.0",
     "electron-vite": "5.0.0",
+    "esbuild": "0.25.12",
     "pdf-lib": "1.17.1",
     "typescript": "6.0.3",
     "vite": "7.3.7",
-    "vitest": "4.1.11"
+    "vitest": "4.1.11",
+    "web-ext": "10.8.0"
   },
   "build": {
     "appId": "dev.lalohao.research",

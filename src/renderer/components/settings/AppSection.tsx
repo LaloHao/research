@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { AppSettings } from '../../../shared/settings'
 import { errorText } from '../../lib/errorText'
 import { parseSyncMinutes } from '../../lib/sync'
+import { ExtensionSection } from './ExtensionSection'
 import { LocalApiSection } from './LocalApiSection'
 import { ModelsSection } from './ModelsSection'
 import { TraySection } from './TraySection'
@@ -163,6 +164,7 @@ export function AppSection({ onSaved }: { onSaved: () => void }): React.JSX.Elem
       )}
       <ModelsSection />
       <LocalApiSection onSaved={onSaved} />
+      <ExtensionSection />
       <TraySection onSaved={onSaved} />
       <h3>{t('settings.logs')}</h3>
       <div className="field">

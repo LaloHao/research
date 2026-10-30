@@ -6,6 +6,7 @@ import { ChatView } from './components/chat/ChatView'
 import { LibraryView } from './components/library/LibraryView'
 import { MapView } from './components/map/MapView'
 import { MappingsView } from './components/mappings/MappingsView'
+import { ExtensionPairingPrompt } from './components/ExtensionPairingPrompt'
 import { OpenFromEditor } from './components/OpenFromEditor'
 import { Rail } from './components/Rail'
 import { RelationsFileBanner } from './components/RelationsFileBanner'
@@ -51,6 +52,7 @@ export function App(): React.JSX.Element {
       )}
       {/* Outside the shell: the main process waits for its answer even if the project closes meanwhile. */}
       <CloseSyncDialog onOpenSync={openSync} onVisibleChange={setClosePrompt} />
+      <ExtensionPairingPrompt />
     </>
   )
 }

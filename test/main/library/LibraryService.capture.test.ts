@@ -55,6 +55,23 @@ describe('LibraryService.ingestCapture', () => {
     expect(await store.readContent('he2017drain')).toBeNull()
   })
 
+  it('takes the identifier the browser extension read over the page\'s own meta tags', async () => {
+    const pdf = await makePdf([['Drain parses logs online with a fixed depth tree.']])
+    const { library, resolver } = await setupLibrary({ resolver: { '10.1109/icws.2017.13': DRAIN } })
+    const outcome = await library.ingestCapture({ url: BLOG, html: html('postmortem.html'), pdf, ids: { doi: '10.1109/icws.2017.13' } })
+    expect(outcome).toEqual({ status: 'added', paperId: 'he2017drain' })
+    expect(resolver.calls).toEqual(['10.1109/icws.2017.13'])
+  })
+
+  it('adds a PDF tab sent by the browser extension as a PDF from that URL', async () => {
+    const pdf = await makePdf([['A study of things', 'Somebody Else']], { title: 'A study of things' })
+    const { library, store } = await setupLibrary()
+    const outcome = await library.ingestPdfData(pdf, 'study.pdf', 'https://files.acme.test/study.pdf')
+    const read = await store.readPaper(outcome.paperId)
+    expect(read.ok && read.value).toMatchObject({ title: 'A study of things', identifiers: { url: 'https://files.acme.test/study.pdf' }, oa_pdf_url: 'https://files.acme.test/study.pdf' })
+    await expect(library.ingestPdfData(new TextEncoder().encode('<html>'), 'x.pdf', 'https://files.acme.test/x.pdf')).rejects.toMatchObject({ code: 'not_a_pdf' })
+  })
+
   it('keeps a page without a readable article under its own title, incomplete, with the PDF', async () => {
     const pdf = await makePdf([['How to validate GPT models with text summarization and ROUGE scores.']])
     const { library, store } = await setupLibrary()

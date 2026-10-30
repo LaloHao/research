@@ -32,6 +32,7 @@ import type {
   ModelInfo,
   RelationsDetail
 } from './relations'
+import type { ExtensionStatus, PairingCode, PairingRequest } from './extension'
 import type { ApiOpenPaper, LocalApiStatus } from './localApi'
 import type { PdfPolicy } from './schemas'
 import type { AppSettings } from './settings'
@@ -199,6 +200,12 @@ export const IPC = {
   localApiStatus: 'local-api:status',
   localApiCopyToken: 'local-api:copy-token',
   localApiRegenerateToken: 'local-api:regenerate-token',
+  extensionStatus: 'extension:status',
+  extensionStartPairing: 'extension:start-pairing',
+  extensionCancelPairing: 'extension:cancel-pairing',
+  extensionAnswerPairing: 'extension:answer-pairing',
+  extensionPendingPairing: 'extension:pending-pairing',
+  extensionRevoke: 'extension:revoke',
   logRendererError: 'log:renderer-error'
 } as const
 
@@ -236,6 +243,8 @@ export type ResearchEvent =
   | 'settings-changed'
   /** The tray's «Sincronizar ahora» needs the Sync view (conflicts, an error, nothing set up). */
   | 'open-sync'
+  /** The browser extension's pairing code or its paired list changed. */
+  | 'extensions-changed'
 
 export const eventChannel = (event: ResearchEvent): string => `event:${event}`
 
@@ -243,6 +252,8 @@ export const eventChannel = (event: ResearchEvent): string => `event:${event}`
 export const API_OPEN_PAPER_CHANNEL = 'local-api:open-paper'
 /** The push channel of the local API's `open_chat_in_app` (a conversation id): open it in the Chat view. */
 export const API_OPEN_CHAT_CHANNEL = 'local-api:open-chat'
+/** The push channel of «¿Vincular la extensión…?» (`PairingRequest`, or null once it was answered or dropped). */
+export const EXTENSION_PAIRING_CHANNEL = 'extension:pairing-request'
 
 /** The push channel of `ChatStreamUpdate`s (an answer as it streams). */
 export const CHAT_STREAM_CHANNEL = 'chat:stream'
@@ -590,6 +601,21 @@ export interface ResearchApi {
     onOpenPaper(callback: (request: ApiOpenPaper) => void): () => void
     /** `open_chat_in_app` from an editor: open this conversation in the Chat view. */
     onOpenChat(callback: (chatId: string) => void): () => void
+  }
+  /** Settings → Aplicación → «Extensión del navegador». The extension's token never reaches the window. */
+  extension: {
+    status(): Promise<ExtensionStatus | null>
+    /** «Vincular extensión»: a new one-time code, valid five minutes. */
+    startPairing(): Promise<PairingCode>
+    cancelPairing(): Promise<void>
+    /** «Aceptar» / «Rechazar» of «¿Vincular la extensión…?». */
+    answerPairing(id: string, accepted: boolean): Promise<void>
+    /** The question to show now (a window that reloaded while one waited). */
+    pendingPairing(): Promise<PairingRequest | null>
+    /** «Revocar». */
+    revoke(id: string): Promise<void>
+    /** A request to show (or null: hide it). */
+    onPairingRequest(callback: (request: PairingRequest | null) => void): () => void
   }
   log: {
     /** Sends an uncaught error of the window to the app log; fire and forget. */

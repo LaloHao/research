@@ -98,6 +98,8 @@ export const ipcArgs = {
   /** A file the user picked or dropped: absolute on POSIX or Windows. */
   absolutePath: z.string().min(1).refine((p) => isAbsolute(p) || win32.isAbsolute(p)),
   flag: z.boolean(),
+  /** A paired extension, or a pairing request: a UUID. */
+  extensionId: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/),
   jobId: z.number().int().nonnegative(),
   /** `lastProjectPath` is managed by the main process only. */
   settingsPatch: z.strictObject({

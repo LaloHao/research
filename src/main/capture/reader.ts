@@ -285,3 +285,29 @@ export async function embedImages(html: string, pageUrl: string, fetchImage: Ima
   }
   return document.body.innerHTML
 }
+
+/**
+ * The images the browser extension fetched in the user's own browser, as an `ImageFetcher`: an article image is
+ * looked up by its absolute URL (its fragment ignored); nothing is fetched from the network. Each was sniffed already.
+ */
+export function suppliedImageFetcher(images: readonly { url: string; data: Uint8Array }[]): ImageFetcher {
+  const byUrl = new Map<string, Uint8Array>()
+  for (const image of images) {
+    const key = withoutFragment(image.url)
+    if (key && !byUrl.has(key)) byUrl.set(key, image.data)
+  }
+  return async (url, maxBytes) => {
+    const data = byUrl.get(withoutFragment(url) ?? '')
+    return data && data.byteLength <= maxBytes ? data : null
+  }
+}
+
+function withoutFragment(url: string): string | null {
+  try {
+    const u = new URL(url)
+    u.hash = ''
+    return u.href
+  } catch {
+    return null
+  }
+}

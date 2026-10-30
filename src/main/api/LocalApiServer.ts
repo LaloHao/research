@@ -11,6 +11,7 @@ import { ApiError, callApiTool, noProject, toolInput, type ApiContext, type ApiT
 import { ASK_API_TOOLS } from './askTools'
 import { CLAUDE_API_TOOLS } from './claudeTools'
 import { WRITING_API_TOOLS } from './writingTools'
+import { EXTENSION_PREFIX } from './extension/routes'
 
 export const API_SERVER_NAME = 'research'
 /** Chapters with their includes can be long: bigger than the agent servers' limit, still bounded. */
@@ -38,6 +39,8 @@ export interface LocalApiServerOptions {
   tools?: ApiTool[]
   /** One line per tool call (name, outcome, duration): never its arguments, never the token. */
   onCall?: (tool: string, ok: boolean, ms: number) => void
+  /** The browser extension's endpoints under `/ext/v1/` (extension/routes.ts), with their own CORS and tokens. */
+  extension?: (req: IncomingMessage, res: ServerResponse) => Promise<void>
 }
 
 export interface LocalApiServerHandle {
@@ -107,7 +110,8 @@ function errorText(error: unknown): string {
  * The local API: MCP over streamable HTTP (JSON responses, stateless, so a plain POST of a JSON-RPC `tools/call`
  * works) on 127.0.0.1 only. Refuses non-loopback peers, a Host or Origin that is not this server on loopback
  * (DNS rebinding), and any request without the bearer token. Tools: the read-only library tools of src/main/mcp and
- * `API_TOOLS`.
+ * `API_TOOLS`. Under `/ext/v1/` are the browser extension's capture endpoints instead (`extension`), with CORS for
+ * paired extension origins only and the extension's own token.
  */
 export async function startLocalApiServer(opts: LocalApiServerOptions): Promise<LocalApiServerHandle> {
   const tools = opts.tools ?? API_TOOLS
@@ -131,7 +135,10 @@ export async function startLocalApiServer(opts: LocalApiServerOptions): Promise<
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (!isLoopbackAddress(req.socket.remoteAddress)) return void res.writeHead(403).end()
-    if (!allowedHost(req.headers.host, port) || !allowedOrigin(req.headers.origin, port)) return void res.writeHead(403).end()
+    if (!allowedHost(req.headers.host, port)) return void res.writeHead(403).end()
+    // The browser extension's endpoints answer its origin (once paired) and only its own token.
+    if (req.url?.startsWith(EXTENSION_PREFIX)) return opts.extension ? opts.extension(req, res) : void res.writeHead(404).end()
+    if (!allowedOrigin(req.headers.origin, port)) return void res.writeHead(403).end()
     if (!authorized(req.headers.authorization, opts.token())) return void res.writeHead(401).end()
     if (req.url !== '/mcp') return void res.writeHead(404).end()
     if (req.method !== 'POST') return void res.writeHead(405, { Allow: 'POST' }).end()

@@ -46,14 +46,14 @@ export function sessionImageFetcher(source: Session, referrer: string): ImageFet
 }
 
 /**
- * The reader view of a captured page as a document: its article sanitized, images fetched through `pageSession` and
- * embedded. Null when the page has no article. The same document is printed as the reader PDF and shown by
- * «Vista de lectura».
+ * The reader view of a captured page as a document: its article sanitized, images got from `fetchImage` (the page's
+ * session in the app's browser, the images the browser extension sent) and embedded. Null when the page has no
+ * article. The same document is printed as the reader PDF and shown by «Vista de lectura».
  */
-export async function readerDocument(html: string, url: string, pageSession: Session, now = new Date()): Promise<string | null> {
+export async function readerDocument(html: string, url: string, fetchImage: ImageFetcher, now = new Date()): Promise<string | null> {
   const article = readArticle(html, url)
   if (!article) return null
-  const content = await embedImages(sanitizeArticle(article.content, url), url, sessionImageFetcher(pageSession, url))
+  const content = await embedImages(sanitizeArticle(article.content, url), url, fetchImage)
   return buildReaderHtml(article, content, { url, accessed: now })
 }
 
@@ -98,9 +98,13 @@ export async function loadReaderDocument<T>(
  * The reader-view PDF of a captured page (`readerDocument`), printed in a hidden window without JavaScript whose
  * session refuses every request but that document. Null when the page has no article.
  */
-export async function printReaderPdf(html: string, url: string, pageSession: Session, now = new Date()): Promise<Uint8Array | null> {
-  const document = await readerDocument(html, url, pageSession, now)
-  if (document === null) return null
+export async function printReaderPdf(html: string, url: string, fetchImage: ImageFetcher, now = new Date()): Promise<Uint8Array | null> {
+  const document = await readerDocument(html, url, fetchImage, now)
+  return document === null ? null : printReaderDocument(document)
+}
+
+/** A reader document (`readerDocument`) printed in a hidden window without JavaScript, its session refusing every request but it. */
+export async function printReaderDocument(document: string): Promise<Uint8Array> {
   const win = new BrowserWindow(readerWindowOptions())
   win.webContents.on('will-navigate', (event) => event.preventDefault())
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))

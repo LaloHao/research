@@ -49,6 +49,8 @@ export interface LocalApiDeps {
   /** The token, as soon as it is known or changes: the app log redacts it. */
   onToken: (token: string) => void
   tools?: ApiTool[]
+  /** The browser extension's endpoints (extension/routes.ts). */
+  extension?: LocalApiServerOptions['extension']
   /** Injectable for tests. */
   start?: (opts: LocalApiServerOptions) => Promise<LocalApiServerHandle>
 }
@@ -146,6 +148,7 @@ export class LocalApiService {
         context: this.deps.context,
         allowCostly: () => this.settings.allowCostly,
         tools: this.deps.tools,
+        extension: this.deps.extension,
         onCall: (tool, ok, ms) => appLog.debug('api_call', { tool, ok, ms })
       })
     } catch (error) {

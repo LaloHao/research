@@ -3,11 +3,15 @@ import { join } from 'node:path'
 import type { ChatStreamUpdate } from '../shared/chat'
 import type { DraftStreamUpdate } from '../shared/writing/draft'
 import type { ProjectInfo, ResearchEvent } from '../shared/ipc'
+import type { ExtensionStatus, PairingCode, PairingRequest } from '../shared/extension'
 import type { ApiOpenPaper, LocalApiStatus } from '../shared/localApi'
 import type { ModelInfo } from '../shared/relations'
 import type { PdfPolicy } from '../shared/schemas'
 import { DEFAULT_SETTINGS, type AppSettings } from '../shared/settings'
 import { LocalApiService } from './api/LocalApiService'
+import { ExtensionCapture, type CaptureLibrary, type ReaderPrinter } from './api/extension/capture'
+import { ExtensionPairing, EXTENSIONS_FILE } from './api/extension/pairing'
+import { extensionRoutes } from './api/extension/routes'
 import type { ApiContext } from './api/registry'
 import { loadSettings, saveSettings } from './appSettings'
 import { ProjectSession, type SessionOptions } from './library/ProjectSession'
@@ -20,6 +24,11 @@ export interface ApiHost {
   dir: string
   openInApp: (request: ApiOpenPaper) => void
   openChatInApp: (chatId: string) => void
+  /** The browser extension: «¿Vincular la extensión…?» in the window (null hides it), and the reader-PDF printer. */
+  showPairingRequest?: (request: PairingRequest | null) => void
+  printReader?: ReaderPrinter
+  /** The app's version, as the extension's «Probar conexión» shows it. */
+  version?: string
 }
 
 /** App-level state: settings plus the one open project. Electron-free so it can be tested. */
@@ -28,6 +37,8 @@ export class AppController {
   private session: ProjectSession | null = null
   private readonly api: LocalApiService | null
   private apiToken: string | null = null
+  /** The browser extension's pairing and paired list; none without the local API. */
+  private readonly pairing: ExtensionPairing | null
 
   constructor(
     private readonly settingsFile: string,
@@ -41,6 +52,15 @@ export class AppController {
     /** The local API (Settings → Aplicación → «API local»); none in tests that don't need it. */
     apiHost: ApiHost | null = null
   ) {
+    this.pairing = apiHost
+      ? new ExtensionPairing({
+          file: join(apiHost.dir, EXTENSIONS_FILE),
+          ask: (request) => apiHost.showPairingRequest?.(request),
+          settled: () => apiHost.showPairingRequest?.(null),
+          changed: () => this.emit('extensions-changed')
+        })
+      : null
+    const pairing = this.pairing
     this.api = apiHost
       ? new LocalApiService({
           dir: apiHost.dir,
@@ -49,7 +69,19 @@ export class AppController {
           onToken: (token) => {
             this.apiToken = token
             this.registerSecrets()
-          }
+          },
+          extension: pairing
+            ? extensionRoutes({
+                pairing,
+                capture: new ExtensionCapture({
+                  library: () => this.captureLibrary(apiHost),
+                  printReader: apiHost.printReader ?? (async () => null)
+                }),
+                projectName: () => this.session?.store.config.name ?? null,
+                version: apiHost.version ?? '',
+                onCall: (endpoint, status, ms) => appLog.debug('extension_call', { endpoint, status, ms })
+              })
+            : undefined
         })
       : null
   }
@@ -59,6 +91,7 @@ export class AppController {
     this.registerSecrets()
     // Idempotent: persists a freshly generated deviceId when the settings file didn't have one yet.
     await saveSettings(this.settingsFile, this.settings)
+    await this.pairing?.load()
     await this.applyApi()
     const last = this.settings.lastProjectPath
     if (!last) return
@@ -197,6 +230,54 @@ export class AppController {
   async regenerateApiToken(): Promise<LocalApiStatus | null> {
     await this.api?.regenerateToken()
     return this.apiStatus()
+  }
+
+  /** Settings → Aplicación → «Extensión del navegador». */
+  extensionStatus(): ExtensionStatus | null {
+    if (!this.pairing) return null
+    return { apiRunning: this.api?.status().running ?? false, code: this.pairing.currentCode(), paired: this.pairing.list() }
+  }
+
+  /** «Vincular extensión»: a new code; refused while the local API is not listening (the extension could not reach it). */
+  startExtensionPairing(): PairingCode {
+    if (!this.pairing || !this.api?.status().running) throw new Error('The local API is not running')
+    appLog.info('extension_pairing_started')
+    return this.pairing.start()
+  }
+
+  cancelExtensionPairing(): void {
+    this.pairing?.cancel()
+  }
+
+  answerExtensionPairing(id: string, accepted: boolean): void {
+    appLog.info('extension_pairing_answered', { accepted })
+    this.pairing?.answer(id, accepted)
+  }
+
+  pendingExtensionPairing(): PairingRequest | null {
+    return this.pairing?.pendingRequest() ?? null
+  }
+
+  async revokeExtension(id: string): Promise<void> {
+    await this.pairing?.revoke(id)
+    appLog.info('extension_revoked')
+  }
+
+  /** What the extension's capture endpoints do with the open project. */
+  private captureLibrary(host: ApiHost): CaptureLibrary | null {
+    const session = this.session
+    if (!session) return null
+    return {
+      dedupeEntries: () => session.cache.dedupeEntries(),
+      title: (key) => session.cache.getPaper(key)?.title ?? null,
+      findByUrl: (url) => session.findCapturedPage(url),
+      enqueueIdentifier: (input) => session.queue.enqueue({ type: 'ingest_identifier', input }),
+      whenDone: (job, ms) => session.queue.whenDone(job, ms),
+      ingestCapture: (capture) => session.ingestCapture(capture),
+      ingestPdf: (bytes, name, url) => session.ingestPdfData(bytes, name, url),
+      replacePdf: (key, pdf) => session.replaceCapturedPdf(key, pdf),
+      open: (key) => host.openInApp({ paper: key, page: null, quote: null })
+    }
   }
 
   private async applyApi(): Promise<void> {

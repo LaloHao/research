@@ -247,3 +247,15 @@
 - Verified headless (Xvfb, a stand-in StatusNotifierWatcher, a temporary HOME and XDG config): the library, a PDF, full-text search, the local API, the `claude` child with the library MCP config (a fake CLI), native modules, the tray, the menu and Ctrl+W, autostart and the hidden start. Not verified: the local embeddings model in the packaged app (it needs a download); a real KDE session.
 - Only tested headless on Linux (Xvfb with a stand-in StatusNotifierWatcher on a private session bus); not on macOS (where closing the last window doesn't quit anyway) or Windows.
 
+
+## Browser extension technical minutiae
+
+The extension (`extension/`, Research Connector) and its endpoints (`/ext/v1/*` in src/main/api/extension) are built: pairing with a one-time code confirmed in the window, a capture-scoped token bound to the extension's origin, CORS for paired origins only, `capture_page`/`capture_identifier`/`capture_lookup`/`capture_update_pdf`/`capture_status`/`open_in_app`. Pending:
+
+- Verified end to end in Playwright's Chromium (pairing through the options page, an article with its images and a PDF tab, revocation); in Firefox only `web-ext lint` and the unit tests ran. Firefox may close the popup while it asks for a site's permission (then «Agregar» has to be pressed again); the permission could be asked from the options page or a tab of the extension instead.
+- There is no «página tal como se ve» PDF from the extension (a browser can't print to PDF without a dialog): a page without a readable article gets no PDF, only its text or its title (incomplete metadata), and the app's «PDF de la captura» setting doesn't apply.
+- The article's images are fetched by the page's own context: a cross-origin image whose server sends no CORS headers can't be read and is left out of the reader PDF. A PDF fetched through the page (the fallback when the extension may not reach the site) goes through the extension messaging, which in Chrome is limited to about 64 MB.
+- Captures are tasks kept in memory (the last 200): `capture_status` forgets them on restart, and page captures don't show in Actividad (identifier captures do, as their job).
+- The shortcut leaves a page already in the library as it is (no «Actualizar PDF» without the popup).
+- The unlisted Firefox add-on doesn't update itself: a new version is signed (with a new version number, the app's) and installed by hand.
+- A request body (a page with a 100 MB PDF and its images, in base64) is held whole in memory while it is decoded.
