@@ -57,6 +57,18 @@ rewrite your text: they point, explain and ask, or offer options for you to choo
 | `research-reverse-outline` | `C-c r r` | For the Org subtree at point (or the region; the buffer outside a heading; up to 20 000 characters): a side buffer with one line per paragraph, its main idea in your terms (at most 20 words) and flags (dos ideas, sin transición, fuera del tema) with a short note. `RET` jumps to the paragraph. The app splits the paragraphs, so the jumps are exact. |
 | `research-rq-coverage` | `C-c r q` | For the file (or the region; `C-u`: the Org subtree at point; up to 40 000 characters): which research questions of Settings → Tesis each heading addresses, with a short excerpt as evidence (verified in your text), and the questions no heading addresses. `RET` on a heading or an excerpt jumps to it. |
 
+«Preguntar a Claude» (Claude, same confirmation and the same switch; one chat answer under «Tope por mensaje de chat»).
+Claude reads what you are writing and gives its opinion: what works, what to change and why, and questions. **By
+default it does not rewrite your text**; a proposed version only comes when you allow it for that question.
+
+| Command | Key | What it does |
+| --- | --- | --- |
+| `research-ask` | `C-c r ?` | Asks for your question (with history), then «¿Permitir propuesta de redacción? (y/N)» (`y` only when you want Claude to also propose a version, set apart as its own and never as your text; anything else is an opinion). Sends the region, or the paragraph at point; `C-u`: the Org subtree at point (a section or chapter); `C-u C-u`: the whole file; at most 30 000 characters, with the file's name and the heading path. Shows the estimated cost and asks, then streams the answer into a read-only Org side buffer, `*research-ask*` (question, scope, file › section, mode, and the cost when done), every `research-ask-poll-interval` seconds while Emacs stays free. Claims about papers carry citations `[key, p. N]` the app checked against the paper (unverified ones in the warning face), listed under «Citas:» with their quotes. Your buffer is never changed. The conversation is a normal one of the app's Chat view (title from the question, «desde Emacs: archivo › sección»), synced like the others. |
+
+In `*research-ask*`: `f` asks a follow-up in the same conversation (same passage; it asks again whether to allow a
+proposed version), `c` opens the citation at point in the app at its page with the quote highlighted, `a` opens the
+conversation in the app's Chat view, `s` stops the answer (what arrived is kept), `q` closes the window.
+
 ## Prose checks (`research-prose.el`)
 
 Local and free: pure Emacs Lisp, no app, no network, no external process. A Flymake backend for Spanish academic prose
@@ -107,6 +119,7 @@ Errors from the app are shown in Spanish, like the app (no project open, the API
 - `research-quote-formats`: how a passage's quote is written per format.
 - `research-request-timeout`: seconds to wait for the app (60).
 - `research-draft-poll-interval`: seconds between two looks at a draft being written (5).
+- `research-ask-poll-interval`: seconds between two looks at the answer `research-ask` is following (2).
 - `research-bib-order`: `"appearance"` (default) or `"alphabetical"`.
 - `research-keymap-prefix`: `"C-c r"` by default; `nil` to bind `research-command-map` yourself (set it before the
   package loads).
@@ -160,7 +173,8 @@ and to `config.el`:
        :desc "Alternatives (Claude)"  "w" #'research-alternatives
        :desc "Reverse outline"        "r" #'research-reverse-outline
        :desc "RQ coverage"            "q" #'research-rq-coverage
-       :desc "Prose check (local)"    "l" #'research-prose-check))
+       :desc "Prose check (local)"    "l" #'research-prose-check
+       :desc "Preguntar a Claude"     "?" #'research-ask))
 ```
 
 Then run `doom sync` and restart Emacs (run `doom sync` again after updating the repository). In an Org buffer,

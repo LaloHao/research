@@ -33,6 +33,12 @@
 ;; `yes-or-no-p'.  The tutor's never write your text: they point, explain, ask,
 ;; outline, or offer options of one sentence for you to choose from.
 ;;
+;; `research-ask' (`?' in the command map) sends the region, paragraph,
+;; section or file with your question: Claude gives its opinion (what to
+;; change and why, and questions) without rewriting your text unless you allow
+;; a proposed version for that question.  The answer streams into
+;; `*research-ask*' and is a conversation of the app's Chat view.
+;;
 ;; `research-prose-check' (research-prose.el, `l' in the command map) checks
 ;; Spanish academic prose locally, without the app.
 ;;
