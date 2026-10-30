@@ -2,7 +2,9 @@ import { z } from 'zod'
 import {
   CHAT_ID,
   MAX_CHAT_MESSAGE,
+  MAX_WRITING_CHAPTER,
   MAX_WRITING_FILE,
+  MAX_WRITING_OUTLINE,
   MAX_WRITING_PASSAGE,
   MAX_WRITING_SECTION,
   WRITING_MODES,
@@ -10,11 +12,14 @@ import {
   type AssistantView,
   type ChatConversation,
   type ChatSummary,
+  type ChatWritingContext,
   type WritingMode
 } from '../../shared/chat'
 import { LLM_MODELS, type LlmModel } from '../../shared/summary'
 import { answerToOrg } from '../../shared/writing/answerOrg'
 import { UserFacingError } from '../library/UserFacingError'
+import { operationPlan } from '../llm/cappedOperation'
+import { inputSurchargeUsd } from '../llm/inputCost'
 import { ApiError, costlyTool, freeTool, type ApiContext, type ApiTool } from './registry'
 
 const conversationId = z.string().regex(CHAT_ID).describe('The id ask answered')
@@ -23,6 +28,9 @@ const passage = z
   .string()
   .refine((s) => [...s].length <= MAX_WRITING_PASSAGE, `At most ${MAX_WRITING_PASSAGE} characters`)
   .describe(`The passage: the region, paragraph, section or file (at most ${MAX_WRITING_PASSAGE} characters)`)
+
+/** At most `max` characters (code points). */
+const capped = (max: number) => z.string().refine((s) => [...s].length <= max, `At most ${max} characters`)
 
 const ASK_INPUT = {
   question: z.string().trim().min(1).max(MAX_CHAT_MESSAGE),
@@ -34,10 +42,33 @@ const ASK_INPUT = {
     .enum(WRITING_MODES)
     .optional()
     .describe('opinion (default): comments, critique, suggestions and questions, never a rewrite; rewrite: only when the user explicitly allowed a proposed rewrite for this question'),
+  chapter: capped(MAX_WRITING_CHAPTER)
+    .optional()
+    .describe(
+      `Background, not the focus: the whole file the passage is in (at most ${MAX_WRITING_CHAPTER} characters; a larger file is sent as a window around the passage, with chapter_truncated). Omitted when the passage is the whole file. Sent again with every question, follow-ups included, so it follows the user's edits`
+    ),
+  chapter_truncated: z.boolean().optional().describe('true when chapter is only a window around the passage'),
+  outline: capped(MAX_WRITING_OUTLINE)
+    .optional()
+    .describe(`Background: the headings of the whole thesis by file, the current file and section marked (at most ${MAX_WRITING_OUTLINE} characters). Sent with every question`),
   conversation_id: conversationId.optional().describe('A follow-up question in that conversation'),
   model: z.enum(LLM_MODELS).optional().describe("sonnet, haiku or opus for a new conversation; the project's model when missing")
 }
 type AskArgs = z.infer<z.ZodObject<typeof ASK_INPUT>>
+
+/** The background of this question (kept in memory for the conversation, never in chats/), or undefined when none was sent. */
+const contextOf = (args: AskArgs): ChatWritingContext | undefined => {
+  const chapter = args.chapter?.trim() ? args.chapter : undefined
+  const outline = args.outline?.trim() ? args.outline : undefined
+  if (!chapter && !outline) return undefined
+  return { ...(chapter ? { chapter, chapterCut: args.chapter_truncated === true } : {}), ...(outline ? { outline } : {}) }
+}
+
+/** The characters this question sends Claude beyond a plain chat question: the passage and its background. */
+async function inputChars(ctx: ApiContext, args: AskArgs, summary: ChatSummary | null): Promise<number> {
+  const passage = summary ? [...((await ctx.chats.open(summary.id).catch(chatError)).writing?.passage ?? '')].length : [...(args.text ?? '')].length
+  return passage + [...(args.chapter ?? '')].length + [...(args.outline ?? '')].length
+}
 
 const fileName = (path: string | undefined): string => (path ?? '').split(/[\\/]/).pop()!.trim().slice(0, MAX_WRITING_FILE)
 
@@ -93,16 +124,26 @@ export const ASK_API_TOOLS: ApiTool[] = [
   costlyTool({
     name: 'ask',
     description:
-      "«Preguntar a Claude»: Claude's opinion on a passage the user is writing (its file and heading path given), with the library's read-only tools and the thesis context; every claim about a paper is cited with a quote and page the app checks. By default (mode opinion) Claude comments, critiques, suggests and asks, and does not rewrite the passage; mode rewrite (only when the user explicitly allowed it for this question) may add a proposed version set apart as Claude's. Starts a conversation in the app's Chat view (or, with conversation_id, asks a follow-up in it) and answers at once with its conversation_id: follow the answer with ask_status (free), stop it with ask_stop. Costs Claude quota (one chat answer, under the per-message cap): without confirmed it answers the plan.",
+      "«Preguntar a Claude»: Claude's opinion on a passage the user is writing (its file and heading path given), with the library's read-only tools and the thesis context, and as background the chapter the passage is in and the thesis outline; every claim about a paper is cited with a quote and page the app checks. By default (mode opinion) Claude comments, critiques, suggests and asks, and does not rewrite the passage; mode rewrite (only when the user explicitly allowed it for this question) may add a proposed version set apart as Claude's. Starts a conversation in the app's Chat view (or, with conversation_id, asks a follow-up in it) and answers at once with its conversation_id: follow the answer with ask_status (free), stop it with ask_stop. Costs Claude quota (one chat answer, under the per-message cap): without confirmed it answers the plan.",
     input: ASK_INPUT,
     cost: {
       kind: 'chat',
       model: modelOf,
       // ChatService admits and charges the answer as a chat answer, under the per-message cap.
       selfCapped: true,
+      // The learned estimate of a chat answer, plus what this question's input (a chapter, the outline) adds to it.
+      estimate: async (ctx, args) => {
+        const { summary } = checked(ctx, args)
+        const plan = await operationPlan(ctx.capped, 'chat')
+        const extra = inputSurchargeUsd(modelOf(ctx, args), await inputChars(ctx, args, summary))
+        return { ...plan, estimateUsd: plan.estimateUsd + extra }
+      },
       plan: async (ctx, args) => {
         const { summary } = checked(ctx, args)
         return {
+          input_chars: await inputChars(ctx, args, summary),
+          chapter_chars: args.chapter ? [...args.chapter].length : 0,
+          outline_chars: args.outline ? [...args.outline].length : 0,
           conversation_id: summary?.id ?? null,
           answering: summary ? ctx.chats.answering(summary.id) : false,
           mode: args.mode ?? 'opinion',
@@ -124,6 +165,7 @@ export const ASK_API_TOOLS: ApiTool[] = [
           text: args.question,
           excerpt: null,
           mode,
+          ...(contextOf(args) ? { context: contextOf(args) } : {}),
           ...(summary
             ? {}
             : {
