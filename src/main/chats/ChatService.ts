@@ -24,6 +24,7 @@ import {
   type ChatSummary,
   type ChatPartial,
   type ChatWriting,
+  type ChatWritingContext,
   type PaperState,
   type UserMessage
 } from '../../shared/chat'
@@ -122,6 +123,8 @@ export type ChatOutcome = { kind: 'done' } | { kind: 'stopped' } | { kind: 'erro
 
 const SEARCH_CHARS = 200_000
 const MAX_WRITE_ATTEMPTS = 3
+/** Writing conversations whose background (chapter, outline) is kept in memory; an older one gets it again with its next question. */
+const MAX_KEPT_CONTEXTS = 8
 /** The summary fields a paper chat shows Claude. */
 const PAPER_SUMMARY_FIELDS = ['tldr', 'problem', 'contribution', 'method', 'evaluation', 'results'] as const
 const logged = (error: unknown): void => console.error('chat', error)
@@ -212,6 +215,8 @@ export class ChatService {
   private readonly writing = new Map<string, Promise<unknown>>()
   /** How each conversation's last answer of this app run ended; cleared when the next one starts. */
   private readonly outcomes = new Map<string, ChatOutcome>()
+  /** The background of the latest writing conversations (chapter, outline), in memory only: the editor sends it with every question. */
+  private readonly contexts = new Map<string, ChatWritingContext>()
 
   constructor(private readonly deps: ChatServiceDeps) {
     this.approvals = new ApprovalGate({ timeoutMs: deps.approvalTimeoutMs ?? APPROVAL_TIMEOUT_MS, changed: (id) => this.approvalsChanged(id), now: deps.now })
@@ -357,6 +362,7 @@ export class ChatService {
     if (read) await this.deps.store.deleteChat(id, read.hash)
     this.entries.delete(id)
     this.outcomes.delete(id)
+    this.contexts.delete(id)
     for (const key of [...this.undos.keys()]) if (key.startsWith(`${id}:`)) this.undos.delete(key)
     this.changedAt.set(id, ++this.writes)
     this.deps.emit()
@@ -480,6 +486,8 @@ export class ChatService {
     if (!req.chatId && req.scope !== 'library' && this.paperState(req.scope.paper) !== 'library') throw new UserFacingError('paper_not_in_library')
     // A passage starts a library conversation; a follow-up keeps the passage it was started with.
     if (req.writing && (req.chatId || req.scope !== 'library')) throw new UserFacingError('invalid_edit')
+    // Background goes with a passage, or with a follow-up (whose conversation the caller checked is a writing one).
+    if (req.context && !req.writing && !req.chatId) throw new UserFacingError('invalid_edit')
     if (req.chatId) this.sending.add(req.chatId)
     try {
       const reservation = await this.deps.budget.admit(undefined, 'chat')
@@ -495,11 +503,19 @@ export class ChatService {
         reservation.release()
         throw error
       }
+      if (req.context) this.keepContext(id, req.context)
       this.start(id, reservation)
       return id
     } finally {
       if (req.chatId) this.sending.delete(req.chatId)
     }
+  }
+
+  /** Keeps a writing conversation's background, the most recently used ones only (each may hold a whole chapter). */
+  private keepContext(id: string, context: ChatWritingContext): void {
+    this.contexts.delete(id)
+    this.contexts.set(id, context)
+    while (this.contexts.size > MAX_KEPT_CONTEXTS) this.contexts.delete(this.contexts.keys().next().value!)
   }
 
   private async retryNow(id: string): Promise<void> {
@@ -844,7 +860,7 @@ export class ChatService {
         history: messages.slice(0, asked),
         question: question.text,
         excerpt: question.excerpt,
-        ...(meta.writing ? { writing: meta.writing } : {}),
+        ...(meta.writing ? { writing: meta.writing, context: this.contexts.get(id) } : {}),
         // Only what follows the question: the history above stops before it, so no record is shown twice.
         actionsDone: messages.slice(asked + 1).filter((m): m is ActionMessage => m.role === 'action')
       })

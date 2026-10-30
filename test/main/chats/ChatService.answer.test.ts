@@ -85,6 +85,19 @@ describe('ChatService answers', () => {
     expect((await store.readChat(id))?.ok).toBe(true)
   })
 
+  it('keeps a writing conversation\'s background in memory for its answers; never for a plain chat', async () => {
+    const { chats, provider } = await setupChats({ responses: [chatAnswer('A.'), chatAnswer('B.')] })
+    const writing = { source: 'emacs' as const, file: 'ch2.org', section: '', scope: 'paragraph' as const, mode: 'opinion' as const, passage: 'My text.' }
+    const id = await chats.send({ ...ask('Q'), writing, context: { chapter: 'The chapter.', chapterCut: false, outline: '* Heading' } })
+    await chats.idle()
+    expect(provider.chatCalls[0].input).toContain('</passage>\n<chapter>\nThe chapter.\n</chapter>\n<outline>\n* Heading\n</outline>')
+    // A question from the Chat view sends none: the kept background still goes.
+    await chats.send(ask('Again?', id))
+    await chats.idle()
+    expect(provider.chatCalls[1].input).toContain('<chapter>\nThe chapter.\n</chapter>')
+    await expect(chats.send({ ...ask('Plain'), context: { outline: '* H' } })).rejects.toMatchObject({ code: 'invalid_edit' })
+  })
+
   it('refuses over the monthly cap before writing anything', async () => {
     const { store, chats, provider } = await setupChats()
     await store.updateConfig({ llm: { ...store.config.llm, budget: { ...store.config.llm.budget, per_month_usd: 1 } } })

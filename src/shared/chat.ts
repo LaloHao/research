@@ -31,6 +31,23 @@ export type WritingScope = (typeof WRITING_SCOPES)[number]
 export const MAX_WRITING_PASSAGE = 30_000
 export const MAX_WRITING_FILE = 255
 export const MAX_WRITING_SECTION = 500
+/** The chapter (the whole file the passage is in) sent as background; a larger one is sent as a window around the passage. */
+export const MAX_WRITING_CHAPTER = 80_000
+/** The thesis outline (its headings) sent as background. */
+export const MAX_WRITING_OUTLINE = 30_000
+
+/**
+ * Background of a writing conversation, not its focus: the chapter the passage is in and the thesis outline. Never
+ * written to chats/ (a chapter would bloat every conversation file): kept in memory per conversation, and the editor
+ * sends it fresh with every question, so it follows the user's edits.
+ */
+export interface ChatWritingContext {
+  /** The whole file the passage is in, or a window around the passage when `chapterCut`; absent when the passage is the file. */
+  chapter?: string
+  chapterCut?: boolean
+  /** The thesis' headings (level and title, by file), the current file and section marked. */
+  outline?: string
+}
 
 /**
  * The passage of a conversation started from the editor, kept in its frontmatter: every answer of the conversation
@@ -295,6 +312,8 @@ export interface ChatSendRequest {
   writing?: ChatWriting
   /** In a conversation from the editor, this question's mode (`opinion` when missing): it becomes the conversation's. */
   mode?: WritingMode
+  /** In a conversation from the editor, fresh background (chapter, outline) replacing the one kept for it. */
+  context?: ChatWritingContext
 }
 
 export type ChatStreamEvent =
