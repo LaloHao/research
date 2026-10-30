@@ -260,11 +260,19 @@ text.  Signals `research-error' with the API's error code."
 
 (defvar research--papers nil "The last `list_papers_for_citation' answer.")
 
-(defun research--papers (&optional refresh)
-  "The library papers for completion; asks the app again when REFRESH."
-  (when (or refresh (null research--papers))
-    (setq research--papers (research-call "list_papers_for_citation")))
-  research--papers)
+(defun research--papers (&optional _refresh)
+  "The library papers for completion, asked fresh from the app every time.
+Papers added in the app show up at once (the call is local and quick).
+When the app doesn't answer, the last list is used, with a message; with
+no list yet, the error is raised.  _REFRESH is kept for compatibility."
+  (condition-case err
+      (setq research--papers (research-call "list_papers_for_citation"))
+    (research-error
+     (if research--papers
+         (progn (message "No se pudo pedir la lista a la app (%s); uso la última que tengo"
+                         (error-message-string err))
+                research--papers)
+       (signal (car err) (cdr err))))))
 
 (defun research--candidates (papers)
   "Completion strings for PAPERS, each with its key in `research-key'."

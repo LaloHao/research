@@ -26,7 +26,7 @@ without the token or with a foreign `Host`/`Origin` header. With no project open
 
 | Command | Key (`research-mode`) | What it does |
 | --- | --- | --- |
-| `research-insert-citation` | `C-c r c` | Complete a library paper (key, title, year, authors; works with vertico/consult) and insert `[cite:@key]`, `\cite{key}` or `[@key]`. `C-u` refreshes the list. |
+| `research-insert-citation` | `C-c r c` | Complete a library paper (key, title, year, authors; works with vertico/consult) and insert `[cite:@key]`, `\cite{key}` or `[@key]`. The list is asked from the app every time, so papers you just added show up at once (if the app doesn't answer, the last list is used). |
 | `research-check-citations` | `C-c r k` | Check the buffer (or region): unknown keys, keys in the trash, keys repeated in a sentence and papers without indexed text show as Flymake diagnostics. |
 | `research-bibtex-for-file` | `C-c r b` | Write a `.bib` next to the file with only the entries it cites (following `\input`, `\include`, `\subfile` and `#+INCLUDE` inside its folder). `C-u` asks where. Offers to add `#+bibliography:` and to add it to `citar-bibliography`. |
 | `research-insert-outline` | `C-c r o` | Insert the app's outline (one section per facet value, papers with their one-liner, gaps). `C-u` asks for the facets, the research question and «only reviewed». |
@@ -160,6 +160,8 @@ Errors from the app are shown in Spanish, like the app (no project open, the API
   `research-prose-gls-capitalize`, `research-prose-auto-gls` (`M-x customize-group RET research-prose`).
 
 ## Doom Emacs setup
+
+With evil (Doom's default), `C-u` scrolls up: the universal argument this README writes as `C-u` is `SPC u` there (`C-u C-u` is `SPC u SPC u`), e.g. `SPC u SPC m w ?` asks about the paragraph only.
 
 With the `biblio` module (citar) and org-cite export to LaTeX with biblatex/biber, add to `packages.el`:
 
