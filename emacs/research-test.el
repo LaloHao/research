@@ -60,6 +60,29 @@ HANDLER returns (STATUS . BODY); `research-test--result' builds one."
 
 ;;;; Transport
 
+(ert-deftest research-test-papers-are-asked-fresh-each-time ()
+  (let ((calls 0) (keys '("a2020x")))
+    (research-test--with-app
+        (lambda (tool _args)
+          (should (equal tool "list_papers_for_citation"))
+          (setq calls (1+ calls))
+          (research-test--result (vconcat (mapcar (lambda (k) `((key . ,k) (title . "T"))) keys))))
+      (should (equal (mapcar (lambda (p) (alist-get 'key p)) (research--papers)) '("a2020x")))
+      ;; A paper added in the app shows up on the next call, without C-u.
+      (setq keys '("a2020x" "b2026y"))
+      (should (equal (mapcar (lambda (p) (alist-get 'key p)) (research--papers)) '("a2020x" "b2026y")))
+      (should (= calls 2)))))
+
+(ert-deftest research-test-papers-fall-back-to-the-last-list ()
+  (research-test--with-app (lambda (_tool _args) (research-test--result [((key . "a2020x") (title . "T"))]))
+    (research--papers))
+  (let ((research--papers '(((key . "a2020x") (title . "T")))))
+    (research-test--with-app (lambda (_tool _args) (cons 500 ""))
+      (setq research--papers '(((key . "a2020x") (title . "T"))))
+      (should (equal (mapcar (lambda (p) (alist-get 'key p)) (research--papers)) '("a2020x"))))
+    (research-test--with-app (lambda (_tool _args) (cons 500 ""))
+      (should-error (research--papers) :type 'research-error))))
+
 (ert-deftest research-test-call-sends-a-tools-call-with-the-token ()
   (research-test--with-app (lambda (_tool _args) (research-test--result '((ok . t))))
     (should (equal (research-call "outline" '((format . "org") (reviewed_only . t))) '((ok . t))))
@@ -130,8 +153,8 @@ HANDLER returns (STATUS . BODY); `research-test--result' builds one."
         (research-insert-citation)
         (setq buffer-file-name nil)
         (should (equal (buffer-string) "[@zhu2020loghub]"))))
-    ;; The papers were asked for once and kept.
-    (should (= (length research-test--requests) 1))))
+    ;; The papers are asked for each time, so new ones show up at once.
+    (should (= (length research-test--requests) 3))))
 
 ;;;; Checking citations
 
