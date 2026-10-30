@@ -71,6 +71,16 @@ function ProjectShell({ project, view, onViewChange: setView, inert }: ProjectSh
   const [visibleIds, setVisibleIds] = useState<string[] | null>(null)
   const sync = useSyncStatus()
   const refreshSync = sync.refresh
+  // The local API's `open_chat_in_app` (an editor's «abrir en la app»): the Chat view with that conversation open.
+  const [openChat, setOpenChat] = useState<{ id: string; n: number } | null>(null)
+  useEffect(
+    () =>
+      window.research.localApi.onOpenChat((id) => {
+        setOpenChat((current) => ({ id, n: (current?.n ?? 0) + 1 }))
+        setView('chat')
+      }),
+    [setView]
+  )
   const [syncing, setSyncing] = useState(false)
 
   const openLibrary = useCallback(
@@ -126,7 +136,7 @@ function ProjectShell({ project, view, onViewChange: setView, inert }: ProjectSh
           />
         )}
         {view === 'mappings' && <MappingsView />}
-        {view === 'chat' && <ChatView />}
+        {view === 'chat' && <ChatView open={openChat} />}
         {view === 'writing' && <WritingView projectRoot={project.root} tab={writingTab} onTabChange={setWritingTab} visibleIds={visibleIds} />}
         {view === 'trash' && <TrashView />}
         {view === 'sync' && <SyncView sync={sync} />}

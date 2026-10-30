@@ -22,6 +22,8 @@ import {
   type ChatStreamEvent,
   type ChatStreamUpdate,
   type ChatSummary,
+  type ChatPartial,
+  type ChatWriting,
   type PaperState,
   type UserMessage
 } from '../../shared/chat'
@@ -47,7 +49,7 @@ import { InvalidEdit } from '../summary/merge'
 import { enabledTools, gateAction, isReadTool, latestUserText, toolEnabled } from './actionPolicy'
 import type { ActionExecutor, ExecutedAction } from './actionTypes'
 import { ApprovalGate, type ApprovalAnswer } from './ApprovalGate'
-import { CHAT_MAX_TOOL_CALLS, chatInput, chatSystemPrompt, type PaperContext } from './chatPrompt'
+import { CHAT_MAX_TOOL_CALLS, chatInput, chatSystemPrompt, writingSystemPrompt, type PaperContext } from './chatPrompt'
 import { indexSources, unverifiedCount, verifyCitations } from './citations'
 import { readPaperContext } from './paperContext'
 
@@ -115,6 +117,9 @@ interface Run {
   unconfirmed: number
 }
 
+/** How the last answer of a conversation ended in this app run (for the local API's `ask_status`). */
+export type ChatOutcome = { kind: 'done' } | { kind: 'stopped' } | { kind: 'error'; error: string }
+
 const SEARCH_CHARS = 200_000
 const MAX_WRITE_ATTEMPTS = 3
 /** The summary fields a paper chat shows Claude. */
@@ -170,6 +175,9 @@ export function asWritten(file: ChatFile): ChatFile {
   return read.value
 }
 
+/** A writing conversation's place, without its passage (the list's note). */
+const writingNote = (w: ChatWriting): ChatSummary['writing'] => ({ source: w.source, file: w.file, section: w.section, scope: w.scope, mode: w.mode })
+
 /** What «Guardar en notas del paper» appends to notes.md. */
 export function notesBlock(title: string, m: AssistantMessage): string {
   return `### Claude — ${m.at.slice(0, 10)} — ${title}\n\n${citationsToText(m.text).trim()}\n`
@@ -202,6 +210,8 @@ export class ChatService {
   private readonly undos = new Map<string, () => Promise<void>>()
   /** The last write queued for each conversation (see update). */
   private readonly writing = new Map<string, Promise<unknown>>()
+  /** How each conversation's last answer of this app run ended; cleared when the next one starts. */
+  private readonly outcomes = new Map<string, ChatOutcome>()
 
   constructor(private readonly deps: ChatServiceDeps) {
     this.approvals = new ApprovalGate({ timeoutMs: deps.approvalTimeoutMs ?? APPROVAL_TIMEOUT_MS, changed: (id) => this.approvalsChanged(id), now: deps.now })
@@ -267,7 +277,8 @@ export class ChatService {
       messages,
       partial: run ? { text: run.text, tools: run.tools, seq: run.seq } : null,
       canRetry: !this.busy(id) && questionIndex(e.file.messages) >= 0,
-      approvals: this.approvals.pending(id)
+      approvals: this.approvals.pending(id),
+      ...(e.file.meta.writing ? { writing: e.file.meta.writing } : {})
     }
   }
 
@@ -345,6 +356,7 @@ export class ChatService {
     const read = await this.deps.store.readChat(id)
     if (read) await this.deps.store.deleteChat(id, read.hash)
     this.entries.delete(id)
+    this.outcomes.delete(id)
     for (const key of [...this.undos.keys()]) if (key.startsWith(`${id}:`)) this.undos.delete(key)
     this.changedAt.set(id, ++this.writes)
     this.deps.emit()
@@ -417,6 +429,22 @@ export class ChatService {
     this.approvals.denyWhere(id, () => true, 'stopped')
   }
 
+  /** The answer being written for a conversation (its text so far), or null when none is. */
+  progress(id: string): ChatPartial | null {
+    const run = this.runs.get(id)
+    return run ? { text: run.text, tools: run.tools, seq: run.seq } : null
+  }
+
+  /** Whether a question of the conversation is being admitted or answered. */
+  answering(id: string): boolean {
+    return this.busy(id)
+  }
+
+  /** How the conversation's last answer of this app run ended; null when none ended since the app started. */
+  outcome(id: string): ChatOutcome | null {
+    return this.outcomes.get(id) ?? null
+  }
+
   /** Resolves once no answer is being written. */
   async idle(): Promise<void> {
     while (this.runs.size > 0) await Promise.allSettled([...this.runs.values()].map((r) => r.done))
@@ -450,13 +478,19 @@ export class ChatService {
     if (req.chatId && !CHAT_ID.test(req.chatId)) throw new UserFacingError('chat_not_found')
     if (req.chatId && this.busy(req.chatId)) throw new UserFacingError('chat_busy')
     if (!req.chatId && req.scope !== 'library' && this.paperState(req.scope.paper) !== 'library') throw new UserFacingError('paper_not_in_library')
+    // A passage starts a library conversation; a follow-up keeps the passage it was started with.
+    if (req.writing && (req.chatId || req.scope !== 'library')) throw new UserFacingError('invalid_edit')
     if (req.chatId) this.sending.add(req.chatId)
     try {
       const reservation = await this.deps.budget.admit(undefined, 'chat')
       let id: string
       try {
         const message: UserMessage = { role: 'user', at: this.now().toISOString(), text, excerpt: req.excerpt }
-        id = req.chatId ? (await this.update(req.chatId, (f) => ({ ...f, messages: [...f.messages, message] }))).meta.id : await this.create(req, message)
+        // In a conversation from the editor every question carries its mode: a rewrite only when this one allows it.
+        const withMode = (meta: ChatMeta): ChatMeta => (meta.writing ? { ...meta, writing: { ...meta.writing, mode: req.mode ?? 'opinion' } } : meta)
+        id = req.chatId
+          ? (await this.update(req.chatId, (f) => ({ ...f, meta: withMode(f.meta), messages: [...f.messages, message] }))).meta.id
+          : await this.create(req, message)
       } catch (error) {
         reservation.release()
         throw error
@@ -527,7 +561,8 @@ export class ChatService {
       // The messages the user reads as the conversation: action records are not counted.
       messages: messages.filter((m) => m.role !== 'action').length,
       copyOf: meta.copy_of ? { machine: meta.copy_of.machine } : null,
-      problem: false
+      problem: false,
+      ...(meta.writing ? { writing: writingNote(meta.writing) } : {})
     }
   }
 
@@ -612,7 +647,8 @@ export class ChatService {
         cost_usd: 0,
         actions: req.actions === true,
         sync: req.sync === true,
-        updated_on: this.deps.machine
+        updated_on: this.deps.machine,
+        ...(req.writing ? { writing: { ...req.writing, mode: req.mode ?? req.writing.mode } } : {})
       },
       messages: [message]
     }
@@ -634,6 +670,7 @@ export class ChatService {
       unconfirmed: Number.NaN
     }
     this.runs.set(id, run)
+    this.outcomes.delete(id)
     run.done = this.answer(id, run, reservation).finally(() => this.runs.delete(id))
   }
 
@@ -807,6 +844,7 @@ export class ChatService {
         history: messages.slice(0, asked),
         question: question.text,
         excerpt: question.excerpt,
+        ...(meta.writing ? { writing: meta.writing } : {}),
         // Only what follows the question: the history above stops before it, so no record is shown twice.
         actionsDone: messages.slice(asked + 1).filter((m): m is ActionMessage => m.role === 'action')
       })
@@ -843,7 +881,7 @@ export class ChatService {
         run.controller.signal.throwIfAborted()
         result = await provider.chat(
           {
-            system: chatSystemPrompt(meta.scope, on),
+            system: meta.writing ? writingSystemPrompt(meta.writing.mode, on) : chatSystemPrompt(meta.scope, on),
             input,
             model: meta.model,
             maxUsd: store.config.llm.budget.per_chat_message_usd,
@@ -889,6 +927,7 @@ export class ChatService {
       }
       await this.update(id, (f) => ({ ...f, messages: [...f.messages, answer] }))
       run.log?.end({ costUsd: result.costUsd, turns: result.turns })
+      this.outcomes.set(id, { kind: 'done' })
       this.push(id, run, { kind: 'done' })
     } catch (error) {
       // A cut-off or stopped call is charged at its cap (estimated), so the monthly cap counts it; never twice.
@@ -903,11 +942,14 @@ export class ChatService {
       if (run.controller.signal.aborted) {
         const stopped: AssistantMessage = { role: 'assistant', at: this.now().toISOString(), model, costUsd: spent, stopped: true, text: run.text.trim() }
         await this.update(id, (f) => ({ ...f, messages: [...f.messages, stopped] })).catch(logged)
+        this.outcomes.set(id, { kind: 'stopped' })
         this.push(id, run, { kind: 'stopped' })
       } else {
         const code = toUserFacing(error).code
         // The CLI's cap here is the per-message one, which has its own setting.
-        this.push(id, run, { kind: 'error', error: code === 'operation_budget' ? 'chat_message_budget' : code })
+        const reported = code === 'operation_budget' ? 'chat_message_budget' : code
+        this.outcomes.set(id, { kind: 'error', error: reported })
+        this.push(id, run, { kind: 'error', error: reported })
       }
     } finally {
       reservation.settle(spent, { estimated })

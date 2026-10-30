@@ -18,6 +18,43 @@ const paperKey = z.string().regex(PAPER_KEY)
 export const ChatScopeSchema = z.union([z.literal('library'), z.strictObject({ paper: paperKey })])
 export type ChatScope = z.infer<typeof ChatScopeSchema>
 
+/**
+ * «Preguntar a Claude» from the editor: what Claude says about a passage the user is writing. `opinion` (the default)
+ * comments, critiques and asks without rewriting the passage; `rewrite` (only when the user explicitly allows it for a
+ * question) may also propose a rewritten version, set apart as Claude's.
+ */
+export const WRITING_MODES = ['opinion', 'rewrite'] as const
+export type WritingMode = (typeof WRITING_MODES)[number]
+/** What the editor sent: the region, the paragraph at point, the Org subtree (a section or chapter) or the whole file. */
+export const WRITING_SCOPES = ['region', 'paragraph', 'subtree', 'file'] as const
+export type WritingScope = (typeof WRITING_SCOPES)[number]
+export const MAX_WRITING_PASSAGE = 30_000
+export const MAX_WRITING_FILE = 255
+export const MAX_WRITING_SECTION = 500
+
+/**
+ * The passage of a conversation started from the editor, kept in its frontmatter: every answer of the conversation
+ * (from the editor or the app's Chat view) reads it. `mode` is that of the latest question.
+ */
+export const ChatWritingSchema = z.looseObject({
+  /** Where the question came from (only the editor, for now). */
+  source: z.literal('emacs'),
+  /** The file's name (no folder). */
+  file: z.string().max(MAX_WRITING_FILE),
+  /** Its heading path, `Chapter › Section`; '' outside any heading. */
+  section: z.string().max(MAX_WRITING_SECTION),
+  scope: z.enum(WRITING_SCOPES),
+  mode: z.enum(WRITING_MODES),
+  /** Counted in characters (code points), as the editor that sent it counts them. */
+  passage: z
+    .string()
+    .min(1)
+    .refine((s) => [...s].length <= MAX_WRITING_PASSAGE)
+})
+export type ChatWriting = z.infer<typeof ChatWritingSchema>
+/** A writing conversation as the list shows it: where its passage is, without the passage. */
+export type ChatWritingNote = Pick<ChatWriting, 'source' | 'file' | 'section' | 'scope' | 'mode'>
+
 /** Frontmatter of chats/<id>.md. Loose: keys added by a later version survive a round trip and the sync's merge. */
 export const ChatMetaSchema = z.looseObject({
   schema_version: z.literal(1),
@@ -38,7 +75,9 @@ export const ChatMetaSchema = z.looseObject({
   /** The machine that wrote the file last; names the copy when the sync has to split the conversation. */
   updated_on: z.string().optional(),
   /** Only on a conversation the sync split off: the original's id and the machine this version came from. */
-  copy_of: z.object({ id: z.string().regex(CHAT_ID), machine: z.string().nullable() }).optional()
+  copy_of: z.object({ id: z.string().regex(CHAT_ID), machine: z.string().nullable() }).optional(),
+  /** Only on a conversation started from the editor: the passage it is about. */
+  writing: ChatWritingSchema.optional()
 })
 export type ChatMeta = z.infer<typeof ChatMetaSchema>
 
@@ -207,6 +246,8 @@ export interface ChatSummary {
   copyOf: { machine: string | null } | null
   /** The file cannot be read (git conflict markers, invalid frontmatter): it can only be deleted or fixed by hand. */
   problem: boolean
+  /** A conversation started from the editor: its file and section («desde Emacs: <archivo> › <sección>»). */
+  writing?: ChatWritingNote
 }
 
 export type AssistantView = AssistantMessage & { citations: ChatCitation[]; unverified: number }
@@ -229,6 +270,8 @@ export interface ChatConversation {
   canRetry: boolean
   /** Actions of the running answer waiting for «Aprobar» or «Rechazar». */
   approvals: PendingApproval[]
+  /** A conversation started from the editor: the passage it is about. */
+  writing?: ChatWriting
 }
 
 export interface ChatListQuery {
@@ -248,6 +291,10 @@ export interface ChatSendRequest {
   /** The switches of a new conversation (ignored for an existing one, whose switches change with setTools). */
   actions?: boolean
   sync?: boolean
+  /** A new conversation from the editor: the passage it is about (library scope only). */
+  writing?: ChatWriting
+  /** In a conversation from the editor, this question's mode (`opinion` when missing): it becomes the conversation's. */
+  mode?: WritingMode
 }
 
 export type ChatStreamEvent =

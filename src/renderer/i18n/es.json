@@ -1065,6 +1065,12 @@
     "paper_missing_banner": "El paper de esta conversación ya no está en la biblioteca.",
     "model": "Modelo",
     "total_cost": "Costo acumulado: {{cost}}",
+    "writing": {
+      "from_editor": "desde Emacs: {{place}}",
+      "no_file": "sin archivo",
+      "mode_opinion": "opinión (sin reescribir tu texto)",
+      "mode_rewrite": "propuesta de redacción permitida en la última pregunta"
+    },
     "rename": "Renombrar",
     "rename_save": "Guardar",
     "archive": "Archivar",

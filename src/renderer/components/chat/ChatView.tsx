@@ -9,7 +9,12 @@ import { ChatList } from './ChatList'
 import { Conversation } from './Conversation'
 
 /** The rail's Chat view: every conversation (library and paper chats), and the open one. */
-export function ChatView(): React.JSX.Element {
+interface ChatViewProps {
+  /** A conversation to open (an editor asked for it); `n` grows with every request, so the same one opens again. */
+  open?: { id: string; n: number } | null
+}
+
+export function ChatView({ open = null }: ChatViewProps = {}): React.JSX.Element {
   const { t } = useTranslation()
   const [list, setList] = useState<ChatSummary[]>([])
   const [all, setAll] = useState<ChatSummary[]>([])
@@ -52,6 +57,9 @@ export function ChatView(): React.JSX.Element {
     setSession((n) => n + 1)
   }, [])
   const papers = useMemo(() => paperFilterOptions(all), [all])
+  useEffect(() => {
+    if (open) select(open.id)
+  }, [open, select])
 
   return (
     <div className="chat-view">

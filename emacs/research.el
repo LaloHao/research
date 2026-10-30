@@ -33,6 +33,12 @@
 ;; `yes-or-no-p'.  The tutor's never write your text: they point, explain, ask,
 ;; outline, or offer options of one sentence for you to choose from.
 ;;
+;; `research-ask' (`?' in the command map) sends the region, paragraph,
+;; section or file with your question: Claude gives its opinion (what to
+;; change and why, and questions) without rewriting your text unless you allow
+;; a proposed version for that question.  The answer streams into
+;; `*research-ask*' and is a conversation of the app's Chat view.
+;;
 ;; `research-prose-check' (research-prose.el, `l' in the command map) checks
 ;; Spanish academic prose locally, without the app.
 ;;
@@ -1310,6 +1316,311 @@ excerpt jumps to it.  Shows the estimated cost and asks first."
                      (or (alist-get 'costUsd answer) 0))
             answer))))))
 
+;;;; Asking Claude about what you write
+
+;; `research-ask' sends a passage (the region, the paragraph, the section or
+;; the file) with your question; Claude answers as a reader of your thesis:
+;; what works, what to change and why, and questions.  It does not rewrite
+;; your text unless you allow a proposed rewrite for that question.  The
+;; answer streams into `*research-ask*'; your buffer is never touched.
+
+(declare-function org-get-outline-path "org")
+
+(defcustom research-ask-poll-interval 2
+  "Seconds between two looks at the answer `research-ask' is following."
+  :type 'number)
+
+(defconst research--ask-max-chars 30000
+  "The most characters `research-ask' sends.")
+
+(defvar research--ask-history nil "Questions asked with `research-ask'.")
+
+(defconst research--ask-scopes
+  '(("region" . "región") ("paragraph" . "párrafo") ("subtree" . "sección") ("file" . "archivo completo"))
+  "What `research-ask' sends, in Spanish.")
+
+(defconst research--ask-modes
+  '(("opinion" . "opinión (sin reescribir tu texto)") ("rewrite" . "propuesta de redacción permitida"))
+  "The modes of a question, in Spanish.")
+
+(defconst research--ask-errors
+  '(("chat_message_budget" . "se alcanzó el tope por mensaje de chat")
+    ("budget_exceeded" . "se alcanzó un tope de gasto de Claude")
+    ("interrupted" . "la respuesta se interrumpió (¿se cerró la app?)")
+    ("agent_tools_unavailable" . "no se pudieron abrir las herramientas de la biblioteca"))
+  "Spanish reasons for the error codes `ask_status' can report.")
+
+(defvar-local research--ask-state nil
+  "The conversation of this `*research-ask*' buffer: a plist with `:id',
+`:timer', `:failures' and, for the question being answered, the markers
+`:status' and `:answer' (each a cons of start and end).")
+
+(defvar research-ask-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "f") #'research-ask-follow-up)
+    (define-key map (kbd "c") #'research-ask-open-citation)
+    (define-key map (kbd "a") #'research-ask-open-in-app)
+    (define-key map (kbd "s") #'research-ask-stop)
+    (define-key map (kbd "q") #'quit-window)
+    map)
+  "Keys of `*research-ask*'.")
+
+(define-derived-mode research-ask-mode org-mode "Research-Ask"
+  "Claude's answers about a passage you are writing, read-only.
+\\{research-ask-mode-map}"
+  (setq buffer-read-only t)
+  (add-hook 'kill-buffer-hook #'research--ask-forget nil t))
+
+(defun research--ask-scope (arg)
+  "What `research-ask' sends with prefix ARG: (SCOPE BEG . END).
+The active region; else with \\[universal-argument] \\[universal-argument]
+the whole file, with \\[universal-argument] the Org subtree at point, and
+otherwise the paragraph at point."
+  (cond ((use-region-p) (cons "region" (cons (region-beginning) (region-end))))
+        ((equal arg '(16)) (cons "file" (cons (point-min) (point-max))))
+        (arg (let ((bounds (research--section-bounds)))
+               (cons (if (and (= (car bounds) (point-min)) (= (cdr bounds) (point-max))
+                              (not (save-excursion (goto-char (point-min)) (looking-at-p "\\*+ "))))
+                         "file" "subtree")
+                     bounds)))
+        (t (cons "paragraph" (research--paragraph-bounds)))))
+
+(defun research--ask-section (pos)
+  "The heading path of POS in an Org buffer, as `A › B'; \"\" elsewhere."
+  (or (and (derived-mode-p 'org-mode) (fboundp 'org-get-outline-path)
+           (save-excursion
+             (goto-char pos)
+             (when-let* ((path (ignore-errors (org-get-outline-path t t))))
+               (mapconcat #'substring-no-properties path " › "))))
+      ""))
+
+(defun research--ask-read-mode ()
+  "\"rewrite\" when the user explicitly allows a proposed rewrite, else \"opinion\"."
+  (if (memq (read-char-choice "¿Permitir propuesta de redacción? (y/N) " '(?y ?Y ?n ?N ?\r ?\s ?\d))
+            '(?y ?Y))
+      "rewrite"
+    "opinion"))
+
+(defun research--ask-read-question ()
+  "Read a question for Claude, with history."
+  (let ((question (string-trim (read-string "Pregunta para Claude: " nil 'research--ask-history))))
+    (when (string-empty-p question) (user-error "Escribe una pregunta"))
+    question))
+
+(defun research--ask-start (arguments)
+  "Ask the app for the plan of ARGUMENTS, confirm it and start the answer.
+Returns the conversation id, or nil when declined."
+  (let ((plan (research-call "ask" arguments)))
+    (when (and (consp plan) (alist-get 'answering plan))
+      (user-error "Claude todavía está respondiendo en esta conversación: espera o detén la respuesta con `s'"))
+    (if (not (and (consp plan) (alist-get 'confirmation_required plan) (yes-or-no-p (research--plan-prompt plan))))
+        (progn (message "Cancelado") nil)
+      (condition-case err
+          (alist-get 'conversation_id (research-call "ask" (append arguments '((confirmed . t)))))
+        (research-error
+         (if (equal (nth 1 err) "busy")
+             (user-error "Claude todavía está respondiendo en esta conversación: espera o detén la respuesta con `s'")
+           (signal (car err) (cdr err))))))))
+
+;;;###autoload
+(defun research-ask (question mode &optional arg)
+  "Ask Claude, through the app, QUESTION about what you are writing.
+Sends the active region, else the paragraph at point; with
+\\[universal-argument] (ARG) the current Org subtree (a chapter or
+section), with \\[universal-argument] \\[universal-argument] the whole
+file, with the file's name and the heading path.  MODE is \"opinion\"
+\(default: Claude comments, critiques, suggests and asks; it does not
+rewrite your passage) or \"rewrite\" (only when you allow it: Claude may
+also propose a version, set apart as its own).  Shows the estimated cost
+and asks first.  The answer streams into `*research-ask*' (your buffer is
+never changed), and is a conversation of the app's Chat view: there `f'
+asks a follow-up, `c' opens the citation at point in the app, `a' opens
+the conversation in the app, `s' stops the answer and `q' closes."
+  (interactive (list (research--ask-read-question) (research--ask-read-mode) current-prefix-arg))
+  (research--with-errors
+    (let* ((scope (research--ask-scope arg))
+           (beg (cadr scope))
+           (text (buffer-substring-no-properties beg (cddr scope)))
+           (file (if buffer-file-name (file-name-nondirectory buffer-file-name) (buffer-name)))
+           (section (research--ask-section beg)))
+      (when (string-empty-p (string-trim text)) (user-error "No hay texto que enviar aquí"))
+      (when (> (length text) research--ask-max-chars)
+        (user-error "El texto tiene %d caracteres y se envían hasta %d: selecciona una parte más corta"
+                    (length text) research--ask-max-chars))
+      (let ((buffer (get-buffer "*research-ask*")))
+        (when (and buffer (plist-get (buffer-local-value 'research--ask-state buffer) :timer))
+          (user-error "Claude todavía está respondiendo en `*research-ask*': espera o detén la respuesta con `s'")))
+      (when-let* ((id (research--ask-start `((question . ,question) (text . ,text) (file . ,file)
+                                             (section . ,section) (scope . ,(car scope)) (mode . ,mode)))))
+        (let ((buffer (get-buffer-create "*research-ask*")))
+          (with-current-buffer buffer
+            (research--ask-forget)
+            (research-ask-mode)
+            (setq research--ask-state (list :id id :failures 0))
+            (let ((inhibit-read-only t))
+              (erase-buffer)
+              (insert (propertize (format "Preguntar a Claude — %s\n" (string-join (seq-remove #'string-empty-p (list file section)) " › "))
+                                  'face 'bold)
+                      (propertize (format "Alcance: %s (%d caracteres)\n" (research--label (car scope) research--ask-scopes) (length text))
+                                  'face 'shadow)
+                      (propertize "f: otra pregunta · c: abrir la cita · a: abrir en la app · s: detener · q: cerrar\n"
+                                  'face 'shadow))))
+          (research--ask-begin buffer question mode)
+          (display-buffer buffer '((display-buffer-in-side-window) (side . right) (window-width . 0.45)))
+          (message "Claude está respondiendo en `*research-ask*' (s lo detiene)")
+          id)))))
+
+(defun research--ask-begin (buffer question mode)
+  "Add QUESTION (MODE) to BUFFER and follow its answer on a timer."
+  (with-current-buffer buffer
+    (let ((inhibit-read-only t))
+      (goto-char (point-max))
+      (insert "\n* " (replace-regexp-in-string "[ \t\n]+" " " question) "\n")
+      (insert (format "Modo: %s · " (research--label mode research--ask-modes)))
+      (let ((status-beg (point-marker)))
+        (insert "respondiendo…\n\n")
+        ;; Made after the blank lines, so inserting them did not move it.
+        (let ((status-end (copy-marker (- (point) 2) t)))
+          (let ((answer-beg (point-marker)))
+            (let ((answer-end (copy-marker (point) t)))
+              (plist-put research--ask-state :status (cons status-beg status-end))
+              (plist-put research--ask-state :answer (cons answer-beg answer-end))
+              (plist-put research--ask-state :failures 0)
+              (plist-put research--ask-state :timer
+                         (run-with-timer research-ask-poll-interval research-ask-poll-interval
+                                         (lambda () (research--ask-poll buffer)))))))))))
+
+(defun research--ask-forget ()
+  "Stop following this buffer's answer."
+  (when-let* ((timer (plist-get research--ask-state :timer))) (cancel-timer timer))
+  (when research--ask-state (plist-put research--ask-state :timer nil)))
+
+(defun research--ask-replace (region text)
+  "Replace the text of REGION (a cons of markers) with TEXT."
+  (let ((inhibit-read-only t))
+    (save-excursion
+      (delete-region (car region) (cdr region))
+      (goto-char (car region))
+      (insert text))))
+
+(defun research--ask-poll (buffer)
+  "Ask the app how the answer of BUFFER goes, and show it."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (when (plist-get research--ask-state :timer)
+        (let ((id (plist-get research--ask-state :id)))
+          (condition-case err
+              (let ((status (research-call "ask_status" `((conversation_id . ,id)))))
+                (plist-put research--ask-state :failures 0)
+                (pcase (alist-get 'status status)
+                  ("running"
+                   (research--ask-replace (plist-get research--ask-state :answer) (or (alist-get 'text status) "")))
+                  ((or "done" "stopped")
+                   (research--ask-forget)
+                   (research--ask-show status))
+                  (_
+                   (research--ask-forget)
+                   (let* ((code (or (alist-get 'error status) "failed"))
+                          (reason (or (cdr (assoc code research--ask-errors))
+                                      (cdr (assoc code research--draft-errors))
+                                      (cdr (assoc code research--error-messages))
+                                      code)))
+                     (research--ask-replace (plist-get research--ask-state :status) (format "sin respuesta: %s" reason))
+                     (message "Claude no respondió: %s" reason)))))
+            (research-error
+             (let ((failures (1+ (plist-get research--ask-state :failures))))
+               (plist-put research--ask-state :failures failures)
+               (when (>= failures 3)
+                 (research--ask-forget)
+                 (research--ask-replace (plist-get research--ask-state :status) "ya no se sigue aquí: mírala en la app")
+                 (message "Dejé de seguir la respuesta: %s.  Mírala en la app (Chat)" (research--error-message err)))))))))))
+
+(defun research--ask-citation-line (c)
+  "The line of the citation C in the answer's list."
+  (format "- [%s%s] %s: «%s»\n" (alist-get 'key c)
+          (if (alist-get 'page c) (format ", p. %s" (alist-get 'page c)) "")
+          (if (alist-get 'verified c) "verificada" "sin verificar")
+          (alist-get 'quote c)))
+
+(defun research--ask-show (status)
+  "Show STATUS, the `ask_status' of a finished answer, in this buffer."
+  (let* ((answer (plist-get research--ask-state :answer))
+         (beg (marker-position (car answer)))
+         (citations (alist-get 'citations status))
+         (text (string-trim-right (or (alist-get 'text status) "")))
+         (inhibit-read-only t))
+    (research--ask-replace answer text)
+    (dolist (c citations)
+      (let ((from (+ beg (alist-get 'start c))) (to (+ beg (alist-get 'end c))))
+        (add-text-properties from to `(research-ask-citation ,c help-echo ,(alist-get 'quote c)
+                                       face ,(if (alist-get 'verified c) 'link 'warning)))))
+    (save-excursion
+      (goto-char (cdr answer))
+      (when citations
+        (insert "\n\nCitas:\n")
+        (dolist (c citations)
+          (let ((start (point)))
+            (insert (research--ask-citation-line c))
+            (add-text-properties start (1- (point)) `(research-ask-citation ,c face ,(if (alist-get 'verified c) 'default 'warning)))))))
+    (research--ask-replace (plist-get research--ask-state :status)
+                           (format "%sUS$%.2f (conversación US$%.2f)"
+                                   (if (equal (alist-get 'status status) "stopped") "detenida · " "")
+                                   (or (alist-get 'costUsd status) 0) (or (alist-get 'conversation_cost_usd status) 0)))
+    (message "Claude respondió%s: %d citas, %d sin verificar (US$%.2f)"
+             (if (equal (alist-get 'status status) "stopped") " (detenida)" "")
+             (length citations) (or (alist-get 'unverified status) 0) (or (alist-get 'costUsd status) 0))))
+
+(defun research--ask-buffer-state ()
+  "This `*research-ask*' buffer's conversation, or a `user-error'."
+  (unless (and (derived-mode-p 'research-ask-mode) (plist-get research--ask-state :id))
+    (user-error "Esto no es una respuesta de `research-ask'"))
+  research--ask-state)
+
+(defun research-ask-follow-up (question mode)
+  "Ask Claude a follow-up QUESTION (MODE) in this buffer's conversation.
+The passage is the one the conversation started with."
+  (interactive
+   (progn
+     (when (plist-get (research--ask-buffer-state) :timer)
+       (user-error "Claude todavía está respondiendo: espera o detén la respuesta con `s'"))
+     (list (research--ask-read-question) (research--ask-read-mode))))
+  (research--with-errors
+    (let ((state (research--ask-buffer-state)))
+      (when (plist-get state :timer)
+        (user-error "Claude todavía está respondiendo: espera o detén la respuesta con `s'"))
+      (when (research--ask-start `((question . ,question) (conversation_id . ,(plist-get state :id)) (mode . ,mode)))
+        (research--ask-begin (current-buffer) question mode)
+        (goto-char (point-max))
+        (message "Claude está respondiendo (s lo detiene)")))))
+
+(defun research-ask-open-citation ()
+  "Show the paper of the citation at point in the app, the quote highlighted."
+  (interactive)
+  (let ((c (or (get-text-property (point) 'research-ask-citation)
+               (and (> (point) (point-min)) (get-text-property (1- (point)) 'research-ask-citation))
+               (user-error "No hay una cita aquí"))))
+    (research--with-errors
+      (research--open-in-app (alist-get 'key c) (alist-get 'page c) (alist-get 'quote c))
+      (message "Abriendo %s en la app%s" (alist-get 'key c)
+               (if (alist-get 'page c) (format ", p. %s" (alist-get 'page c)) "")))))
+
+(defun research-ask-open-in-app ()
+  "Open this buffer's conversation in the app's Chat view."
+  (interactive)
+  (let ((id (plist-get (research--ask-buffer-state) :id)))
+    (research--with-errors
+      (research-call "open_chat_in_app" `((conversation_id . ,id)))
+      (message "Abriendo la conversación en la app"))))
+
+(defun research-ask-stop ()
+  "Stop the answer being written; what arrived is kept."
+  (interactive)
+  (let ((id (plist-get (research--ask-buffer-state) :id)))
+    (research--with-errors
+      (if (alist-get 'stopping (research-call "ask_stop" `((conversation_id . ,id))))
+          (message "Deteniendo la respuesta…")
+        (message "No hay una respuesta en curso")))))
+
 ;;;; Minor mode
 
 (defvar research-command-map
@@ -1330,6 +1641,7 @@ excerpt jumps to it.  Shows the estimated cost and asks first."
     (define-key map (kbd "r") #'research-reverse-outline)
     (define-key map (kbd "q") #'research-rq-coverage)
     (define-key map (kbd "l") #'research-prose-check)
+    (define-key map (kbd "?") #'research-ask)
     map)
   "The research commands, under `research-keymap-prefix' in `research-mode'.")
 (defalias 'research-command-map research-command-map)

@@ -70,7 +70,9 @@ async function project(responses: Respond[], chats: ChatResponse[] = []) {
     writing: new WritingService({ store, cache, includedPapers: () => [], llm: { provider, budget, ledger }, checker }),
     drafts,
     capped: { budget, ledger, limits },
-    openInApp: () => undefined
+    chats: {} as ApiContext['chats'],
+    openInApp: () => undefined,
+    openChatInApp: () => undefined
   }
   return { store, provider, ledger, ctx, drafts }
 }

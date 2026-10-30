@@ -8,6 +8,7 @@ import { LlmError } from '../llm/LlmProvider'
 import { defineLibraryTools, type Run, type ToolResult } from '../mcp/LibraryMcpServer'
 import { ToolError, type LibraryTools } from '../mcp/libraryTools'
 import { ApiError, callApiTool, noProject, toolInput, type ApiContext, type ApiTool } from './registry'
+import { ASK_API_TOOLS } from './askTools'
 import { CLAUDE_API_TOOLS } from './claudeTools'
 import { WRITING_API_TOOLS } from './writingTools'
 
@@ -19,10 +20,11 @@ const MAX_ANSWER_CHARS = 20_000_000
 export const CLOSE_GRACE_MS = 10_000
 
 /**
- * The tools beyond the library's: the free writing tools, then the costly ones (claudeTools.ts). A costly tool is added
+ * The tools beyond the library's: the free writing tools, then the costly ones (claudeTools.ts) and «Preguntar a Claude»
+ * (askTools.ts). A costly tool is added
  * with `costlyTool` (see registry.ts); the gate, the plan and the cap come with it.
  */
-export const API_TOOLS: ApiTool[] = [...WRITING_API_TOOLS, ...CLAUDE_API_TOOLS]
+export const API_TOOLS: ApiTool[] = [...WRITING_API_TOOLS, ...CLAUDE_API_TOOLS, ...ASK_API_TOOLS]
 
 export interface LocalApiServerOptions {
   /** 0 picks a free port (tests). */

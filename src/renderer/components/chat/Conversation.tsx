@@ -17,6 +17,7 @@ import {
   liveFromPartial,
   streamAction,
   takeBuffered,
+  writingPlace,
   type LiveAnswer
 } from '../../lib/chat'
 import { switchHints } from '../../lib/chatActions'
@@ -313,6 +314,14 @@ export function Conversation({ chatId, scope, defaultModel, excerpt, onExcerptCh
             <h3>{summary ? chatTitle(t, summary) : t('chat.new')}</h3>
           )}
           {summary && scopePaper && <p className="muted small">{t('chat.about_paper', { title: summary.paperTitle ?? scopePaper })}</p>}
+          {chat?.writing && (
+            <details className="chat-passage small">
+              <summary className="muted">
+                {writingPlace(t, chat.writing)} · {t(`chat.writing.mode_${chat.writing.mode}`)}
+              </summary>
+              <pre className="chat-passage-text">{chat.writing.passage}</pre>
+            </details>
+          )}
           <div className="row small">
             <label>
               {t('chat.model')}{' '}

@@ -234,6 +234,8 @@ export const eventChannel = (event: ResearchEvent): string => `event:${event}`
 
 /** The push channel of the local API's `open_in_app` (`ApiOpenPaper`): show a paper at a page. */
 export const API_OPEN_PAPER_CHANNEL = 'local-api:open-paper'
+/** The push channel of the local API's `open_chat_in_app` (a conversation id): open it in the Chat view. */
+export const API_OPEN_CHAT_CHANNEL = 'local-api:open-chat'
 
 /** The push channel of `ChatStreamUpdate`s (an answer as it streams). */
 export const CHAT_STREAM_CHANNEL = 'chat:stream'
@@ -575,6 +577,8 @@ export interface ResearchApi {
     regenerateToken(): Promise<LocalApiStatus | null>
     /** `open_in_app` from an editor: show this paper. */
     onOpenPaper(callback: (request: ApiOpenPaper) => void): () => void
+    /** `open_chat_in_app` from an editor: open this conversation in the Chat view. */
+    onOpenChat(callback: (chatId: string) => void): () => void
   }
   log: {
     /** Sends an uncaught error of the window to the app log; fire and forget. */
