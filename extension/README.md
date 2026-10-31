@@ -11,9 +11,22 @@ What it does on a page:
   extension downloads it with your session and the app attaches it.
 - **PDF tab**: the PDF is downloaded with your session and added like a dropped PDF (its DOI or arXiv id read from its
   first pages).
-- **Any other page** (a blog post, a report): the page's HTML and the article's images (fetched by the page itself, with
-  its cookies) go to the app, which builds the paper exactly like its own browser's capture: the readable text and the
-  reader-view PDF, with those images embedded.
+- **Any other page** (a blog post, a report): the page's HTML goes to the app, which builds the paper exactly like its
+  own browser's capture: the readable text and a PDF made one of two ways, chosen in the popup and remembered (the
+  shortcut uses the same choice):
+  - «Vista de lectura (recomendado)»: the reader-view PDF, with the article's images (fetched by the page itself, with
+    its cookies) embedded, formulas (MathML, MathJax SVG, KaTeX through its MathML), inline SVG, icon-font glyphs
+    (drawn in the page as small PNGs) and canvases (copied as images) kept.
+  - «Página tal como se ve»: the content script serializes the live page into one self-contained HTML document
+    (`src/serialize.ts`, written for this extension): every stylesheet (through the CSSOM when readable, so rules a
+    script inserted count; else fetched), its `@import`s resolved, `url()`s turned into data: URIs (only the fonts the
+    page has loaded, sniffed as WOFF2/WOFF/TTF/OTF; raster or SVG images), each `<img>` as the source the browser
+    chose, canvases as images, form state (never passwords), same-site frames as `srcdoc`, open shadow roots as
+    declarative shadow DOM; scripts, `<noscript>`, event handlers, `<base>`, refresh metas and cookie-consent overlays
+    (the app's list, plus fixed banners named like one) removed. It goes as `page_html` with `viewport_width`; the app
+    prints it with screen styles at that width. Limits: 8 MB per font or image, 30 MB inlined in all, 600 resources,
+    50 MB for the document (a larger page falls back to the reader view). Not kept: cross-origin resources without
+    CORS, cross-origin frames (blank), closed shadow roots, video and audio, scroll position.
 - **Already in the library** (same DOI, arXiv id or address): the popup says «Ya está en tu biblioteca como `<clave>`»
   and offers «Actualizar PDF» (replaces that paper's PDF, as «Volver a capturar desde la web» does) and «Abrir en
   Research».
@@ -117,8 +130,12 @@ What it protects:
   its captures and bring the app's window to a paper. It can't read the library, run anything that costs Claude quota,
   or reach the editor's tools.
 - **The page's content is untrusted.** Its HTML is only parsed in the app (Readability, then the same sanitizer as the
-  in-app browser's reader view: no scripts, styles, frames, forms or event handlers); the reader PDF is printed in a
-  hidden window without JavaScript whose session refuses every request. Images are accepted only as PNG, JPEG, GIF,
+  in-app browser's reader view: no scripts, styles, frames, forms or event handlers; SVG and MathML through strict
+  allowlists); the reader PDF is printed in a hidden window without JavaScript whose session refuses every request. A
+  serialized page («Página tal como se ve», at most 50 MB) is cleaned again in the app (scripts, `<noscript>`, objects,
+  embeds, remote frames, `<base>`, every `<link>` and `http-equiv` meta, event handlers and every URL but data:
+  resources and links removed) and printed the same way, under a policy that loads only its inline styles and data:
+  images, fonts and media. Images are accepted only as PNG, JPEG, GIF,
   WebP or AVIF by their bytes (never SVG), at most 40, 5 MB each and 30 MB together; the PDF must start like a PDF
   (at most 100 MB); the HTML at most 10 MB. Anything larger or malformed is refused, not cut.
 - **Where data goes.** The extension sends data only to the API address in its options, which must be
