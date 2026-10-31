@@ -24,3 +24,6 @@ input { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid v
 .error { color: var(--err); }
 .ok { color: var(--ok); }
 .notice { padding: 8px; border-radius: 6px; border: 1px solid var(--line); margin: 8px 0; }
+.mode { border: 1px solid var(--line); border-radius: 6px; margin: 8px 0; padding: 6px 10px 8px; }
+.mode legend { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); padding: 0 4px; }
+.mode label { display: block; padding: 2px 0; cursor: pointer; }
