@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ExtensionCapture, type CaptureLibrary, type ReaderPrinter } from '../../../../src/main/api/extension/capture'
 import { ExtensionPairing } from '../../../../src/main/api/extension/pairing'
-import { EXTENSION_LIMITS } from '../../../../src/main/api/extension/payload'
+import { EXTENSION_LIMITS, MAX_EXTENSION_BODY, PayloadError, readPage } from '../../../../src/main/api/extension/payload'
 import { extensionRoutes } from '../../../../src/main/api/extension/routes'
 import { startLocalApiServer, type LocalApiServerHandle } from '../../../../src/main/api/LocalApiServer'
 import type { CaptureInput, IngestOutcome } from '../../../../src/main/library/LibraryService'
@@ -27,8 +27,13 @@ interface Fake {
   jobs: string[]
   opened: string[]
   printed: { html: string; url: string; fig1: Uint8Array | null; missing: Uint8Array | null }[]
+  /** Pages printed as they looked: the serialized HTML and its width. */
+  pagePrinted: { html: string; width: number }[]
   jobResult: JobRecord | null
 }
+
+const PAGE_PDF = Buffer.from('%PDF-1.7\n% the page as it looked\n%%EOF\n')
+const SERIALIZED = '<!DOCTYPE html><html><head><style>body{font-family:"Web Font"}</style></head><body><h1>A long read</h1></body></html>'
 
 function fakeLibrary(fake: Fake): CaptureLibrary {
   const outcome = (key: string): IngestOutcome => {
@@ -59,7 +64,7 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((s) => s.close()))
 })
 
-async function serve(opts: { project?: boolean; answer?: boolean } = {}) {
+async function serve(opts: { project?: boolean; answer?: boolean; pagePrint?: 'fails' } = {}) {
   const fake: Fake = {
     papers: new Map([['smith2020deep', { title: 'Deep things', doi: '10.1234/deep', url: 'https://blog.example.org/known' }]]),
     ingested: [],
@@ -68,6 +73,7 @@ async function serve(opts: { project?: boolean; answer?: boolean } = {}) {
     jobs: [],
     opened: [],
     printed: [],
+    pagePrinted: [],
     jobResult: null
   }
   const pairing: ExtensionPairing = new ExtensionPairing({
@@ -79,7 +85,12 @@ async function serve(opts: { project?: boolean; answer?: boolean } = {}) {
     fake.printed.push({ html, url, fig1: await fetchImage('https://cdn.example.org/fig1.png#x', 1e7), missing: await fetchImage('https://cdn.example.org/missing.png', 1e7) })
     return new Uint8Array(PDF)
   }
-  const capture = new ExtensionCapture({ library: () => (opts.project === false ? null : fakeLibrary(fake)), printReader })
+  const printPage = async (html: string, width: number): Promise<Uint8Array | null> => {
+    fake.pagePrinted.push({ html, width })
+    if (opts.pagePrint === 'fails') throw new Error('Page print timed out')
+    return new Uint8Array(PAGE_PDF)
+  }
+  const capture = new ExtensionCapture({ library: () => (opts.project === false ? null : fakeLibrary(fake)), printReader, printPage })
   const server = await startLocalApiServer({
     port: 0,
     token: () => API_TOKEN,
@@ -122,8 +133,8 @@ function send(port: number, path: string, opts: { method?: string; origin?: stri
   })
 }
 
-async function paired(origin = FIREFOX) {
-  const ctx = await serve()
+async function paired(origin = FIREFOX, opts: { pagePrint?: 'fails' } = {}) {
+  const ctx = await serve(opts)
   const { code } = ctx.pairing.start()
   const res = await send(ctx.server.port, '/ext/v1/pair', { origin, body: { code } })
   expect(res.status).toBe(200)
@@ -255,6 +266,24 @@ describe('capture payload validation', () => {
     expect(fake.ingested).toEqual([])
   })
 
+  it('takes a serialized page only with the width it was laid out at, not empty, and within its limit', async () => {
+    const { call, fake } = await paired()
+    const page = { url: 'https://blog.example.org/new', html: ARTICLE }
+    expect((await call('capture_page', { ...page, page_html: SERIALIZED })).json).toMatchObject({ error: 'invalid' })
+    expect((await call('capture_page', { ...page, viewport_width: 1280 })).json).toMatchObject({ error: 'invalid' })
+    expect((await call('capture_page', { ...page, page_html: '  ', viewport_width: 1280 })).json).toMatchObject({ error: 'invalid' })
+    expect((await call('capture_page', { ...page, page_html: SERIALIZED, viewport_width: 12.5 })).status).toBe(400)
+    expect((await call('capture_page', { ...page, page_html: SERIALIZED, viewport_width: 50 })).status).toBe(400)
+    expect((await call('capture_page', { ...page, page_html: 42, viewport_width: 1280 })).status).toBe(400)
+    expect(fake.ingested).toEqual([])
+    // Past the limit it is too large (read directly: 50 MB through HTTP would only slow the test down).
+    const huge = { ...page, page_html: 'x'.repeat(EXTENSION_LIMITS.pageHtml + 1), viewport_width: 1280 }
+    expect(() => readPage(huge)).toThrow(PayloadError)
+    expect(() => readPage(huge)).toThrow(/larger than allowed/)
+    expect(readPage({ ...page, page_html: SERIALIZED, viewport_width: 1280 })).toMatchObject({ pageHtml: SERIALIZED, viewportWidth: 1280 })
+    expect(MAX_EXTENSION_BODY).toBeGreaterThan(EXTENSION_LIMITS.pageHtml * 2)
+  })
+
   it('says no project is open', async () => {
     const ctx = await serve({ project: false })
     const { code } = ctx.pairing.start()
@@ -293,6 +322,25 @@ describe('capture routing', () => {
     expect(fake.printed[0]!.missing).toBeNull()
     expect(fake.ingested[0]).toMatchObject({ url: 'https://blog.example.org/new', html: ARTICLE })
     expect(fake.ingested[0]!.ids).toBeUndefined()
+    expect(Buffer.from(fake.ingested[0]!.pdf!)).toEqual(PDF)
+  })
+
+  it('prints a serialized page as it looked, keeping the readable text from the HTML, and no reader view', async () => {
+    const { call, settle, fake } = await paired()
+    const res = await call('capture_page', { url: 'https://blog.example.org/new', title: 'A long read', html: ARTICLE, page_html: SERIALIZED, viewport_width: 1366 })
+    expect(await settle(res.json!.task as string)).toMatchObject({ state: 'done', outcome: 'added' })
+    expect(fake.pagePrinted).toEqual([{ html: SERIALIZED, width: 1366 }])
+    expect(fake.printed).toEqual([])
+    expect(fake.ingested[0]).toMatchObject({ url: 'https://blog.example.org/new', html: ARTICLE })
+    expect(Buffer.from(fake.ingested[0]!.pdf!)).toEqual(PAGE_PDF)
+  })
+
+  it('falls back to the reader view when the serialized page cannot be printed', async () => {
+    const { call, settle, fake } = await paired(FIREFOX, { pagePrint: 'fails' })
+    const res = await call('capture_page', { url: 'https://blog.example.org/new', html: ARTICLE, page_html: SERIALIZED, viewport_width: 1366 })
+    await settle(res.json!.task as string)
+    expect(fake.pagePrinted).toHaveLength(1)
+    expect(fake.printed).toHaveLength(1)
     expect(Buffer.from(fake.ingested[0]!.pdf!)).toEqual(PDF)
   })
 
@@ -362,6 +410,10 @@ describe('capture_update_pdf', () => {
     await settle(printed.json!.task as string)
     expect(fake.replaced.map((r) => r.key)).toEqual(['smith2020deep', 'smith2020deep'])
     expect(fake.printed).toHaveLength(1)
+    const asSeen = await call('capture_update_pdf', { key: 'smith2020deep', url: 'https://blog.example.org/known', html: ARTICLE, page_html: SERIALIZED, viewport_width: 800 })
+    await settle(asSeen.json!.task as string)
+    expect(fake.pagePrinted).toEqual([{ html: SERIALIZED, width: 800 }])
+    expect(Buffer.from(fake.replaced[2]!.pdf)).toEqual(PAGE_PDF)
   })
 
   it('refuses another paper than the page, an unknown key, and a page without a PDF', async () => {
@@ -392,7 +444,7 @@ describe('UserFacingError from a capture', () => {
       throw new UserFacingError('unreadable_page')
     }
     const capture = new ExtensionCapture({ library: () => lib, printReader: async () => null })
-    const { task } = await capture.page({ url: 'https://n.example/', title: '', html: '<p>x</p>', meta: {}, images: [], pdf: null }, 'https://n.example/')
+    const { task } = await capture.page({ url: 'https://n.example/', title: '', html: '<p>x</p>', meta: {}, images: [], pdf: null, pageHtml: null, viewportWidth: null }, 'https://n.example/')
     await new Promise((r) => setTimeout(r, 5))
     expect(capture.status(task!)).toMatchObject({ state: 'failed', error: 'unreadable_page' })
   })

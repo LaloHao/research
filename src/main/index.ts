@@ -7,7 +7,7 @@ import type { CloseDecision } from '../shared/sync'
 import { AppController } from './AppController'
 import { appMenuTemplate, hideAction } from './appMenu'
 import { CaptureWindow } from './capture/CaptureWindow'
-import { printReaderPdf } from './capture/print'
+import { printPagePdf, printReaderPdf } from './capture/print'
 import { confirmClose, createQuitFlow, once } from './closeFlow'
 import { UtilityEmbeddingRuntime } from './embeddings/UtilityEmbeddingRuntime'
 import { waitForFlush } from './flush'
@@ -107,6 +107,8 @@ const controller = new AppController(
     },
     // The same hidden, script-less print window as the app browser's reader PDF, with the extension's images.
     printReader: (html, url, fetchImage) => printReaderPdf(html, url, fetchImage),
+    // «Página tal como se ve»: the page the extension serialized, in a hidden window without scripts or network.
+    printPage: (pageHtml, viewportWidth) => printPagePdf(pageHtml, viewportWidth),
     version: app.getVersion()
   }
 )

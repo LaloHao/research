@@ -103,6 +103,19 @@ export function readerWindowOptions(): BrowserWindowConstructorOptions {
   }
 }
 
+/** The session a page serialized by the browser extension is printed in: in memory, refusing every request but it. */
+export const PAGE_PARTITION = 'capture-page'
+
+/**
+ * The hidden window that prints a page serialized by the browser extension («Página tal como se ve»): the same rules
+ * as the reader's (no JavaScript at all, sandboxed, isolated, no preload) in its own in-memory session, `width` wide
+ * like the browser window the page was in.
+ */
+export function pageWindowOptions(width: number): BrowserWindowConstructorOptions {
+  const options = readerWindowOptions()
+  return { ...options, width, height: 1000, webPreferences: { ...options.webPreferences, partition: PAGE_PARTITION } }
+}
+
 /** The session the reader view is previewed in («Vista de lectura»): in memory, refusing every request but its document. */
 export const PREVIEW_PARTITION = 'capture-preview'
 

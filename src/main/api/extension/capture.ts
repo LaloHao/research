@@ -30,10 +30,15 @@ export interface CaptureLibrary {
 /** The reader-view PDF of a page (the hidden print window); null when the page has no article. */
 export type ReaderPrinter = (html: string, url: string, fetchImage: ImageFetcher) => Promise<Uint8Array | null>
 
+/** «Página tal como se ve»: the page the extension serialized, printed in the hidden script-less window. */
+export type PagePrinter = (pageHtml: string, viewportWidth: number) => Promise<Uint8Array | null>
+
 export interface CaptureDeps {
   /** Null when no project is open. */
   library: () => CaptureLibrary | null
   printReader: ReaderPrinter
+  /** Without it, a serialized page gets the reader-view PDF instead. */
+  printPage?: PagePrinter
 }
 
 export type TaskState = 'running' | 'done' | 'failed'
@@ -74,9 +79,10 @@ const outcomeOf = (status: string | null): TaskOutcome =>
 /**
  * The capture endpoints' work, apart from HTTP: a page sent by the browser extension becomes a paper exactly as one
  * added from the app's browser. A DOI or arXiv id on it takes the identifier path (with the PDF it brought, if any);
- * a PDF tab is ingested as a dropped PDF; any other page gets its readable text and the reader-view PDF printed in the
- * hidden window, with the images the extension sent instead of fetched ones. Nothing from the page runs in the app:
- * its HTML is only parsed (Readability, then the reader view's sanitizer). Each capture is a task the popup polls.
+ * a PDF tab is ingested as a dropped PDF; any other page gets its readable text and a PDF printed in a hidden window:
+ * the page as it looked when the extension sent it serialized («Página tal como se ve»), else the reader view, with the
+ * images the extension sent instead of fetched ones. Nothing from the page runs in the app: its HTML is only parsed
+ * (Readability, the sanitizers) and printed without JavaScript or network. Each capture is a task the popup polls.
  */
 export class ExtensionCapture {
   private readonly tasks = new Map<string, TaskStatus>()
@@ -160,7 +166,7 @@ export class ExtensionCapture {
     if (found?.key !== key) throw new CaptureFailure('mismatch')
     const task = this.track(
       (async () => {
-        const pdf = page.pdf ?? (page.html ? await this.readerPdf(page) : null)
+        const pdf = page.pdf ?? (await this.htmlPdf(page))
         if (!pdf) throw new UserFacingError('capture_no_pdf')
         await lib.replacePdf(key, pdf)
         return { key, outcome: 'pdf_updated' as const }
@@ -196,11 +202,17 @@ export class ExtensionCapture {
     if (known.doi || known.arxiv) return lib.ingestCapture({ url: page.url, html: page.html, pdf: page.pdf, ids: known })
     // A PDF tab: the PDF is the paper, its identifiers read from its first pages.
     if (page.pdf && !page.html.trim()) return lib.ingestPdf(page.pdf, pdfName(page.url), page.url)
-    const pdf = page.pdf ?? (await this.readerPdf(page))
+    const pdf = page.pdf ?? (await this.htmlPdf(page))
     return lib.ingestCapture({ url: page.url, html: page.html, pdf })
   }
 
-  private async readerPdf(page: CapturedPage): Promise<Uint8Array | null> {
+  /** The PDF made from the page: as it looked, when it came serialized (and printed); else its reader view. */
+  private async htmlPdf(page: CapturedPage): Promise<Uint8Array | null> {
+    if (page.pageHtml && page.viewportWidth && this.deps.printPage) {
+      const printed = await this.deps.printPage(page.pageHtml, page.viewportWidth).catch(() => null)
+      if (printed) return printed
+    }
+    if (!page.html) return null
     return this.deps.printReader(page.html, page.url, suppliedImageFetcher(page.images)).catch(() => null)
   }
 
