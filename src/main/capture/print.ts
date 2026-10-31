@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { readArticle } from '../ingest/web'
 import { hardenSession, READER_PARTITION, readerWindowOptions } from './policy'
-import { buildReaderHtml, embedImages, sanitizeArticle, type ImageFetcher } from './reader'
+import { buildReaderHtml, embedImages, prepareReaderHtml, sanitizeArticle, type ImageFetcher } from './reader'
 
 /** Longest a reader print may take (loading the document and printing it). */
 const PRINT_TIMEOUT_MS = 60_000
@@ -51,9 +51,10 @@ export function sessionImageFetcher(source: Session, referrer: string): ImageFet
  * article. The same document is printed as the reader PDF and shown by «Vista de lectura».
  */
 export async function readerDocument(html: string, url: string, fetchImage: ImageFetcher, now = new Date()): Promise<string | null> {
-  const article = readArticle(html, url)
+  const prepared = prepareReaderHtml(html)
+  const article = readArticle(prepared.html, url)
   if (!article) return null
-  const content = await embedImages(sanitizeArticle(article.content, url), url, fetchImage)
+  const content = await embedImages(sanitizeArticle(article.content, url, prepared.formulas), url, fetchImage)
   return buildReaderHtml(article, content, { url, accessed: now })
 }
 
