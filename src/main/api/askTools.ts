@@ -16,6 +16,7 @@ import {
   type WritingMode
 } from '../../shared/chat'
 import { LLM_MODELS, type LlmModel } from '../../shared/summary'
+import { extractEdits } from '../../shared/writing/answerEdits'
 import { answerToOrg } from '../../shared/writing/answerOrg'
 import { UserFacingError } from '../library/UserFacingError'
 import { operationPlan } from '../llm/cappedOperation'
@@ -45,7 +46,9 @@ const ASK_INPUT = {
   mode: z
     .enum(WRITING_MODES)
     .optional()
-    .describe('opinion (default): comments, critique, suggestions and questions, never a rewrite; rewrite: only when the user explicitly allowed a proposed rewrite for this question'),
+    .describe(
+      'opinion (default): comments, critique, suggestions and questions, never a rewrite; rewrite: only when the user explicitly allowed a proposed rewrite for this question; edit: only when the user explicitly allowed Claude to edit the file for this question (the answer then carries exact changes, in edits, that the editor applies to the passage)'
+    ),
   chapter: capped(MAX_WRITING_CHAPTER)
     .optional()
     .describe(
@@ -202,7 +205,7 @@ export const ASK_API_TOOLS: ApiTool[] = [
   freeTool({
     name: 'ask_status',
     description:
-      "A conversation's latest answer: running (with its text so far, as Org), done or stopped (the answer as plain Org text, each citation as [key, p. N] with its offsets in characters, the key, page, quote and whether the app found the quote in the paper; the answer's cost), or error with its code. Free.",
+      "A conversation's latest answer: running (with its text so far, as Org), done or stopped (the answer as plain Org text, each citation as [key, p. N] with its offsets in characters, the key, page, quote and whether the app found the quote in the paper; the answer's cost; for a question in mode edit, `edits`: the changes {find, replace, why, state} taken out of the answer's text, state ok only when find occurs exactly once in the passage), or error with its code. Free.",
     input: { conversation_id: conversationId },
     async run(ctx, args) {
       const id = args.conversation_id
@@ -217,10 +220,13 @@ export const ASK_API_TOOLS: ApiTool[] = [
       const answer = lastAnswer(chat)
       // A question left without an answer and nothing running: the app closed (or restarted) while it answered.
       if (!answer) return { conversation_id: id, status: 'error', error: 'interrupted' }
-      const org = answerToOrg(answer.text, answer.citations)
+      const withEdits = extractEdits(answer.text, chat.writing?.passage ?? '')
+      const org = answerToOrg(withEdits.text, answer.citations)
       return {
         conversation_id: id,
         status: answer.stopped ? 'stopped' : 'done',
+        // A stopped answer's changes may be cut: none are applied.
+        ...(withEdits.edits && !answer.stopped ? { edits: withEdits.edits } : {}),
         title: chat.summary.title,
         file: chat.writing?.file ?? null,
         section: chat.writing?.section ?? null,
@@ -274,7 +280,8 @@ export const ASK_API_TOOLS: ApiTool[] = [
         if (m.role === 'user') return [{ role: 'question', text: m.text, at: m.at }]
         if (m.role !== 'assistant') return []
         const answer = m as AssistantView
-        const org = answerToOrg(answer.text, answer.citations)
+        const withEdits = extractEdits(answer.text, chat.writing?.passage ?? '')
+        const org = answerToOrg(withEdits.text, answer.citations)
         return [
           {
             role: 'answer',
@@ -283,7 +290,9 @@ export const ASK_API_TOOLS: ApiTool[] = [
             stopped: answer.stopped,
             citations: org.citations.map((c) => ({ ...c, verified: c.state === 'found' })),
             unverified: answer.unverified,
-            costUsd: answer.costUsd
+            costUsd: answer.costUsd,
+            // Checked against the passage the conversation has now, which may be a later one.
+            ...(withEdits.edits ? { edits: withEdits.edits.map(({ find, replace, why }) => ({ find, replace, why })) } : {})
           }
         ]
       })

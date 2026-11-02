@@ -3,6 +3,7 @@ import { ACTION_READ_TOOLS, type ChatTools } from '../../shared/chatActions'
 import { citationsToText } from '../../shared/chatCitations'
 import type { ThesisContext } from '../../shared/summary'
 import { sliceWhole } from '../../shared/textMatch'
+import { MAX_ANSWER_EDITS, MAX_EDIT_FIND } from '../../shared/writing/answerEdits'
 import { escapePromptData } from '../llm/promptTags'
 import { ACTION_MAX_TOOL_CALLS } from '../mcp/ActionsMcpServer'
 import { DATA_CLOSE, DATA_OPEN } from '../mcp/LibraryMcpServer'
@@ -170,6 +171,14 @@ function writingModeRules(mode: WritingMode): string[] {
       ...opinion,
       '- Do NOT rewrite the passage, nor any of its paragraphs or sentences: the author writes it. Explain what to change and why instead. Only when a point really needs it, you may illustrate it with one short example phrase (at most 15 words), presented as an illustration, never as a replacement for the author\'s text.',
       '- If the question asks you to rewrite or write the text, do not: say in one sentence that the author can explicitly allow a proposed rewrite for a question, and give your comments.'
+    ]
+  }
+  if (mode === 'edit') {
+    return [
+      ...opinion,
+      '- The author explicitly allowed you to EDIT their file for this question: the changes you give are applied to the passage in the author\'s editor, marked, and the author can undo them. Comment briefly first: what you change and why. Change only what the question asks for, as little as needed; keep the author\'s voice.',
+      `- Then, at the very end, give the changes as one fenced code block whose info string is edits (\`\`\`edits) holding only a JSON array of objects {"find": …, "replace": …, "why": …}: find is text copied exactly from <passage> as it is there (same characters, line breaks and markup), long enough to occur only once in the passage and at most ${MAX_EDIT_FIND} characters; replace is its new text (Org, LaTeX or Markdown like the passage); why is one short sentence. At most ${MAX_ANSWER_EDITS} changes, none overlapping. With no change needed, give no block.`,
+      '- In the changes keep the passage\'s citations ([cite:@key], \\cite{key}, [@key]), math and commands exactly as they are unless the change is about them, never put a citation marker [[…]] inside the block, and do not add claims the passage does not make.'
     ]
   }
   return [
