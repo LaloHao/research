@@ -490,6 +490,7 @@ export class ChatService {
     if (req.context && !req.writing && !req.chatId) throw new UserFacingError('invalid_edit')
     // A fresh passage only replaces the one of an existing conversation.
     if (req.passage !== undefined && (!req.chatId || !req.passage.trim())) throw new UserFacingError('invalid_edit')
+    if (req.place && req.passage === undefined) throw new UserFacingError('invalid_edit')
     if (req.chatId) this.sending.add(req.chatId)
     try {
       const reservation = await this.deps.budget.admit(undefined, 'chat')
@@ -499,7 +500,14 @@ export class ChatService {
         // In a conversation from the editor every question carries its mode: a rewrite only when this one allows it.
         const withMode = (meta: ChatMeta): ChatMeta =>
           meta.writing
-            ? { ...meta, writing: { ...meta.writing, mode: req.mode ?? 'opinion', ...(req.passage !== undefined ? { passage: req.passage } : {}) } }
+            ? {
+                ...meta,
+                writing: {
+                  ...meta.writing,
+                  mode: req.mode ?? 'opinion',
+                  ...(req.passage !== undefined ? { passage: req.passage, ...compactPlace(req.place) } : {})
+                }
+              }
             : meta
         id = req.chatId
           ? (await this.update(req.chatId, (f) => ({ ...f, meta: withMode(f.meta), messages: [...f.messages, message] }))).meta.id
@@ -981,4 +989,13 @@ export class ChatService {
   private async paperContext(scope: ChatScope): Promise<PaperContext | null> {
     return scope === 'library' ? null : readPaperContext(this.deps.store, scope.paper, PAPER_SUMMARY_FIELDS)
   }
+}
+
+/** The parts of a new passage's place that were given. */
+function compactPlace(place: ChatSendRequest['place']): Partial<Pick<ChatWriting, 'file' | 'section' | 'scope'>> {
+  const out: Partial<Pick<ChatWriting, 'file' | 'section' | 'scope'>> = {}
+  if (place?.file !== undefined) out.file = place.file
+  if (place?.section !== undefined) out.section = place.section
+  if (place?.scope !== undefined) out.scope = place.scope
+  return out
 }

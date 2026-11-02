@@ -1358,6 +1358,14 @@ excerpt jumps to it.  Shows the estimated cost and asks first."
   "Seconds between two looks at the answer `research-ask' is following."
   :type 'number)
 
+(defcustom research-ask-offer-continue t
+  "Whether `research-ask' offers to go on with the conversation of `*research-ask*'.
+When non-nil and that buffer holds a conversation that is not answering,
+`research-ask' asks whether to continue it (c: the new passage and
+question go to it, with its history) or to start a new one (n).  Nil:
+always a new conversation."
+  :type 'boolean)
+
 (defconst research--ask-max-chars 30000
   "The most characters of the passage `research-ask' sends.")
 
@@ -1675,52 +1683,103 @@ passage) or \"rewrite\" (only when you allow it: Claude may also propose
 a version, set apart as its own).  Shows the estimated cost and asks
 first.  The answer streams into `*research-ask*' (your buffer is never
 changed), and is a conversation of the app's Chat view: there `f' asks a
-follow-up (with the chapter and outline as they are then), `c' opens the
-citation at point in the app, `a' opens the conversation in the app, `s'
-stops the answer and `q' closes."
+follow-up (with the passage, chapter and outline as they are then), `c'
+opens the citation at point in the app, `a' opens the conversation in the
+app, `s' stops the answer and `q' closes.  When `*research-ask*' already
+holds a conversation (and `research-ask-offer-continue' is on), asks
+whether to continue it (c: this passage and question go to it, with its
+history, and its follow-ups are then about this passage) or start a new
+one (n).  `research-ask-resume' reopens an earlier conversation."
   (interactive
    (let ((selection (research--ask-selection)))
      (list (research--ask-read-question) (research--ask-read-mode) current-prefix-arg selection)))
   (research--with-errors
-    (let* ((fit (research--ask-fit (research--ask-scope arg selection)))
-           (scope (car fit))
-           (notice (cdr fit))
-           (beg (cadr scope))
-           (end (cddr scope))
-           (text (buffer-substring-no-properties beg end))
-           (file (if buffer-file-name (file-name-nondirectory buffer-file-name) (buffer-name)))
-           (section (research--ask-section beg)))
-      (when (string-empty-p (string-trim text)) (user-error "No hay texto que enviar aquí"))
-      (let ((buffer (get-buffer "*research-ask*")))
-        (when (and buffer (plist-get (buffer-local-value 'research--ask-state buffer) :timer))
-          (user-error "Claude todavía está respondiendo en `*research-ask*': espera o detén la respuesta con `s'")))
-      (let* ((context (research--ask-context (car scope) beg end buffer-file-name))
-             (source (current-buffer))
-             (place (list :source source :path buffer-file-name :scope (car scope)
-                          :beg (copy-marker beg) :end (copy-marker end t) :pos beg :end-pos end)))
-        (when-let* ((id (research--ask-start `((question . ,question) (text . ,text) (file . ,file)
-                                               (section . ,section) (scope . ,(car scope)) (mode . ,mode)
-                                               ,@(car context))
-                                             notice)))
-          (let ((buffer (get-buffer-create "*research-ask*")))
-            (with-current-buffer buffer
-              (research--ask-forget)
-              (research-ask-mode)
-              (setq research--ask-state (append (list :id id :failures 0) place))
-              (let ((inhibit-read-only t))
-                (erase-buffer)
-                (insert (propertize (format "Preguntar a Claude — %s\n" (string-join (seq-remove #'string-empty-p (list file section)) " › "))
-                                    'face 'bold)
-                        (propertize (format "Alcance: %s (%d caracteres) · contexto: %s\n"
-                                            (research--label (car scope) research--ask-scopes) (length text) (cdr context))
-                                    'face 'shadow)
-                        (if notice (propertize (concat notice "\n") 'face 'warning) "")
-                        (propertize "f: otra pregunta · c: abrir la cita · a: abrir en la app · s: detener · q: cerrar\n"
-                                    'face 'shadow))))
-            (research--ask-begin buffer question mode)
-            (display-buffer buffer '((display-buffer-in-side-window) (side . right) (window-width . 0.45)))
-            (message "%sClaude está respondiendo en `*research-ask*' (s lo detiene)" (if notice (concat notice " ") ""))
-            id))))))
+   (let* ((fit (research--ask-fit (research--ask-scope arg selection)))
+          (scope (car fit))
+          (notice (cdr fit))
+          (beg (cadr scope))
+          (end (cddr scope))
+          (text (buffer-substring-no-properties beg end))
+          (file (if buffer-file-name (file-name-nondirectory buffer-file-name) (buffer-name)))
+          (section (research--ask-section beg)))
+     (when (string-empty-p (string-trim text)) (user-error "No hay texto que enviar aquí"))
+     (let ((buffer (get-buffer "*research-ask*")))
+       (when (and buffer (plist-get (buffer-local-value 'research--ask-state buffer) :timer))
+         (user-error "Claude todavía está respondiendo en `*research-ask*': espera o detén la respuesta con `s'")))
+     (if (research--ask-continue-p)
+         (research--ask-continue question mode scope text file section notice)
+       (let* ((context (research--ask-context (car scope) beg end buffer-file-name))
+              (source (current-buffer))
+              (place (list :source source :path buffer-file-name :scope (car scope)
+                           :beg (copy-marker beg) :end (copy-marker end t) :pos beg :end-pos end)))
+         (when-let* ((id (research--ask-start `((question . ,question) (text . ,text) (file . ,file)
+						(section . ,section) (scope . ,(car scope)) (mode . ,mode)
+						,@(car context))
+                                              notice)))
+           (let ((buffer (get-buffer-create "*research-ask*")))
+             (with-current-buffer buffer
+               (research--ask-forget)
+               (research-ask-mode)
+               (setq research--ask-state (append (list :id id :failures 0) place))
+               (let ((inhibit-read-only t))
+                 (erase-buffer)
+                 (insert (propertize (format "Preguntar a Claude — %s\n" (string-join (seq-remove #'string-empty-p (list file section)) " › "))
+                                     'face 'bold)
+                         (propertize (format "Alcance: %s (%d caracteres) · contexto: %s\n"
+                                             (research--label (car scope) research--ask-scopes) (length text) (cdr context))
+                                     'face 'shadow)
+                         (if notice (propertize (concat notice "\n") 'face 'warning) "")
+                         (propertize "f: otra pregunta · c: abrir la cita · a: abrir en la app · s: detener · q: cerrar\n"
+                                     'face 'shadow))))
+             (research--ask-begin buffer question mode)
+             (display-buffer buffer '((display-buffer-in-side-window) (side . right) (window-width . 0.45)))
+             (message "%sClaude está respondiendo en `*research-ask*' (s lo detiene)" (if notice (concat notice " ") ""))
+             id)))))))
+
+(defun research--ask-continue-p ()
+  "Non-nil when the user goes on with the conversation of `*research-ask*'.
+Asked only when `research-ask-offer-continue' is on and that buffer holds
+a conversation."
+  (let ((buffer (get-buffer "*research-ask*")))
+    (and research-ask-offer-continue buffer
+         (plist-get (buffer-local-value 'research--ask-state buffer) :id)
+         (eq (read-char-choice "¿Continuar la conversación de `*research-ask*' (c) o empezar una nueva (n)? "
+                               '(?c ?C ?n ?N))
+             ?c))))
+
+(defun research--ask-place (scope)
+  "Where SCOPE (a cons of the scope's code and its bounds) of this buffer is,
+for `research--ask-state'."
+  (let ((beg (cadr scope)) (end (cddr scope)))
+    (list :source (current-buffer) :path buffer-file-name :scope (car scope)
+          :beg (copy-marker beg) :end (copy-marker end t) :pos beg :end-pos end)))
+
+(defun research--ask-continue (question mode scope text file section notice)
+  "Ask QUESTION (MODE) about TEXT (SCOPE of FILE, SECTION) in the conversation
+of `*research-ask*': its history goes with it, and this passage becomes the
+conversation's (its later follow-ups are about it).  NOTICE as in `research-ask'."
+  (let* ((beg (cadr scope))
+         (end (cddr scope))
+         (context (research--ask-context (car scope) beg end buffer-file-name))
+         (place (research--ask-place scope))
+         (buffer (get-buffer "*research-ask*"))
+         (id (plist-get (buffer-local-value 'research--ask-state buffer) :id)))
+    (when (research--ask-start `((question . ,question) (conversation_id . ,id) (mode . ,mode)
+                                 (text . ,text) (file . ,file) (section . ,section) (scope . ,(car scope))
+                                 ,@(car context))
+                               notice)
+      (with-current-buffer buffer
+        (setq research--ask-state (append (list :id id :failures 0) place))
+        (let ((inhibit-read-only t))
+          (goto-char (point-max))
+          (insert "\n" (propertize (format "Nuevo pasaje — %s · alcance: %s (%d caracteres) · contexto: %s\n"
+                                           (string-join (seq-remove #'string-empty-p (list file section)) " › ")
+                                           (research--label (car scope) research--ask-scopes) (length text) (cdr context))
+                                   'face 'shadow)))
+        (research--ask-begin buffer question mode))
+      (display-buffer buffer '((display-buffer-in-side-window) (side . right) (window-width . 0.45)))
+      (message "%sClaude sigue la conversación en `*research-ask*' (s lo detiene)" (if notice (concat notice " ") ""))
+      id)))
 
 (defun research--ask-begin (buffer question mode)
   "Add QUESTION (MODE) to BUFFER and follow its answer on a timer."
@@ -1879,6 +1938,135 @@ with the chapter and the thesis outline as they are now too."
         (goto-char (point-max))
         (message "Claude está respondiendo (s lo detiene)")))))
 
+(defun research--ask-conversation-label (c)
+  "The line of the conversation C (from `ask_list') in the list to resume."
+  (format "%s · %s — %s (%d %s)"
+          (replace-regexp-in-string "T" " " (substring (or (alist-get 'updated_at c) "") 0 (min 16 (length (or (alist-get 'updated_at c) "")))))
+          (string-join (seq-remove #'string-empty-p (list (or (alist-get 'file c) "") (or (alist-get 'section c) ""))) " › ")
+          (alist-get 'title c)
+          (/ (1+ (or (alist-get 'messages c) 0)) 2)
+          (if (= 1 (/ (1+ (or (alist-get 'messages c) 0)) 2)) "pregunta" "preguntas")))
+
+(defun research--ask-read-conversation (&optional archived)
+  "Choose a conversation started with `research-ask' (ARCHIVED ones too): its id."
+  (let* ((list (append (alist-get 'conversations (research-call "ask_list" (and archived '((archived . t)))))
+                       nil))
+         (labels (mapcar (lambda (c) (cons (research--ask-conversation-label c) (alist-get 'conversation_id c))) list)))
+    (unless labels (user-error "No hay conversaciones de `research-ask' que retomar"))
+    (let ((choice (completing-read "Retomar conversación: "
+                                   (lambda (string pred action)
+                                     (if (eq action 'metadata)
+                                         '(metadata (display-sort-function . identity) (cycle-sort-function . identity))
+                                       (complete-with-action action labels string pred)))
+                                   nil t)))
+      (or (cdr (assoc choice labels)) (user-error "Elige una conversación de la lista")))))
+
+(defun research--ask-find-source (file scope passage)
+  "Where the PASSAGE (SCOPE) of FILE is now, for `research--ask-state', or nil.
+FILE is a file name without folder: the current buffer when it visits it,
+else a buffer visiting it, else that file in the current buffer's folder
+or the thesis folder (opened).  A whole-file SCOPE is the whole buffer;
+otherwise PASSAGE is looked up as it is (nil when you changed it since)."
+  (let* ((visiting (lambda (b) (and (buffer-file-name b) (equal (file-name-nondirectory (buffer-file-name b)) file))))
+         (buffer (or (and (funcall visiting (current-buffer)) (current-buffer))
+                     (seq-find visiting (buffer-list))
+                     (let* ((here (and buffer-file-name (file-name-directory buffer-file-name)))
+                            (main (and buffer-file-name (research--ask-thesis-main buffer-file-name)))
+                            (dirs (delq nil (list here (and main (file-name-directory main)))))
+                            (found (seq-some (lambda (d)
+                                               (let ((f (expand-file-name file d)))
+                                                 (if (file-readable-p f) f
+                                                   (car (ignore-errors
+                                                          (directory-files-recursively d (concat "\\`" (regexp-quote file) "\\'")))))))
+                                             dirs)))
+                       (and found (find-file-noselect found))))))
+    (when (and buffer (not (string-empty-p (or file ""))))
+      (with-current-buffer buffer
+        (save-restriction
+          (widen)
+          (if (equal scope "file")
+              (research--ask-place (cons scope (cons (point-min) (point-max))))
+            (save-excursion
+              (goto-char (point-min))
+              (when (and passage (search-forward passage nil t))
+                (research--ask-place (cons scope (cons (match-beginning 0) (match-end 0))))))))))))
+
+(defun research--ask-insert-turns (turns)
+  "Insert the questions and answers TURNS (from `ask_history') at the end."
+  (let ((inhibit-read-only t)
+        (inhibit-message t)
+        (message-log-max nil))
+    (while turns
+      (let ((turn (pop turns)))
+        (when (equal (alist-get 'role turn) "question")
+          (goto-char (point-max))
+          (insert "\n* " (replace-regexp-in-string "[ \t\n]+" " " (alist-get 'text turn)) "\n")
+          (let ((answer (and turns (equal (alist-get 'role (car turns)) "answer") (pop turns))))
+            (if (not answer)
+                (insert (propertize "sin respuesta (pregúntala de nuevo con f)\n" 'face 'shadow))
+              (insert "Respuesta · ")
+              (let ((status-beg (point-marker)))
+                (insert "…\n\n")
+                (let ((status-end (copy-marker (- (point) 2) t))
+                      (answer-beg (point-marker)))
+                  (plist-put research--ask-state :status (cons status-beg status-end))
+                  (plist-put research--ask-state :answer (cons answer-beg (copy-marker (point) t)))
+                  (research--ask-show `((status . ,(if (alist-get 'stopped answer) "stopped" "done"))
+                                        (text . ,(alist-get 'text answer))
+                                        (citations . ,(alist-get 'citations answer))
+                                        (unverified . ,(alist-get 'unverified answer))
+                                        (costUsd . ,(alist-get 'costUsd answer))
+                                        (conversation_cost_usd . ,(plist-get research--ask-state :cost)))))))))))))
+
+;;;###autoload
+(defun research-ask-resume (id &optional archived)
+  "Reopen in `*research-ask*' the conversation ID started with `research-ask'.
+Interactively, choose it from the newest (with \\[universal-argument],
+ARCHIVED ones too), each with its date, file › section, first question and
+how many questions.  Its questions and answers are shown, and `f' goes on
+with it, with its history.  The passage is found in its file (a buffer
+visiting it, else the file in this folder or the thesis folder): the
+whole file, or the passage's text when you have not changed it; then each
+follow-up sends it as it is then.  When not found, the follow-ups go with
+the last passage the conversation got (and `\\[research-ask]' with c
+continues it with a new passage)."
+  (interactive (list (research--ask-read-conversation current-prefix-arg) current-prefix-arg))
+  (ignore archived)
+  (research--with-errors
+   (let ((buffer (get-buffer "*research-ask*")))
+     (when (and buffer (plist-get (buffer-local-value 'research--ask-state buffer) :timer))
+       (user-error "Claude todavía está respondiendo en `*research-ask*': espera o detén la respuesta con `s'")))
+   (let* ((history (research-call "ask_history" `((conversation_id . ,id))))
+          (file (or (alist-get 'file history) ""))
+          (section (or (alist-get 'section history) ""))
+          (scope (or (alist-get 'scope history) "region"))
+          (place (research--ask-find-source file scope (alist-get 'passage history)))
+          (turns (append (alist-get 'turns history) nil))
+          (answering (alist-get 'answering history))
+          (last-question (and answering (equal (alist-get 'role (car (last turns))) "question") (car (last turns))))
+          (buffer (get-buffer-create "*research-ask*")))
+     (with-current-buffer buffer
+       (research--ask-forget)
+       (research-ask-mode)
+       (setq research--ask-state (append (list :id id :failures 0 :cost (alist-get 'conversation_cost_usd history)) place))
+       (let ((inhibit-read-only t))
+         (erase-buffer)
+         (insert (propertize (format "Preguntar a Claude — %s\n" (string-join (seq-remove #'string-empty-p (list file section)) " › "))
+                             'face 'bold)
+                 (propertize (format "Conversación retomada · alcance: %s · pasaje: %s\n"
+                                     (research--label scope research--ask-scopes)
+                                     (if place "tu archivo como está ahora" "el último que se envió (no lo encontré en tu archivo)"))
+                             'face 'shadow)
+                 (propertize "f: otra pregunta · c: abrir la cita · a: abrir en la app · s: detener · q: cerrar\n"
+                             'face 'shadow))
+         (research--ask-insert-turns (if last-question (butlast turns) turns)))
+       (when last-question
+         (research--ask-begin buffer (alist-get 'text last-question) (or (alist-get 'mode history) "opinion")))
+       (goto-char (point-max)))
+     (display-buffer buffer '((display-buffer-in-side-window) (side . right) (window-width . 0.45)))
+     (message "Conversación retomada en `*research-ask*': f sigue con ella")
+     id)))
+
 (defun research-ask-open-citation ()
   "Show the paper of the citation at point in the app, the quote highlighted."
   (interactive)
@@ -1932,6 +2120,7 @@ with the chapter and the thesis outline as they are now too."
     (define-key map (kbd "A") #'research-prose-add-acronym)
     (define-key map (kbd "T") #'research-prose-auto-gls-mode)
     (define-key map (kbd "?") #'research-ask)
+    (define-key map (kbd ".") #'research-ask-resume)
     map)
   "The research commands, under `research-keymap-prefix' in `research-mode'.")
 (defalias 'research-command-map research-command-map)
