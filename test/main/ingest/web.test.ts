@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { bareWebMetadata, captureWebPage, cleanPageTitle, findScholarlyIds, normalizePageUrl, parseByline, readArticle, slugTitle, webMetadata } from '../../../src/main/ingest/web'
+import { bareWebMetadata, captureWebPage, cleanPageTitle, findScholarlyIds, normalizePageUrl, parseByline, parsePdfAuthor, readArticle, slugTitle, webMetadata } from '../../../src/main/ingest/web'
 
 const fx = (name: string): string => readFileSync(new URL(`../../fixtures/web/${name}`, import.meta.url), 'utf8')
 const URL_ = 'https://eng.acme.test/posts/database-outage'
@@ -163,4 +163,15 @@ describe('readArticle', () => {
     expect(article.title.length).toBeGreaterThan(0)
     expect(readArticle('<html><body><p>Hi</p></body></html>', URL_)).toBeNull()
   })
+})
+
+describe('parsePdfAuthor', () => {
+  it.each([
+    ['Ana Pérez', [{ family: 'Pérez', given: 'Ana' }]],
+    ['Beyer, Betsy', [{ family: 'Beyer', given: 'Betsy' }]],
+    ['Betsy Beyer, Chris Jones, and Niall Richard Murphy', [{ family: 'Beyer', given: 'Betsy' }, { family: 'Jones', given: 'Chris' }, { family: 'Murphy', given: 'Niall Richard' }]],
+    ['Beyer, Betsy; Jones, Chris', [{ family: 'Beyer', given: 'Betsy' }, { family: 'Jones', given: 'Chris' }]],
+    ['Pinjia He & Jieming Zhu', [{ family: 'He', given: 'Pinjia' }, { family: 'Zhu', given: 'Jieming' }]],
+    ['  ', []]
+  ])('%s', (raw, authors) => expect(parsePdfAuthor(raw)).toEqual(authors))
 })

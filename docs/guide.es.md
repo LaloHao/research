@@ -64,7 +64,7 @@ La app completa los metadatos automáticamente a partir del identificador. Si el
 
 Al agregar un paper (o completar sus metadatos), la app consulta en segundo plano sus referencias en OpenAlex (ver «Citas y candidatos»); no consume cuota de Claude.
 
-Agregar un identificador o PDF que ya está en la biblioteca actualiza el paper existente en vez de duplicarlo («ya estaba en la biblioteca» / «actualizado» en el panel de actividad). Un PDF que sueltas en la biblioteca se asocia por el DOI o el ID de arXiv impreso en él, o por su título: si no coincide con ninguno, se crea un paper nuevo, y si el paper ya tiene PDF, el que soltaste se ignora. Para darle su PDF a un paper concreto, usa su pestaña PDF (ver «Adjuntar o reemplazar un PDF» más abajo).
+Agregar un identificador o PDF que ya está en la biblioteca actualiza el paper existente en vez de duplicarlo («ya estaba en la biblioteca» / «actualizado» en el panel de actividad). Un PDF que sueltas en la biblioteca se asocia por el DOI o el ID de arXiv impreso en sus primeras páginas, o, si es un libro, por el ISBN de su página de créditos (en sus primeras 8 páginas; con él toma los datos del libro como «Agregar»), o por su título: si no coincide con ninguno, se crea un paper nuevo, y si el paper ya tiene PDF, el que soltaste se ignora. Para darle su PDF a un paper concreto, usa su pestaña PDF (ver «Adjuntar o reemplazar un PDF» más abajo). Un PDF sin identificador que se pueda resolver queda con su título y sus autores tal como los dicen sus metadatos (una lista de autores se separa en personas) y «Los metadatos están incompletos.»; si traía un ISBN, «Reintentar» lo vuelve a buscar.
 
 ### Sitios que bloquean las descargas
 

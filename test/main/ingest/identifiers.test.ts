@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { arxivDoi, arxivFromDoi, findIdentifiersInText, normalizeIsbn, parseInput } from '../../../src/main/ingest/identifiers'
+import { arxivDoi, arxivFromDoi, findIdentifiersInText, findIsbnInText, normalizeIsbn, parseInput } from '../../../src/main/ingest/identifiers'
 
 describe('parseInput', () => {
   it.each([
@@ -65,5 +65,20 @@ describe('normalizeIsbn', () => {
     expect(parseInput('ISBN 149192912X')).toEqual({ kind: 'isbn', isbn: '9781491929124' })
     expect(parseInput('978-1-4919-2912-5')).toEqual({ kind: 'invalid' })
     expect(parseInput('2008.06448')).toEqual({ kind: 'arxiv', arxiv: '2008.06448' })
+  })
+})
+
+describe('findIsbnInText', () => {
+  it.each([
+    ['Copyright © 2016\nISBN: 978-1-491-92912-4\n[LSI]', '9781491929124'],
+    ['ISBN-10: 149192912X', '9781491929124'],
+    ['ISBN 978‐0‐262‐03384‐8 (hardcover)', '9780262033848'],
+    ['ISBN (ebook) 978 0 262 03384 8', '9780262033848'],
+    ['ISBN 978-1-4919-2912-5 ISBN 0-262-03384-4', '9780262033848']
+  ])('%s', (text, isbn) => expect(findIsbnInText(text)).toBe(isbn))
+
+  it('finds nothing without a valid «ISBN» label and number', () => {
+    expect(findIsbnInText('Call 978-1-491-92912-4 now')).toBeUndefined()
+    expect(findIsbnInText('ISBN pending')).toBeUndefined()
   })
 })
