@@ -36,7 +36,9 @@ const ASK_INPUT = {
   question: z.string().trim().min(1).max(MAX_CHAT_MESSAGE),
   text: passage
     .optional()
-    .describe('The passage the question is about; required to start a conversation. In a follow-up, the same passage as it is now (the author may have edited it); omitted, the conversation keeps the one it has'),
+    .describe(
+      'The passage the question is about; required to start a conversation. In a follow-up, the same passage as it is now (the author may have edited it) or another one the conversation goes on with (with its file, section and scope); omitted, the conversation keeps the one it has'
+    ),
   file: z.string().max(4096).optional().describe("The file's name (its folder is dropped)"),
   section: z.string().max(MAX_WRITING_SECTION).optional().describe('The heading path, e.g. "Chapter 2 › Related work"'),
   scope: z.enum(WRITING_SCOPES).optional().describe('What the passage is: region (default), paragraph, subtree or file'),
@@ -172,7 +174,14 @@ export const ASK_API_TOOLS: ApiTool[] = [
           ...(contextOf(args) ? { context: contextOf(args) } : {}),
           ...(summary
             ? args.text !== undefined
-              ? { passage: args.text }
+              ? {
+                  passage: args.text,
+                  place: {
+                    ...(args.file !== undefined ? { file: fileName(args.file) } : {}),
+                    ...(args.section !== undefined ? { section: args.section.replace(/\s+/g, ' ').trim() } : {}),
+                    ...(args.scope !== undefined ? { scope: args.scope } : {})
+                  }
+                }
               : {}
             : {
                 writing: {
@@ -222,6 +231,73 @@ export const ASK_API_TOOLS: ApiTool[] = [
         costUsd: answer.costUsd,
         conversation_cost_usd: chat.summary.costUsd,
         model: answer.model
+      }
+    }
+  }),
+  freeTool({
+    name: 'ask_list',
+    description:
+      'The conversations started with ask (from the editor), newest first: id, title (the first question), file, section, scope, when it was last updated, how many questions and answers, and its cost. Archived ones only with archived. Free.',
+    input: {
+      limit: z.number().int().min(1).max(200).optional().describe('At most this many (default 50)'),
+      archived: z.boolean().optional().describe('Include archived conversations')
+    },
+    async run(ctx, args) {
+      const conversations = ctx.chats
+        .list()
+        .filter((c) => c.writing && !c.problem && (args.archived || !c.archived))
+        .slice(0, args.limit ?? 50)
+        .map((c) => ({
+          conversation_id: c.id,
+          title: c.title,
+          file: c.writing!.file,
+          section: c.writing!.section,
+          scope: c.writing!.scope,
+          mode: c.writing!.mode,
+          updated_at: c.updatedAt,
+          messages: c.messages,
+          cost_usd: c.costUsd,
+          archived: c.archived
+        }))
+      return { conversations }
+    }
+  }),
+  freeTool({
+    name: 'ask_history',
+    description:
+      'A conversation started with ask, to continue it: its passage (the latest one sent) with file, section, scope and mode, and every question and answer in order (answers as plain Org text with their citations, as ask_status gives them). Free.',
+    input: { conversation_id: conversationId },
+    async run(ctx, args) {
+      followed(ctx, args.conversation_id)
+      const chat = await ctx.chats.open(args.conversation_id).catch(chatError)
+      const turns = chat.messages.flatMap((m): Record<string, unknown>[] => {
+        if (m.role === 'user') return [{ role: 'question', text: m.text, at: m.at }]
+        if (m.role !== 'assistant') return []
+        const answer = m as AssistantView
+        const org = answerToOrg(answer.text, answer.citations)
+        return [
+          {
+            role: 'answer',
+            text: org.text,
+            at: answer.at,
+            stopped: answer.stopped,
+            citations: org.citations.map((c) => ({ ...c, verified: c.state === 'found' })),
+            unverified: answer.unverified,
+            costUsd: answer.costUsd
+          }
+        ]
+      })
+      return {
+        conversation_id: chat.summary.id,
+        title: chat.summary.title,
+        file: chat.writing?.file ?? null,
+        section: chat.writing?.section ?? null,
+        scope: chat.writing?.scope ?? null,
+        mode: chat.writing?.mode ?? null,
+        passage: chat.writing?.passage ?? null,
+        answering: ctx.chats.answering(chat.summary.id),
+        conversation_cost_usd: chat.summary.costUsd,
+        turns
       }
     }
   }),

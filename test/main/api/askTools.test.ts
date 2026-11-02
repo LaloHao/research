@@ -132,6 +132,39 @@ describe('local API: ask (Claude’s opinion on a passage)', () => {
     expect((await chats.open(id)).messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant', 'user', 'assistant'])
   })
 
+  it('a follow-up may go on with another passage and its place; ask_list and ask_history give the conversations to resume', async () => {
+    const { store, provider, chats, ctx } = await project([chatAnswer('Plain.'), chatAnswer(`First. ${DRAIN_ANSWER}`, 0.04), chatAnswer('Second.', 0.02)])
+    const server = await serve(ctx)
+    const plain = await chats.send({ chatId: null, scope: 'library', model: 'sonnet', text: 'Plain chat', excerpt: null })
+    await chats.idle()
+    const { conversation_id: id } = await ok(server, 'ask', { ...START, confirmed: true })
+    await chats.idle()
+    const other = 'Los antecedentes empiezan aquí.'
+    await ok(server, 'ask', { question: '¿Y este otro?', conversation_id: id, text: other, file: '/home/me/thesis/chapter1.org', section: 'Introducción › Antecedentes', scope: 'subtree', confirmed: true })
+    await chats.idle()
+    expect(provider.chatCalls[2].input).toContain(`<location>\nfile: chapter1.org\nsection: Introducción › Antecedentes\nscope: subtree\n</location>\n<passage>\n${other}\n</passage>`)
+    expect(provider.chatCalls[2].input).toContain('<turn role="assistant">\nFirst.')
+    expect(await store.readChat(id)).toMatchObject({ ok: true, value: { meta: { writing: { passage: other, file: 'chapter1.org', scope: 'subtree' } } } })
+
+    // Only the editor's conversations, newest first, with where their passage is now.
+    const { conversations } = await ok(server, 'ask_list', {})
+    expect(conversations).toEqual([
+      expect.objectContaining({ conversation_id: id, title: '¿Se sostiene el argumento?', file: 'chapter1.org', section: 'Introducción › Antecedentes', scope: 'subtree', messages: 4, archived: false })
+    ])
+    expect(conversations.some((c: { conversation_id: string }) => c.conversation_id === plain)).toBe(false)
+
+    const history = await ok(server, 'ask_history', { conversation_id: id })
+    expect(history).toMatchObject({ conversation_id: id, file: 'chapter1.org', scope: 'subtree', passage: other, answering: false })
+    expect(history.turns.map((t: { role: string; text: string }) => [t.role, t.text])).toEqual([
+      ['question', '¿Se sostiene el argumento?'],
+      ['answer', 'First. Drain parses logs online [he2017drain, p. 1].'],
+      ['question', '¿Y este otro?'],
+      ['answer', 'Second.']
+    ])
+    expect(history.turns[1]).toMatchObject({ costUsd: 0.04, stopped: false, citations: [expect.objectContaining({ key: 'he2017drain', verified: true })] })
+    expect((await call(server, 'ask_history', { conversation_id: plain })).text).toMatch(/^invalid: .*not started with ask/)
+  })
+
   it('refuses before spending: no passage, a passage in a follow-up, an unknown or non-editor conversation, a passage too long', async () => {
     const { provider, chats, ctx } = await project([chatAnswer('ok'), chatAnswer('ok')])
     const server = await serve(ctx)
