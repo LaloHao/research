@@ -128,3 +128,12 @@ export interface FacetSuggestPlan {
 
 /** «Editar y aceptar»: the user's version of the proposal, of the suggestion's own kind. */
 export type SuggestionEdit = { kind: 'new_facet'; facet: FacetDef } | { kind: 'new_value'; value: string } | { kind: 'alias'; to: string }
+
+/** «Cambiar clave»: the file with paper `from` called `to` in every suggestion's examples, or null when none names it. */
+export function rekeyFacetSuggestions(file: FacetSuggestionsFile, from: string, to: string): FacetSuggestionsFile | null {
+  if (!file.suggestions.some((s) => s.examples.some((e) => e.paper === from))) return null
+  return {
+    ...file,
+    suggestions: file.suggestions.map((s) => (s.examples.some((e) => e.paper === from) ? { ...s, examples: s.examples.map((e) => (e.paper === from ? { ...e, paper: to } : e)) } : s))
+  }
+}

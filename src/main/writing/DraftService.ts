@@ -9,6 +9,7 @@ import {
   MAX_DRAFT_PURPOSE,
   MAX_DRAFT_TEXT,
   MAX_DRAFT_TITLE,
+  rekeyDraft,
   type DraftCheck,
   type DraftFile,
   type DraftInput,
@@ -272,6 +273,32 @@ export class DraftService {
       return { meta: { ...f.meta, versions }, texts: f.texts.map((t, i) => (i === last ? text : t)) }
     })
     return this.check(file.texts.at(-1) ?? '', file.meta.papers)
+  }
+
+  /**
+   * «Cambiar clave»: every draft naming paper `from` (its chosen papers, every version's citation markers) names `to`
+   * instead; `only` limits it to these drafts (an undo, never refused). Otherwise refused while any version is being
+   * written. A draft that cannot be read is left as it is. On a failure the ones already rewritten go back. Returns the
+   * drafts it rewrote.
+   */
+  async rekeyPaper(from: string, to: string, only?: string[]): Promise<string[]> {
+    if (!only && (this.runs.size > 0 || this.sending.size > 0)) throw new UserFacingError('paper_busy')
+    const ids: string[] = []
+    for (const id of only ?? (await this.deps.store.listDraftIds())) {
+      const read = await this.deps.store.readDraft(id)
+      if (read?.ok && rekeyDraft(read.value, from, to)) ids.push(id)
+    }
+    const done: string[] = []
+    try {
+      for (const id of ids) {
+        await this.update(id, (f) => rekeyDraft(f, from, to) ?? f)
+        done.push(id)
+      }
+    } catch (error) {
+      for (const id of done) await this.update(id, (f) => rekeyDraft(f, to, from) ?? f).catch((undo: unknown) => console.error('draft back to', from, id, undo))
+      throw error
+    }
+    return done
   }
 
   async rename(id: string, title: string): Promise<void> {

@@ -561,6 +561,36 @@ export class IndexCache {
     return Number(r.changes)
   }
 
+  /** Whether a queued or running job (of any type) names this paper. */
+  hasActiveJobsFor(paperId: string): boolean {
+    return Boolean(this.db.prepare("SELECT 1 FROM jobs WHERE state IN ('queued', 'running') AND json_extract(spec, '$.paperId') = ? LIMIT 1").get(paperId))
+  }
+
+  /**
+   * «Cambiar clave»: every row of paper `from` (its library row, text, summary, vector, citations, neighbours and facet
+   * values, and the job history's link to it) moves to `to`, so nothing is extracted or embedded again and no row is
+   * left under the old key. Typed relations are not touched: they are an index of relations.yaml, rebuilt from it.
+   */
+  renamePaper(from: string, to: string): void {
+    this.tx(() => {
+      // Rows a former paper with that key may have left behind (it never had a folder of its own any more).
+      this.dropPaperRows(to, false)
+      const move = (table: string, column: string): void => void this.db.prepare(`UPDATE ${table} SET ${column} = ? WHERE ${column} = ?`).run(to, from)
+      move('papers', 'id')
+      move('papers_fts', 'id')
+      move('chunks_fts', 'paper_id')
+      move('summaries_fts', 'paper_id')
+      move('citation_edges', 'citing_id')
+      move('incoming_citations', 'cited_paper_id')
+      move('incoming_fetches', 'paper_id')
+      move('paper_vectors', 'paper_id')
+      move('similar_pairs', 'a')
+      move('similar_pairs', 'b')
+      move('paper_facets', 'paper_id')
+      move('jobs', 'paper_id')
+    })
+  }
+
   /** A paper moved to the trash leaves the library, but keeps its text state, chunks and vector so a restore does not extract or embed it again. */
   moveToTrash(entry: TrashRow): void {
     this.tx(() => {

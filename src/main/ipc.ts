@@ -5,7 +5,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { recaptureUrl } from '../shared/capture'
 import type { DesktopStatus } from '../shared/desktop'
-import type { MetadataEditResult, UserErrorCode } from '../shared/library'
+import type { ChangeKeyResult, MetadataEditResult, UserErrorCode } from '../shared/library'
 import type { OpenAlexCount } from '../shared/mapping'
 import type { CountResult } from '../shared/relations'
 import type { FormImpact } from '../shared/summary'
@@ -235,6 +235,16 @@ export function registerIpc(app: AppController, getWindow: () => BrowserWindow |
   ipcMain.handle(IPC.libraryRevertMetadata, (_e, rawToken: unknown): Promise<ActionResult> => {
     const token = arg(ipcArgs.undoToken, rawToken, 'token')
     return actionResult(() => app.requireSession().revertMetadata(token))
+  })
+  ipcMain.handle(IPC.librarySuggestKey, (_e, rawId: unknown) => app.requireSession().suggestKey(arg(ipcArgs.paperId, rawId, 'id')))
+  ipcMain.handle(IPC.libraryChangeKey, async (_e, rawId: unknown, rawKey: unknown): Promise<ChangeKeyResult> => {
+    const id = arg(ipcArgs.paperId, rawId, 'id')
+    const key = arg(ipcArgs.newKey, rawKey, 'key')
+    try {
+      return { ok: true, key: await app.requireSession().changeKey(id, key) }
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error).message }
+    }
   })
   ipcMain.handle(IPC.libraryOpenInBrowser, (_e, rawUrl: unknown): Promise<ActionResult> => {
     const url = arg(ipcArgs.webUrl, rawUrl, 'url')

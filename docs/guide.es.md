@@ -95,7 +95,7 @@ Algunos sitios (muchos blogs y revistas detrás de Cloudflare u otra protección
 
 ### Editar metadatos
 
-«Editar metadatos», bajo el título del paper en su detalle, abre un formulario con el título, los autores (uno por línea, «Apellido, Nombre»; una organización tal cual), el año (en una página web, su fecha como `AAAA`, `AAAA-MM` o `AAAA-MM-DD`, que fija el año), la revista o evento (en una página web, su sitio) y la URL. «Guardar» escribe `paper.yaml` y los mismos campos en la entrada BibTeX del paper, conservando todos los demás (páginas, volumen, editorial…), y actualiza `exports/library.bib`. La clave de cita nunca cambia. Justo después de guardar, «Deshacer» devuelve lo que cambió la edición, siempre que `paper.yaml` no haya cambiado desde entonces. Completar título, autores y año marca los metadatos como completos.
+«Editar metadatos», bajo el título del paper en su detalle, abre un formulario con el título, los autores (uno por línea, «Apellido, Nombre»; una organización tal cual), el año (en una página web, su fecha como `AAAA`, `AAAA-MM` o `AAAA-MM-DD`, que fija el año), la revista o evento (en una página web, su sitio) y la URL. «Guardar» escribe `paper.yaml` y los mismos campos en la entrada BibTeX del paper, conservando todos los demás (páginas, volumen, editorial…), y actualiza `exports/library.bib`. La clave de cita no cambia (para cambiarla, ver «Cambiar» más abajo). Justo después de guardar, «Deshacer» devuelve lo que cambió la edición, siempre que `paper.yaml` no haya cambiado desde entonces. Completar título, autores y año marca los metadatos como completos.
 
 ### Adjuntar o reemplazar un PDF
 
@@ -105,7 +105,9 @@ Cuando el paper ya tiene PDF, la pestaña PDF tiene arriba un botón «Reemplaza
 
 Adjuntar corre como un trabajo en el panel de actividad («Adjuntar PDF a <clave>», resultado «PDF adjuntado»). Solo cambia el PDF: los metadatos del paper no se vuelven a buscar ni a combinar, y el texto del PDF reemplaza al texto indexado antes (búsqueda, pestaña Texto, resúmenes que se generen desde ahora). Los resúmenes existentes se quedan como están, así que después de un reemplazo sus citas de evidencia y números de página pueden apuntar a otro lugar del PDF nuevo; regenera el resumen si eso importa. Si el archivo no es un PDF, está dañado o el `paper.yaml` del paper tiene un problema, el trabajo falla y no cambia nada.
 
-Cada paper recibe una **clave de cita** (su carpeta en `papers/`) que nunca cambia, aunque edites sus metadatos. Se puede copiar con el botón «Copiar» junto a la clave, en el detalle del paper.
+Cada paper recibe una **clave de cita** (su carpeta en `papers/`) al agregarse: el apellido del primer autor (o el sitio de una página web), el año (`nd` si no tiene) y la primera palabra significativa del título, más una letra si otro paper ya la usa (`he2017drain`, `he2017draina`). Editar los metadatos no la cambia. Se puede copiar con el botón «Copiar» junto a la clave, en el detalle del paper.
+
+**Cambiar la clave.** Cuando un paper entró con metadatos pobres (por ejemplo, un PDF cuyos autores venían en una sola cadena larga y sin año, que da una clave como `betsybeyerchrisjonesjenniferpetoffandniallrichardmurphyndsite`), completa primero sus metadatos y luego toca «Cambiar» junto a la clave. El diálogo sugiere la clave que dan los metadatos actuales (`beyer2016site`), que puedes editar: solo letras minúsculas sin acentos y números, empezando con una letra, y que no use otro paper de la biblioteca ni de la papelera. «Guardar» renombra la carpeta del paper y cambia su clave en todo el proyecto: `paper.yaml` y su entrada BibTeX, `exports/library.bib`, las relaciones tipadas, los chats del paper y las citas en las respuestas de todos los chats y borradores, el paper en la selección de los borradores, los registros de mapeos vinculados a él y los ejemplos de las sugerencias de facetas. Su texto, resumen, notas, embeddings y vecinos se mantienen; nada se vuelve a extraer ni a embeber. El detalle muestra entonces la clave nueva. Se rechaza mientras haya un trabajo del paper en cola o en curso, o mientras Claude responde un chat o escribe un borrador; si algo no se puede reescribir (por ejemplo, un archivo con conflicto de git), todos los archivos vuelven a como estaban. **Las citas que ya escribiste con la clave anterior fuera de la app (tu tesis en LaTeX, Org o Markdown, otros documentos) dejan de funcionar: cámbialas a mano.** En los otros equipos el cambio llega con la siguiente sincronización de git, como la carpeta vieja borrada y la nueva agregada.
 
 La app mantiene `exports/library.bib` con el BibTeX de todos los papers, listo para citar desde LaTeX u org-cite. Los meses se escriben con las macros estándar (`jun`, `oct`…), porque fuentes como Crossref dan `month=June` o `month=Oct`, que Biber no entiende. Es un archivo generado: no lo edites a mano.
 
@@ -195,7 +197,7 @@ Aparecen en este orden: Resumen, Contenido, PDF, Texto, Relaciones, Chat, Notas.
 
 La pestaña Texto muestra una página a la vez, con «Página N de M», «Anterior» / «Siguiente» y un campo para ir a una página. El texto se rearma para leerlo: las palabras cortadas con guion al final de una línea se unen, las líneas de un mismo párrafo se juntan, las líneas cortas con forma de título (como «1 Introduction», «2.3 Results» o líneas en mayúsculas) se ven como encabezados, y los encabezados, pies y números de página que se repiten entre páginas se atenúan. El buscador busca en todas las páginas, sin distinguir mayúsculas ni acentos, y muestra cuántos resultados hay; las flechas pasan de un resultado a otro, cambiando de página si hace falta, con cada coincidencia resaltada.
 
-Arriba del detalle: la clave de cita (con botón para copiarla), el enlace al DOI o la URL original, «Mostrar en carpeta» (abre `papers/<clave>/` en el explorador de archivos) y el estado del texto indexado (indexando, texto indexado, PDF sin texto/escaneado, sin texto, error al extraer).
+Arriba del detalle: la clave de cita (con botones para copiarla y para cambiarla, ver «Cambiar la clave»), el enlace al DOI o la URL original, «Mostrar en carpeta» (abre `papers/<clave>/` en el explorador de archivos) y el estado del texto indexado (indexando, texto indexado, PDF sin texto/escaneado, sin texto, error al extraer).
 
 ## Resúmenes con Claude
 
@@ -619,7 +621,7 @@ mappings/<id>/             un mapeo sistemático
   records.yaml             registros deduplicados con sus fuentes
   decisions.yaml           decisiones de cribado (solo se agregan)
   suggestions.yaml         sugerencias de cribado de Claude (solo se agregan)
-papers/<clave>/            un paper por carpeta; <clave> es su clave de cita y nunca cambia
+papers/<clave>/            un paper por carpeta; <clave> es su clave de cita (solo cambia con «Cambiar»)
   paper.yaml               metadatos, BibTeX y citas (OpenAlex)
   summary.md               campos del resumen, con evidencia y estado por campo
   extraction.yaml          clasificación según el formulario, y relación con la tesis

@@ -3,7 +3,8 @@ import { existsSync } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { authorsLabel } from '../../shared/format'
-import type { IngestStatus, MetadataEdit, PaperDetail, PaperRow } from '../../shared/library'
+import { PAPER_KEY } from '../../shared/chat'
+import type { IngestStatus, KeySuggestion, MetadataEdit, PaperDetail, PaperRow } from '../../shared/library'
 import type { Paper } from '../../shared/schemas'
 import type { ExtractionFile, FacetDef } from '../../shared/summary'
 import type { DeletePlan, RestoreConflict, RestoreOutcome, TrashEntry, TrashOutcome, TrashProblem, TrashTarget } from '../../shared/trash'
@@ -26,6 +27,7 @@ import { entryFitsFacet, thesisRelationOutdated } from '../summary/merge'
 import { buildPaper, compact } from './buildPaper'
 import { applyMetadataEdit } from './metadataEdit'
 import { findDuplicate, mergePapers, samePaperContent } from './dedupe'
+import type { PaperReferences } from './paperReferences'
 import { mergeNotes, planMergeFile } from './trashMerge'
 import { toUserFacing, UserFacingError } from './UserFacingError'
 
@@ -66,7 +68,7 @@ export const DEFAULT_DEVICE_ID = '00000000-0000-0000-0000-000000000000'
 export interface TrashRelations {
   countTouching(ids: string[]): Promise<number>
   removeTouching(ids: string[]): Promise<number>
-  rekey(from: string, to: string): Promise<void>
+  rekey(from: string, to: string, opts?: { keepAnalysis?: boolean }): Promise<void>
 }
 
 export interface LibraryDeps {
@@ -83,6 +85,8 @@ export interface LibraryDeps {
   /** Cancels only the queued jobs of these papers (synchronous; safe inside the serial queue). */
   cancelQueued?: (ids: string[]) => unknown
   relations?: TrashRelations
+  /** «Cambiar clave»: the other project files that name a paper (chats, drafts, mappings, facet suggestions). */
+  references?: PaperReferences
 }
 
 interface AddExtras {
@@ -860,6 +864,85 @@ export class LibraryService {
         throw toUserFacing(error)
       }
     })
+  }
+
+  /**
+   * «Cambiar clave»: the key the paper's current metadata gives, made as an ingest makes it (a web page's site stands
+   * in for missing authors), free in the library and the trash; the paper's own key counts as free, so `same` says the
+   * key it has is already the one its metadata gives.
+   */
+  async suggestKey(id: string): Promise<KeySuggestion> {
+    const read = await this.deps.store.readPaper(id).catch(() => null)
+    if (!read?.ok) throw new UserFacingError('file_problem')
+    const p = read.value
+    const base = baseCitekey({ authors: p.authors, year: p.year, title: p.title, site: p.kind === 'web' ? p.venue : undefined })
+    const key = uniqueCitekey(base, (candidate) => candidate !== id && this.keyTaken(candidate))
+    return { key, same: key === id }
+  }
+
+  /**
+   * «Cambiar clave»: the paper's folder, paper.yaml id and BibTeX key become `key`, and so does every reference to it in
+   * the project: relations.yaml first (it refuses during a git conflict, before anything changed), then the chats,
+   * drafts, mappings and facet suggestions, then the folder. A failure puts every file back as it was. The index moves
+   * the paper's rows (text, vector, neighbours) to the new key, and library.bib follows. Refused while a job of the
+   * paper is queued or running. Resolves with the new key.
+   */
+  changeKey(id: string, key: string): Promise<string> {
+    return this.serial(async () => {
+      try {
+        return await this.changeKeyNow(id, key.trim())
+      } catch (error) {
+        throw toUserFacing(error)
+      }
+    })
+  }
+
+  private async changeKeyNow(id: string, key: string): Promise<string> {
+    const { store, cache, relations, references } = this.deps
+    if (!PAPER_KEY.test(key)) throw new UserFacingError('invalid_key')
+    if (!store.paperExists(id)) throw new UserFacingError('paper_not_in_library')
+    if (key === id) throw new UserFacingError('key_unchanged')
+    if (this.keyTaken(key)) throw new UserFacingError('key_taken')
+    const read = await store.readPaper(id)
+    if (!read.ok) throw new UserFacingError('file_problem')
+    if (cache.hasActiveJobsFor(id)) throw new UserFacingError('paper_busy')
+    await relations?.rekey(id, key, { keepAnalysis: true })
+    const relationsBack = (): Promise<void> =>
+      relations?.rekey(key, id, { keepAnalysis: true }).catch((undo: unknown) => console.error('relations back to', id, undo)) ?? Promise.resolve()
+    let referencesBack: () => Promise<void>
+    try {
+      referencesBack = (await references?.rekey(id, key)) ?? (async () => {})
+    } catch (failure) {
+      await relationsBack()
+      throw failure
+    }
+    await this.exclusive(id, () =>
+      this.exclusive(key, async () => {
+        const updated_at = this.now().toISOString()
+        try {
+          await store.renamePaper(id, key, (p) => ({ ...p, id: key, bibtex: rekeyedBibtex(p.bibtex, key), updated_at }))
+        } catch (failure) {
+          await referencesBack()
+          await relationsBack()
+          throw failure
+        }
+        // The folder moved: from here on the paper has its new key, even if indexing it fails (the next reindex retries).
+        try {
+          cache.renamePaper(id, key)
+          await this.doIndex(key)
+        } catch (failure) {
+          console.error('change key: index', key, failure)
+        }
+      })
+    )
+    await this.exportBib()
+    this.emit()
+    return key
+  }
+
+  /** A key some folder uses, in the library (with or without paper.yaml) or in the trash. */
+  private keyTaken(key: string): boolean {
+    return existsSync(this.deps.store.paperDir(key)) || this.deps.store.trashExists(key)
   }
 
   protected async ingestPdfBytes(bytes: Uint8Array, fileName: string, sourceUrl: string | undefined, signal?: AbortSignal): Promise<IngestOutcome> {

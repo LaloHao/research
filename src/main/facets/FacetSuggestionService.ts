@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto'
-import type {
-  FacetSuggestion,
-  FacetSuggestionList,
-  FacetSuggestionsFile,
-  FacetSuggestionsFileState,
-  FacetSuggestionStatus,
-  FacetSuggestPlan,
-  SuggestionEdit
+import {
+  rekeyFacetSuggestions,
+  type FacetSuggestion,
+  type FacetSuggestionList,
+  type FacetSuggestionsFile,
+  type FacetSuggestionsFileState,
+  type FacetSuggestionStatus,
+  type FacetSuggestPlan,
+  type SuggestionEdit
 } from '../../shared/facetSuggestions'
 import type { JobSpec } from '../../shared/jobs'
 import type { ExtractionForm, LlmModel } from '../../shared/summary'
@@ -260,6 +261,31 @@ export class FacetSuggestionService {
     this.autoDay = day
     // The day's automatic batch: its cap is shared with the automatic relation suggestions.
     await this.request({ auto: true, batchId: `auto-${day}` })
+  }
+
+  /**
+   * «Cambiar clave»: the examples of paper `from` name `to` instead. Refused while the file has a git conflict (nothing
+   * changed then). True when the file changed.
+   */
+  async rekeyPaper(from: string, to: string): Promise<boolean> {
+    let changed = false
+    await this.serialized(async () => {
+      for (let attempt = 0; ; attempt++) {
+        const { file, hash } = await this.readFresh()
+        const next = rekeyFacetSuggestions(file, from, to)
+        if (!next) return
+        try {
+          await this.write(next, hash)
+          changed = true
+          return
+        } catch (error) {
+          if (error instanceof ConflictError && attempt === 0) continue
+          throw error
+        }
+      }
+    })
+    if (changed) this.deps.emit()
+    return changed
   }
 
   private setStatus(id: string, from: FacetSuggestionStatus, to: FacetSuggestionStatus): Promise<string> {

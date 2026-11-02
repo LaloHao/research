@@ -374,6 +374,10 @@
     "site_blocked": "El sitio bloquea las descargas automáticas ({{detail}}). Ábrelo con «Abrir en el navegador de la app» (en Actividad, o «Abrir en navegador» junto a «Agregar»), resuelve ahí la verificación si aparece y pulsa «Agregar a la biblioteca». También puedes guardar la página como PDF desde tu navegador (Ctrl+P → Guardar como PDF) y arrastrarla a la biblioteca.",
     "rate_limited": "El servicio está recibiendo demasiadas solicitudes. Espera unos minutos y reintenta.",
     "server_error": "El servidor respondió con un error ({{detail}}). Reintenta más tarde.",
+    "invalid_key": "La clave solo puede tener letras minúsculas sin acentos y números, y empieza con una letra.",
+    "key_taken": "Esa clave ya la usa otro paper de la biblioteca o de la papelera.",
+    "key_unchanged": "Es la misma clave que ya tiene.",
+    "paper_busy": "Hay trabajos de este paper o respuestas de Claude en curso. Espera a que terminen e inténtalo de nuevo.",
     "unknown": "Ocurrió un error inesperado."
   },
   "capture": {
@@ -419,6 +423,18 @@
     "cite_key": "Clave de cita",
     "copy_key": "Copiar",
     "copied": "Copiado",
+    "change_key": {
+      "open": "Cambiar",
+      "title": "Cambiar clave de cita",
+      "current": "Clave actual",
+      "new": "Nueva clave",
+      "suggested_hint": "Sugerida a partir de los metadatos actuales (primer autor, año y primera palabra del título). Puedes escribir otra: solo letras minúsculas sin acentos y números, empezando con una letra.",
+      "same_hint": "La clave actual ya es la que dan sus metadatos. Puedes escribir otra: solo letras minúsculas sin acentos y números, empezando con una letra.",
+      "warning": "Las citas que ya escribiste con la clave anterior (en tu tesis u otros documentos) dejan de funcionar: cámbialas a mano.",
+      "save": "Guardar",
+      "saving": "Guardando…",
+      "cancel": "Cancelar"
+    },
     "open_link": "Abrir enlace",
     "show_in_folder": "Mostrar en carpeta",
     "remove": "Quitar de la biblioteca",
@@ -482,7 +498,7 @@
       "venue": "Revista o evento",
       "site": "Sitio",
       "url": "URL",
-      "key_stays": "La clave de cita ({{key}}) no cambia.",
+      "key_stays": "La clave de cita ({{key}}) no cambia; para cambiarla usa «Cambiar» junto a ella.",
       "save": "Guardar",
       "cancel": "Cancelar",
       "saved": "Metadatos guardados.",

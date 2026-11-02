@@ -90,6 +90,8 @@ export const ipcArgs = {
     venue: metadataText(1000).nullable().optional(),
     url: webUrlSchema.nullable().optional()
   }),
+  /** «Cambiar clave»: any short text; a malformed key is the user's typo, answered as `invalid_key`. */
+  newKey: z.string().max(200),
   projectName: z.string().trim().min(1),
   text: z.string(),
   optionalText: z.string().optional(),

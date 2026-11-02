@@ -269,3 +269,22 @@ describe('ChatService conversations', () => {
     expect(text.startsWith(`${mine}\nAdded meanwhile.\n\n### Claude — `)).toBe(true)
   })
 })
+
+describe('ChatService.rekeyPaper', () => {
+  it('renames a paper in the conversations naming it, refusing while an answer is being prepared', async () => {
+    const { store, chats } = await setupChats()
+    await store.writeChat(chatFile([userMessage(), assistantMessage()], { scope: { paper: DRAIN_ID } }), null)
+    await store.writeChat(chatFile([userMessage({ text: 'Loghub?' }), assistantMessage({ text: 'Nothing cited.' })], { id: OTHER }), null)
+    await chats.reindex()
+    const sending = (chats as unknown as { sending: Set<string> }).sending
+    sending.add(OTHER)
+    await expect(chats.rekeyPaper(DRAIN_ID, 'he2017online')).rejects.toMatchObject({ code: 'paper_busy' })
+    sending.delete(OTHER)
+    expect(await chats.rekeyPaper(DRAIN_ID, 'he2017online')).toEqual([CHAT_ID_A])
+    expect(chats.list({ paper: 'he2017online' }).map((c) => c.id)).toEqual([CHAT_ID_A])
+    // An undo names the conversations, and is never refused.
+    sending.add(OTHER)
+    expect(await chats.rekeyPaper('he2017online', DRAIN_ID, [CHAT_ID_A])).toEqual([CHAT_ID_A])
+    expect(chats.list({ paper: DRAIN_ID }).map((c) => c.id)).toEqual([CHAT_ID_A])
+  })
+})

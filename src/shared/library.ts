@@ -107,6 +107,10 @@ export const USER_ERROR_CODES = [
   'site_blocked',
   'rate_limited',
   'server_error',
+  'invalid_key',
+  'key_taken',
+  'key_unchanged',
+  'paper_busy',
   'unknown'
 ] as const
 export type UserErrorCode = (typeof USER_ERROR_CODES)[number]
@@ -170,6 +174,15 @@ export interface MetadataEdit {
 
 /** A metadata edit: `undoToken` is what «Deshacer» sends back (null when nothing changed). */
 export type MetadataEditResult = { ok: true; undoToken: string | null } | { ok: false; error: string }
+
+/** «Cambiar clave»: the key the paper's current metadata gives (free in the library and the trash); `same` when that is its key already. */
+export interface KeySuggestion {
+  key: string
+  same: boolean
+}
+
+/** «Cambiar clave»: the paper's new key, or why it was refused. */
+export type ChangeKeyResult = { ok: true; key: string } | { ok: false; error: string }
 
 export const INGEST_STATUSES = ['added', 'merged', 'duplicate'] as const
 export type IngestStatus = (typeof INGEST_STATUSES)[number]

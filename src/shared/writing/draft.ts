@@ -1,6 +1,7 @@
 /** «Borrador»: a section Claude drafts from chosen papers, kept in drafts/<id>.md with its earlier versions. */
 import { z } from 'zod'
 import { CHAT_ID, MESSAGE_AT, MESSAGE_MODEL, PAPER_KEY, type ChatCitation, type ChatStreamEvent } from '../chat'
+import { rekeyCitations } from '../chatCitations'
 import { LLM_MODELS, type LlmModel } from '../summary'
 import { convertMarkers, type ConvertOptions, type ConvertResult } from './convert'
 
@@ -145,6 +146,14 @@ export type DraftStreamUpdate = DraftStreamEvent & { draftId: string; seq: numbe
 export type DraftOpenResult = { ok: true; draft: DraftView } | { ok: false; error: string }
 export type DraftRunResult = { ok: true; draftId: string } | { ok: false; error: string }
 export type DraftEditResult = { ok: true; check: DraftCheck } | { ok: false; error: string }
+
+/** «Cambiar clave»: the draft with paper `from` called `to` (its chosen papers and every version's citation markers), or null when it does not name `from`. */
+export function rekeyDraft(file: DraftFile, from: string, to: string): DraftFile | null {
+  const papers = file.meta.papers.includes(from) ? [...new Set(file.meta.papers.map((p) => (p === from ? to : p)))] : file.meta.papers
+  const texts = file.texts.map((text) => rekeyCitations(text, from, to))
+  if (papers === file.meta.papers && texts.every((text, i) => text === file.texts[i])) return null
+  return { meta: { ...file.meta, papers }, texts }
+}
 
 /** How many `[[sin cita]]` marks a text has. */
 export function uncitedCount(text: string): number {

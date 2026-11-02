@@ -107,6 +107,14 @@
 - The review mode loads a relation item with three requests (the paper's relations and both papers' details), one after another.
 - Candidates use only the stored neighbours; a paper added after the last neighbour recompute is a candidate only once the neighbours are updated.
 
+## «Cambiar clave» technical minutiae
+
+- Order (LibraryService.changeKey, serialized with ingests and trash operations): validate (`^[a-z][a-z0-9]*$`, not the current key, no folder under that key in `papers/` or `.trash/`, no queued or running job naming the paper), then relations.yaml (refuses during a git conflict; the paper's own `analyzed` record moves with it), then facet-suggestions.yaml (refuses during a git conflict), chats and drafts (refused while any answer or draft is being written, not only those naming the paper), mapping records, and last the folder (paper.yaml rewritten in place, hash-checked, then one rename; the on-demand PDF in `.cache/pdfs/` follows). A failure undoes what ran, newest first, by renaming back (only the files that changed); an undo that itself fails is logged, not reported. Undone chats, drafts and relations keep a new `updated_at`.
+- Not rewritten: the user's own files outside the project (thesis chapters, other documents) — the dialog warns; notes.md text and summaries (user and model prose); chat action records (their `args`/`result` are a log of what ran); `costs/*.jsonl` (`paper_id` of past calls, append-only); finished jobs keep their spec (only the index's `paper_id` link moves); a chat or draft file that cannot be read (conflict markers, invalid frontmatter) is skipped and keeps the old key. A conversation's in-memory writing context and an editor buffer of `research-ask` may still show the old key until refreshed.
+- Index: the paper's rows (text, chunks, summary text, vector, citations, neighbours, facet values) move to the new key in one transaction, so nothing is extracted or embedded again; neighbours are then recomputed for both keys.
+- Sync: other machines get a delete of `papers/<old>/` plus an add of `papers/<new>/` and the rewritten files; a machine that edited the paper under the old key meanwhile gets a conflict on the old folder (the usual paper conflict). An untracked PDF of the old key on another machine (policy «no versionar») stays in its old folder there.
+- Metadata-edit undo tokens of the old key stop working (the paper.yaml hash changed). No chat action or local API tool changes a key.
+
 ## Paper trash technical minutiae
 
 - Removing a paper drops it from its neighbours' lists without backfilling: a paper that had it in its top 10 shows 9 neighbours until the next full recompute (end of a batch, project open).
