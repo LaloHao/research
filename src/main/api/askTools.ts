@@ -34,7 +34,9 @@ const capped = (max: number) => z.string().refine((s) => [...s].length <= max, `
 
 const ASK_INPUT = {
   question: z.string().trim().min(1).max(MAX_CHAT_MESSAGE),
-  text: passage.optional().describe('The passage the question is about; required to start a conversation, not given in a follow-up'),
+  text: passage
+    .optional()
+    .describe('The passage the question is about; required to start a conversation. In a follow-up, the same passage as it is now (the author may have edited it); omitted, the conversation keeps the one it has'),
   file: z.string().max(4096).optional().describe("The file's name (its folder is dropped)"),
   section: z.string().max(MAX_WRITING_SECTION).optional().describe('The heading path, e.g. "Chapter 2 › Related work"'),
   scope: z.enum(WRITING_SCOPES).optional().describe('What the passage is: region (default), paragraph, subtree or file'),
@@ -66,7 +68,8 @@ const contextOf = (args: AskArgs): ChatWritingContext | undefined => {
 
 /** The characters this question sends Claude beyond a plain chat question: the passage and its background. */
 async function inputChars(ctx: ApiContext, args: AskArgs, summary: ChatSummary | null): Promise<number> {
-  const passage = summary ? [...((await ctx.chats.open(summary.id).catch(chatError)).writing?.passage ?? '')].length : [...(args.text ?? '')].length
+  const passage =
+    summary && args.text === undefined ? [...((await ctx.chats.open(summary.id).catch(chatError)).writing?.passage ?? '')].length : [...(args.text ?? '')].length
   return passage + [...(args.chapter ?? '')].length + [...(args.outline ?? '')].length
 }
 
@@ -80,11 +83,12 @@ function followed(ctx: ApiContext, id: string): ChatSummary {
   return summary
 }
 
-/** The arguments checked before anything is spent: a passage to start, none in a follow-up. */
+/** The arguments checked before anything is spent: a passage to start; in a follow-up, none or the same one as it is now. */
 function checked(ctx: ApiContext, args: AskArgs): { summary: ChatSummary | null } {
   if (args.conversation_id) {
-    if (args.text !== undefined) throw new ApiError('invalid', 'A follow-up keeps the passage its conversation started with: do not send text.')
-    return { summary: followed(ctx, args.conversation_id) }
+    const summary = followed(ctx, args.conversation_id)
+    if (args.text !== undefined && !args.text.trim()) throw new ApiError('invalid', 'The passage (text) of a follow-up, when sent, is not empty.')
+    return { summary }
   }
   if (!args.text?.trim()) throw new ApiError('invalid', 'Send the passage (text) the question is about.')
   return { summary: null }
@@ -167,7 +171,9 @@ export const ASK_API_TOOLS: ApiTool[] = [
           mode,
           ...(contextOf(args) ? { context: contextOf(args) } : {}),
           ...(summary
-            ? {}
+            ? args.text !== undefined
+              ? { passage: args.text }
+              : {}
             : {
                 writing: {
                   source: 'emacs' as const,

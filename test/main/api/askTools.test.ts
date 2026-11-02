@@ -190,6 +190,26 @@ describe('local API: ask (Claude’s opinion on a passage)', () => {
     expect(provider.chatCalls[2].input).not.toContain('Más texto')
   })
 
+  it('a follow-up may send the passage as it is now: it replaces the conversation\'s, in the prompt and in its file', async () => {
+    const { store, provider, chats, ctx } = await project([chatAnswer('First.'), chatAnswer('Second.'), chatAnswer('Third.')])
+    const server = await serve(ctx)
+    const { conversation_id: id } = await ok(server, 'ask', { ...START, confirmed: true })
+    await chats.idle()
+    const edited = 'Antecedentes: ahora con texto escrito.'
+    expect(await ok(server, 'ask', { question: '¿Y ahora?', conversation_id: id, text: edited })).toMatchObject({ input_chars: edited.length })
+    expect((await call(server, 'ask', { question: '¿Y ahora?', conversation_id: id, text: '  ' })).text).toMatch(/^invalid: /)
+    await ok(server, 'ask', { question: '¿Y ahora?', conversation_id: id, text: edited, confirmed: true })
+    await chats.idle()
+    expect(provider.chatCalls[1].input).toContain(`<passage>\n${edited}\n</passage>`)
+    expect(provider.chatCalls[1].input).not.toContain('Drain parses logs online')
+    expect(provider.chatCalls[1].system).toContain('the author may have edited it since earlier turns')
+    expect(JSON.stringify(await store.readChat(id))).toContain(edited)
+    // Without text, the follow-up keeps the last one sent.
+    await ok(server, 'ask', { question: '¿Algo más?', conversation_id: id, confirmed: true })
+    await chats.idle()
+    expect(provider.chatCalls[2].input).toContain(`<passage>\n${edited}\n</passage>`)
+  })
+
   it('refuses a chapter or an outline over its cap, counted in characters', async () => {
     const { provider, ctx } = await project([chatAnswer('ok')])
     const server = await serve(ctx)
