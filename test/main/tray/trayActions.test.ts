@@ -51,7 +51,7 @@ describe('tray actions', () => {
     const { deps, calls } = fakeDeps({ readClipboard: () => 'my secret notes' })
     await runTrayAction('add-clipboard', deps)
     await runTrayAction('browse-clipboard', deps)
-    expect(calls).toEqual(['notify El portapapeles no tiene un DOI, arXiv o URL', 'notify El portapapeles no tiene una URL http(s)'])
+    expect(calls).toEqual(['notify El portapapeles no tiene un DOI, arXiv, ISBN o URL', 'notify El portapapeles no tiene una URL http(s)'])
     expect(calls.join(' ')).not.toContain('secret')
   })
 

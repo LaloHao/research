@@ -93,5 +93,5 @@ function rebuiltEntry(p: Paper): string {
   if (p.kind === 'web' && url) {
     return buildOnlineEntry({ key: p.id, title: p.title, authors: p.authors, site: p.venue, year: p.year, url, urldate: p.added_at.slice(0, 10) })
   }
-  return buildFallbackEntry({ key: p.id, kind: p.kind, title: p.title, authors: p.authors, year: p.year, venue: p.venue, doi: p.identifiers.doi, arxiv: p.identifiers.arxiv, url })
+  return buildFallbackEntry({ key: p.id, kind: p.kind, title: p.title, authors: p.authors, year: p.year, venue: p.venue, doi: p.identifiers.doi, arxiv: p.identifiers.arxiv, isbn: p.identifiers.isbn, url })
 }

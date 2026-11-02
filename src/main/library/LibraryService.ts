@@ -130,6 +130,8 @@ export class LibraryService {
           return await this.add(await this.deps.resolver.byArxiv(parsed.arxiv, signal), { signal })
         case 'openalex':
           return await this.add(await this.deps.resolver.byOpenAlex(parsed.openalex, signal), { signal })
+        case 'isbn':
+          return await this.add(await this.deps.resolver.byIsbn(parsed.isbn, signal), { signal })
         case 'url':
           return await this.ingestUrl(parsed.url, signal)
       }
@@ -299,14 +301,21 @@ export class LibraryService {
     try {
       const read = await store.readPaper(id)
       if (!read.ok) throw new UserFacingError('file_problem')
-      let { doi, arxiv } = read.value.identifiers
+      let { doi, arxiv, isbn } = read.value.identifiers
       if (input?.trim()) {
         const parsed = parseInput(input)
-        if (parsed.kind === 'doi') [doi, arxiv] = [parsed.doi, undefined]
-        else if (parsed.kind === 'arxiv') [doi, arxiv] = [undefined, parsed.arxiv]
+        if (parsed.kind === 'doi') [doi, arxiv, isbn] = [parsed.doi, undefined, undefined]
+        else if (parsed.kind === 'arxiv') [doi, arxiv, isbn] = [undefined, parsed.arxiv, undefined]
+        else if (parsed.kind === 'isbn') [doi, arxiv, isbn] = [undefined, undefined, parsed.isbn]
         else throw new UserFacingError('invalid_identifier')
       }
-      const meta = doi ? await resolver.byDoi(doi, signal) : arxiv ? await resolver.byArxiv(arxiv, signal) : null
+      const meta = doi
+        ? await resolver.byDoi(doi, signal)
+        : arxiv
+          ? await resolver.byArxiv(arxiv, signal)
+          : isbn
+            ? await resolver.byIsbn(isbn, signal)
+            : null
       if (!meta) throw new UserFacingError('no_identifier')
       const fresh = buildPaper(meta, id, this.now())
       const before = read.value.identifiers

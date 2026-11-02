@@ -116,7 +116,7 @@ export function typedIdentifier(identifier: unknown, latest: string | null): str
     }
     if (!ID_HOSTS.test(host)) return null
   }
-  const id = parsed.kind === 'doi' ? parsed.doi : parsed.kind === 'arxiv' ? parsed.arxiv : parsed.openalex
+  const id = parsed.kind === 'doi' ? parsed.doi : parsed.kind === 'arxiv' ? parsed.arxiv : parsed.kind === 'isbn' ? parsed.isbn : parsed.openalex
   return id === '' ? null : span(occursWhole(id.toLowerCase(), lower), id.length)
 }
 

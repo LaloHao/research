@@ -28,6 +28,26 @@ describe('LibraryService.ingestIdentifier', () => {
     expect(changes).toBeGreaterThan(0)
   })
 
+  it('adds a book by ISBN with its @book entry, and says when no catalogue has it', async () => {
+    const { store, library, resolver } = await setupLibrary()
+    resolver.setIsbn('9781491929124', {
+      kind: 'book',
+      title: 'Site Reliability Engineering: How Google Runs Production Systems',
+      authors: [{ family: 'Beyer', given: 'Betsy' }],
+      year: 2016,
+      venue: "O'Reilly Media",
+      identifiers: { isbn: '9781491929124' },
+      bibtex: '@book{isbn,\n  editor = {Beyer, Betsy},\n  title = {Site Reliability Engineering},\n  isbn = {9781491929124}\n}',
+      complete: true
+    })
+    expect(await library.ingestIdentifier('ISBN 978-1-4919-2912-4')).toEqual({ status: 'added', paperId: 'beyer2016site' })
+    const read = await store.readPaper('beyer2016site')
+    expect(read.ok && read.value.identifiers).toEqual({ isbn: '9781491929124' })
+    expect(read.ok && read.value.bibtex.startsWith('@book{beyer2016site,')).toBe(true)
+    expect(await library.ingestIdentifier('149192912X')).toEqual({ status: 'duplicate', paperId: 'beyer2016site' })
+    await expect(library.ingestIdentifier('978-0-262-03384-8')).rejects.toMatchObject({ code: 'isbn_not_found' })
+  })
+
   it('reports a duplicate instead of adding twice', async () => {
     const { store, library } = await setupLibrary({ resolver: { '10.1109/icws.2017.13': DRAIN } })
     await library.ingestIdentifier('10.1109/ICWS.2017.13')

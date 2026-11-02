@@ -8,7 +8,7 @@ export interface ResolvedMetadata {
   year?: number
   venue?: string
   abstract?: string
-  identifiers: { doi?: string; arxiv?: string; openalex?: string; url?: string }
+  identifiers: { doi?: string; arxiv?: string; openalex?: string; isbn?: string; url?: string }
   oa_pdf_url?: string
   /** Publisher/registry BibTeX with whatever key it came with. */
   bibtex?: string

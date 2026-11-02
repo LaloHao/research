@@ -23,7 +23,7 @@ const page = {
 
 /** The arguments of each tool of the actions server. A path is never an argument: attach_pdf's file is picked by the user. */
 export const ACTION_INPUTS = {
-  add_paper: { identifier: z.string().trim().min(1).max(2000).describe('A DOI, an arXiv id or a URL; it runs without asking only when the user typed this identifier in their latest message'), request_quote: requestQuote },
+  add_paper: { identifier: z.string().trim().min(1).max(2000).describe('A DOI, an arXiv id, an ISBN (for a book) or a URL; it runs without asking only when the user typed this identifier in their latest message'), request_quote: requestQuote },
   write_note: { paper_id: paperId, text: z.string().trim().min(1).max(20_000).describe('Markdown to append'), request_quote: requestQuote },
   decide_relation: {
     relation_id: z.string().max(200).regex(RELATION_ID),
@@ -83,7 +83,7 @@ const ASK = " Put in request_quote the words of the user's latest message that a
 const ALWAYS_ASKS = ' The app always asks the user to approve it; the call waits for the answer.'
 
 export const ACTION_DESCRIPTIONS: Record<ActionTool | ActionReadTool, string> = {
-  add_paper: `Adds a paper to the library by its DOI, arXiv id or URL, like «Agregar» in the app, and returns its key once added.${ASK}`,
+  add_paper: `Adds a paper to the library by its DOI, arXiv id, ISBN (a book) or URL, like «Agregar» in the app, and returns its key once added.${ASK}`,
   write_note: `Appends Markdown to the end of a paper's notes (notes.md), under a dated heading.${ASK}`,
   decide_relation: `Decides a typed relation: confirm, reject, back_to_suggested, change_type (with type) or reverse. Relation ids come from list_relations.${ASK}`,
   review_summary: `Marks a summary entry as verified, or back to generated: section fields (key: a summary field), facets (key: a facet key) or thesis. Without section and with status verified, verifies the whole summary.${ASK}`,

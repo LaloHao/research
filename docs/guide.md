@@ -55,7 +55,7 @@ The project folder is plain text (YAML, Markdown), meant to be versioned with gi
 
 In the library's top bar you can:
 
-- **Paste a DOI, an arXiv id or a URL** and tap «Agregar» (Add). It also accepts an OpenAlex id (`W2741809807` or `https://openalex.org/W2741809807`); that's what «Agregar» (Add) in Candidates uses for works without a DOI. For a URL that isn't a DOI or arXiv id, the app looks at what's behind it: if it serves a PDF, it's added as a PDF; if the page has a DOI or an arXiv id, that identifier is used; otherwise it's saved as a web page (grey literature), with its readable text if found, and if not, it warns that «La página no tiene un artículo legible.» (The page has no readable article.).
+- **Paste a DOI, an arXiv id or a URL** and tap «Agregar» (Add). It also accepts an OpenAlex id (`W2741809807` or `https://openalex.org/W2741809807`); that's what «Agregar» (Add) in Candidates uses for works without a DOI. A **book** is added by its **ISBN** (10 or 13 digits, with or without hyphens or a leading «ISBN»; an ISBN with a wrong check digit is not accepted): the app takes title, subtitle, authors or editors, publisher and year from Open Library, fills what's missing from Google Books, and stores it as a `@book` with `publisher` and `isbn` (with `editor` instead of `author` when Open Library says it's an edited volume). A book's ISBN-10 and ISBN-13 are the same identifier. If neither catalogue has it, it says «No encontré ese ISBN en Open Library ni en Google Books.» (I couldn't find that ISBN in Open Library or Google Books.). Many academic books (Springer, ACM, IEEE, MIT Press) also have a DOI, which usually gives better metadata. For a URL that isn't a DOI or arXiv id, the app looks at what's behind it: if it serves a PDF, it's added as a PDF; if the page has a DOI or an arXiv id, that identifier is used; otherwise it's saved as a web page (grey literature), with its readable text if found, and if not, it warns that «La página no tiene un artículo legible.» (The page has no readable article.).
 - **Drag one or more PDFs** onto the library.
 - **Open a URL in the app's browser** with «Abrir en navegador» (Open in browser), next to «Agregar» (Add); see "Sites that block downloads" below.
 - **From your own browser**, with the Research Connector extension for Firefox and Chrome; see "Browser extension" below.
@@ -350,7 +350,7 @@ You can talk with Claude about your library in two places:
 
 Every conversation starts out only reading your library. Its header has two switches, off by default, saved with the conversation (and synced with it):
 
-- **«Acciones»** (Actions): from this conversation Claude can add papers (DOI, arXiv or URL), attach a PDF, write notes, confirm, reject, send back to suggested, retype or reverse typed relations, verify or edit a summary's fields and facets, accept or merge proposed values, accept, reject or restore facet suggestions, start summaries, relation and facet suggestions and filling new facets, move papers to the trash, restore them and delete them for good.
+- **«Acciones»** (Actions): from this conversation Claude can add papers (DOI, arXiv, ISBN or URL), attach a PDF, write notes, confirm, reject, send back to suggested, retype or reverse typed relations, verify or edit a summary's fields and facets, accept or merge proposed values, accept, reject or restore facet suggestions, start summaries, relation and facet suggestions and filling new facets, move papers to the trash, restore them and delete them for good.
 - **«Sincronizar con git»** (Sync with git): Claude can see the sync's state and its conflicts (free) and, if you let it, sync now or resolve conflicts (always asked first). It doesn't need «Acciones».
 
 **Who decides.** The app enforces the rule, not Claude:
@@ -501,7 +501,7 @@ While the app runs it puts an icon in the system tray (on KDE Plasma and other d
 Left click shows the window, or hides it when it's already in front. The right-click menu:
 
 - **«Mostrar ventana» / «Ocultar ventana»** (Show / Hide window).
-- **The project's name**, and **«Agregar desde el portapapeles»** (Add from the clipboard): if the clipboard holds a DOI, an arXiv or OpenAlex id or an http(s) address, it's added exactly as from the «Agregar» box (a job that shows in Activity); otherwise a notification says «El portapapeles no tiene un DOI, arXiv o URL» (The clipboard has no DOI, arXiv or URL). The clipboard is read only when you pick the item, used only for that, and never written to the log.
+- **The project's name**, and **«Agregar desde el portapapeles»** (Add from the clipboard): if the clipboard holds a DOI, an arXiv or OpenAlex id, an ISBN or an http(s) address, it's added exactly as from the «Agregar» box (a job that shows in Activity); otherwise a notification says «El portapapeles no tiene un DOI, arXiv, ISBN o URL» (The clipboard has no DOI, arXiv, ISBN or URL). The clipboard is read only when you pick the item, used only for that, and never written to the log.
 - **«Abrir en el navegador de la app»** (Open in the app's browser): opens the http(s) address in the clipboard in the app's browser, to capture the page (see "Sites that block downloads").
 - **The sync status** and **«Sincronizar ahora»** (Sync now): the same as the rail's ⟳ button. It syncs right away when it can; if the repository has no remote, conflicts are waiting, or the sync fails or ends in conflicts, the window opens on the Sync view. Disabled while the project isn't in a git repository or a sync is running.
 - **«N trabajos en curso»** (N jobs in progress), when there are some.
@@ -675,7 +675,7 @@ The summarize button is disabled and «Forzar» (Force) appears, which summarize
 The paper's status shows «PDF sin texto (escaneado)» (PDF without text (scanned)); this app doesn't do OCR, so that paper can't be summarized until you get a version with text.
 
 **«Los metadatos están incompletos.»** (Metadata is incomplete.)
-Title, authors, or other paper data still needs completing. Paste a DOI or arXiv id next to the notice and tap «Completar» (Complete), or «Reintentar» (Retry) if it already had one.
+Title, authors, or other paper data still needs completing. Paste a DOI, arXiv id or ISBN next to the notice and tap «Completar» (Complete), or «Reintentar» (Retry) if it already had one.
 
 **«El formulario cambió fuera de este editor»** (The form changed from outside this editor)
 Another machine (or a `git pull`) changed `project.yaml` while you had unsaved changes of your own in the form editor. Use «Descartar mis cambios y recargar» (Discard my changes and reload) to see the new version, and reapply your changes if they were still needed.

@@ -1,5 +1,6 @@
-import type { PaperKind } from '../../shared/schemas'
-import type { HttpClient } from './http'
+import type { Author, PaperKind } from '../../shared/schemas'
+import { buildEntry, formatAuthors, type BibField } from './bibtex'
+import { HttpError, type HttpClient } from './http'
 import { arxivDoi, arxivFromDoi, normalizeDoi } from './identifiers'
 import { authorFromDisplayName, bareOpenAlexId } from './openalex'
 import type { ResolvedMetadata } from './types'
@@ -8,6 +9,8 @@ export interface MetadataSource {
   byDoi(doi: string, signal?: AbortSignal): Promise<ResolvedMetadata>
   byArxiv(id: string, signal?: AbortSignal): Promise<ResolvedMetadata>
   byOpenAlex(id: string, signal?: AbortSignal): Promise<ResolvedMetadata>
+  /** A book by its ISBN-13 (normalizeIsbn): Open Library, then Google Books for what it lacks. */
+  byIsbn(isbn: string, signal?: AbortSignal): Promise<ResolvedMetadata>
 }
 
 interface CslName {
@@ -124,6 +127,145 @@ export class MetadataResolver implements MetadataSource {
       return meta
     }
     return fromOpenAlexWork(work, id)
+  }
+
+  async byIsbn(isbn: string, signal?: AbortSignal): Promise<ResolvedMetadata> {
+    const olUrl = `https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`
+    let olError: unknown = null
+    const ol = await this.http
+      .json<Record<string, OpenLibraryBook>>(olUrl, 'application/json', signal)
+      .then((r) => fromOpenLibrary(r[`ISBN:${isbn}`]))
+      .catch((error: unknown) => {
+        if (signal?.aborted) throw error
+        olError = error
+        return null
+      })
+    // Google Books only fills what Open Library lacks: without a key its quota is small and often spent.
+    const google =
+      ol && ol.title && ol.authors.length && ol.year && ol.publisher
+        ? null
+        : await this.http
+            .json<GoogleBooksAnswer>(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`, 'application/json', signal)
+            .then((r) => fromGoogleBooks(r.items?.[0]?.volumeInfo))
+            .catch((error: unknown) => {
+              if (signal?.aborted) throw error
+              return null
+            })
+    const book = mergeBooks(ol, google)
+    // Open Library failing (network, 5xx) is not «not found»: that error is the one to show.
+    if (!book?.title) throw olError ?? new HttpError(404, olUrl)
+    return bookMetadata(isbn, book)
+  }
+}
+
+interface OpenLibraryBook {
+  title?: string
+  subtitle?: string
+  authors?: { name?: string }[]
+  by_statement?: string
+  publishers?: { name?: string }[]
+  publish_date?: string
+}
+
+interface GoogleVolume {
+  title?: string
+  subtitle?: string
+  authors?: string[]
+  publisher?: string
+  publishedDate?: string
+  description?: string
+}
+
+interface GoogleBooksAnswer {
+  items?: { volumeInfo?: GoogleVolume }[]
+}
+
+interface Book {
+  title?: string
+  authors: Author[]
+  /** The names are the book's editors («edited by …»): BibTeX `editor`, not `author`. */
+  edited: boolean
+  year?: number
+  publisher?: string
+  abstract?: string
+}
+
+const yearIn = (s?: string): number | undefined => {
+  const m = s?.match(/\b(1[5-9]\d\d|20\d\d)\b/)
+  return m ? Number(m[1]) : undefined
+}
+
+const bookTitle = (title?: string, subtitle?: string): string | undefined => {
+  const t = title?.trim()
+  if (!t) return undefined
+  const sub = subtitle?.trim()
+  return sub && !t.toLowerCase().includes(sub.toLowerCase()) ? `${t}: ${sub}` : t
+}
+
+/** «Jones, Chris (Computer engineer)» or «Betsy Beyer» (Open Library writes both). */
+export function bookAuthor(name: string): Author | null {
+  const clean = name.replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!clean) return null
+  const comma = clean.match(/^([^,]+),\s*(.+)$/)
+  return comma ? { family: comma[1].trim(), given: comma[2].trim() } : authorFromDisplayName(clean)
+}
+
+function fromOpenLibrary(b?: OpenLibraryBook): Book | null {
+  if (!b) return null
+  return {
+    title: bookTitle(b.title, b.subtitle),
+    authors: (b.authors ?? []).flatMap((a) => (a.name ? [bookAuthor(a.name)].filter((x): x is Author => !!x) : [])),
+    edited: /^\s*edited\b/i.test(b.by_statement ?? ''),
+    year: yearIn(b.publish_date),
+    publisher: b.publishers?.[0]?.name?.trim() || undefined
+  }
+}
+
+function fromGoogleBooks(v?: GoogleVolume): Book | null {
+  if (!v) return null
+  return {
+    title: bookTitle(v.title, v.subtitle),
+    authors: (v.authors ?? []).flatMap((n) => [bookAuthor(n)].filter((x): x is Author => !!x)),
+    edited: false,
+    year: yearIn(v.publishedDate),
+    publisher: v.publisher?.trim() || undefined,
+    abstract: v.description ? stripTags(v.description) : undefined
+  }
+}
+
+function mergeBooks(a: Book | null, b: Book | null): Book | null {
+  if (!a || !b) return a ?? b
+  return {
+    title: a.title ?? b.title,
+    authors: a.authors.length ? a.authors : b.authors,
+    edited: a.authors.length ? a.edited : b.edited,
+    year: a.year ?? b.year,
+    publisher: a.publisher ?? b.publisher,
+    abstract: a.abstract ?? b.abstract
+  }
+}
+
+function bookMetadata(isbn: string, book: Book): ResolvedMetadata {
+  const title = book.title ?? isbn
+  const names = book.authors.length ? formatAuthors(book.authors) : undefined
+  const fields: BibField[] = [
+    [book.edited ? 'editor' : 'author', names, true],
+    ['title', title],
+    ['publisher', book.publisher],
+    ['year', book.year],
+    ['isbn', isbn, true]
+  ]
+  return {
+    kind: 'book',
+    title,
+    authors: book.authors,
+    year: book.year,
+    venue: book.publisher,
+    abstract: book.abstract,
+    identifiers: { isbn },
+    // The key is replaced when the paper is built (rekeyBibtex).
+    bibtex: buildEntry('book', 'isbn', fields),
+    complete: !!book.title && book.authors.length > 0 && book.year !== undefined
   }
 }
 

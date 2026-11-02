@@ -7,7 +7,7 @@ export type ClipboardAction = { kind: 'add'; input: string } | { kind: 'browse';
 const MAX_CLIPBOARD_CHARS = 4000
 
 /**
- * `add`: a DOI, an arXiv or OpenAlex id, or an http(s) address, as the «Agregar» box accepts them (`parseInput`).
+ * `add`: a DOI, an arXiv or OpenAlex id, an ISBN, or an http(s) address, as the «Agregar» box accepts them (`parseInput`).
  * `browse`: an http(s) address only. Anything else (empty, several lines, plain text) is `none`.
  */
 export function clipboardAction(text: string, mode: 'add' | 'browse'): ClipboardAction {

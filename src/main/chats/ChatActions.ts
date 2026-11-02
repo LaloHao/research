@@ -152,7 +152,7 @@ export class ChatActions implements ActionExecutor {
     switch (tool) {
       case 'add_paper': {
         const { identifier } = input('add_paper', raw)
-        if (parseInput(identifier).kind === 'invalid') throw new ToolError('That is not a DOI, an arXiv id or a URL.')
+        if (parseInput(identifier).kind === 'invalid') throw new ToolError('That is not a DOI, an arXiv id, an ISBN or a URL.')
         // With automatic summaries on, adding queues a summary: it spends, so it asks with that summary's estimate.
         const spends = store.config.llm.auto_summarize
         const cost = spends ? await this.cost(1, 'summarize', this.deps.estimate('summarize'), false) : null

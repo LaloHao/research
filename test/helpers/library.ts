@@ -74,6 +74,17 @@ export class FakeResolver implements MetadataSource {
     this.map.set(`openalex:${id.toLowerCase()}`, meta)
   }
 
+  setIsbn(isbn: string, meta: ResolvedMetadata): void {
+    this.map.set(`isbn:${isbn}`, meta)
+  }
+
+  async byIsbn(isbn: string): Promise<ResolvedMetadata> {
+    this.calls.push(`isbn:${isbn}`)
+    const meta = this.map.get(`isbn:${isbn}`)
+    if (!meta) throw new HttpError(404, `https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`)
+    return structuredClone(meta)
+  }
+
   async byOpenAlex(id: string): Promise<ResolvedMetadata> {
     this.calls.push(`openalex:${id}`)
     const meta = this.map.get(`openalex:${id.toLowerCase()}`)
