@@ -102,3 +102,53 @@ describe('invertedIndexToText', () => {
     expect(invertedIndexToText({ logs: [1], parsing: [2], Online: [0], logs2: [] })).toBe('Online logs parsing')
   })
 })
+
+describe('MetadataResolver.byIsbn', () => {
+  const OL = 'https://openlibrary.org/api/books?bibkeys=ISBN:9781491929124&format=json&jscmd=data'
+  const GOOGLE = 'https://www.googleapis.com/books/v1/volumes?q=isbn:9781491929124'
+
+  it('resolves a book from Open Library as an edited @book with publisher and ISBN', async () => {
+    const fetch = routeFetch([{ url: OL, body: fx('sre-book.openlibrary.json') }])
+    const meta = await new MetadataResolver(new HttpClient({ fetch, sleep: async () => {} })).byIsbn('9781491929124')
+    expect(meta).toMatchObject({
+      kind: 'book',
+      title: 'Site Reliability Engineering: How Google Runs Production Systems',
+      year: 2016,
+      venue: "O'Reilly Media, Inc.",
+      identifiers: { isbn: '9781491929124' },
+      complete: true
+    })
+    expect(meta.authors.slice(0, 2)).toEqual([
+      { family: 'Beyer', given: 'Betsy' },
+      { family: 'Jones', given: 'Chris' }
+    ])
+    expect(meta.bibtex).toMatch(/^@book\{isbn,/)
+    expect(meta.bibtex).toMatch(/editor = \{Beyer, Betsy and Jones, Chris and/)
+    expect(meta.bibtex).not.toMatch(/\bauthor =/)
+    expect(meta.bibtex).toContain('isbn = {9781491929124}')
+    expect(meta.bibtex).toContain('year = {2016}')
+    // Open Library had everything: Google Books is not asked.
+    expect(fetch.calls.map((c) => c.url)).toEqual([OL])
+  })
+
+  it('fills what Open Library lacks from Google Books', async () => {
+    const google = { items: [{ volumeInfo: { title: 'Postmortems', authors: ['Ana López'], publisher: 'Acme Press', publishedDate: '2021-05-02', description: '<p>About <b>incidents</b>.</p>' } }] }
+    const meta = await resolver([
+      { url: OL, body: JSON.stringify({ 'ISBN:9781491929124': { title: 'Postmortems' } }) },
+      { url: GOOGLE, body: JSON.stringify(google) }
+    ]).byIsbn('9781491929124')
+    expect(meta).toMatchObject({ title: 'Postmortems', authors: [{ family: 'López', given: 'Ana' }], year: 2021, venue: 'Acme Press', abstract: 'About incidents .', complete: true })
+    expect(meta.bibtex).toMatch(/author = \{López, Ana\}/)
+  })
+
+  it('uses Google Books alone when Open Library has no such book, and fails as not found when neither has it', async () => {
+    const google = { items: [{ volumeInfo: { title: 'Only in Google', authors: ['X Y'], publishedDate: '2019' } }] }
+    expect((await resolver([{ url: OL, body: '{}' }, { url: GOOGLE, body: JSON.stringify(google) }]).byIsbn('9781491929124')).title).toBe('Only in Google')
+    // Google Books without quota (429) and nothing in Open Library.
+    await expect(resolver([{ url: OL, body: '{}' }, { url: GOOGLE, status: 429, body: '{}' }]).byIsbn('9781491929124')).rejects.toMatchObject({ status: 404, url: OL })
+  })
+
+  it("reports Open Library's own failure, not «not found», when Google Books can't fill in", async () => {
+    await expect(resolver([{ url: OL, status: 503, body: 'down' }, { url: GOOGLE, status: 429, body: '{}' }]).byIsbn('9781491929124')).rejects.toMatchObject({ status: 503 })
+  })
+})

@@ -215,7 +215,9 @@ export function PaperDetail({
 
   const tabs: Tab[] = paperTabs(detail)
   const active = tabs.includes(tab) ? tab : tabs[0]
-  const link = paper.identifiers.doi ? `https://doi.org/${paper.identifiers.doi}` : paper.identifiers.url
+  const link = paper.identifiers.doi
+    ? `https://doi.org/${paper.identifiers.doi}`
+    : (paper.identifiers.url ?? (paper.identifiers.isbn ? `https://openlibrary.org/isbn/${paper.identifiers.isbn}` : undefined))
   const authors = paper.authors.map((a) => (a.given ? `${a.given} ${a.family}` : a.family)).join(', ')
   const openEvidence = (page: number, quote: string): void => {
     if (tabs.includes('pdf')) {
@@ -256,7 +258,7 @@ export function PaperDetail({
           <span className="muted">{t(`text_status.${detail.textStatus}`)}</span>
         </div>
         {paper.metadata_status === 'incomplete' && (
-          <MetadataCompletion paperId={id} hasIdentifier={Boolean(paper.identifiers.doi || paper.identifiers.arxiv)} />
+          <MetadataCompletion paperId={id} hasIdentifier={Boolean(paper.identifiers.doi || paper.identifiers.arxiv || paper.identifiers.isbn)} />
         )}
         <MetadataEditor key={id} paper={paper} />
         {onRemoved && <RemovePaper id={id} title={paper.title} onRemoved={onRemoved} />}

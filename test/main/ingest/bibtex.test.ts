@@ -121,3 +121,12 @@ describe('normalizeBibMonth', () => {
     expect(rekeyBibtex('@article{old, month=June}', 'new2024')).toBe('@article{new2024, month=jun}')
   })
 })
+
+describe('buildFallbackEntry for a book', () => {
+  it('writes the publisher and the ISBN', () => {
+    const entry = buildFallbackEntry({ key: 'k', kind: 'book', title: 'T', authors: [{ family: 'A' }], year: 2020, venue: 'MIT Press', isbn: '9780262033848' })
+    expect(entry).toMatch(/^@book\{k,/)
+    expect(entry).toContain('publisher = {MIT Press}')
+    expect(entry).toContain('isbn = {9780262033848}')
+  })
+})

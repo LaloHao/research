@@ -113,7 +113,8 @@ const VENUE_FIELD: Partial<Record<PaperKind, string>> = {
   article: 'journal',
   conference: 'booktitle',
   chapter: 'booktitle',
-  report: 'institution'
+  report: 'institution',
+  book: 'publisher'
 }
 
 /** Used only when no publisher BibTeX exists (e.g. a PDF without DOI). */
@@ -126,6 +127,7 @@ export function buildFallbackEntry(p: {
   venue?: string
   doi?: string
   arxiv?: string
+  isbn?: string
   url?: string
 }): string {
   const venueField = VENUE_FIELD[p.kind]
@@ -137,6 +139,7 @@ export function buildFallbackEntry(p: {
     ['doi', p.doi, true],
     ['eprint', p.arxiv, true],
     ['archiveprefix', p.arxiv ? 'arXiv' : undefined, true],
+    ['isbn', p.isbn, true],
     ['url', p.url, true]
   ])
 }

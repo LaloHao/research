@@ -38,6 +38,7 @@ export interface PaperRow {
 export const USER_ERROR_CODES = [
   'invalid_identifier',
   'not_found',
+  'isbn_not_found',
   'network',
   'unreadable_page',
   'not_a_pdf',

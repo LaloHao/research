@@ -55,7 +55,7 @@ La carpeta del proyecto es texto plano (YAML, Markdown) pensado para versionarse
 
 En la barra de arriba de la biblioteca puedes:
 
-- **Pegar un DOI, un ID de arXiv o una URL** y tocar «Agregar». También acepta un id de OpenAlex (`W2741809807` o `https://openalex.org/W2741809807`); es lo que usa «Agregar» en Candidatos para los trabajos sin DOI. Con una URL que no sea DOI ni arXiv, la app mira qué hay detrás: si sirve un PDF, se agrega como PDF; si la página tiene un DOI o un ID de arXiv, se usa ese identificador; si no, se guarda como página web (literatura gris), con su texto legible si lo encuentra, y si no, avisa que «La página no tiene un artículo legible.».
+- **Pegar un DOI, un ID de arXiv o una URL** y tocar «Agregar». También acepta un id de OpenAlex (`W2741809807` o `https://openalex.org/W2741809807`); es lo que usa «Agregar» en Candidatos para los trabajos sin DOI. Un **libro** se agrega por su **ISBN** (de 10 o 13 dígitos, con o sin guiones ni «ISBN» delante; un ISBN con el dígito de control mal no se acepta): la app toma título, subtítulo, autores o editores, editorial y año de Open Library, completa lo que falte con Google Books y lo deja como `@book` con `publisher` e `isbn` (con `editor` en lugar de `author` cuando Open Library dice que es una obra editada). El ISBN-10 y el ISBN-13 del mismo libro son el mismo identificador. Si ninguno de los dos catálogos lo tiene, avisa «No encontré ese ISBN en Open Library ni en Google Books.». Muchos libros académicos (Springer, ACM, IEEE, MIT Press) también tienen DOI, que suele dar mejores metadatos. Con una URL que no sea DOI ni arXiv, la app mira qué hay detrás: si sirve un PDF, se agrega como PDF; si la página tiene un DOI o un ID de arXiv, se usa ese identificador; si no, se guarda como página web (literatura gris), con su texto legible si lo encuentra, y si no, avisa que «La página no tiene un artículo legible.».
 - **Arrastrar uno o varios PDFs** a la biblioteca.
 - **Abrir una URL en el navegador de la app** con «Abrir en navegador», junto a «Agregar»; ver «Sitios que bloquean las descargas» más abajo.
 - **Desde tu propio navegador**, con la extensión Research Connector para Firefox y Chrome; ver «Extensión del navegador» más abajo.
@@ -350,7 +350,7 @@ Puedes conversar con Claude sobre tu biblioteca en dos lugares:
 
 Toda conversación empieza solo leyendo tu biblioteca. En su encabezado hay dos interruptores, apagados por defecto, que se guardan en la conversación (y se sincronizan con ella):
 
-- **Acciones**: Claude puede, desde esta conversación, agregar papers (DOI, arXiv o URL), adjuntar un PDF, escribir notas, confirmar, rechazar, devolver a sugeridas, cambiar de tipo o invertir relaciones tipadas, verificar o editar campos y facetas de un resumen, aceptar o unir valores propuestos, aceptar, rechazar o restaurar sugerencias de facetas, lanzar resúmenes, sugerencias de relaciones y de facetas y el llenado de facetas nuevas, quitar papers a la papelera, restaurarlos y eliminarlos definitivamente.
+- **Acciones**: Claude puede, desde esta conversación, agregar papers (DOI, arXiv, ISBN o URL), adjuntar un PDF, escribir notas, confirmar, rechazar, devolver a sugeridas, cambiar de tipo o invertir relaciones tipadas, verificar o editar campos y facetas de un resumen, aceptar o unir valores propuestos, aceptar, rechazar o restaurar sugerencias de facetas, lanzar resúmenes, sugerencias de relaciones y de facetas y el llenado de facetas nuevas, quitar papers a la papelera, restaurarlos y eliminarlos definitivamente.
 - **Sincronizar con git**: Claude puede ver el estado de la sincronización y sus conflictos (es gratis) y, si lo decides, sincronizar ahora o resolver conflictos (siempre te preguntan primero). No necesita «Acciones».
 
 **Quién decide.** La regla la aplica la app, no Claude:
@@ -501,7 +501,7 @@ Mientras la app corre, pone un ícono en la bandeja del sistema (en KDE Plasma y
 El clic izquierdo muestra la ventana, o la oculta si ya está al frente. El menú del clic derecho:
 
 - **«Mostrar ventana» / «Ocultar ventana»**.
-- **El nombre del proyecto** y **«Agregar desde el portapapeles»**: si el portapapeles tiene un DOI, un id de arXiv u OpenAlex o una dirección http(s), se agrega igual que desde la casilla «Agregar» (un trabajo que aparece en Actividad); si no, una notificación dice «El portapapeles no tiene un DOI, arXiv o URL». El portapapeles solo se lee al elegir la opción, solo se usa para eso y nunca se escribe en el registro.
+- **El nombre del proyecto** y **«Agregar desde el portapapeles»**: si el portapapeles tiene un DOI, un id de arXiv u OpenAlex, un ISBN o una dirección http(s), se agrega igual que desde la casilla «Agregar» (un trabajo que aparece en Actividad); si no, una notificación dice «El portapapeles no tiene un DOI, arXiv, ISBN o URL». El portapapeles solo se lee al elegir la opción, solo se usa para eso y nunca se escribe en el registro.
 - **«Abrir en el navegador de la app»**: abre la dirección http(s) del portapapeles en el navegador de la app, para capturar la página (ver «Sitios que bloquean las descargas»).
 - **El estado de la sincronización** y **«Sincronizar ahora»**: lo mismo que el botón ⟳ del riel. Sincroniza en el acto cuando puede; si el repositorio no tiene remoto, hay conflictos pendientes, o la sincronización falla o termina en conflictos, la ventana se abre en la vista Sincronización. Desactivado mientras el proyecto no está en un repositorio git o hay una sincronización en curso.
 - **«N trabajos en curso»**, cuando los hay.
@@ -673,7 +673,7 @@ El botón para resumir se deshabilita y aparece «Forzar», que resume usando so
 El estado del paper muestra «PDF sin texto (escaneado)»; esta app no hace OCR, así que ese paper no se puede resumir hasta que consigas una versión con texto.
 
 **«Los metadatos están incompletos.»**
-Falta completar título, autores u otros datos del paper. Pega un DOI o ID de arXiv junto al aviso y toca «Completar», o «Reintentar» si ya tenía uno.
+Falta completar título, autores u otros datos del paper. Pega un DOI, ID de arXiv o ISBN junto al aviso y toca «Completar», o «Reintentar» si ya tenía uno.
 
 **«El formulario cambió fuera de este editor»**
 Otro equipo (o un `git pull`) cambió `project.yaml` mientras tenías cambios propios sin guardar en el editor del formulario. Usa «Descartar mis cambios y recargar» para ver la versión nueva, y vuelve a aplicar tus cambios si seguían siendo necesarios.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { arxivDoi, arxivFromDoi, findIdentifiersInText, parseInput } from '../../../src/main/ingest/identifiers'
+import { arxivDoi, arxivFromDoi, findIdentifiersInText, normalizeIsbn, parseInput } from '../../../src/main/ingest/identifiers'
 
 describe('parseInput', () => {
   it.each([
@@ -45,5 +45,25 @@ describe('findIdentifiersInText', () => {
 
   it('returns nothing when there is nothing', () => {
     expect(findIdentifiersInText('no identifiers here')).toEqual({})
+  })
+})
+
+describe('normalizeIsbn', () => {
+  it.each([
+    ['978-1-4919-2912-4', '9781491929124'],
+    ['ISBN 978 1 4919 2912 4', '9781491929124'],
+    ['ISBN-13: 9781491929124', '9781491929124'],
+    ['149192912X', '9781491929124'],
+    ['ISBN-10 1-4919-2912-x', '9781491929124'],
+    ['0-262-03384-4', '9780262033848']
+  ])('%s → %s', (raw, isbn) => expect(normalizeIsbn(raw)).toBe(isbn))
+
+  it.each(['978-1-4919-2912-5', '1491929121', '12345', '9771491929124', '2008.06448'])('rejects %s', (raw) => expect(normalizeIsbn(raw)).toBeNull())
+
+  it('is what «Agregar» reads from an ISBN, before a DOI or a URL', () => {
+    expect(parseInput('978-1-4919-2912-4')).toEqual({ kind: 'isbn', isbn: '9781491929124' })
+    expect(parseInput('ISBN 149192912X')).toEqual({ kind: 'isbn', isbn: '9781491929124' })
+    expect(parseInput('978-1-4919-2912-5')).toEqual({ kind: 'invalid' })
+    expect(parseInput('2008.06448')).toEqual({ kind: 'arxiv', arxiv: '2008.06448' })
   })
 })

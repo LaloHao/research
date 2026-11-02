@@ -40,6 +40,7 @@ function fromHttp(error: HttpError): UserFacingError {
   const http = `HTTP ${status}`
   const withDetail = error.detail ? `${http}: ${error.detail}` : http
   const make = (code: UserErrorCode, detail: string | null = null): UserFacingError => new UserFacingError(code, { cause: error, detail })
+  if ((status === 404 || status === 410) && /^https:\/\/openlibrary\.org\//.test(error.url)) return make('isbn_not_found')
   if (status === 404 || status === 410) return make('not_found')
   if (status === 400 && isOpenAlexSearch(error.url)) return make('search_query_invalid', error.detail ?? http)
   // A site behind bot protection refuses any app, whatever it asks for: only a browser gets the page.

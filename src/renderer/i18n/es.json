@@ -186,7 +186,7 @@
   },
   "library": {
     "search_placeholder": "Buscar en títulos, autores y texto…",
-    "add_placeholder": "DOI, arXiv, OpenAlex o URL",
+    "add_placeholder": "DOI, arXiv, ISBN, OpenAlex o URL",
     "add": "Agregar",
     "open_in_browser": "Abrir en navegador",
     "open_in_browser_hint": "Abre la página en el navegador de la app y agrégala desde ahí: para sitios que bloquean las descargas automáticas, piden iniciar sesión o arman la página con scripts.",
@@ -303,14 +303,15 @@
     }
   },
   "errors": {
-    "invalid_identifier": "No reconozco eso como DOI, ID de arXiv o URL.",
+    "invalid_identifier": "No reconozco eso como DOI, ID de arXiv, ISBN o URL.",
     "not_found": "No se encontró en el registro de DOIs.",
+    "isbn_not_found": "No encontré ese ISBN en Open Library ni en Google Books.",
     "network": "Error de red. Revisa tu conexión y reintenta.",
     "capture_no_pdf": "No se pudo hacer el PDF de esta página. Recárgala e inténtalo de nuevo.",
     "unreadable_page": "La página no tiene un artículo legible. Si necesita iniciar sesión o la arman scripts, ábrela con «Abrir en navegador» y agrégala desde ahí.",
     "not_a_pdf": "El archivo no es un PDF.",
     "file_problem": "paper.yaml tiene un problema; corrígelo primero.",
-    "no_identifier": "Este paper no tiene DOI ni arXiv; escribe uno.",
+    "no_identifier": "Este paper no tiene DOI, arXiv ni ISBN; escribe uno.",
     "conflict": "El archivo cambió fuera de la app.",
     "project_exists": "Esa carpeta ya tiene un proyecto; ábrelo en lugar de crear otro.",
     "not_a_project": "Esa carpeta no es un proyecto (no tiene project.yaml).",
@@ -497,7 +498,7 @@
     "metadata": {
       "incomplete": "Los metadatos están incompletos.",
       "retry": "Reintentar",
-      "input_placeholder": "Pega un DOI o ID de arXiv",
+      "input_placeholder": "Pega un DOI, ID de arXiv o ISBN",
       "apply": "Completar"
     }
   },
@@ -1779,7 +1780,7 @@
       "fullscreen": "Pantalla completa"
     },
     "notify": {
-      "no_identifier": "El portapapeles no tiene un DOI, arXiv o URL",
+      "no_identifier": "El portapapeles no tiene un DOI, arXiv, ISBN o URL",
       "no_url": "El portapapeles no tiene una URL http(s)",
       "added": "Se agregó a la cola: lo verás en Actividad.",
       "no_project": "Abre un proyecto primero.",

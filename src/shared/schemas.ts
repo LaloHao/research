@@ -36,6 +36,8 @@ export const IdentifiersSchema = z.object({
   doi: z.string().optional(),
   arxiv: z.string().optional(),
   openalex: z.string().optional(),
+  /** ISBN-13, digits only (normalizeIsbn). */
+  isbn: z.string().optional(),
   url: z.string().optional()
 })
 
