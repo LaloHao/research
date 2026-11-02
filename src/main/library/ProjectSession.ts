@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import type { ChatStreamUpdate } from '../../shared/chat'
 import type { DraftStreamUpdate } from '../../shared/writing/draft'
 import type { JobSpec } from '../../shared/jobs'
-import type { MetadataEdit, PaperDetail } from '../../shared/library'
+import type { KeySuggestion, MetadataEdit, PaperDetail } from '../../shared/library'
 import type { ReviewItem } from '../../shared/summary'
 import type { DeletePlan, RestoreOutcome, TrashEntry, TrashOutcome, TrashTarget } from '../../shared/trash'
 import { IndexCache } from '../cache/IndexCache'
@@ -47,6 +47,7 @@ import { DraftService } from '../writing/DraftService'
 import { CiteChecker } from '../writing/CiteChecker'
 import { WritingService } from '../writing/WritingService'
 import { DEFAULT_DEVICE_ID, LibraryService, type CaptureInput, type IngestOutcome } from './LibraryService'
+import { paperReferences } from './paperReferences'
 
 /** The per-device automatic sync settings, read at every tick. */
 export interface AutoSyncOptions {
@@ -130,7 +131,7 @@ export class ProjectSession {
     const http = new HttpClient({ fetch: opts.fetch, contactEmail: opts.contactEmail, openalexApiKey: opts.openalexApiKey })
     // An empty id (settings not loaded yet) counts as none.
     const deviceId = opts.deviceId || DEFAULT_DEVICE_ID
-    const library = new LibraryService({
+    const library: LibraryService = new LibraryService({
       store,
       cache,
       resolver: new MetadataResolver(http),
@@ -144,8 +145,15 @@ export class ProjectSession {
       relations: {
         countTouching: (ids) => relations.countTouching(ids),
         removeTouching: (ids) => relations.removeTouching(ids),
-        rekey: (from, to) => relations.rekey(from, to)
-      }
+        rekey: (from, to, o) => relations.rekey(from, to, o)
+      },
+      // «Cambiar clave»: the other files naming a paper; called later, once these services exist.
+      references: paperReferences([
+        { name: 'facet-suggestions.yaml', rekey: async (from, to) => ((await facets.rekeyPaper(from, to)) ? () => facets.rekeyPaper(to, from) : null) },
+        { name: 'chats', rekey: async (from, to) => undoIds(await chats.rekeyPaper(from, to), (ids) => chats.rekeyPaper(to, from, ids)) },
+        { name: 'drafts', rekey: async (from, to) => undoIds(await drafts.rekeyPaper(from, to), (ids) => drafts.rekeyPaper(to, from, ids)) },
+        { name: 'mappings', rekey: async (from, to) => undoIds(await mappings.rekeyPaper(from, to), (ids) => mappings.rekeyPaper(to, from, ids)) }
+      ])
     })
     const ledger = new CostLedger(store, deviceId)
     // Agent runs cost more than a summary: their estimate starts higher and grows on its own.
@@ -564,6 +572,27 @@ export class ProjectSession {
     return this.track(this.library.revertMetadata(token))
   }
 
+  /** «Cambiar clave»: the key the paper's current metadata gives. */
+  suggestKey(id: string): Promise<KeySuggestion> {
+    return this.track(this.library.suggestKey(id))
+  }
+
+  /**
+   * «Cambiar clave»: the paper and every reference to it take the new key; its neighbours are recomputed under it. Held
+   * off the automatic sync like a trash operation (a folder moves).
+   */
+  changeKey(id: string, key: string): Promise<string> {
+    return this.track(
+      this.trashOp(async () => {
+        const next = await this.library.changeKey(id, key)
+        await this.similarity.enqueueStale([next]).catch(logged('embeddings'))
+        await this.similarity.paperChanged(id).catch(logged('neighbours'))
+        await this.similarity.paperChanged(next).catch(logged('neighbours'))
+        return next
+      })
+    )
+  }
+
   /** «Quitar de la biblioteca»; the neighbours of the moved papers are updated afterwards. */
   trash(ids: string[]): Promise<TrashOutcome> {
     return this.track(
@@ -666,6 +695,11 @@ export interface JobServices {
   relations: RelationService
   facets: FacetSuggestionService
   mappings: MappingService
+}
+
+/** The undo of a step that rewrote these files, or null when it rewrote none. */
+function undoIds(ids: string[], back: (ids: string[]) => Promise<unknown>): (() => Promise<unknown>) | null {
+  return ids.length > 0 ? () => back(ids) : null
 }
 
 const logged =

@@ -997,6 +997,36 @@ export class MappingService {
     return !newest || newest.protocol_version < version
   }
 
+  /**
+   * «Cambiar clave»: every record linked to paper `from` is linked to `to`; `only` limits it to these mappings (an
+   * undo). A mapping that cannot be read is left as it is. On a failure the ones already rewritten go back. Returns the
+   * mappings it rewrote.
+   */
+  async rekeyPaper(from: string, to: string, only?: string[]): Promise<string[]> {
+    const done: string[] = []
+    try {
+      for (const id of only ?? (await this.deps.store.listMappingIds())) {
+        if (await this.relink(id, from, to)) done.push(id)
+      }
+    } catch (error) {
+      for (const id of done) await this.relink(id, to, from).catch((undo: unknown) => console.error('mapping back to', from, id, undo))
+      throw error
+    }
+    return done
+  }
+
+  private async relink(id: string, from: string, to: string): Promise<boolean> {
+    const load = await this.load(id)
+    if (!load.files?.records.value.records.some((r) => r.paper_id === from)) return false
+    const at = this.now().toISOString()
+    return this.mutate(id, (files) => {
+      const records = files.records.value.records
+      if (!records.some((r) => r.paper_id === from)) return { writes: [], result: false }
+      const next = records.map((r) => (r.paper_id === from ? { ...r, paper_id: to, updated_at: at } : r))
+      return { writes: [{ kind: 'records', file: { ...files.records.value, records: next } }], result: true }
+    })
+  }
+
   private linkPaper(id: string, recordId: string, paperId: string): Promise<void> {
     const at = this.now().toISOString()
     return this.mutate(id, (files) => {

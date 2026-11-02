@@ -46,3 +46,8 @@ export function citationsToText(markdown: string): string {
 export function citedPapers(markdown: string): string[] {
   return [...new Set(parseCitations(markdown).map((c) => c.paper))]
 }
+
+/** The markdown with every marker citing `from` citing `to` instead (page and quote untouched). */
+export function rekeyCitations(markdown: string, from: string, to: string): string {
+  return markdown.replace(CITATION_MARKER, (whole: string, paper: string) => (paper === from ? `[[${to}${whole.slice(2 + from.length)}` : whole))
+}

@@ -95,7 +95,7 @@ Some sites (many blogs and magazines behind Cloudflare or similar bot protection
 
 ### Editing metadata
 
-«Editar metadatos» (Edit metadata), under the paper's title in its detail, opens a form with the title, the authors (one per line, «Family, Given»; an organization on its own), the year (for a web page, its date as `YYYY`, `YYYY-MM` or `YYYY-MM-DD`, which sets the year), the journal or venue (for a web page, its site) and the URL. «Guardar» (Save) writes `paper.yaml` and the same fields in the paper's BibTeX entry, keeping every other field (pages, volume, publisher…), and updates `exports/library.bib`. The citation key never changes. Right after saving, «Deshacer» (Undo) puts back what the edit changed, as long as `paper.yaml` hasn't changed since. Filling in title, authors and year marks the metadata as complete.
+«Editar metadatos» (Edit metadata), under the paper's title in its detail, opens a form with the title, the authors (one per line, «Family, Given»; an organization on its own), the year (for a web page, its date as `YYYY`, `YYYY-MM` or `YYYY-MM-DD`, which sets the year), the journal or venue (for a web page, its site) and the URL. «Guardar» (Save) writes `paper.yaml` and the same fields in the paper's BibTeX entry, keeping every other field (pages, volume, publisher…), and updates `exports/library.bib`. The citation key doesn't change (see «Cambiar» (Change) below to change it). Right after saving, «Deshacer» (Undo) puts back what the edit changed, as long as `paper.yaml` hasn't changed since. Filling in title, authors and year marks the metadata as complete.
 
 ### Attaching or replacing a PDF
 
@@ -105,7 +105,9 @@ When the paper already has a PDF, the PDF tab has a «Reemplazar PDF…» (Repla
 
 Attaching runs as a job in the activity panel («Adjuntar PDF a <key>» (Attach PDF to <key>), outcome «PDF adjuntado» (PDF attached)). Only the PDF changes: the paper's metadata isn't looked up or merged again, and the PDF's text replaces the previously indexed text (search, the Texto tab, summaries generated from now on). Existing summaries are kept as they are, so after a replacement their evidence quotes and page numbers may point to a different place in the new PDF; regenerate the summary if that matters. If the file isn't a PDF, it's damaged, or the paper's `paper.yaml` has a problem, the job fails and nothing changes.
 
-Each paper gets a **citation key** (its folder under `papers/`) that never changes, even if you edit its metadata. It can be copied with the «Copiar» (Copy) button next to the key, in the paper's detail.
+Each paper gets a **citation key** (its folder under `papers/`) when it's added: the first author's family name (or a web page's site), the year (`nd` without one) and the first significant word of the title, plus a letter if another paper already uses it (`he2017drain`, `he2017draina`). Editing the metadata doesn't change it. It can be copied with the «Copiar» (Copy) button next to the key, in the paper's detail.
+
+**Changing the key.** When a paper was added with poor metadata (for example a PDF whose authors came as one long string and had no year, giving a key like `betsybeyerchrisjonesjenniferpetoffandniallrichardmurphyndsite`), complete its metadata first and then tap «Cambiar» (Change) next to the key. The dialog suggests the key the current metadata gives (`beyer2016site`), which you can edit: only lowercase unaccented letters and digits, starting with a letter, not used by another paper in the library or the trash. «Guardar» (Save) renames the paper's folder and changes its key everywhere in the project: `paper.yaml` and its BibTeX entry, `exports/library.bib`, typed relations, chats scoped to the paper and the citations in every chat answer and draft, the paper in drafts' selections, mapping records linked to it and facet-suggestion examples. Its text, summary, notes, embeddings and neighbours stay; nothing is extracted or embedded again. The detail then shows the new key. It's refused while a job of the paper is queued or running, or while Claude is answering a chat or writing a draft; if anything can't be rewritten (for example a file with a git conflict), every file is put back as it was. **Citations you already wrote with the old key outside the app (your thesis in LaTeX, Org or Markdown, other documents) stop working: change them by hand.** On other machines the change arrives with the next git sync, as the old folder removed and the new one added.
 
 The app keeps `exports/library.bib` with the BibTeX of every paper, ready to cite from LaTeX or org-cite. Months are written as the standard macros (`jun`, `oct`…), since sources like Crossref give `month=June` or `month=Oct`, which Biber doesn't understand. It's a generated file: don't edit it by hand.
 
@@ -195,7 +197,7 @@ They appear in this order: Resumen, Contenido, PDF, Texto, Relaciones, Chat, Not
 
 The Texto tab shows one page at a time, with «Página N de M» (Page N of M), «Anterior» / «Siguiente» (Previous / Next) and a box to jump to a page. The text is reflowed: words hyphenated at a line end are joined, the lines of a paragraph are merged, short title-like lines (such as «1 Introduction», «2.3 Results» or all-caps lines) show as headings, and running headers, footers and page numbers that repeat across pages are dimmed. The search box searches every page, ignoring case and accents, and shows how many results there are; the arrows move between results, changing page when needed, with each match highlighted.
 
-Above the detail: the citation key (with a button to copy it), the link to the original DOI or URL, «Mostrar en carpeta» (Show in folder) (opens `papers/<key>/` in the file explorer), and the indexed-text status (indexing, text indexed, PDF without text/scanned, no text, extraction error).
+Above the detail: the citation key (with buttons to copy it and to change it, see "Changing the key"), the link to the original DOI or URL, «Mostrar en carpeta» (Show in folder) (opens `papers/<key>/` in the file explorer), and the indexed-text status (indexing, text indexed, PDF without text/scanned, no text, extraction error).
 
 ## Summaries with Claude
 
@@ -621,7 +623,7 @@ mappings/<id>/             a systematic mapping
   records.yaml             deduplicated records with their sources
   decisions.yaml           screening decisions (only ever added to)
   suggestions.yaml         Claude's screening suggestions (only ever added to)
-papers/<key>/              one paper per folder; <key> is its citation key and never changes
+papers/<key>/              one paper per folder; <key> is its citation key (changes only with «Cambiar»)
   paper.yaml               metadata, BibTeX and citations (OpenAlex)
   summary.md               summary fields, with evidence and per-field status
   extraction.yaml          classification per the form, and the relation to the thesis

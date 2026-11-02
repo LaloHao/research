@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatCitation } from '../../../src/shared/chat'
-import { draftCheck, exportDraft, uncitedCount } from '../../../src/shared/writing/draft'
+import { draftCheck, exportDraft, rekeyDraft, uncitedCount } from '../../../src/shared/writing/draft'
+import { draftFile } from '../../helpers/drafts'
 
 const TEXT = 'Drain is online [[he2017drain|p. 1|"Drain parses logs"]]. Loghub [[zhu2020loghub|p. 2|"A collection"]]. All agree [[sin cita]].'
 const CITATIONS: ChatCitation[] = [
@@ -27,5 +28,15 @@ describe('draft checks and export', () => {
     expect(latex.text).toContain('All agree [SIN CITA].')
     const md = exportDraft(TEXT, check, { format: 'markdown' })
     expect(md.text).toBe('Drain is online [@he2017drain, p. 3]. Loghub [@zhu2020loghub, p. 2] <!-- no verificada -->. All agree [SIN CITA].')
+  })
+})
+
+describe('rekeyDraft', () => {
+  it('renames the paper among the chosen ones and in every version, and is null for a draft without it', () => {
+    const file = draftFile([TEXT, 'First try [[he2017drain|"Drain"]].'], { papers: ['he2017drain', 'zhu2020loghub'] })
+    const next = rekeyDraft(file, 'he2017drain', 'he2017online')
+    expect(next?.meta.papers).toEqual(['he2017online', 'zhu2020loghub'])
+    expect(next?.texts).toEqual([TEXT.replace('[[he2017drain|', '[[he2017online|'), 'First try [[he2017online|"Drain"]].'])
+    expect(rekeyDraft(draftFile(['No citations.'], { papers: ['zhu2020loghub'] }), 'he2017drain', 'x')).toBeNull()
   })
 })

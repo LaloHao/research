@@ -331,17 +331,25 @@ export class RelationService {
     return removed
   }
 
-  /** A trashed paper merged into the library paper `to` on restore: its relations follow it there (same guarantees as removeTouching). */
-  async rekey(from: string, to: string): Promise<void> {
+  /**
+   * A trashed paper merged into the library paper `to` on restore: its relations follow it there (same guarantees as
+   * removeTouching). With `keepAnalysis` (the paper itself changed its key) its own analysis record moves to `to` too;
+   * otherwise it goes, and the paper counts as not analyzed.
+   */
+  async rekey(from: string, to: string, opts: { keepAnalysis?: boolean } = {}): Promise<void> {
     const file = await this.currentFile()
     const touchesFrom = file.relations.some((r) => r.from === from || r.to === from)
     const othersReferencing = Object.values(file.analyzed).some((a) => a.candidates.includes(from))
     if (!touchesFrom && !file.analyzed[from] && !othersReferencing) return
-    await this.mutateFile((f) => ({
-      ...f,
-      relations: rekeyRelations(f.relations, from, to, this.now()),
-      analyzed: renameAnalyzedCandidate(withoutKeys(f.analyzed, new Set([from])), from, to)
-    }))
+    await this.mutateFile((f) => {
+      const renamed = renameAnalyzedCandidate(f.analyzed, from, to)
+      return {
+        ...f,
+        relations: rekeyRelations(f.relations, from, to, this.now()),
+        // In place, so a change undone leaves the file as it was.
+        analyzed: opts.keepAnalysis ? Object.fromEntries(Object.entries(renamed).map(([k, a]) => [k === from ? to : k, a])) : withoutKeys(renamed, new Set([from]))
+      }
+    })
     this.deps.emit()
   }
 

@@ -8,6 +8,7 @@ import { excerptFromSelection, paperChatOf, updatePaperChat, type PaperChatState
 import { errorText } from '../../lib/errorText'
 import { paperTabs, type Tab } from '../../lib/paperTabs'
 import { AttachPdfStatus, useAttachPdf } from './AttachPdf'
+import { ChangeKey } from './ChangeKey'
 import { ContentView, type ContentFocus } from './ContentView'
 import { MetadataCompletion } from './MetadataCompletion'
 import { MetadataEditor } from './MetadataEditor'
@@ -133,11 +134,14 @@ export function PaperDetail({
   id,
   onOpenCandidates,
   onSelectPaper,
+  onKeyChanged,
   onRemoved
 }: {
   id: string
   onOpenCandidates?: (paperId: string) => void
   onSelectPaper?: (id: string) => void
+  /** «Cambiar clave» gave the paper this key (default: `onSelectPaper`, so the selection follows it). */
+  onKeyChanged?: (key: string) => void
   /** The paper went to the trash: the host closes the detail and shows «Deshacer». Without it, there is no remove button. */
   onRemoved?: (ids: string[]) => void
 }): React.JSX.Element {
@@ -247,6 +251,7 @@ export function PaperDetail({
           <button className="small" onClick={copyKey}>
             {copied ? t('paper.copied') : t('paper.copy_key')}
           </button>
+          <ChangeKey id={id} onChanged={onKeyChanged ?? onSelectPaper} />
           {link && (
             <a href={link} target="_blank" rel="noreferrer">
               {t('paper.open_link')}

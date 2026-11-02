@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { citationMarker, parseCitations } from './chatCitations'
+import { citationMarker, parseCitations, rekeyCitations } from './chatCitations'
 import { ACTION_STATES, MAX_REQUEST_QUOTE, UNDO_TOOL, type ActionState, type PendingApproval } from './chatActions'
 import { LLM_MODELS, type LlmModel } from './summary'
 
@@ -208,6 +208,25 @@ export const ChatMessageSchema = z.discriminatedUnion('role', [
 export interface ChatFile {
   meta: ChatMeta
   messages: ChatMessage[]
+}
+
+/**
+ * «Cambiar clave»: the conversation with paper `from` called `to` (its scope, quoted excerpts and the citation markers
+ * of every question and answer), or null when it does not name `from`. Action records stay as they ran.
+ */
+export function rekeyChat(file: ChatFile, from: string, to: string): ChatFile | null {
+  let changed = false
+  const scope: ChatScope = file.meta.scope !== 'library' && file.meta.scope.paper === from ? { paper: to } : file.meta.scope
+  if (scope !== file.meta.scope) changed = true
+  const messages = file.messages.map((m): ChatMessage => {
+    if (m.role === 'action') return m
+    const text = rekeyCitations(m.text, from, to)
+    const excerpt = m.role === 'user' && m.excerpt?.paper === from ? { ...m.excerpt, paper: to } : m.role === 'user' ? m.excerpt : null
+    if (text === m.text && (m.role !== 'user' || excerpt === m.excerpt)) return m
+    changed = true
+    return m.role === 'user' ? { ...m, text, excerpt } : { ...m, text }
+  })
+  return changed ? { meta: { ...file.meta, scope }, messages } : null
 }
 
 /**

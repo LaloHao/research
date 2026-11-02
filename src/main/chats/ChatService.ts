@@ -8,6 +8,7 @@ import {
   normalizeExcerpt,
   PAPER_KEY,
   questionIndex,
+  rekeyChat,
   undoneActions,
   type ActionMessage,
   type AssistantMessage,
@@ -405,6 +406,32 @@ export class ChatService {
       }
     }
     return entries.join('\n\n')
+  }
+
+  /**
+   * «Cambiar clave»: every conversation naming paper `from` (scope, excerpts, citation markers) names `to` instead;
+   * `only` limits it to these conversations (an undo, never refused). Otherwise refused while any answer is being
+   * written: it could still cite the old key. A conversation that cannot be read is left as it is. On a failure the ones already rewritten go back.
+   * Returns the conversations it rewrote.
+   */
+  async rekeyPaper(from: string, to: string, only?: string[]): Promise<string[]> {
+    if (!only && (this.runs.size > 0 || this.sending.size > 0)) throw new UserFacingError('paper_busy')
+    const ids: string[] = []
+    for (const id of only ?? (await this.deps.store.listChatIds())) {
+      const read = await this.deps.store.readChat(id)
+      if (read?.ok && rekeyChat(read.value, from, to)) ids.push(id)
+    }
+    const done: string[] = []
+    try {
+      for (const id of ids) {
+        await this.update(id, (f) => rekeyChat(f, from, to) ?? f)
+        done.push(id)
+      }
+    } catch (error) {
+      for (const id of done) await this.update(id, (f) => rekeyChat(f, to, from) ?? f).catch((undo: unknown) => console.error('chat back to', from, id, undo))
+      throw error
+    }
+    return done
   }
 
   /** Where a paper is, as the index knows it. */

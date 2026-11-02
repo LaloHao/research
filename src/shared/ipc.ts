@@ -3,7 +3,7 @@ import type { ChatConversation, ChatListQuery, ChatSendRequest, ChatStreamUpdate
 import type { ChatTools } from './chatActions'
 import type { FacetSuggestionList, FacetSuggestPlan, SuggestionEdit } from './facetSuggestions'
 import type { JobRecord } from './jobs'
-import type { MetadataEdit, MetadataEditResult, PaperDetail, PaperRow, UserErrorCode } from './library'
+import type { ChangeKeyResult, KeySuggestion, MetadataEdit, MetadataEditResult, PaperDetail, PaperRow, UserErrorCode } from './library'
 import type {
   DecideRequest,
   ImportOutcome,
@@ -64,6 +64,8 @@ export const IPC = {
   libraryUpdateMetadata: 'library:update-metadata',
   libraryEditMetadata: 'library:edit-metadata',
   libraryRevertMetadata: 'library:revert-metadata',
+  librarySuggestKey: 'library:suggest-key',
+  libraryChangeKey: 'library:change-key',
   libraryOpenInBrowser: 'library:open-in-browser',
   libraryRecapture: 'library:recapture',
   libraryReadPdf: 'library:read-pdf',
@@ -333,6 +335,10 @@ export interface ResearchApi {
     /** «Editar metadatos»: writes the changed fields (and the BibTeX entry); the token is what «Deshacer» sends back. */
     editMetadata(id: string, edit: MetadataEdit): Promise<MetadataEditResult>
     revertMetadata(undoToken: string): Promise<ActionResult>
+    /** «Cambiar clave»: the key the paper's current metadata gives. */
+    suggestKey(id: string): Promise<KeySuggestion>
+    /** «Cambiar clave»: the paper and every reference to it in the project take `key`. */
+    changeKey(id: string, key: string): Promise<ChangeKeyResult>
     /** «Abrir en el navegador de la app»: the user browses the page there and adds it from its toolbar. */
     openInBrowser(url: string): Promise<ActionResult>
     /**

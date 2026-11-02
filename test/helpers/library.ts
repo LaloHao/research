@@ -5,6 +5,7 @@ import { HttpClient, HttpError } from '../../src/main/ingest/http'
 import type { MetadataSource } from '../../src/main/ingest/MetadataResolver'
 import type { ResolvedMetadata } from '../../src/main/ingest/types'
 import { LibraryService, type TrashRelations } from '../../src/main/library/LibraryService'
+import type { PaperReferences } from '../../src/main/library/paperReferences'
 import { ProjectStore } from '../../src/main/project/ProjectStore'
 import type { PdfPolicy } from '../../src/shared/schemas'
 import { routeFetch, type Route } from './fakeFetch'
@@ -103,6 +104,7 @@ export async function setupLibrary(
     cancelJobs?: (ids: string[]) => Promise<unknown>
     cancelQueued?: (ids: string[]) => unknown
     relations?: TrashRelations
+    references?: PaperReferences
   } = {}
 ) {
   const root = await tmpDir()
@@ -122,7 +124,8 @@ export async function setupLibrary(
     deviceId: opts.deviceId,
     cancelJobs: opts.cancelJobs,
     cancelQueued: opts.cancelQueued,
-    relations: opts.relations
+    relations: opts.relations,
+    references: opts.references
   })
   return { root, store, cache, resolver, library, fetch }
 }

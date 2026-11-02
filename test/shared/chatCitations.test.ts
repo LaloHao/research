@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { citationLabel, citationMarker, citationsToText, citedPapers, parseCitations } from '../../src/shared/chatCitations'
+import { citationLabel, citationMarker, citationsToText, citedPapers, parseCitations, rekeyCitations } from '../../src/shared/chatCitations'
 
 const ANSWER = 'Drain uses a fixed-depth tree [[he2017drain|p. 1|"Drain parses log messages online"]]; Loghub collects datasets [[zhu2020loghub|"a large collection of system log datasets"]].'
 
@@ -59,5 +59,15 @@ describe('marker text', () => {
       'Drain uses a fixed-depth tree "Drain parses log messages online" [he2017drain, p. 1]; Loghub collects datasets "a large collection of system log datasets" [zhu2020loghub].'
     )
     expect(citedPapers(`${ANSWER} again [[he2017drain|p. 2|"y"]]`)).toEqual(['he2017drain', 'zhu2020loghub'])
+  })
+})
+
+describe('rekeyCitations', () => {
+  it('rewrites only the markers citing that key, with or without a page', () => {
+    const text = `${ANSWER} Again [[he2017drain|"online"]], not [[he2017drainb|"other"]] nor he2017drain in prose.`
+    expect(rekeyCitations(text, 'he2017drain', 'he2017online')).toBe(
+      'Drain uses a fixed-depth tree [[he2017online|p. 1|"Drain parses log messages online"]]; Loghub collects datasets [[zhu2020loghub|"a large collection of system log datasets"]]. Again [[he2017online|"online"]], not [[he2017drainb|"other"]] nor he2017drain in prose.'
+    )
+    expect(rekeyCitations(ANSWER, 'nosuchkey', 'other')).toBe(ANSWER)
   })
 })

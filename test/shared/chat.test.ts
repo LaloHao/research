@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { CHAT_ID, ChatMessageSchema, ChatMetaSchema, ChatScopeSchema, normalizeExcerpt, questionIndex, undoneActions } from '../../src/shared/chat'
+import { CHAT_ID, ChatMessageSchema, ChatMetaSchema, ChatScopeSchema, normalizeExcerpt, questionIndex, rekeyChat, undoneActions } from '../../src/shared/chat'
 import { ACTION_READ_TOOLS, ACTION_TOOLS, SYNC_TOOLS, TOOL_RISK } from '../../src/shared/chatActions'
 
-import { actionMessage, assistantMessage, userMessage } from '../helpers/chats'
+import { actionMessage, assistantMessage, chatFile, userMessage } from '../helpers/chats'
 
 const AT = '2026-10-11T12:00:00.000Z'
 const meta = { schema_version: 1, id: '20261011-120000-a1b2', title: 'What does Drain do?', scope: 'library', model: 'sonnet', created_at: AT, updated_at: AT }
@@ -109,5 +109,21 @@ describe('action records', () => {
     expect(questionIndex([userMessage(), actionMessage(), assistantMessage()])).toBe(-1)
     expect(questionIndex([userMessage(), assistantMessage(), userMessage()])).toBe(2)
     expect(questionIndex([])).toBe(-1)
+  })
+})
+
+describe('rekeyChat', () => {
+  it('renames the scope paper, quoted excerpts and citation markers, and leaves action records as they ran', () => {
+    const excerpt = { paper: 'he2017drain', page: 1, quote: 'Drain parses log messages online' }
+    const file = chatFile([userMessage({ excerpt }), actionMessage(), assistantMessage()], { scope: { paper: 'he2017drain' } })
+    const next = rekeyChat(file, 'he2017drain', 'he2017online')
+    expect(next?.meta.scope).toEqual({ paper: 'he2017online' })
+    expect(next?.messages[0]).toMatchObject({ excerpt: { ...excerpt, paper: 'he2017online' } })
+    expect(next?.messages[1]).toBe(file.messages[1])
+    expect(next?.messages[2]).toMatchObject({ text: expect.stringContaining('[[he2017online|p. 1|') })
+  })
+
+  it('is null for a conversation that does not name the paper', () => {
+    expect(rekeyChat(chatFile(), 'zhu2020loghub', 'other')).toBeNull()
   })
 })

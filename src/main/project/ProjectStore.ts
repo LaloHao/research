@@ -79,6 +79,7 @@ export class ProjectStore {
     'updateConfig',
     'trashPaper',
     'restorePaper',
+    'renamePaper',
     'adoptTrashedFile',
     'keepPaperFileAs',
     'finishMerge',
@@ -536,6 +537,38 @@ export class ProjectStore {
       }
     }
     return this.moveOutOfTrash(id, as)
+  }
+
+  /**
+   * «Cambiar clave»: `papers/<id>/` becomes `papers/<as>/` (one rename), its paper.yaml rewritten by `rewrite` (with
+   * id `as`) first, hash-checked. A key some folder already uses, in the library or the trash, is refused. If the
+   * folder cannot be moved, the original paper.yaml goes back (hash-checked). The on-demand PDF in `.cache/` follows.
+   */
+  async renamePaper(id: string, as: string, rewrite: (paper: Paper) => Paper): Promise<void> {
+    if (!PAPER_ID.test(id) || !PAPER_ID.test(as)) throw new Error(`Invalid paper id: ${id} → ${as}`)
+    if (!this.paperExists(id)) throw new ConflictError(join(this.paperDir(id), 'paper.yaml'))
+    if (existsSync(this.paperDir(as)) || this.trashExists(as)) throw new ProjectError(`${as} is taken`, 'paper_exists')
+    const path = join(this.paperDir(id), 'paper.yaml')
+    const read = await this.readPaper(id)
+    if (!read.ok) throw new ConflictError(path)
+    const next = PaperSchema.parse(rewrite(read.value))
+    if (next.id !== as) throw new Error(`The rewritten paper.yaml must have id ${as}`)
+    const original = await readFile(path, 'utf8')
+    const rewritten = await this.writeChecked(path, toYaml(next), read.hash)
+    try {
+      await this.move(this.paperDir(id), this.paperDir(as))
+    } catch (error) {
+      await this.writeChecked(path, original, rewritten).catch((undo: unknown) => console.error('rename: paper.yaml', id, undo))
+      throw error
+    }
+    const cached = join(this.cacheDir, 'pdfs', `${id}.pdf`)
+    if (existsSync(cached)) {
+      await rename(cached, join(this.cacheDir, 'pdfs', `${as}.pdf`)).catch(async (error: unknown) => {
+        // Only a cache: it is downloaded again when needed.
+        console.error('rename: cached PDF', id, error)
+        await rm(cached, { force: true })
+      })
+    }
   }
 
   /** Files of a trashed paper (no folders, dot files or trashed.yaml), sorted with paper.yaml last. */

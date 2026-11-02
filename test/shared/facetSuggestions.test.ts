@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FacetSuggestionSchema, FacetSuggestionsFileSchema, isSuggestionName, SUGGESTION_ID, suggestionId } from '../../src/shared/facetSuggestions'
+import { FacetSuggestionSchema, FacetSuggestionsFileSchema, isSuggestionName, rekeyFacetSuggestions, SUGGESTION_ID, suggestionId } from '../../src/shared/facetSuggestions'
 import { aliasSuggestion, newFacetSuggestion, newValueSuggestion } from '../helpers/facets'
 
 describe('suggestion ids', () => {
@@ -51,5 +51,15 @@ describe('FacetSuggestionsFileSchema', () => {
     expect(FacetSuggestionSchema.safeParse(newValueSuggestion({ id: 'new_value__data_type__metrics', value: 'x', status: 'rejected' })).success).toBe(true)
     expect(FacetSuggestionSchema.safeParse(newValueSuggestion({ id: 'new_value__task__metrics', status: 'accepted' })).success).toBe(false)
     expect(FacetSuggestionSchema.safeParse(aliasSuggestion({ id: 'new_value__sanitization_technique__x', status: 'accepted' })).success).toBe(false)
+  })
+})
+
+describe('rekeyFacetSuggestions', () => {
+  it('renames the paper in the examples that quote it, and is null when none does', () => {
+    const file = { schema_version: 1 as const, suggestions: [newFacetSuggestion(), newValueSuggestion()] }
+    const next = rekeyFacetSuggestions(file, 'zhu2020loghub', 'zhu2020collection')
+    expect(next?.suggestions[0].examples.map((e) => e.paper)).toEqual(['zhu2020collection'])
+    expect(next?.suggestions[1]).toBe(file.suggestions[1])
+    expect(rekeyFacetSuggestions(file, 'he2017drain', 'x')).toBeNull()
   })
 })
