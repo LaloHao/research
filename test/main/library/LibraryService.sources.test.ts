@@ -30,10 +30,46 @@ describe('LibraryService.ingestPdf', () => {
     const { store, library } = await setupLibrary()
     const path = await pdfFile([['Sanitizing logs with NER for incident reviews in production systems.']], { title: 'Sanitizing logs with NER', author: 'Ana Pérez' })
     const outcome = await library.ingestPdf(path)
-    expect(outcome).toEqual({ status: 'added', paperId: 'anaperezndsanitizing' })
+    expect(outcome).toEqual({ status: 'added', paperId: 'perezndsanitizing' })
     const read = await store.readPaper(outcome.paperId)
     expect(read.ok && read.value).toMatchObject({ metadata_status: 'incomplete', title: 'Sanitizing logs with NER', kind: 'other' })
-    expect(read.ok && read.value.bibtex).toContain('@misc{anaperezndsanitizing,')
+    expect(read.ok && read.value.bibtex).toContain('@misc{perezndsanitizing,')
+  })
+
+  it('splits the PDF metadata\'s author list into people, never one long name', async () => {
+    const { store, library } = await setupLibrary()
+    const path = await pdfFile([['A book about reliability engineering in large production systems.']], {
+      title: 'Site Reliability Engineering',
+      author: 'Betsy Beyer, Chris Jones, Jennifer Petoff, and Niall Richard Murphy'
+    })
+    const { paperId } = await library.ingestPdf(path)
+    expect(paperId).toBe('beyerndsite')
+    const read = await store.readPaper(paperId)
+    expect(read.ok && read.value.authors).toEqual([
+      { family: 'Beyer', given: 'Betsy' },
+      { family: 'Jones', given: 'Chris' },
+      { family: 'Petoff', given: 'Jennifer' },
+      { family: 'Murphy', given: 'Niall Richard' }
+    ])
+  })
+
+  it('resolves a book through the ISBN on its copyright page, and keeps the ISBN when no catalogue answers', async () => {
+    const { store, resolver, library } = await setupLibrary()
+    const BOOK = { kind: 'book' as const, title: 'Site Reliability Engineering: How Google Runs Production Systems', authors: [{ family: 'Beyer', given: 'Betsy' }], year: 2016, venue: "O'Reilly Media", identifiers: { isbn: '9781491929124' }, complete: true }
+    const pages = [['Site Reliability Engineering'], ['Edited by Betsy Beyer'], ['Copyright © 2016 Google, Inc.', 'ISBN: 978-1-491-92912-4', '[LSI]']]
+    const unresolved = await library.ingestPdf(await pdfFile(pages, { title: 'Site Reliability Engineering' }))
+    const before = await store.readPaper(unresolved.paperId)
+    expect(before.ok && before.value).toMatchObject({ metadata_status: 'incomplete', identifiers: { isbn: '9781491929124' } })
+    resolver.setIsbn('9781491929124', BOOK)
+    expect(await library.updateMetadata(unresolved.paperId)).toMatchObject({ paperId: unresolved.paperId })
+    const after = await store.readPaper(unresolved.paperId)
+    expect(after.ok && after.value).toMatchObject({ kind: 'book', year: 2016, metadata_status: 'complete' })
+
+    const { store: store2, resolver: resolver2, library: library2 } = await setupLibrary()
+    resolver2.setIsbn('9781491929124', BOOK)
+    expect(await library2.ingestPdf(await pdfFile(pages))).toEqual({ status: 'added', paperId: 'beyer2016site' })
+    const read = await store2.readPaper('beyer2016site')
+    expect(read.ok && read.value.pdf_sha256).toBeTruthy()
   })
 
   it('keeps the DOI when resolution fails so metadata can be completed later', async () => {

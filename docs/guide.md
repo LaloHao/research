@@ -64,7 +64,7 @@ The app fills in metadata automatically from the identifier. If the paper ends u
 
 When a paper is added (or its metadata completed), the app looks up its references in OpenAlex in the background (see "Citations and candidates"); this uses no Claude quota.
 
-Adding an identifier or PDF that's already in the library updates the existing paper instead of duplicating it («ya estaba en la biblioteca» (was already in the library) / «actualizado» (updated) in the activity panel). A PDF dropped on the library is matched by the DOI or arXiv id printed on it, or by its title: when nothing matches, it becomes a new paper, and when the paper already has a PDF, the dropped one is ignored. To give a specific paper its PDF, use its PDF tab instead (see "Attaching or replacing a PDF" below).
+Adding an identifier or PDF that's already in the library updates the existing paper instead of duplicating it («ya estaba en la biblioteca» (was already in the library) / «actualizado» (updated) in the activity panel). A PDF dropped on the library is matched by the DOI or arXiv id printed on its first pages, or, for a book, by the ISBN on its copyright page (within its first 8 pages; with it the book's data is taken as «Agregar» does), or by its title: when nothing matches, it becomes a new paper, and when the paper already has a PDF, the dropped one is ignored. To give a specific paper its PDF, use its PDF tab instead (see "Attaching or replacing a PDF" below). A PDF without an identifier that resolves keeps its title and authors as its metadata say them (an author list is split into people) and «Los metadatos están incompletos.» (metadata incomplete); if it had an ISBN, «Reintentar» (Retry) looks it up again.
 
 ### Sites that block downloads
 
