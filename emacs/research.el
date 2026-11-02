@@ -1439,6 +1439,8 @@ end).")
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "f") #'research-ask-follow-up)
     (define-key map (kbd "RET") #'research-ask-visit-edit)
+    (define-key map (kbd "y") #'research-ask-accept-edits)
+    (define-key map (kbd "d") #'research-ask-reject-edit)
     (define-key map (kbd "c") #'research-ask-open-citation)
     (define-key map (kbd "a") #'research-ask-open-in-app)
     (define-key map (kbd "s") #'research-ask-stop)
@@ -1815,7 +1817,7 @@ rewrite, -e (with `research-ask-allow-edits') lets Claude edit your file.
   (transient-setup 'research-ask-follow-up))
 
 (defconst research--ask-keys-line
-  "f: otra pregunta · c: abrir la cita · RET: ir al cambio · a: abrir en la app · s: detener · q: cerrar\n"
+  "f: otra pregunta · c: abrir la cita · RET: ir al cambio · y: aceptar cambios · d: deshacer el cambio · a: abrir en la app · s: detener · q: cerrar\n"
   "The keys of `*research-ask*', under its header.")
 
 ;;;###autoload
@@ -2050,10 +2052,11 @@ or `reason'."
                       (insert (alist-get 'replace e))
                       (let ((ov (make-overlay at (point))))
                         (overlay-put ov 'face 'research-ask-edit)
+                        (overlay-put ov 'research-ask-original find)
                         (overlay-put ov 'evaporate t)
                         (overlay-put ov 'help-echo (alist-get 'why e))
-                        (overlay-put ov 'modification-hooks (list (lambda (o after &rest _) (when after (delete-overlay o))))))
-                      (push (cons (cons 'applied (copy-marker at)) e) out))))))))
+                        (overlay-put ov 'modification-hooks (list (lambda (o after &rest _) (when after (delete-overlay o)))))
+                        (push (append (list (cons 'applied (copy-marker at)) (cons 'overlay ov)) e) out)))))))))
         (undo-boundary))))
     (nreverse out)))
 
@@ -2062,7 +2065,7 @@ or `reason'."
   (let ((applied (seq-count (lambda (e) (alist-get 'applied e)) edits))
         (oneline (lambda (s) (truncate-string-to-width (replace-regexp-in-string "[ \t\n]+" " " s) 70 nil nil "…"))))
     (insert (format "\n\nCambios (%d de %d aplicados%s):\n" applied (length edits)
-                    (if (> applied 0) "; un `undo' en tu búfer los deshace" "")))
+                    (if (> applied 0) "; y: aceptarlos (quita la marca) · d: deshacer el de la línea · un `undo' en tu búfer los deshace todos" "")))
     (dolist (e edits)
       (let ((start (point)))
         (insert (format "- %s «%s» → «%s»%s%s\n"
@@ -2072,7 +2075,8 @@ or `reason'."
                         (if (alist-get 'applied e) ""
                           (format " (no se aplicó: %s)" (research--label (alist-get 'reason e) research--ask-edit-reasons)))))
         (when (alist-get 'applied e)
-          (add-text-properties start (1- (point)) `(research-ask-edit ,(alist-get 'applied e))))))
+          (add-text-properties start (1- (point)) `(research-ask-edit ,(alist-get 'applied e)
+                                                   research-ask-edit-overlay ,(alist-get 'overlay e))))))
     (when (> applied 0)
       (let ((source (plist-get research--ask-state :source)))
         (message "Claude cambió %d %s en %s (un `undo' allí los deshace)" applied
@@ -2081,11 +2085,59 @@ or `reason'."
 (defun research-ask-visit-edit ()
   "Go to the change of Claude at point in your buffer."
   (interactive)
-  (let ((at (get-text-property (point) 'research-ask-edit)))
+  (let ((at (let ((ov (get-text-property (point) 'research-ask-edit-overlay)))
+              (if (and (overlayp ov) (overlay-buffer ov))
+                  (set-marker (make-marker) (overlay-start ov) (overlay-buffer ov))
+                (get-text-property (point) 'research-ask-edit)))))
     (unless (and (markerp at) (buffer-live-p (marker-buffer at)))
       (user-error "No hay un cambio aplicado en esta línea"))
     (pop-to-buffer (marker-buffer at))
     (goto-char at)))
+
+(defun research--ask-edit-overlays (buffer)
+  "The marks of Claude's changes in BUFFER."
+  (with-current-buffer buffer
+    (save-restriction
+      (widen)
+      (seq-filter (lambda (o) (overlay-get o 'research-ask-original))
+                  (overlays-in (point-min) (point-max))))))
+
+;;;###autoload
+(defun research-ask-accept-edits ()
+  "Accept Claude's changes: they stay as they are and lose their mark.
+From `*research-ask*', those in the buffer of its conversation; from any
+other buffer, those in it."
+  (interactive)
+  (let* ((buffer (if (derived-mode-p 'research-ask-mode)
+                     (plist-get research--ask-state :source)
+                   (current-buffer)))
+         (marks (and (buffer-live-p buffer) (research--ask-edit-overlays buffer))))
+    (unless marks (user-error "No hay cambios de Claude marcados aquí"))
+    (mapc #'delete-overlay marks)
+    (message "Aceptados %d %s de Claude" (length marks) (if (= 1 (length marks)) "cambio" "cambios"))))
+
+;;;###autoload
+(defun research-ask-reject-edit ()
+  "Put back your text in place of the change of Claude here.
+In `*research-ask*', the change of the «Cambios:» line at point; in your
+buffer, the marked change at point.  Only while you have not edited it."
+  (interactive)
+  (let ((ov (if (derived-mode-p 'research-ask-mode)
+                (get-text-property (point) 'research-ask-edit-overlay)
+              (seq-find (lambda (o) (overlay-get o 'research-ask-original))
+                        (overlays-at (point) t)))))
+    (unless (and (overlayp ov) (overlay-buffer ov))
+      (user-error "Aquí no hay un cambio de Claude marcado (¿ya lo aceptaste o lo editaste?)"))
+    (let ((original (overlay-get ov 'research-ask-original))
+          (beg (overlay-start ov))
+          (end (overlay-end ov)))
+      (with-current-buffer (overlay-buffer ov)
+        (delete-overlay ov)
+        (save-excursion
+          (goto-char beg)
+          (delete-region beg end)
+          (insert original)))
+      (message "Volví a tu texto: «%s»" (truncate-string-to-width original 60 nil nil "…")))))
 
 (defun research--ask-buffer-state ()
   "This `*research-ask*' buffer's conversation, or a `user-error'."
@@ -2323,6 +2375,8 @@ continues it with a new passage)."
     (define-key map (kbd "T") #'research-prose-auto-gls-mode)
     (define-key map (kbd "?") #'research-ask)
     (define-key map (kbd ".") #'research-ask-resume)
+    (define-key map (kbd "y") #'research-ask-accept-edits)
+    (define-key map (kbd "x") #'research-ask-reject-edit)
     map)
   "The research commands, under `research-keymap-prefix' in `research-mode'.")
 (defalias 'research-command-map research-command-map)

@@ -1279,7 +1279,7 @@ The selection is read as when the menu opens; the question with `read-string'."
             (search-forward "uno de los")
             (should (eq (get-char-property (point) 'face) 'research-ask-edit))
             (with-current-buffer "*research-ask*"
-              (should (string-match-p "Cambios (2 de 3 aplicados; un `undo' en tu búfer los deshace):\n- ✓ «es el mejor» → «es uno de los mejores»: Matiza\\.\n- ✓ «Sigue» → «Continúa»: Verbo\\.\n- ✗ «no existe» → «x» (no se aplicó: ese texto no está en el pasaje)" (buffer-string)))
+              (should (string-match-p "Cambios (2 de 3 aplicados; y: aceptarlos (quita la marca) · d: deshacer el de la línea · un `undo' en tu búfer los deshace todos):\n- ✓ «es el mejor» → «es uno de los mejores»: Matiza\\.\n- ✓ «Sigue» → «Continúa»: Verbo\\.\n- ✗ «no existe» → «x» (no se aplicó: ese texto no está en el pasaje)" (buffer-string)))
               (goto-char (point-min))
               (search-forward "✓ «Sigue")
               (research-ask-visit-edit)
@@ -1291,6 +1291,46 @@ The selection is read as when the menu opens; the question with `read-string'."
               (undo)
               (should (string-match-p "Drain es el mejor \\[cite:@he2017drain\\]\\.\nSigue la idea\\." (buffer-string)))
               (should (string-match-p "Al final\\.\n\\'" (buffer-string))))))))))
+
+(ert-deftest research-test-ask-edits-are-accepted-or-put-back ()
+  (let* (poll
+         (edits [((find . "es el mejor") (replace . "es uno de los mejores") (why . "Matiza.") (state . "ok"))
+                 ((find . "Sigue") (replace . "Continúa") (why . "Verbo.") (state . "ok"))])
+         (done `((conversation_id . ,research-test--ask-id) (status . "done") (mode . "edit")
+                 (text . "Ok.") (citations . []) (unverified . 0) (costUsd . 0.03)
+                 (conversation_cost_usd . 0.03) (edits . ,edits))))
+    (research-test--with-app
+        (lambda (tool args)
+          (pcase tool
+            ("ask" (if (alist-get 'confirmed args)
+                       (research-test--result `((conversation_id . ,research-test--ask-id) (status . "running")))
+                     (research-test--ask-plan)))
+            ("ask_status" (research-test--result done))))
+      (research-test--with-draft-timer poll
+        (research-test--with-ask-buffer
+          (let ((research-ask-allow-edits t)
+                (source (current-buffer)))
+            (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) t))
+                      ((symbol-function 'message) #'ignore))
+              (research-ask-question "Mejóralo" "edit" '(4))
+              (funcall poll)
+              (should (= 2 (length (research--ask-edit-overlays source))))
+              ;; d on a «Cambios:» line puts the author's text back.
+              (with-current-buffer "*research-ask*"
+                (should (eq (key-binding (kbd "d")) #'research-ask-reject-edit))
+                (goto-char (point-min))
+                (search-forward "✓ «Sigue")
+                (research-ask-reject-edit))
+              (should (string-match-p "\nSigue la idea\\." (buffer-string)))
+              (should (= 1 (length (research--ask-edit-overlays source))))
+              ;; y accepts the rest: the text stays, the mark goes.
+              (with-current-buffer "*research-ask*" (research-ask-accept-edits))
+              (should (string-match-p "es uno de los mejores" (buffer-string)))
+              (should-not (research--ask-edit-overlays source))
+              (should-error (research-ask-accept-edits) :type 'user-error)
+              ;; From the buffer itself, at point.
+              (goto-char (point-min))
+              (should-error (research-ask-reject-edit) :type 'user-error))))))))
 
 (ert-deftest research-test-ask-edits-are-not-applied-without-permission ()
   (let* (poll
