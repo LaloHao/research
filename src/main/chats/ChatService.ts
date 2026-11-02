@@ -488,6 +488,8 @@ export class ChatService {
     if (req.writing && (req.chatId || req.scope !== 'library')) throw new UserFacingError('invalid_edit')
     // Background goes with a passage, or with a follow-up (whose conversation the caller checked is a writing one).
     if (req.context && !req.writing && !req.chatId) throw new UserFacingError('invalid_edit')
+    // A fresh passage only replaces the one of an existing conversation.
+    if (req.passage !== undefined && (!req.chatId || !req.passage.trim())) throw new UserFacingError('invalid_edit')
     if (req.chatId) this.sending.add(req.chatId)
     try {
       const reservation = await this.deps.budget.admit(undefined, 'chat')
@@ -495,7 +497,10 @@ export class ChatService {
       try {
         const message: UserMessage = { role: 'user', at: this.now().toISOString(), text, excerpt: req.excerpt }
         // In a conversation from the editor every question carries its mode: a rewrite only when this one allows it.
-        const withMode = (meta: ChatMeta): ChatMeta => (meta.writing ? { ...meta, writing: { ...meta.writing, mode: req.mode ?? 'opinion' } } : meta)
+        const withMode = (meta: ChatMeta): ChatMeta =>
+          meta.writing
+            ? { ...meta, writing: { ...meta.writing, mode: req.mode ?? 'opinion', ...(req.passage !== undefined ? { passage: req.passage } : {}) } }
+            : meta
         id = req.chatId
           ? (await this.update(req.chatId, (f) => ({ ...f, meta: withMode(f.meta), messages: [...f.messages, message] }))).meta.id
           : await this.create(req, message)

@@ -1829,27 +1829,41 @@ stops the answer and `q' closes."
   research--ask-state)
 
 (defun research--ask-fresh-context (state)
-  "The `ask' arguments of the background of STATE's passage, as it is now.
-From its buffer when still open, else from its file; nil when neither."
+  "The `ask' arguments of STATE's passage and its background, as they are now.
+The passage (`text') and the chapter and outline, from its buffer when
+still open, else from its file; nil when neither.  A passage that was the
+whole file is the whole file again (what you added before or after it
+too); otherwise the text between its markers, which follow your edits."
   (let ((buffer (plist-get state :source))
         (path (plist-get state :path))
         (scope (plist-get state :scope)))
-    (cond ((buffer-live-p buffer)
-           (with-current-buffer buffer
-             (let ((beg (marker-position (plist-get state :beg)))
-                   (end (marker-position (plist-get state :end))))
-               (car (research--ask-context scope (min beg end) (max beg end) buffer-file-name)))))
-          ((and path (file-readable-p path))
-           (with-temp-buffer
-             (insert-file-contents path)
-             (let ((beg (min (plist-get state :pos) (point-max)))
-                   (end (min (plist-get state :end-pos) (point-max))))
-               (car (research--ask-context scope beg end path))))))))
+    (cl-flet ((fresh (beg end file)
+                (let ((text (buffer-substring-no-properties beg end)))
+                  (append (unless (string-empty-p (string-trim text)) `((text . ,text)))
+                          (car (research--ask-context scope beg end file))))))
+      (cond ((buffer-live-p buffer)
+             (with-current-buffer buffer
+               (save-restriction
+                 (widen)
+                 (if (equal scope "file")
+                     (fresh (point-min) (point-max) buffer-file-name)
+                   (let ((beg (marker-position (plist-get state :beg)))
+                         (end (marker-position (plist-get state :end))))
+                     (fresh (min beg end) (max beg end) buffer-file-name))))))
+            ((and path (file-readable-p path))
+             (with-temp-buffer
+               (insert-file-contents path)
+               (if (equal scope "file")
+                   (fresh (point-min) (point-max) path)
+                 (let ((beg (min (plist-get state :pos) (point-max)))
+                       (end (min (plist-get state :end-pos) (point-max))))
+                   (fresh (min beg end) (max beg end) path)))))))))
 
 (defun research-ask-follow-up (question mode)
   "Ask Claude a follow-up QUESTION (MODE) in this buffer's conversation.
-The passage is the one the conversation started with; the chapter and
-the thesis outline go again as they are now (you may have edited them)."
+The passage is the one the conversation started with, sent again as it
+is now (with your edits; the whole file when it was the whole file),
+with the chapter and the thesis outline as they are now too."
   (interactive
    (progn
      (when (plist-get (research--ask-buffer-state) :timer)

@@ -314,6 +314,8 @@ export interface ChatSendRequest {
   mode?: WritingMode
   /** In a conversation from the editor, fresh background (chapter, outline) replacing the one kept for it. */
   context?: ChatWritingContext
+  /** In a follow-up from the editor, the passage as it is now: it replaces the conversation's (the author edits it). */
+  passage?: string
 }
 
 export type ChatStreamEvent =
