@@ -6,6 +6,7 @@ import { call, ConnectorError, DEFAULT_API_URL, waitForTask, type Connection, ty
 import { ext, type Tab } from './browser'
 import type { ConnectorPage } from './content'
 import { isCapturable, isPdfBytes, isPdfTab, LIMITS, toBase64, type Detection } from './detect'
+import type { CaptureMode } from './mode'
 import { lookupBody, needs, pageBody, planCapture, type Collected } from './payload'
 
 export const SETTINGS_KEYS = ['apiUrl', 'token'] as const
@@ -86,25 +87,46 @@ export async function lookup(conn: Connection, inspected: Inspected): Promise<Ex
   return (await call<{ existing: Existing | null }>(conn, 'capture_lookup', lookupBody(inspected.detection))).existing
 }
 
-export type Step = 'reading' | 'pdf' | 'sending' | 'processing'
+export type Step = 'reading' | 'pdf' | 'serializing' | 'sending' | 'processing'
 
 export type CaptureResult = { status: TaskStatus } | { existing: Existing }
 
-async function gather(inspected: Inspected, onStep: (step: Step) => void): Promise<Collected> {
-  const want = needs(inspected.detection)
+/**
+ * The page serialized as it looks; null when it can't be (too large for the app, or the page refused): the app then
+ * prints the reader view, so the images it needs are collected instead.
+ */
+async function serialized(inspected: Inspected): Promise<Collected['page']> {
+  const result = await inPage(inspected.tabId, 'serializePage').catch(() => null)
+  return result && 'html' in result ? { html: result.html, viewportWidth: result.viewportWidth } : null
+}
+
+async function gather(inspected: Inspected, onStep: (step: Step) => void, mode: CaptureMode): Promise<Collected> {
+  const want = needs(inspected.detection, mode)
   let pdf: string | null = null
   if (want.pdf) {
     onStep('pdf')
     pdf = await fetchPdf(inspected)
   }
+  let page: Collected['page'] = null
+  if (want.page && !pdf && inspected.scriptable) {
+    onStep('serializing')
+    page = await serialized(inspected)
+  }
   onStep('reading')
-  const page = want.html && inspected.scriptable ? await inPage(inspected.tabId, 'collectPage', { images: want.images && !pdf }) : { html: '', images: [] }
-  return { html: page.html, images: page.images, pdf }
+  const images = (want.images || (want.page && !page)) && !pdf
+  const read = want.html && inspected.scriptable ? await inPage(inspected.tabId, 'collectPage', { images }) : { html: '', images: [] }
+  return { html: read.html, images: read.images, pdf, page }
 }
 
 /** «Agregar a Research»: resolves with the finished task, or with the paper the page already is. */
-export async function capture(conn: Connection, inspected: Inspected, onStep: (step: Step) => void = () => undefined, onStatus?: (s: TaskStatus) => void): Promise<CaptureResult> {
-  const collected = await gather(inspected, onStep)
+export async function capture(
+  conn: Connection,
+  inspected: Inspected,
+  onStep: (step: Step) => void = () => undefined,
+  onStatus?: (s: TaskStatus) => void,
+  mode: CaptureMode = 'reader'
+): Promise<CaptureResult> {
+  const collected = await gather(inspected, onStep, mode)
   if (inspected.detection.isPdf && !collected.pdf) throw new ConnectorError(pdfPermission(inspected) ? 'pdf_permission' : 'capture_no_pdf')
   const plan = planCapture(inspected.detection, collected)
   onStep('sending')
@@ -118,13 +140,16 @@ export async function capture(conn: Connection, inspected: Inspected, onStep: (s
 }
 
 /** «Actualizar PDF» of the paper this page already is. */
-export async function updatePdf(conn: Connection, inspected: Inspected, key: string, onStep: (step: Step) => void = () => undefined): Promise<TaskStatus> {
-  const want = needs(inspected.detection)
-  const collected = await gather(inspected, onStep)
-  // Without a PDF to send, the app prints the reader view: it needs the article's images.
-  if (!collected.pdf && want.html && !want.images && inspected.scriptable) {
-    collected.images = (await inPage(inspected.tabId, 'collectPage', { images: true })).images
-  }
+export async function updatePdf(
+  conn: Connection,
+  inspected: Inspected,
+  key: string,
+  onStep: (step: Step) => void = () => undefined,
+  mode: CaptureMode = 'reader'
+): Promise<TaskStatus> {
+  // The paper is known already: the PDF comes from the page even when it has a DOI or an arXiv id.
+  const printable: Inspected = { ...inspected, detection: { ...inspected.detection, doi: null, arxiv: null } }
+  const collected = await gather(printable, onStep, mode)
   if (inspected.detection.isPdf && !collected.pdf) throw new ConnectorError(pdfPermission(inspected) ? 'pdf_permission' : 'capture_no_pdf')
   onStep('sending')
   const { task } = await call<{ task: string }>(conn, 'capture_update_pdf', { key, ...pageBody(inspected.detection, collected) })

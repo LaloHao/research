@@ -2,9 +2,12 @@
  * Injected into the tab only when the user clicks the button or presses the shortcut (activeTab + scripting), in the
  * extension's isolated world: the page's scripts can't see or change it. It reads the page and, for the capture,
  * fetches the article's images (and a PDF on the page's own site) with the page's credentials, as the page itself
- * would. It never changes the page and sends nothing anywhere: it only returns what it read to the extension.
+ * would; for «Página tal como se ve» it serializes the page with its styles, fonts and images (./serialize). It never
+ * changes the page and sends nothing anywhere: it only returns what it read to the extension.
  */
+import { annotatedPageHtml } from '../../src/shared/pageCapture/glyphs'
 import { articleImages, detect, isPdfBytes, LIMITS, sniffImage, toBase64, type Detection, type ImageType } from './detect'
+import { PageTooLargeError, serializePage as serialize } from './serialize'
 
 export interface CollectedImage {
   url: string
@@ -40,8 +43,17 @@ function detectPage(): Detection {
   return detect(document, location.href, document.contentType)
 }
 
+/** The page's HTML, with icon glyphs drawn and canvases copied for the app's reader view (on a copy). */
+function pageHtml(): string {
+  try {
+    return annotatedPageHtml()
+  } catch {
+    return document.documentElement?.outerHTML ?? ''
+  }
+}
+
 async function collectPage(options: { images: boolean }): Promise<Collected> {
-  const html = (document.documentElement?.outerHTML ?? '').slice(0, LIMITS.html)
+  const html = pageHtml().slice(0, LIMITS.html)
   const images: CollectedImage[] = []
   if (!options.images) return { html, images }
   let total = 0
@@ -62,6 +74,25 @@ async function fetchPdf(url: string): Promise<string | null> {
   return bytes && isPdfBytes(bytes) ? toBase64(bytes) : null
 }
 
-const api = { detectPage, collectPage, fetchPdf }
+const RESOURCE_TIMEOUT_MS = 15_000
+
+/** «Página tal como se ve»: the page as one self-contained document; `too_large` when it is past the app's limit. */
+async function serializePage(): Promise<{ html: string; viewportWidth: number; missing: number } | { error: 'too_large' }> {
+  try {
+    return await serialize({
+      doc: document,
+      view: window,
+      fetch: async (url, maxBytes) => {
+        const bytes = await fetchBytes(url, maxBytes, RESOURCE_TIMEOUT_MS)
+        return bytes ? { bytes } : null
+      }
+    })
+  } catch (error) {
+    if (error instanceof PageTooLargeError) return { error: 'too_large' }
+    throw error
+  }
+}
+
+const api = { detectPage, collectPage, fetchPdf, serializePage }
 export type ConnectorPage = typeof api
 ;(globalThis as unknown as { __researchConnector: ConnectorPage }).__researchConnector = api

@@ -5,24 +5,36 @@
  */
 import type { CollectedImage } from './content'
 import type { Detection } from './detect'
+import type { CaptureMode } from './mode'
 
 export interface Collected {
   html: string
   images: CollectedImage[]
   /** Base64. */
   pdf: string | null
+  /** «Página tal como se ve»: the page serialized in the tab, and the width it was laid out at. */
+  page?: { html: string; viewportWidth: number } | null
 }
 
-/** What a capture of this page has to gather in the tab. */
-export function needs(detection: Detection): { html: boolean; images: boolean; pdf: boolean } {
-  const identified = Boolean(detection.doi || detection.arxiv)
+/**
+ * What a capture of this page has to gather in the tab. The PDF of a plain web article (no DOI, no arXiv id, no PDF
+ * of its own) is made by the app from the page: its reader view, from the HTML and the article's images, or the page
+ * as it looks (`mode` «page»), from the page serialized with its styles, fonts and images.
+ */
+export function needs(detection: Detection, mode: CaptureMode = 'reader'): { html: boolean; images: boolean; pdf: boolean; page: boolean } {
+  const fromPage = printsPage(detection)
   return {
     pdf: detection.pdfUrl !== null,
-    // A PDF viewer's page is not the paper.
+    // A PDF viewer's page is not the paper; the HTML always gives the paper its readable text.
     html: !detection.isPdf,
-    // Images are only needed for the reader-view PDF of a plain web article.
-    images: !detection.isPdf && !identified
+    images: fromPage && mode === 'reader',
+    page: fromPage && mode === 'page'
   }
+}
+
+/** Whether the app may print this page into its PDF (so «Vista de lectura» / «Página tal como se ve» applies). */
+export function printsPage(detection: Detection): boolean {
+  return !detection.isPdf && !detection.doi && !detection.arxiv
 }
 
 export type Plan = { endpoint: 'capture_identifier'; body: { identifier: string; page_url: string; title?: string } } | { endpoint: 'capture_page'; body: PageBody }
@@ -35,16 +47,20 @@ export interface PageBody {
   meta: Record<string, string[]>
   images: CollectedImage[]
   pdf?: string
+  page_html?: string
+  viewport_width?: number
 }
 
 export function pageBody(detection: Detection, collected: Collected): PageBody {
+  const page = !detection.isPdf && !collected.pdf ? collected.page : null
   return {
     url: detection.url,
     ...(detection.title ? { title: detection.title } : {}),
     html: detection.isPdf ? '' : collected.html,
     meta: detection.meta,
     images: collected.images,
-    ...(collected.pdf ? { pdf: collected.pdf } : {})
+    ...(collected.pdf ? { pdf: collected.pdf } : {}),
+    ...(page ? { page_html: page.html, viewport_width: page.viewportWidth } : {})
   }
 }
 

@@ -1,15 +1,33 @@
 import { describe, expect, it } from 'vitest'
 import type { Detection } from '../../extension/src/detect'
-import { kindLabel, lookupBody, needs, planCapture } from '../../extension/src/payload'
+import { kindLabel, lookupBody, needs, pageBody, planCapture, printsPage } from '../../extension/src/payload'
 
 const base: Detection = { url: 'https://journal.example.org/a/7', title: 'A study', kind: 'article', doi: null, arxiv: null, pdfUrl: null, isPdf: false, authors: [], date: null, meta: { 'og:type': ['article'] } }
 const image = { url: 'https://cdn.example.org/f.png', data: 'iVBORw0KGgo=', type: 'png' as const }
 
 describe('what a capture gathers', () => {
   it('reads images only for a plain web article, the HTML for anything but a PDF tab, the PDF when there is one', () => {
-    expect(needs(base)).toEqual({ pdf: false, html: true, images: true })
-    expect(needs({ ...base, kind: 'doi', doi: '10.1/x', pdfUrl: 'https://journal.example.org/a/7.pdf' })).toEqual({ pdf: true, html: true, images: false })
-    expect(needs({ ...base, kind: 'pdf', isPdf: true, pdfUrl: base.url })).toEqual({ pdf: true, html: false, images: false })
+    expect(needs(base)).toEqual({ pdf: false, html: true, images: true, page: false })
+    expect(needs({ ...base, kind: 'doi', doi: '10.1/x', pdfUrl: 'https://journal.example.org/a/7.pdf' })).toEqual({ pdf: true, html: true, images: false, page: false })
+    expect(needs({ ...base, kind: 'pdf', isPdf: true, pdfUrl: base.url })).toEqual({ pdf: true, html: false, images: false, page: false })
+  })
+
+  it('serializes the page instead of collecting images when the page is to be printed as it looks', () => {
+    expect(needs(base, 'page')).toEqual({ pdf: false, html: true, images: false, page: true })
+    // A DOI or arXiv page, or a PDF tab, gets its PDF elsewhere: the mode doesn't apply.
+    expect(needs({ ...base, kind: 'doi', doi: '10.1/x' }, 'page')).toMatchObject({ images: false, page: false })
+    expect(needs({ ...base, kind: 'pdf', isPdf: true, pdfUrl: base.url }, 'page')).toMatchObject({ page: false })
+    expect(printsPage(base)).toBe(true)
+    expect(printsPage({ ...base, arxiv: '2401.01234' })).toBe(false)
+  })
+
+  it('sends the serialized page and its width, unless a PDF goes instead', () => {
+    const page = { html: '<!DOCTYPE html><html></html>', viewportWidth: 1366 }
+    expect(pageBody(base, { html: '<html>y</html>', images: [], pdf: null, page })).toMatchObject({ page_html: page.html, viewport_width: 1366 })
+    const withPdf = pageBody(base, { html: '<html>y</html>', images: [], pdf: 'JVBERi0=', page })
+    expect(withPdf).not.toHaveProperty('page_html')
+    expect(withPdf).not.toHaveProperty('viewport_width')
+    expect(pageBody(base, { html: '<html>y</html>', images: [], pdf: null })).not.toHaveProperty('page_html')
   })
 })
 

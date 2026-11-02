@@ -1,6 +1,8 @@
 import type { BrowserWindowConstructorOptions, IpcMainInvokeEvent, Session, WebContents, WebPreferences } from 'electron'
 import type { CapturePdfMode } from '../../shared/capture'
+import { ANNOTATED_PAGE_HTML } from '../../shared/pageCapture/glyphs'
 import { withoutOverlays, type OverlayContents } from './consent'
+import { asSeenPrintOptions, layoutWidth, withScreenMedia, type DebuggerContents } from './screen'
 
 /**
  * The rules of the app's browser window, apart from Electron so they can be tested: how the window and the page are
@@ -101,6 +103,19 @@ export function readerWindowOptions(): BrowserWindowConstructorOptions {
   }
 }
 
+/** The session a page serialized by the browser extension is printed in: in memory, refusing every request but it. */
+export const PAGE_PARTITION = 'capture-page'
+
+/**
+ * The hidden window that prints a page serialized by the browser extension («Página tal como se ve»): the same rules
+ * as the reader's (no JavaScript at all, sandboxed, isolated, no preload) in its own in-memory session, `width` wide
+ * like the browser window the page was in.
+ */
+export function pageWindowOptions(width: number): BrowserWindowConstructorOptions {
+  const options = readerWindowOptions()
+  return { ...options, width, height: 1000, webPreferences: { ...options.webPreferences, partition: PAGE_PARTITION } }
+}
+
 /** The session the reader view is previewed in («Vista de lectura»): in memory, refusing every request but its document. */
 export const PREVIEW_PARTITION = 'capture-preview'
 
@@ -165,15 +180,27 @@ export interface PageCapture {
   pdf: Uint8Array | null
 }
 
-/** The page's HTML as it is now, read from an isolated world (the page's scripts cannot change what it sees): untrusted. */
+const PLAIN_HTML = 'document.documentElement ? document.documentElement.outerHTML : ""'
+
+/**
+ * The page's HTML as it is now, read from an isolated world (the page's scripts cannot change what it sees): untrusted.
+ * Icon-font glyphs come drawn and inline SVG sized on the copy read (shared/pageCapture/glyphs), for the reader view.
+ */
 export async function readPageHtml(contents: Pick<WebContents, 'executeJavaScriptInIsolatedWorld'>): Promise<string> {
-  const raw: unknown = await contents.executeJavaScriptInIsolatedWorld(CAPTURE_WORLD_ID, [
-    { code: 'document.documentElement ? document.documentElement.outerHTML : ""' }
-  ])
+  const run = (code: string): Promise<unknown> => contents.executeJavaScriptInIsolatedWorld(CAPTURE_WORLD_ID, [{ code }])
+  const raw: unknown = await run(ANNOTATED_PAGE_HTML).catch(() => run(PLAIN_HTML))
   return typeof raw === 'string' ? raw.slice(0, MAX_CAPTURE_HTML) : ''
 }
 
-type CaptureContents = Pick<WebContents, 'getURL' | 'executeJavaScriptInIsolatedWorld' | 'printToPDF'> & OverlayContents
+/** The width the page is laid out at in its view (CSS pixels), from the same isolated world. */
+async function viewportWidth(contents: Pick<WebContents, 'executeJavaScriptInIsolatedWorld'>): Promise<number> {
+  const raw: unknown = await contents
+    .executeJavaScriptInIsolatedWorld(CAPTURE_WORLD_ID, [{ code: 'document.documentElement ? document.documentElement.clientWidth : 0' }])
+    .catch(() => null)
+  return layoutWidth(typeof raw === 'number' && raw > 0 ? raw : null)
+}
+
+type CaptureContents = Pick<WebContents, 'getURL' | 'executeJavaScriptInIsolatedWorld' | 'printToPDF'> & OverlayContents & DebuggerContents
 
 export interface CaptureOptions {
   mode: CapturePdfMode
@@ -184,7 +211,8 @@ export interface CaptureOptions {
 /**
  * Reads what the page shows now: its URL, its HTML (from an isolated world) and a PDF. In `reader` mode the PDF is the
  * reader view of the article; a page without one (or a reader print that fails) is printed as it looks instead, as in
- * `page` mode, with consent overlays hidden.
+ * `page` mode: with consent overlays hidden, its screen styles (not its print ones), at the width it has in the window,
+ * with backgrounds (see ./screen).
  */
 export async function readCapture(contents: CaptureContents, options: CaptureOptions): Promise<PageCapture> {
   const url = contents.getURL()
@@ -193,7 +221,10 @@ export async function readCapture(contents: CaptureContents, options: CaptureOpt
   let printed: Uint8Array | null = null
   if (options.mode === 'reader' && html) printed = await options.printReader(html, url).catch(() => null)
   if (!printed) {
-    printed = await withoutOverlays(contents, CAPTURE_WORLD_ID, () => contents.printToPDF({ printBackground: true })).catch(() => null)
+    printed = await withoutOverlays(contents, CAPTURE_WORLD_ID, async () => {
+      const width = await viewportWidth(contents)
+      return withScreenMedia(contents, () => contents.printToPDF(asSeenPrintOptions(width)))
+    }).catch(() => null)
   }
   // Without a PDF the paper still gets the page's text.
   const pdf = printed && printed.byteLength <= MAX_CAPTURE_PDF ? new Uint8Array(printed) : null

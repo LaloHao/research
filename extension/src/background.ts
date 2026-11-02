@@ -1,11 +1,13 @@
 /**
- * The keyboard shortcut («Agregar a Research» without the popup): the same capture, with the result on the toolbar
- * icon (✓ or !, the message in its tooltip). A page already in the library is left as it is.
+ * The keyboard shortcut («Agregar a Research» without the popup): the same capture, with the PDF mode last chosen in
+ * the popup, and the result on the toolbar icon (✓ or !, the message in its tooltip). A page already in the library
+ * is left as it is.
  */
 import { ConnectorError } from './api'
 import { ext, type Tab } from './browser'
 import { errorMessage, outcomeMessage } from './errors'
 import { capture, connection, inspect, lookup } from './flow'
+import { loadMode } from './mode'
 
 
 async function badge(tabId: number | undefined, text: string, color: string, title: string): Promise<void> {
@@ -24,7 +26,8 @@ async function addFromShortcut(tab: Tab | undefined): Promise<void> {
     const inspected = await inspect(tab)
     const existing = await lookup(conn, inspected)
     if (existing) return await badge(tabId, '=', '#2457c5', `Ya está en tu biblioteca como ${existing.key}.`)
-    const result = await capture(conn, inspected, () => undefined, () => void ext().action.setBadgeText({ text: '…', tabId }).catch(() => undefined))
+    const mode = await loadMode(ext().storage.local)
+    const result = await capture(conn, inspected, () => undefined, () => void ext().action.setBadgeText({ text: '…', tabId }).catch(() => undefined), mode)
     if ('existing' in result) return await badge(tabId, '=', '#2457c5', `Ya está en tu biblioteca como ${result.existing.key}.`)
     await badge(tabId, '✓', '#1e7b34', outcomeMessage(result.status.outcome, result.status.key ?? ''))
   } catch (error) {

@@ -20,6 +20,8 @@ import {
   toolbarWindowOptions
 } from '../../../src/main/capture/policy'
 import { CONSENT_CSS, HIDE_ATTRIBUTE, MARK_FIXED_OVERLAYS, OVERLAY_NAME } from '../../../src/main/capture/consent'
+import { asSeenPrintOptions } from '../../../src/main/capture/screen'
+import { ANNOTATED_PAGE_HTML } from '../../../src/shared/pageCapture/glyphs'
 
 type Listener = (...args: any[]) => void
 
@@ -166,14 +168,16 @@ describe('fromToolbar', () => {
 })
 
 describe('readCapture', () => {
-  function page(url: string, html: unknown, pdf: Buffer | Error) {
+  function page(url: string, html: unknown, pdf: Buffer | Error, opts: { annotate?: 'fails'; debuggerFails?: boolean } = {}) {
     const worlds: number[] = []
     const calls: string[] = []
     const css: string[] = []
+    const printed: Electron.PrintToPDFOptions[] = []
     return {
       worlds,
       calls,
       css,
+      printed,
       getURL: () => url,
       executeJavaScriptInIsolatedWorld: async (world: number, scripts: { code: string }[]) => {
         worlds.push(world)
@@ -182,13 +186,32 @@ describe('readCapture', () => {
           calls.push(code === MARK_FIXED_OVERLAYS ? 'mark' : 'unmark')
           return 1
         }
-        calls.push('html')
+        if (code.includes('clientWidth')) {
+          calls.push('width')
+          return 1000
+        }
+        if (code === ANNOTATED_PAGE_HTML) {
+          calls.push('html')
+          if (opts.annotate === 'fails') throw new Error('annotate')
+          return html
+        }
+        calls.push('plain-html')
         return html
       },
       insertCSS: async (text: string) => (calls.push('insertCSS'), css.push(text), 'css-key'),
       removeInsertedCSS: async (key: string) => void calls.push(`removeCSS:${key}`),
-      printToPDF: async () => {
+      debugger: {
+        isAttached: () => false,
+        attach: () => {
+          if (opts.debuggerFails) throw new Error('Another debugger is already attached')
+          calls.push('attach')
+        },
+        sendCommand: async (method: string, params: { media: string }) => void calls.push(`${method}:${params.media}`),
+        detach: () => void calls.push('detach')
+      },
+      printToPDF: async (options: Electron.PrintToPDFOptions) => {
         calls.push('print')
+        printed.push(options)
         if (pdf instanceof Error) throw pdf
         return pdf
       }
@@ -216,7 +239,19 @@ describe('readCapture', () => {
   it('prints the page as it looks with consent overlays hidden by CSS, and takes the style and marks away afterwards', async () => {
     const contents = page('https://acme.test/a', '<html>hi</html>', Buffer.from('%PDF-1.7'))
     await readCapture(contents as never, pageMode)
-    expect(contents.calls).toEqual(['html', 'mark', 'insertCSS', 'print', 'removeCSS:css-key', 'unmark'])
+    expect(contents.calls).toEqual([
+      'html',
+      'mark',
+      'insertCSS',
+      'width',
+      'attach',
+      'Emulation.setEmulatedMedia:screen',
+      'print',
+      'Emulation.setEmulatedMedia:',
+      'detach',
+      'removeCSS:css-key',
+      'unmark'
+    ])
     const [css] = contents.css
     for (const selector of ['#onetrust-consent-sdk', '#CybotCookiebotDialog', '#didomi-host', '#qc-cmp2-container', '#truste-consent-track', '#usercentrics-root', '[id^="sp_message_container"]', '.osano-cm-window', '#termly-code-snippet-support', '#cmplz-cookiebanner-container', '.cky-consent-container']) {
       expect(css).toContain(selector)
@@ -229,6 +264,21 @@ describe('readCapture', () => {
     expect(MARK_FIXED_OVERLAYS).toMatch(/position !== 'fixed' && position !== 'sticky'/)
     // The empty full-window backdrop of a dialog goes too.
     expect(MARK_FIXED_OVERLAYS).toMatch(/0\.8 \* area && \(el\.textContent \|\| ''\)\.trim\(\)\.length === 0/)
+  })
+
+  it('prints with the screen styles, at the width the page has in the window, on A4 with backgrounds', async () => {
+    const contents = page('https://acme.test/a', '<html>hi</html>', Buffer.from('%PDF-1.7'))
+    await readCapture(contents as never, pageMode)
+    expect(contents.printed).toEqual([asSeenPrintOptions(1000)])
+    expect(contents.printed[0]).toMatchObject({ pageSize: 'A4', printBackground: true, scale: 0.717 })
+  })
+
+  it('still prints (with the print styles) when the DevTools protocol is taken, and reads plain HTML if annotating fails', async () => {
+    const contents = page('https://acme.test/a', '<html>hi</html>', Buffer.from('%PDF-1.7'), { annotate: 'fails', debuggerFails: true })
+    const capture = await readCapture(contents as never, pageMode)
+    expect(capture.html).toBe('<html>hi</html>')
+    expect(new TextDecoder().decode(capture.pdf!)).toBe('%PDF-1.7')
+    expect(contents.calls).toEqual(['html', 'plain-html', 'mark', 'insertCSS', 'width', 'print', 'removeCSS:css-key', 'unmark'])
   })
 
   it('marks only fixed or sticky elements named like a consent banner', () => {

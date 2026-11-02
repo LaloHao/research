@@ -9,7 +9,7 @@ import type { ModelInfo } from '../shared/relations'
 import type { PdfPolicy } from '../shared/schemas'
 import { DEFAULT_SETTINGS, type AppSettings } from '../shared/settings'
 import { LocalApiService } from './api/LocalApiService'
-import { ExtensionCapture, type CaptureLibrary, type ReaderPrinter } from './api/extension/capture'
+import { ExtensionCapture, type CaptureLibrary, type PagePrinter, type ReaderPrinter } from './api/extension/capture'
 import { ExtensionPairing, EXTENSIONS_FILE } from './api/extension/pairing'
 import { extensionRoutes } from './api/extension/routes'
 import type { ApiContext } from './api/registry'
@@ -24,9 +24,10 @@ export interface ApiHost {
   dir: string
   openInApp: (request: ApiOpenPaper) => void
   openChatInApp: (chatId: string) => void
-  /** The browser extension: «¿Vincular la extensión…?» in the window (null hides it), and the reader-PDF printer. */
+  /** The browser extension: «¿Vincular la extensión…?» in the window (null hides it), and the PDF printers. */
   showPairingRequest?: (request: PairingRequest | null) => void
   printReader?: ReaderPrinter
+  printPage?: PagePrinter
   /** The app's version, as the extension's «Probar conexión» shows it. */
   version?: string
 }
@@ -75,7 +76,8 @@ export class AppController {
                 pairing,
                 capture: new ExtensionCapture({
                   library: () => this.captureLibrary(apiHost),
-                  printReader: apiHost.printReader ?? (async () => null)
+                  printReader: apiHost.printReader ?? (async () => null),
+                  printPage: apiHost.printPage
                 }),
                 projectName: () => this.session?.store.config.name ?? null,
                 version: apiHost.version ?? '',

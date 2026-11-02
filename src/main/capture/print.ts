@@ -4,11 +4,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { readArticle } from '../ingest/web'
-import { hardenSession, READER_PARTITION, readerWindowOptions } from './policy'
-import { buildReaderHtml, embedImages, sanitizeArticle, type ImageFetcher } from './reader'
+import { sanitizePageHtml } from './page'
+import { hardenSession, PAGE_PARTITION, pageWindowOptions, READER_PARTITION, readerWindowOptions } from './policy'
+import { buildReaderHtml, embedImages, prepareReaderHtml, sanitizeArticle, type ImageFetcher } from './reader'
+import { asSeenPrintOptions, layoutWidth, withScreenMedia } from './screen'
 
 /** Longest a reader print may take (loading the document and printing it). */
 const PRINT_TIMEOUT_MS = 60_000
+/** Longest a serialized page may take (it can be tens of megabytes of inlined images and fonts). */
+const PAGE_PRINT_TIMEOUT_MS = 120_000
 const IMAGE_TIMEOUT_MS = 15_000
 
 /** Page numbers at the foot of each page; no header (Chromium's default would print the date and file path). */
@@ -51,9 +55,10 @@ export function sessionImageFetcher(source: Session, referrer: string): ImageFet
  * article. The same document is printed as the reader PDF and shown by «Vista de lectura».
  */
 export async function readerDocument(html: string, url: string, fetchImage: ImageFetcher, now = new Date()): Promise<string | null> {
-  const article = readArticle(html, url)
+  const prepared = prepareReaderHtml(html)
+  const article = readArticle(prepared.html, url)
   if (!article) return null
-  const content = await embedImages(sanitizeArticle(article.content, url), url, fetchImage)
+  const content = await embedImages(sanitizeArticle(article.content, url, prepared.formulas), url, fetchImage)
   return buildReaderHtml(article, content, { url, accessed: now })
 }
 
@@ -123,6 +128,31 @@ export async function printReaderDocument(document: string): Promise<Uint8Array>
       })
     )
     const timeout = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error('Reader print timed out')), PRINT_TIMEOUT_MS)))
+    return new Uint8Array(await Promise.race([print, timeout]))
+  } finally {
+    clearTimeout(timer)
+    if (!win.isDestroyed()) win.destroy()
+  }
+}
+
+/**
+ * «Página tal como se ve» from the browser extension: the page the extension serialized (`sanitizePageHtml` cleans it
+ * again here) printed as it looked: in a hidden window without JavaScript whose in-memory session refuses every
+ * request but the document, with screen styles, laid out at the width the page had in the browser, with backgrounds.
+ */
+export async function printPagePdf(html: string, viewportWidth: number): Promise<Uint8Array> {
+  const width = layoutWidth(viewportWidth)
+  const document = sanitizePageHtml(html)
+  const win = new BrowserWindow(pageWindowOptions(width))
+  win.webContents.on('will-navigate', (event) => event.preventDefault())
+  win.webContents.on('will-attach-webview', (event) => event.preventDefault())
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  let timer: NodeJS.Timeout | undefined
+  try {
+    const print = loadReaderDocument(win.webContents, session.fromPartition(PAGE_PARTITION), document, () =>
+      withScreenMedia(win.webContents, () => win.webContents.printToPDF(asSeenPrintOptions(width)))
+    )
+    const timeout = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error('Page print timed out')), PAGE_PRINT_TIMEOUT_MS)))
     return new Uint8Array(await Promise.race([print, timeout]))
   } finally {
     clearTimeout(timer)

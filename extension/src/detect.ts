@@ -10,6 +10,8 @@ const META_NAMES = new Set(['description', 'author', 'keywords'])
 /** The limits the app accepts (see the app's extension payload). */
 export const LIMITS = {
   html: 10 * 1024 * 1024,
+  /** «Página tal como se ve»: the serialized page, with its styles, fonts and images inlined (characters). */
+  pageHtml: 50 * 1024 * 1024,
   images: 40,
   imageBytes: 5 * 1024 * 1024,
   imagesTotal: 30 * 1024 * 1024,
@@ -208,6 +210,24 @@ export function sniffImage(bytes: Uint8Array): ImageType | null {
   if (at(0, 0x52, 0x49, 0x46, 0x46) && at(8, 0x57, 0x45, 0x42, 0x50)) return 'webp'
   if (at(4, 0x66, 0x74, 0x79, 0x70) && (at(8, 0x61, 0x76, 0x69, 0x66) || at(8, 0x61, 0x76, 0x69, 0x73))) return 'avif'
   return null
+}
+
+export type FontType = 'woff2' | 'woff' | 'ttf' | 'otf'
+
+/** The web font format its first bytes show (WOFF2, WOFF, TrueType, OpenType/CFF); anything else is not a font. */
+export function sniffFont(bytes: Uint8Array): FontType | null {
+  const tag = bytes.length >= 4 ? String.fromCharCode(bytes[0]!, bytes[1]!, bytes[2]!, bytes[3]!) : ''
+  if (tag === 'wOF2') return 'woff2'
+  if (tag === 'wOFF') return 'woff'
+  if (tag === 'OTTO') return 'otf'
+  if (tag === '\x00\x01\x00\x00' || tag === 'true') return 'ttf'
+  return null
+}
+
+/** An SVG image by its first characters (after a BOM, an XML declaration, comments or a doctype). */
+export function isSvgBytes(bytes: Uint8Array): boolean {
+  const head = new TextDecoder().decode(bytes.subarray(0, 1024)).replace(/^\uFEFF/, '')
+  return /^\s*(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*|<!DOCTYPE[^>]*>\s*)*<svg[\s>]/i.test(head)
 }
 
 export const isPdfBytes = (bytes: Uint8Array): boolean => bytes.length >= 5 && String.fromCharCode(...bytes.subarray(0, 5)) === '%PDF-'

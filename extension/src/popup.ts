@@ -1,19 +1,22 @@
 /**
  * The toolbar popup: what the page is (DOI, arXiv, PDF, web article, its title), whether it is in the library
- * already, «Agregar a Research» or «Actualizar PDF», the progress, the result and «Abrir en Research». Everything from
- * the page is shown as text, never as markup.
+ * already, how the PDF of a web page is made («Vista de lectura» or «Página tal como se ve», remembered), «Agregar a
+ * Research» or «Actualizar PDF», the progress, the result and «Abrir en Research». Everything from the page is shown
+ * as text, never as markup.
  */
 import { ConnectorError, type Connection, type Existing, type TaskStatus } from './api'
 import { ext } from './browser'
 import { errorMessage, outcomeMessage } from './errors'
 import { activeTab, capture, connection, inspect, lookup, openInApp, pdfPermission, updatePdf, type Inspected, type Step } from './flow'
-import { kindLabel } from './payload'
+import { loadMode, MODE_LABELS, saveMode, type CaptureMode } from './mode'
+import { kindLabel, printsPage } from './payload'
 
 const app = document.getElementById('app')!
 
 const STEPS: Record<Step, string> = {
   pdf: 'Descargando el PDF…',
   reading: 'Leyendo la página…',
+  serializing: 'Guardando la página tal como se ve…',
   sending: 'Enviando a Research…',
   processing: 'Research lo está agregando…'
 }
@@ -88,13 +91,38 @@ async function askPdfPermission(inspected: Inspected, granted: boolean): Promise
     .catch(() => false)
 }
 
+/** The mode chosen now (the radio buttons write it to storage as they change). */
+let mode: CaptureMode = 'reader'
+
+/** «¿Cómo guardar el PDF?»: the two modes, the current one checked; a change is remembered at once. */
+function modeChoice(): HTMLElement {
+  const box = el('fieldset', { className: 'mode' }, el('legend', { text: 'PDF de la página' }))
+  for (const value of ['reader', 'page'] as const) {
+    const input = document.createElement('input')
+    input.type = 'radio'
+    input.name = 'mode'
+    input.value = value
+    input.checked = mode === value
+    input.addEventListener('change', () => {
+      if (!input.checked) return
+      mode = value
+      void saveMode(ext().storage.local, value).catch(() => undefined)
+    })
+    const label = el('label', {}, input, document.createTextNode(` ${MODE_LABELS[value]}`))
+    box.append(label)
+  }
+  return box
+}
+
 function ready(conn: Connection, inspected: Inspected, existing: Existing | null, granted: boolean): void {
   const head = describe(inspected)
+  // Only where the app makes the PDF from the page: a web page without a DOI or arXiv id (any page, to update a PDF).
+  const choice = (existing ? !inspected.detection.isPdf : printsPage(inspected.detection)) ? [modeChoice()] : []
   const add = (): void => {
     const asked = askPdfPermission(inspected, granted)
     void asked.then(async () => {
       try {
-        const result = await capture(conn, inspected, (step) => progress(head, step))
+        const result = await capture(conn, inspected, (step) => progress(head, step), undefined, mode)
         if ('existing' in result) ready(conn, inspected, result.existing, true)
         else finished(conn, result.status)
       } catch (error) {
@@ -106,7 +134,7 @@ function ready(conn: Connection, inspected: Inspected, existing: Existing | null
     const asked = askPdfPermission(inspected, granted)
     void asked.then(async () => {
       try {
-        finished(conn, await updatePdf(conn, inspected, key, (step) => progress(head, step)))
+        finished(conn, await updatePdf(conn, inspected, key, (step) => progress(head, step), mode))
       } catch (error) {
         showError(error, () => ready(conn, inspected, existing, granted))
       }
@@ -116,15 +144,17 @@ function ready(conn: Connection, inspected: Inspected, existing: Existing | null
     show(
       ...head,
       el('p', { className: 'notice' }, document.createTextNode('Ya está en tu biblioteca como '), el('strong', { text: existing.key }), document.createTextNode('.')),
+      ...choice,
       el('div', { className: 'row' }, button('Actualizar PDF', () => update(existing.key), true), openButton(conn, existing.key))
     )
     return
   }
-  show(...head, el('div', { className: 'row' }, button('Agregar a Research', add, true)))
+  show(...head, ...choice, el('div', { className: 'row' }, button('Agregar a Research', add, true)))
 }
 
 async function start(): Promise<void> {
   const conn = await connection()
+  mode = await loadMode(ext().storage.local)
   const tab = await activeTab()
   let inspected: Inspected
   try {

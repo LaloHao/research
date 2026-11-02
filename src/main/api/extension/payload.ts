@@ -7,6 +7,8 @@ import { isPdf } from '../../library/LibraryService'
 /** What the browser extension may send; anything past these is refused (`too_large`), never cut. */
 export const EXTENSION_LIMITS = {
   html: MAX_CAPTURE_HTML,
+  /** «Página tal como se ve»: the page serialized with its styles, fonts and images inlined (characters). */
+  pageHtml: 50 * 1024 * 1024,
   images: READER_IMAGE_LIMITS.count,
   imageBytes: READER_IMAGE_LIMITS.bytes,
   imagesTotal: READER_IMAGE_LIMITS.total,
@@ -18,8 +20,15 @@ export const EXTENSION_LIMITS = {
   metaValue: 4000
 } as const
 
-/** The largest request body the extension endpoints read: a full page with its PDF and images, in base64, plus JSON. */
-export const MAX_EXTENSION_BODY = Math.ceil(((EXTENSION_LIMITS.pdfBytes + EXTENSION_LIMITS.imagesTotal) * 4) / 3) + EXTENSION_LIMITS.html * 2 + 4 * 1024 * 1024
+/**
+ * The largest request body the extension endpoints read: a full page with its PDF and images in base64, its HTML and
+ * serialized page (counted twice: JSON escapes quotes and line breaks), plus JSON.
+ */
+export const MAX_EXTENSION_BODY =
+  Math.ceil(((EXTENSION_LIMITS.pdfBytes + EXTENSION_LIMITS.imagesTotal) * 4) / 3) + (EXTENSION_LIMITS.html + EXTENSION_LIMITS.pageHtml) * 2 + 4 * 1024 * 1024
+
+/** The browser window width a serialized page was laid out at (CSS pixels). */
+export const VIEWPORT_WIDTH = { min: 200, max: 10000 } as const
 
 export const IMAGE_TYPES = ['png', 'jpeg', 'gif', 'webp', 'avif'] as const
 
@@ -62,7 +71,10 @@ const pageShape = {
   images: z
     .array(z.object({ url: webUrl, data: z.string(), type: z.enum(IMAGE_TYPES) }).strict())
     .optional(),
-  pdf: z.string().optional()
+  pdf: z.string().optional(),
+  // «Página tal como se ve»: both or neither (checked below).
+  page_html: z.string().optional(),
+  viewport_width: z.number().int().min(VIEWPORT_WIDTH.min).max(VIEWPORT_WIDTH.max).optional()
 }
 
 export const pageSchema = z.object(pageShape).strict()
@@ -85,6 +97,9 @@ export interface CapturedPage {
   meta: Record<string, string[]>
   images: { url: string; data: Uint8Array; type: (typeof IMAGE_TYPES)[number] }[]
   pdf: Uint8Array | null
+  /** «Página tal como se ve»: the page as the extension serialized it (untrusted), and the width it was laid out at. */
+  pageHtml: string | null
+  viewportWidth: number | null
 }
 
 function decode(data: string, maxBytes: number, what: string): Uint8Array {
@@ -93,9 +108,15 @@ function decode(data: string, maxBytes: number, what: string): Uint8Array {
   return new Uint8Array(Buffer.from(data, 'base64'))
 }
 
-/** Checks the sizes and decodes the images and the PDF; every image must really be one of `IMAGE_TYPES`, the PDF a PDF. */
+/**
+ * Checks the sizes and decodes the images and the PDF; every image must really be one of `IMAGE_TYPES`, the PDF a PDF.
+ * A serialized page comes with the width it was laid out at, or not at all.
+ */
 export function readPage(raw: z.infer<typeof pageSchema>): CapturedPage {
   if (raw.html.length > EXTENSION_LIMITS.html) throw new PayloadError('too_large', 'The page HTML is larger than allowed')
+  if (raw.page_html !== undefined && raw.page_html.length > EXTENSION_LIMITS.pageHtml) throw new PayloadError('too_large', 'The serialized page is larger than allowed')
+  if ((raw.page_html === undefined) !== (raw.viewport_width === undefined)) throw new PayloadError('invalid', 'page_html and viewport_width go together')
+  if (raw.page_html !== undefined && !raw.page_html.trim()) throw new PayloadError('invalid', 'The serialized page is empty')
   const meta: Record<string, string[]> = {}
   const entries = Object.entries(raw.meta ?? {})
   if (entries.length > EXTENSION_LIMITS.metaEntries) throw new PayloadError('too_large', 'Too many meta fields')
@@ -118,7 +139,16 @@ export function readPage(raw: z.infer<typeof pageSchema>): CapturedPage {
     if (pdf.byteLength > EXTENSION_LIMITS.pdfBytes) throw new PayloadError('too_large', 'The PDF is larger than allowed')
     if (!isPdf(pdf)) throw new PayloadError('not_a_pdf', 'The PDF does not start like a PDF')
   }
-  return { url: raw.final_url ?? raw.url, title: raw.title?.trim() ?? '', html: raw.html, meta, images, pdf }
+  return {
+    url: raw.final_url ?? raw.url,
+    title: raw.title?.trim() ?? '',
+    html: raw.html,
+    meta,
+    images,
+    pdf,
+    pageHtml: raw.page_html ?? null,
+    viewportWidth: raw.viewport_width ?? null
+  }
 }
 
 const DOI_FIELDS = ['citation_doi', 'prism.doi', 'dc.identifier', 'bepress_citation_doi', 'dc.identifier.doi']

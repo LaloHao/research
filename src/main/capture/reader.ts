@@ -1,17 +1,21 @@
 import { parseHTML } from 'linkedom'
+import { GLYPH_ATTRIBUTE, GLYPH_BOX_ATTRIBUTE } from '../../shared/pageCapture/glyphs'
 import type { WebArticle } from '../ingest/web'
+import { cleanMath, cleanSvg, glyphImage, prepareMarkup, restoreMarkup } from './markup'
 
 /**
  * The reader view of a captured page: the article Readability found, sanitized, under a header that says where it came
  * from, as a plain document the app prints to PDF instead of the live page (which carries cookie banners, ads and
  * navigation). The article's HTML is untrusted: only a small allowlist of tags and attributes survives, links and
  * images are made absolute, and images end up embedded as data: URIs so the printing window never touches the network.
+ * Formulas (MathML, MathJax's SVG) and inline SVG stay, through their own allowlists (./markup), and icon-font glyphs
+ * the page reader drew become small inline images.
  */
 
 /** Removed with everything inside: active content, embedded documents, forms, media and the page's own styles. */
 const DROPPED = new Set([
   'script', 'style', 'noscript', 'template', 'iframe', 'frame', 'frameset', 'object', 'embed', 'applet', 'param', 'form', 'input',
-  'button', 'select', 'option', 'textarea', 'label', 'fieldset', 'svg', 'math', 'canvas', 'video', 'audio', 'source', 'track',
+  'button', 'select', 'option', 'textarea', 'label', 'fieldset', 'canvas', 'video', 'audio', 'source', 'track',
   'link', 'meta', 'base', 'head', 'title', 'dialog', 'portal', 'slot', 'map', 'area'
 ])
 
@@ -84,8 +88,23 @@ function cleanChildren(node: Node, base: string): void {
     }
     const el = child as El
     const tag = el.tagName.toLowerCase()
+    if (el.hasAttribute(GLYPH_ATTRIBUTE)) {
+      const glyph = glyphImage(el, el.getAttribute(GLYPH_ATTRIBUTE), el.getAttribute(GLYPH_BOX_ATTRIBUTE))
+      if (glyph) {
+        el.replaceWith(glyph)
+        continue
+      }
+    }
     if (DROPPED.has(tag)) {
       el.remove()
+      continue
+    }
+    if (tag === 'svg') {
+      if (!cleanSvg(el)) el.remove()
+      continue
+    }
+    if (tag === 'math') {
+      cleanMath(el)
       continue
     }
     const allowed = ALLOWED[tag]
@@ -118,12 +137,25 @@ function cleanChildren(node: Node, base: string): void {
 }
 
 /**
+ * The page's HTML ready for Readability in the reader view: formulas reduced to MathML or SVG that render without the
+ * page's CSS and fonts, shared SVG definitions copied where they are used (see ./markup). The page's text, as the
+ * library indexes it, is read from the HTML as it came, not from this.
+ */
+export function prepareReaderHtml(html: string): { html: string; formulas: string[] } {
+  const { document } = parseHTML(html)
+  const formulas = prepareMarkup(document as unknown as Document)
+  return { html: document.toString(), formulas }
+}
+
+/**
  * The article's HTML with only safe markup left: no scripts, styles, event handlers, frames, forms, objects or media,
  * no class/id/style attributes; links and images absolute (http/https; mailto for links), images without a usable
- * source removed. `base` is the page's URL.
+ * source removed; SVG and MathML through their allowlists, icon glyphs as inline images. `base` is the page's URL;
+ * `formulas` are the ones `prepareReaderHtml` set aside, put back first.
  */
-export function sanitizeArticle(html: string, base: string): string {
+export function sanitizeArticle(html: string, base: string, formulas: readonly string[] = []): string {
   const { document } = parseHTML(`<!DOCTYPE html><html><head></head><body>${html}</body></html>`)
+  if (formulas.length > 0) restoreMarkup(document as unknown as Document, formulas)
   cleanChildren(document.body, base)
   return document.body.innerHTML
 }
@@ -137,12 +169,23 @@ const normalized = (text: string): string => text.replace(/\s+/g, ' ').trim().to
 export const READER_CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'"
 
 /**
+ * Fonts tried for characters the body and code fonts lack (math, arrows, symbols, emoji), before the system's own
+ * fallback: whichever are installed are used, the rest are skipped (an AppImage uses the system's fonts, and not every
+ * system has Noto). CJK is left to the system's fallback, which picks by language.
+ */
+export const SYMBOL_FONTS = '"Noto Sans Math", "STIX Two Math", "DejaVu Sans", "Noto Sans Symbols", "Noto Sans Symbols 2", "Segoe UI Symbol", "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji"'
+
+/** MathML's fonts: an OpenType MATH font when there is one (they stretch operators and radicals properly). */
+export const MATH_FONTS = '"Latin Modern Math", "STIX Two Math", "Noto Sans Math", "DejaVu Math TeX Gyre", "Cambria Math", math'
+
+/**
  * Serif body at a readable width; margins and page numbers come from the print options (on screen, «Vista de lectura»,
- * some padding stands in for them). Link URLs are not expanded.
+ * some padding stands in for them). Link URLs are not expanded. Formulas: MathML in a math font, MathJax's SVG as
+ * drawn; icon glyphs inline on the text's baseline.
  */
 export const READER_CSS = `
 html { background: #fff; }
-body { margin: 0 auto; max-width: 155mm; color: #111; font-family: "Noto Serif", "DejaVu Serif", "Liberation Serif", Georgia, "Times New Roman", serif;
+body { margin: 0 auto; max-width: 155mm; color: #111; font-family: "Noto Serif", "DejaVu Serif", "Liberation Serif", Georgia, "Times New Roman", ${SYMBOL_FONTS}, serif;
   font-size: 11pt; line-height: 1.5; overflow-wrap: break-word; }
 header.source { border-bottom: 1px solid #999; margin-bottom: 1.2em; padding-bottom: 0.6em; }
 header.source .site { font-size: 9pt; text-transform: uppercase; letter-spacing: 0.04em; color: #555; margin: 0; }
@@ -154,11 +197,15 @@ h1 { font-size: 17pt; } h2 { font-size: 14.5pt; } h3 { font-size: 12.5pt; } h4, 
 p { margin: 0 0 0.7em; orphans: 3; widows: 3; }
 a { color: inherit; text-decoration: underline; }
 img { display: block; max-width: 100%; height: auto; margin: 0.6em auto; break-inside: avoid; page-break-inside: avoid; }
+img.glyph { display: inline; margin: 0 0.15em; max-width: none; }
+math { font-family: ${MATH_FONTS}; }
+math[display="block"] { margin: 0.6em 0; break-inside: avoid; page-break-inside: avoid; }
+svg { max-width: 100%; }
 figure { margin: 1em 0; break-inside: avoid; page-break-inside: avoid; }
 figcaption { font-size: 9pt; color: #444; text-align: center; }
 blockquote { margin: 0.8em 0 0.8em 1em; padding-left: 0.8em; border-left: 2px solid #bbb; color: #333; }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 8.5pt; line-height: 1.35; border-left: 2px solid #ccc; padding: 0.2em 0 0.2em 0.7em; }
-code, kbd, samp { font-family: "DejaVu Sans Mono", "Liberation Mono", Consolas, monospace; font-size: 0.88em; }
+code, kbd, samp { font-family: "DejaVu Sans Mono", "Noto Sans Mono", "Liberation Mono", Consolas, ${SYMBOL_FONTS}, monospace; font-size: 0.88em; }
 pre code { font-size: inherit; }
 table { border-collapse: collapse; width: 100%; font-size: 9.5pt; margin: 0.8em 0; }
 th, td { border: 1px solid #999; padding: 3px 5px; vertical-align: top; text-align: left; }
