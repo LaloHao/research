@@ -38,6 +38,10 @@ HANDLER returns (STATUS . BODY); `research-test--result' builds one."
           (research-api-file (expand-file-name "api.json" ,dir))
           (research--papers nil)
           (research-test--requests nil)
+          ;; Every question shows its one prompt, from a clean configuration.
+          (research-ask-auto-send-below nil)
+          (research-ask-last-choice nil)
+          (research-ask-allow-edits nil)
           (research-http-function
            (lambda (url headers body)
              (let* ((json (json-parse-string body :object-type 'alist :array-type 'list))
@@ -710,6 +714,18 @@ ON-RUN runs in the buffer before the confirmed call answers."
 
 (defconst research-test--ask-id "20261029-120000-a1b2")
 
+(defun research-test--menu-ask (&optional args arg)
+  "Ask from the `research-ask' menu with its options ARGS, about ARG's passage.
+The selection is read as when the menu opens; the question with `read-string'."
+  (setq research--ask-pending-selection (research--ask-selection))
+  (cl-letf (((symbol-function 'transient-args) (lambda (_) args)))
+    (research--ask-from-menu arg)))
+
+(defun research-test--follow-up (&optional args)
+  "Ask a follow-up from the menu of `*research-ask*' with its options ARGS."
+  (cl-letf (((symbol-function 'transient-args) (lambda (_) args)))
+    (research--ask-follow-up-menu-ask)))
+
 (defconst research-test--ask-doc
   "* Capítulo 2\n** Parsers\nPrimer párrafo.\n\nDrain es el mejor [cite:@he2017drain].\nSigue la idea.\n\n** Otra\nFin.\n")
 
@@ -757,13 +773,14 @@ ON-RUN runs in the buffer before the confirmed call answers."
         (research-test--with-ask-buffer
           (let ((before (buffer-string)) prompts)
             (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "¿Se sostiene?"))
-                      ((symbol-function 'read-char-choice) (lambda (prompt &rest _) (push prompt prompts) ?\r))
                       ((symbol-function 'yes-or-no-p) (lambda (prompt) (push prompt prompts) t))
                       ((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
-              (let ((current-prefix-arg '(4)))
-                (should (equal (call-interactively #'research-ask) research-test--ask-id))))
-            (should (string-match-p "(y/N)" (cadr prompts)))
+              (should (equal (research-test--menu-ask nil '(4)) research-test--ask-id)))
+            ;; Over `research-ask-auto-send-below' (nil here), one confirmation with the estimate.
+            (should (= (length prompts) 1))
             (should (string-match-p "chat con sonnet: costo estimado \\$0\\.10" (car prompts)))
+            ;; The menu's options are remembered.
+            (should (equal research-ask-last-choice '(:mode "opinion" :continue t)))
             ;; The plan and the run send the same: the paragraph, its file and heading path, opinion.
             (let ((run (car asked)))
               (should (equal (cl-remove 'confirmed (cadr asked) :key #'car) (cl-remove 'confirmed run :key #'car)))
@@ -819,10 +836,9 @@ ON-RUN runs in the buffer before the confirmed call answers."
       (research-test--with-draft-timer poll
         (research-test--with-ask-buffer
           (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "Q1"))
-                    ((symbol-function 'read-char-choice) (lambda (&rest _) ?n))
                     ((symbol-function 'yes-or-no-p) (lambda (_) t))
                     ((symbol-function 'message) #'ignore))
-            (call-interactively #'research-ask)
+            (research-test--menu-ask)
             (with-current-buffer "*research-ask*"
               ;; While it answers, another question is refused before asking the app anything.
               (let ((sent (length research-test--requests)))
@@ -846,9 +862,8 @@ ON-RUN runs in the buffer before the confirmed call answers."
               (research-ask-open-in-app)
               (should (equal (car opened) `("open_chat_in_app" (conversation_id . ,research-test--ask-id))))
               ;; `f': a follow-up in the same conversation, with the passage as it is now; a rewrite only when allowed.
-              (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "¿Y si lo reescribes?"))
-                        ((symbol-function 'read-char-choice) (lambda (&rest _) ?y)))
-                (call-interactively #'research-ask-follow-up))
+              (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "¿Y si lo reescribes?")))
+                (research-test--follow-up '("--rewrite")))
               (let ((follow (cl-remove 'confirmed (car asked) :key #'car)))
                 (should (equal (cl-remove-if (lambda (x) (memq (car x) '(outline text))) follow)
                                `((question . "¿Y si lo reescribes?") (conversation_id . ,research-test--ask-id) (mode . "rewrite"))))
@@ -916,10 +931,9 @@ ON-RUN runs in the buffer before the confirmed call answers."
         (set-mark (match-beginning 0))
         (activate-mark)
         (cl-letf (((symbol-function 'read-string) (lambda (&rest _) (deactivate-mark) "Q"))
-                  ((symbol-function 'read-char-choice) (lambda (&rest _) ?n))
                   ((symbol-function 'yes-or-no-p) (lambda (_) nil))
                   ((symbol-function 'message) #'ignore))
-          (call-interactively #'research-ask))
+          (research-test--menu-ask))
         (should (equal (alist-get 'scope (car asked)) "region"))
         (should (equal (alist-get 'text (car asked)) "Primer"))
         (should (equal (alist-get 'chapter (car asked)) research-test--ask-doc))))))
@@ -942,7 +956,7 @@ ON-RUN runs in the buffer before the confirmed call answers."
         (search-forward "párrafo corto")
         (cl-letf (((symbol-function 'yes-or-no-p) (lambda (prompt) (push prompt prompts) nil))
                   ((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
-          (research-ask "Q" "opinion"))
+          (research-ask-question "Q" "opinion"))
         (let ((run (car asked)))
           (should (equal (alist-get 'scope run) "subtree"))
           (should (equal (alist-get 'text run) "* Corto\nEl párrafo corto.\n"))
@@ -962,7 +976,7 @@ ON-RUN runs in the buffer before the confirmed call answers."
         (search-forward "párrafo corto")
         (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) nil))
                   ((symbol-function 'message) #'ignore))
-          (research-ask "Q" "opinion" '(4)))
+          (research-ask-question "Q" "opinion" '(4)))
         (let* ((run (car asked)) (chapter (alist-get 'chapter run)))
           (should (equal (alist-get 'text run) "El párrafo corto."))
           (should (eq (alist-get 'chapter_truncated run) t))
@@ -1035,10 +1049,9 @@ ON-RUN runs in the buffer before the confirmed call answers."
                 (file (make-temp-file "research-chapter" nil ".org")))
             (unwind-protect
                 (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "Q"))
-                          ((symbol-function 'read-char-choice) (lambda (&rest _) ?n))
                           ((symbol-function 'yes-or-no-p) (lambda (_) t))
                           ((symbol-function 'message) #'ignore))
-                  (research-ask "Q1" "opinion" '(4))
+                  (research-ask-question "Q1" "opinion" '(4))
                   (funcall poll)
                   ;; The user edits the chapter and the passage, then asks again: both go as they are now.
                   (let ((passage (alist-get 'text (car asked))))
@@ -1049,7 +1062,7 @@ ON-RUN runs in the buffer before the confirmed call answers."
                     (search-forward passage)
                     (backward-char)
                     (insert " Corregido")
-                    (with-current-buffer "*research-ask*" (call-interactively #'research-ask-follow-up))
+                    (with-current-buffer "*research-ask*" (research-test--follow-up))
                     (should (equal (alist-get 'text (car asked))
                                    (concat (substring passage 0 -1) " Corregido" (substring passage -1)))))
                   (let ((follow (car asked)))
@@ -1061,7 +1074,7 @@ ON-RUN runs in the buffer before the confirmed call answers."
                   (with-current-buffer "*research-ask*"
                     (setq research--ask-state (plist-put (plist-put research--ask-state :source nil) :path file))
                     (setq research--ask-state (plist-put (plist-put research--ask-state :pos 14) :end-pos 19))
-                    (call-interactively #'research-ask-follow-up))
+                    (research-test--follow-up))
                   (should (equal (alist-get 'chapter (car asked)) "* Del disco\nTexto.\n"))
                   (should (equal (alist-get 'text (car asked)) "exto."))
                   (should (string-match-p "\\* Del disco  ← the passage is here\\'" (alist-get 'outline (car asked)))))
@@ -1076,17 +1089,17 @@ ON-RUN runs in the buffer before the confirmed call answers."
     (research-test--with-ask-buffer
       (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) nil))
                 ((symbol-function 'message) #'ignore))
-        (should-not (research-ask "Q" "opinion"))
+        (should-not (research-ask-question "Q" "opinion"))
         (should-not (get-buffer "*research-ask*")))
       (erase-buffer)
       (insert "\n\n\n")
       (goto-char 2)
-      (should-error (research-ask "Q" "opinion") :type 'user-error)
+      (should-error (research-ask-question "Q" "opinion") :type 'user-error)
       (let ((long (make-string 30001 ?a)))
         (erase-buffer)
         (insert long)
         (goto-char 10)
-        (should-error (research-ask "Q" "opinion" '(16)) :type 'user-error))
+        (should-error (research-ask-question "Q" "opinion" '(16)) :type 'user-error))
       (should (= 1 (length research-test--requests))))))
 
 (ert-deftest research-test-ask-shows-why-an-answer-failed ()
@@ -1100,7 +1113,7 @@ ON-RUN runs in the buffer before the confirmed call answers."
         (research-test--with-ask-buffer
           (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) t))
                     ((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
-            (research-ask "Q" "rewrite")
+            (research-ask-question "Q" "rewrite")
             (funcall poll)
             (with-current-buffer "*research-ask*"
               (should (string-match-p "Modo: propuesta de redacción permitida · sin respuesta: se alcanzó el tope por mensaje de chat" (buffer-string)))
@@ -1126,7 +1139,7 @@ ON-RUN runs in the buffer before the confirmed call answers."
     (should-not (eq (key-binding (kbd "C-c r c")) #'research-insert-citation))))
 
 (ert-deftest research-test-ask-offers-to-continue-the-conversation-with-a-new-passage ()
-  (let (poll asked (choice ?c))
+  (let (poll asked)
     (research-test--with-app
         (lambda (tool args)
           (pcase tool
@@ -1137,15 +1150,15 @@ ON-RUN runs in the buffer before the confirmed call answers."
             ("ask_status" (research-test--result research-test--ask-done))))
       (research-test--with-draft-timer poll
         (research-test--with-ask-buffer
-          (cl-letf (((symbol-function 'read-char-choice) (lambda (&rest _) choice))
-                    ((symbol-function 'yes-or-no-p) (lambda (_) t))
+          (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) t))
+                    ((symbol-function 'read-string) (lambda (&rest _) "¿Mejor?"))
                     ((symbol-function 'message) #'ignore))
-            (research-ask "Q1" "opinion" '(4))
+            (research-ask-question "Q1" "opinion" '(4))
             (funcall poll)
-            ;; c: another passage (the next section) and question go to the same conversation, with their place.
+            ;; By default another passage (the next section) and question go to the same conversation.
             (goto-char (point-min))
             (search-forward "Fin")
-            (research-ask "¿Y esta sección?" "opinion" '(16))
+            (research-ask-question "¿Y esta sección?" "opinion" '(16))
             (let ((continued (car asked)))
               (should (equal (alist-get 'conversation_id continued) research-test--ask-id))
               (should (equal (alist-get 'text continued) "** Otra\nFin.\n"))
@@ -1161,22 +1174,161 @@ ON-RUN runs in the buffer before the confirmed call answers."
             (goto-char (point-max))
             (insert "Más.\n")
             (with-current-buffer "*research-ask*"
-              (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "¿Mejor?")))
-                (call-interactively #'research-ask-follow-up)))
+              (research-test--follow-up))
             (should (equal (alist-get 'text (car asked)) "** Otra\nFin.\nMás.\n"))
             (funcall poll)
-            ;; n: a new conversation, as always.
-            (setq choice ?n)
-            (research-ask "Nueva" "opinion" '(4))
+            ;; -n: a new conversation.
+            (research-ask-question "Nueva" "opinion" '(4) nil t)
             (should-not (alist-get 'conversation_id (car asked)))
             (with-current-buffer "*research-ask*"
               (should-not (string-match-p "\\* Q1" (buffer-string))))
             (funcall poll)
-            ;; Without the option, never asked.
-            (let ((research-ask-offer-continue nil))
-              (setq choice ?c)
-              (research-ask "Otra nueva" "opinion" '(4))
+            ;; Without the option, never a continuation.
+            (let ((research-ask-offer-continue nil) (research-ask-last-choice nil))
+              (research-ask-question "Otra nueva" "opinion" '(4))
               (should-not (alist-get 'conversation_id (car asked))))))))))
+
+(ert-deftest research-test-ask-menu-remembers-its-options-and-sends-cheap-questions-at-once ()
+  (let (poll asked prompts messages)
+    (research-test--with-app
+        (lambda (tool args)
+          (pcase tool
+            ("ask" (push args asked)
+             (if (alist-get 'confirmed args)
+                 (research-test--result `((conversation_id . ,research-test--ask-id) (status . "running")))
+               (research-test--ask-plan)))
+            ("ask_status" (research-test--result research-test--ask-done))))
+      (research-test--with-draft-timer poll
+        (research-test--with-ask-buffer
+          (cl-letf (((symbol-function 'yes-or-no-p) (lambda (prompt) (push prompt prompts) t))
+                    ((symbol-function 'read-string) (lambda (&rest _) "Q"))
+                    ((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+            ;; The menu opens with nothing checked, then as left last time.
+            (should-not (research--ask-menu-value))
+            (let ((research-ask-auto-send-below 0.25))
+              ;; Under the threshold: sent at once, no confirmation.
+              (research-test--menu-ask '("--rewrite") '(4))
+              (should-not prompts)
+              (should (equal (alist-get 'mode (car asked)) "rewrite"))
+              (funcall poll)
+              (should (equal research-ask-last-choice '(:mode "rewrite" :continue t)))
+              (should (equal (research--ask-menu-value) '("--rewrite")))
+              ;; -n is remembered too, and the follow-up menu keeps it while changing the mode.
+              (research-test--menu-ask '("--rewrite" "--new") '(4))
+              (should-not (alist-get 'conversation_id (car asked)))
+              (funcall poll)
+              (should (equal (research--ask-menu-value) '("--rewrite" "--new")))
+              (with-current-buffer "*research-ask*" (research-test--follow-up nil))
+              (should (equal (alist-get 'mode (car asked)) "opinion"))
+              (funcall poll)
+              (should (equal research-ask-last-choice '(:mode "opinion" :continue :new)))
+              (should (equal (research--ask-menu-value t) nil)))
+            ;; Over it, the estimate is confirmed first.
+            (let ((research-ask-auto-send-below 0.05))
+              (research-test--menu-ask nil '(4))
+              (should (string-match-p "costo estimado \\$0\\.10" (car prompts)))
+              (funcall poll))
+            ;; Editing is only offered, and kept, while allowed.
+            (should (equal (research--ask-menu-mode '("--edit")) "opinion"))
+            (setq research-ask-last-choice '(:mode "edit" :continue t))
+            (should-not (research--ask-menu-value))
+            (let ((research-ask-allow-edits t))
+              (should (equal (research--ask-menu-value) '("--edit")))
+              (should (equal (research--ask-menu-mode '("--edit")) "edit")))))))))
+
+(ert-deftest research-test-ask-menus-are-transients ()
+  (should (get 'research-ask 'transient--prefix))
+  (should (get 'research-ask-follow-up 'transient--prefix))
+  (with-temp-buffer
+    (research-ask-mode)
+    (should (eq (key-binding (kbd "f")) #'research-ask-follow-up))))
+
+(ert-deftest research-test-ask-edit-applies-claudes-changes-to-the-passage-as-one-undo ()
+  (let* (poll asked
+         (edits [((find . "es el mejor") (replace . "es uno de los mejores") (why . "Matiza.") (state . "ok"))
+                 ((find . "Sigue") (replace . "Continúa") (why . "Verbo.") (state . "ok"))
+                 ((find . "no existe") (replace . "x") (why . "") (state . "not_found"))])
+         (done `((conversation_id . ,research-test--ask-id) (status . "done") (mode . "edit")
+                 (text . "Matizo la afirmación.") (citations . []) (unverified . 0) (costUsd . 0.03)
+                 (conversation_cost_usd . 0.03) (edits . ,edits))))
+    (research-test--with-app
+        (lambda (tool args)
+          (pcase tool
+            ("ask" (push args asked)
+             (if (alist-get 'confirmed args)
+                 (research-test--result `((conversation_id . ,research-test--ask-id) (status . "running")))
+               (research-test--ask-plan)))
+            ("ask_status" (research-test--result done))))
+      (research-test--with-draft-timer poll
+        (research-test--with-ask-buffer
+          (buffer-enable-undo)
+          (let ((research-ask-allow-edits t)
+                (source (current-buffer)))
+            (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) t))
+                      ((symbol-function 'message) #'ignore))
+              (research-ask-question "Mejóralo" "edit" '(4)))
+            (should (equal (alist-get 'mode (car asked)) "edit"))
+            ;; The user types meanwhile, outside the passage.
+            (goto-char (point-max))
+            (insert "Al final.\n")
+            (undo-boundary)
+            (cl-letf (((symbol-function 'message) #'ignore))
+              (funcall poll))
+            (should (string-match-p "Drain es uno de los mejores \\[cite:@he2017drain\\]\\.\nContinúa la idea\\." (buffer-string)))
+            (goto-char (point-min))
+            (search-forward "uno de los")
+            (should (eq (get-char-property (point) 'face) 'research-ask-edit))
+            (with-current-buffer "*research-ask*"
+              (should (string-match-p "Cambios (2 de 3 aplicados; un `undo' en tu búfer los deshace):\n- ✓ «es el mejor» → «es uno de los mejores»: Matiza\\.\n- ✓ «Sigue» → «Continúa»: Verbo\\.\n- ✗ «no existe» → «x» (no se aplicó: ese texto no está en el pasaje)" (buffer-string)))
+              (goto-char (point-min))
+              (search-forward "✓ «Sigue")
+              (research-ask-visit-edit)
+              (should (eq (current-buffer) source))
+              (should (looking-at "Continúa")))
+            ;; One undo takes both changes back, and only them.
+            (with-current-buffer source
+              (setq last-command nil)
+              (undo)
+              (should (string-match-p "Drain es el mejor \\[cite:@he2017drain\\]\\.\nSigue la idea\\." (buffer-string)))
+              (should (string-match-p "Al final\\.\n\\'" (buffer-string))))))))))
+
+(ert-deftest research-test-ask-edits-are-not-applied-without-permission ()
+  (let* (poll
+         (done `((conversation_id . ,research-test--ask-id) (status . "done") (mode . "opinion")
+                 (text . "Ok.") (citations . []) (unverified . 0) (costUsd . 0.01) (conversation_cost_usd . 0.01)
+                 (edits . [((find . "Sigue") (replace . "X") (why . "") (state . "ok"))]))))
+    (research-test--with-app
+        (lambda (tool args)
+          (pcase tool
+            ("ask" (if (alist-get 'confirmed args)
+                       (research-test--result `((conversation_id . ,research-test--ask-id) (status . "running")))
+                     (research-test--ask-plan)))
+            ("ask_status" (research-test--result done))))
+      (research-test--with-draft-timer poll
+        (research-test--with-ask-buffer
+          (let ((before (buffer-string)))
+            (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) t))
+                      ((symbol-function 'message) #'ignore))
+              (research-ask-question "Q" nil '(4))
+              (funcall poll))
+            (should (equal (buffer-string) before))
+            (with-current-buffer "*research-ask*"
+              (should (string-match-p "no se aplicó: esta pregunta no permitía editar" (buffer-string))))))))))
+
+(ert-deftest research-test-ask-keys-win-over-evils-normal-state ()
+  (let ((evil-dir (car (file-expand-wildcards (expand-file-name "~/.config/emacs/.local/straight/build-*/evil")))))
+    (skip-unless (or (featurep 'evil) (and evil-dir (file-directory-p evil-dir))))
+    (unless (featurep 'evil)
+      (add-to-list 'load-path evil-dir)
+      (require 'evil))
+    (with-temp-buffer
+      (research-ask-mode)
+      (evil-local-mode 1)
+      (evil-normal-state)
+      (should (eq (key-binding (kbd "f")) #'research-ask-follow-up))
+      (should (eq (key-binding (kbd "c")) #'research-ask-open-citation))
+      (should (eq (key-binding (kbd "s")) #'research-ask-stop))
+      (evil-local-mode -1))))
 
 (ert-deftest research-test-ask-resume-reopens-a-conversation-and-finds-its-passage ()
   (let* ((asked nil) (listed nil) (poll nil)
@@ -1217,7 +1369,6 @@ ON-RUN runs in the buffer before the confirmed call answers."
                              (should (equal labels '("2026-11-02 10:30 · 02-marco.org › Capítulo 2 › Parsers — Q1 (2 preguntas)")))
                              (car labels))))
                         ((symbol-function 'read-string) (lambda (&rest _) "¿Y ahora?"))
-                        ((symbol-function 'read-char-choice) (lambda (&rest _) ?n))
                         ((symbol-function 'yes-or-no-p) (lambda (_) t))
                         ((symbol-function 'message) #'ignore))
                 (should (equal (call-interactively #'research-ask-resume) research-test--ask-id))
@@ -1237,7 +1388,7 @@ ON-RUN runs in the buffer before the confirmed call answers."
                       (search-backward "Sigue la idea.")
                       (end-of-line)
                       (insert " Editado.")))
-                  (call-interactively #'research-ask-follow-up))
+                  (research-test--follow-up))
                 (let ((follow (car asked)))
                   (should (equal (alist-get 'conversation_id follow) research-test--ask-id))
                   (should (equal (alist-get 'text follow) "Drain es el mejor [cite:@he2017drain].\nSigue la idea. Editado.")))

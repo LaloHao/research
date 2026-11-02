@@ -23,7 +23,7 @@ export type ChatScope = z.infer<typeof ChatScopeSchema>
  * comments, critiques and asks without rewriting the passage; `rewrite` (only when the user explicitly allows it for a
  * question) may also propose a rewritten version, set apart as Claude's.
  */
-export const WRITING_MODES = ['opinion', 'rewrite'] as const
+export const WRITING_MODES = ['opinion', 'rewrite', 'edit'] as const
 export type WritingMode = (typeof WRITING_MODES)[number]
 /** What the editor sent: the region, the paragraph at point, the Org subtree (a section or chapter) or the whole file. */
 export const WRITING_SCOPES = ['region', 'paragraph', 'subtree', 'file'] as const

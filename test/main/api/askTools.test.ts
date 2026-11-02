@@ -165,6 +165,25 @@ describe('local API: ask (Claude’s opinion on a passage)', () => {
     expect((await call(server, 'ask_history', { conversation_id: plain })).text).toMatch(/^invalid: .*not started with ask/)
   })
 
+  it('mode edit: the prompt asks for exact changes, and ask_status gives them checked against the passage, out of the text', async () => {
+    const changes = [{ find: PASSAGE.slice(0, 12), replace: 'Cambiado', why: 'Más claro.' }, { find: 'no aparece', replace: 'x', why: 'Falla.' }]
+    const { provider, chats, ctx } = await project([chatAnswer('Cambio el inicio.\n\n```edits\n' + JSON.stringify(changes) + '\n```\n')])
+    const server = await serve(ctx)
+    const { conversation_id: id } = await ok(server, 'ask', { ...START, mode: 'edit', confirmed: true })
+    await chats.idle()
+    expect(provider.chatCalls[0].system).toContain('explicitly allowed you to EDIT their file')
+    expect(provider.chatCalls[0].system).toContain('```edits')
+    expect(provider.chatCalls[0].system).not.toContain('```proposal')
+    const status = await ok(server, 'ask_status', { conversation_id: id })
+    expect(status).toMatchObject({ status: 'done', mode: 'edit', text: 'Cambio el inicio.' })
+    expect(status.edits).toEqual([
+      { ...changes[0], state: 'ok' },
+      { ...changes[1], state: 'not_found' }
+    ])
+    // Opinion answers carry no edits.
+    expect((await ok(server, 'ask_history', { conversation_id: id })).turns[1].edits).toEqual([changes[0], changes[1]])
+  })
+
   it('refuses before spending: no passage, a passage in a follow-up, an unknown or non-editor conversation, a passage too long', async () => {
     const { provider, chats, ctx } = await project([chatAnswer('ok'), chatAnswer('ok')])
     const server = await serve(ctx)
