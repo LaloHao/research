@@ -96,6 +96,18 @@ export function parseInput(input: string): ParsedInput {
   return { kind: 'invalid' }
 }
 
+/** «ISBN 978-1-4919-2912-4», «ISBN-10: 149192912X», «ISBN: 978 1 4919 2912 4» in a text (a book's copyright page). */
+const ISBN_IN_TEXT = /\bISBN(?:-?1[03])?\s*(?:\([^)]{0,20}\))?\s*:?\s*((?:\d[\s\u2010-\u2013-]?){9}[\dXx](?:[\s\u2010-\u2013-]?\d){0,3})/g
+
+/** The first valid ISBN (as its ISBN-13) in TEXT, or undefined. */
+export function findIsbnInText(text: string): string | undefined {
+  for (const m of text.matchAll(ISBN_IN_TEXT)) {
+    const isbn = normalizeIsbn(m[1].replace(/[\u2010-\u2013]/g, '-'))
+    if (isbn) return isbn
+  }
+  return undefined
+}
+
 export function findIdentifiersInText(text: string): { doi?: string; arxiv?: string } {
   const out: { doi?: string; arxiv?: string } = {}
   const doi = text.match(DOI_IN_TEXT)

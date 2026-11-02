@@ -61,6 +61,29 @@ export function parseByline(byline: string): Author[] {
     })
 }
 
+/**
+ * The authors in a PDF's «Author» metadata: one name, a list («A B, C D, and E F», «A B; C D») or one «Family,
+ * Given». Never the whole list as a single name.
+ */
+export function parsePdfAuthor(raw: string): Author[] {
+  const s = raw.replace(/\s+/g, ' ').trim()
+  if (!s) return []
+  if (s.includes(';')) {
+    return s
+      .split(';')
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .map((x): Author => {
+        const comma = x.match(/^([^,]+),\s*(.+)$/)
+        return comma ? { family: comma[1].trim(), given: comma[2].trim() } : (parseByline(x)[0] ?? { family: x })
+      })
+  }
+  // «Beyer, Betsy»: a single person written family first.
+  const single = s.match(/^([^,\s]+(?:\s[^,\s]+)?),\s*([^,]+)$/)
+  if (single && !/\band\b|&/i.test(s) && single[2].trim().split(/\s+/).length <= 3) return [{ family: single[1].trim(), given: single[2].trim() }]
+  return parseByline(s)
+}
+
 /** The article Readability finds in a page: its HTML (untrusted) and what it says about itself. */
 export interface WebArticle {
   title: string

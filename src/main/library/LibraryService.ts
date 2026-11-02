@@ -13,10 +13,10 @@ import { isTextless, type PdfExtractor, type PdfText } from '../extract/PdfExtra
 import { rekeyBibtex } from '../ingest/bibtex'
 import { baseCitekey, uniqueCitekey } from '../ingest/citekey'
 import { HttpError, isOpenAlexUrl, type HttpClient } from '../ingest/http'
-import { findIdentifiersInText, normalizeDoi, parseInput } from '../ingest/identifiers'
+import { findIdentifiersInText, findIsbnInText, normalizeDoi, parseInput } from '../ingest/identifiers'
 import type { MetadataSource } from '../ingest/MetadataResolver'
 import type { ResolvedMetadata } from '../ingest/types'
-import { bareWebMetadata, captureWebPage, findScholarlyIds, normalizePageUrl, webContent, webMetadata } from '../ingest/web'
+import { bareWebMetadata, captureWebPage, findScholarlyIds, normalizePageUrl, parsePdfAuthor, webContent, webMetadata } from '../ingest/web'
 import { sha256 } from '../project/atomicWrite'
 import { ConflictError, type ReadResult } from '../project/errors'
 import type { ProjectStore } from '../project/ProjectStore'
@@ -93,6 +93,8 @@ interface AddExtras {
 }
 
 const MAX_METADATA_UNDO = 100
+/** The pages of a PDF searched for an ISBN (a book's copyright page comes after the title pages). */
+const PDF_ISBN_PAGES = 8
 
 const HTML_ACCEPT = 'text/html,application/xhtml+xml,application/pdf;q=0.9'
 
@@ -867,11 +869,14 @@ export class LibraryService {
     let meta: ResolvedMetadata | null = null
     if (ids.doi) meta = await this.deps.resolver.byDoi(ids.doi, signal).catch(() => null)
     if (!meta && ids.arxiv) meta = await this.deps.resolver.byArxiv(ids.arxiv, signal).catch(() => null)
+    // A book's ISBN is on its copyright page, a few pages in.
+    const isbn = ids.doi || ids.arxiv ? undefined : findIsbnInText(text.pages.slice(0, PDF_ISBN_PAGES).map((p) => p.text).join('\n'))
+    if (!meta && isbn) meta = await this.deps.resolver.byIsbn(isbn, signal).catch(() => null)
     meta ??= {
       kind: 'other',
       title: text.info.title ?? firstLine(text.pages[0]?.text ?? '') ?? fileName.replace(/\.pdf$/i, ''),
-      authors: text.info.author ? [{ family: text.info.author }] : [],
-      identifiers: compact({ doi: ids.doi, arxiv: ids.arxiv, url: sourceUrl }),
+      authors: text.info.author ? parsePdfAuthor(text.info.author) : [],
+      identifiers: compact({ doi: ids.doi, arxiv: ids.arxiv, isbn, url: sourceUrl }),
       complete: false
     }
     // A PDF served directly by a URL can be fetched from it again.
