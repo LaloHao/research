@@ -48,6 +48,7 @@ import {
   type TutorRun
 } from '../../shared/writing/tutor'
 import type { IndexCache } from '../cache/IndexCache'
+import type { Embedder } from '../embeddings/Embedder'
 import { verifyCitations } from '../chats/citations'
 import { rekeyBibtex } from '../ingest/bibtex'
 import { UserFacingError } from '../library/UserFacingError'
@@ -60,6 +61,7 @@ import { startAgentRun, type AgentKind } from '../log/agentLog'
 import type { ProjectStore } from '../project/ProjectStore'
 import { loadForm } from '../summary/extractionForm'
 import { pagesFromChunks, type PageText } from '../summary/paperText'
+import { CitationSuggester, type SentenceSuggestions, type SuggestRequest } from './CitationSuggester'
 import type { CiteChecker } from './CiteChecker'
 import { readWithIncludes } from './includes'
 import { outlineInput, outlineSystemPrompt, type OutlinePaperData } from './outlinePrompt'
@@ -88,6 +90,8 @@ export interface WritingDeps {
   llm?: { provider: LlmProvider; budget: BudgetGuard; ledger: CostLedger }
   /** «Verificar con Claude»; absent where no Claude is wired (tests of the reads). */
   checker?: CiteChecker
+  /** The local multilingual model for `suggestCitations` (null, or absent: by words only). */
+  embedder?: () => Promise<Embedder | null>
 }
 
 /** The evidence fields whose quotes the outline proposal sends, in order (the one-liner's first). */
@@ -196,6 +200,26 @@ export class WritingService {
         .map((r) => ({ id: r.id, title: r.title, year: r.year, hasText: r.text_status === 'ok' })),
       trashed: cache.trashEntries().map((t) => ({ id: t.id, title: t.title }))
     }
+  }
+
+  /**
+   * Papers of the library that may support each sentence, with their best passage: local and free (no Claude), for a
+   * citation the check found weak. Excludes the sentence's `exclude` keys, trashed papers and papers without text.
+   */
+  suggestCitations(sentences: SuggestRequest[], perSentence: number, signal?: AbortSignal): Promise<SentenceSuggestions[]> {
+    const { cache } = this.deps
+    const embedder = this.deps.embedder ?? (async () => null)
+    return new CitationSuggester({
+      papers: () =>
+        cache
+          .listPapers()
+          .filter((r) => !r.problem)
+          .map((r) => ({ id: r.id, title: r.title, year: r.year, hasText: r.text_status === 'ok' })),
+      vectors: (model) => cache.vectors(model),
+      searchChunks: (query, limit) => cache.searchChunks(query, { limit }),
+      chunks: (id) => cache.chunksFor(id),
+      embedder
+    }).suggest(sentences, perSentence, signal)
   }
 
   /** «BibTeX» of pasted text. */

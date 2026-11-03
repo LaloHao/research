@@ -108,6 +108,15 @@ interface PaperIndex {
   vectors: Float32Array[] | null
 }
 
+/** A paper's best window for a claim (`PassageFinder.best`). */
+export interface BestPassage {
+  passage: Passage
+  /** Share (0..1) of the claim's terms the window holds. */
+  coverage: number
+  /** Cosine of the window to the claim; null when the paper was not embedded. */
+  similarity: number | null
+}
+
 export interface PassageFinderDeps {
   /** The paper's indexed text in order (IndexCache.chunksFor). */
   chunks: (paperId: string) => { page: number | null; text: string }[]
@@ -119,6 +128,7 @@ export interface PassageFinderDeps {
 export class PassageFinder {
   private readonly papers = new Map<string, Promise<PaperIndex>>()
   private embedder: Promise<Embedder | null> | null = null
+  private readonly claims = new Map<string, Promise<Float32Array | null>>()
 
   constructor(private readonly deps: PassageFinderDeps) {}
 
@@ -129,21 +139,43 @@ export class PassageFinder {
   async find(paperId: string, claim: string, n: number, signal?: AbortSignal): Promise<Passage[]> {
     const index = await this.index(paperId, signal)
     if (index.windows.length === 0) return []
-    const lexical = ranks(bm25(index.windows, queryTerms(claim)))
-    let semantic = new Map<number, number>()
-    if (index.vectors) {
-      const q = await this.embedClaim(claim, signal)
-      if (q) semantic = ranks(index.vectors.map((v) => dot(q, v) + 1))
-    }
-    const fused = new Map<number, number>()
-    for (const [i, r] of lexical) fused.set(i, (fused.get(i) ?? 0) + 1 / (RRF_K + r))
-    for (const [i, r] of semantic) fused.set(i, (fused.get(i) ?? 0) + 1 / (RRF_K + r))
+    const { fused } = await this.rank(index, claim, signal)
     const picked = [...fused]
       .sort((a, b) => b[1] - a[1] || a[0] - b[0])
       .slice(0, n)
       .map(([i]) => i)
     if (picked.length < n && !picked.includes(0)) picked.push(0)
     return picked.sort((a, b) => a - b).map((i) => index.windows[i])
+  }
+
+  /**
+   * The single best window of `paperId` for `claim`, with what makes it comparable across papers: the share of the
+   * claim's terms it holds and, when the paper was embedded, its cosine to the claim. null when no window matches.
+   */
+  async best(paperId: string, claim: string, signal?: AbortSignal): Promise<BestPassage | null> {
+    const index = await this.index(paperId, signal)
+    if (index.windows.length === 0) return null
+    const { fused, terms, q } = await this.rank(index, claim, signal)
+    const top = [...fused].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]
+    if (!top) return null
+    const window = index.windows[top[0]]
+    const words = new Set((fold(window.text).match(/[\p{L}\p{N}]+/gu) ?? []).map(stem))
+    const coverage = terms.length ? terms.filter((t) => words.has(t)).length / terms.length : 0
+    const similarity = q && index.vectors ? dot(q, index.vectors[top[0]]) : null
+    return { passage: window, coverage, similarity }
+  }
+
+  /** Each matching window's fused (reciprocal rank) score for `claim`. */
+  private async rank(index: PaperIndex, claim: string, signal?: AbortSignal): Promise<{ fused: Map<number, number>; terms: string[]; q: Float32Array | null }> {
+    const terms = queryTerms(claim)
+    const lexical = ranks(bm25(index.windows, terms))
+    let semantic = new Map<number, number>()
+    const q = index.vectors ? await this.embedClaim(claim, signal) : null
+    if (q && index.vectors) semantic = ranks(index.vectors.map((v) => dot(q, v) + 1))
+    const fused = new Map<number, number>()
+    for (const [i, r] of lexical) fused.set(i, (fused.get(i) ?? 0) + 1 / (RRF_K + r))
+    for (const [i, r] of semantic) fused.set(i, (fused.get(i) ?? 0) + 1 / (RRF_K + r))
+    return { fused, terms, q }
   }
 
   private index(paperId: string, signal?: AbortSignal): Promise<PaperIndex> {
@@ -172,7 +204,22 @@ export class PassageFinder {
     }
   }
 
-  private async embedClaim(claim: string, signal?: AbortSignal): Promise<Float32Array | null> {
+  /** A claim's vector the caller already has (a batch of claims embedded in one call). */
+  primeClaim(claim: string, vector: Float32Array): void {
+    if (!this.claims.has(claim)) this.claims.set(claim, Promise.resolve(vector))
+  }
+
+  /** A claim is embedded once per check, however many papers it is ranked in. */
+  private embedClaim(claim: string, signal?: AbortSignal): Promise<Float32Array | null> {
+    let v = this.claims.get(claim)
+    if (!v) {
+      v = this.embedOne(claim, signal)
+      this.claims.set(claim, v)
+    }
+    return v
+  }
+
+  private async embedOne(claim: string, signal?: AbortSignal): Promise<Float32Array | null> {
     const embedder = await this.model()
     if (!embedder) return null
     try {
@@ -183,6 +230,11 @@ export class PassageFinder {
       console.warn('cite check: embedding a claim failed, ranking by its words only', error)
       return null
     }
+  }
+
+  /** Whether the local model is there (and so the passages are ranked by meaning too). */
+  async semantic(): Promise<boolean> {
+    return (await this.model()) !== null
   }
 
   private model(): Promise<Embedder | null> {

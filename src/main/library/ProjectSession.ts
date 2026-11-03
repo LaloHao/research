@@ -340,7 +340,8 @@ export class ProjectSession {
         ledger,
         limits: () => limitsFromConfig(store.config.llm),
         embedder: async () => (opts.embeddings ? opts.embeddings.embedder() : null)
-      })
+      }),
+      embedder: async () => (opts.embeddings ? opts.embeddings.embedder() : null)
     })
     const drafts = new DraftService({
       store,

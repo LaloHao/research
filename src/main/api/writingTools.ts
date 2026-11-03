@@ -17,6 +17,8 @@ const key = z.string().regex(PAPER_KEY).max(80).describe('Citation key of a libr
 /** The files `bibtex_for_file` accepts, as the app's own dialog does (and what `formatOfPath` reads). */
 const SOURCE_EXTENSIONS = new Set(['.tex', '.ltx', '.org', '.md', '.markdown', '.qmd', '.rmd'])
 const MAX_PASSAGES = 30
+const MAX_SUGGEST_SENTENCES = 50
+const MAX_SUGGEST_SENTENCE_CHARS = 2000
 
 /**
  * Offsets in code points: an editor (Emacs) counts characters, JavaScript counts UTF-16 units, and the two differ after
@@ -253,6 +255,27 @@ export const WRITING_API_TOOLS: ApiTool[] = [
         text: h.text,
         quote: bestSentence(h.text, args.query)
       }))
+    }
+  }),
+  freeTool({
+    name: 'suggest_citations',
+    description:
+      'For each sentence, the library papers most likely to support it and the best passage of each (page and quote), found locally without Claude: the paper vectors of the local model when it is downloaded, and full-text hits of the sentence\'s rarer terms. Excludes the keys given (those it already cites), trashed papers and papers without indexed text. Hints to read, not verified support. Free.',
+    input: {
+      sentences: z
+        .array(
+          z.object({
+            text: z.string().min(1).max(MAX_SUGGEST_SENTENCE_CHARS),
+            exclude: z.array(key).max(50).optional().describe('Keys the sentence already cites')
+          })
+        )
+        .min(1)
+        .max(MAX_SUGGEST_SENTENCES),
+      per_sentence: z.number().int().min(1).max(5).optional().describe('Suggestions per sentence (3 by default)')
+    },
+    async run(ctx, args) {
+      const out = await ctx.writing.suggestCitations(args.sentences, args.per_sentence ?? 3)
+      return out.map((s) => ({ semantic: s.semantic, suggestions: s.suggestions }))
     }
   }),
   freeTool({
