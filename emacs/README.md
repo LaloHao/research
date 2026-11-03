@@ -40,11 +40,31 @@ same checks and caps.
 
 | Command | Key | What it does |
 | --- | --- | --- |
-| `research-check-citations-with-claude` | `C-c r v` | For the buffer (or region): whether each cited paper supports its sentence, as Flymake diagnostics on each citation with the paper's quote and page. Error: does not support, or its quote was not found in the paper; warning: partial support, or no passage found; note: supports (or could not be checked, with the reason). |
+| `research-check-citations-with-claude` | `C-c r v` | For the buffer (or region): whether each cited paper supports its sentence, as Flymake diagnostics on each citation with the paper's quote and page. Error: does not support, or its quote was not found in the paper; warning: partial support, or no passage found; note: supports (or could not be checked, with the reason). The echo area sums it up (… «— ver \*research-cite-check\*») and the report opens in a read-only Org side buffer, `*research-cite-check*` (see below). |
 | `research-propose-outline` | `C-c r p` | Insert the outline with Claude's headings, order, openings and gap sentences; citations the app could not verify are marked in the text. `C-u` asks for the outline's choices. |
 | `research-style-review` | `C-c r s` | Style suggestions for the buffer (or region), walked like `query-replace`: each one highlighted, `y` apply, `n` skip, `!` apply this and the rest, `q` stop. Applied at the end, from the last one; refused if the text changed while waiting. Suggestions never touch citations, math or LaTeX commands. |
 | `research-draft` | `C-c r d` | Asks for the title, the purpose, the papers it may cite (`completing-read-multiple`, keys annotated with title, year and authors), the length and an optional research question; Claude writes the section with every claim cited, the app saves it as a new draft in «Redacción → Borrador», and writes it in the background (minutes) while Emacs stays free: the echo area shows its progress every `research-draft-poll-interval` seconds, and when it is written its text opens in Org in a new `*research-draft*` buffer for review, with the counts of unverified citations, citations outside the selection and claims marked `[SIN CITA]`. While one draft started from the API is being written, another is refused (a retry never pays twice). |
 | `research-draft-stop` | `C-c r D` | Stops the draft `research-draft` is following; what Claude wrote so far is kept as a stopped version and opens as usual. |
+
+The report of `research-check-citations-with-claude`, `*research-cite-check*`: a header with file › section (Org),
+date, the counts and the cost; then every checked sentence, the weakest first (does not support, evidence not found,
+no passage, partial, unverified, supports), as a heading with ✗, `!` or ✓ and the sentence (cut at 120 characters),
+and for each cited key its verdict, Claude's note, the quote «…» with its page and whether the quote was found in the
+paper. Under each sentence that is not well supported (does not support, partial, no passage, evidence not found),
+«Sugerencias de tu biblioteca»: up to three papers of your library that may support it, `[key] Title (year), p. N:
+«quote»`, from the free tool `suggest_citations` (one call for all those sentences; local, no Claude, no
+confirmation). They are found by the papers' vectors of the local similarity model when it is downloaded and by
+full-text hits of the sentence's rarer words, then by each paper's best passage, never including the keys the
+sentence already cites, trashed papers or papers without text: **hints to read, not verified support**. An older app
+without the tool shows the report without suggestions. Keys (they win over evil's normal and motion states):
+
+| Key | What it does |
+| --- | --- |
+| `RET` | Go to the sentence in your buffer (it follows your edits). |
+| `o` | Open the citation or suggestion at point in the app, at its page with the quote highlighted. |
+| `i` | On a suggestion: cite it in the sentence, in its own format: added to the sentence's last citation (`[cite:@a;@key]`, `\cite{a,key}`, `[@a; @key]`), or a new citation before the sentence's final punctuation when it has none. Refused when the sentence changed since the check. |
+| `n` / `p` | Next / previous sentence. |
+| `q` | Close the window. |
 
 The tutor (Claude, same confirmation and the same switch; caps «Tope por lectura del tutor», «Tope por alternativas de
 una oración», «Tope por esquema inverso» and «Tope por cobertura de preguntas» in Settings → Claude). They never
@@ -154,6 +174,7 @@ Errors from the app are shown in Spanish, like the app (no project open, the API
 - `research-ask-auto-send-below`: a question estimated at most this (US$) is sent without confirming (0.25; nil: always confirm).
 - `research-ask-allow-edits`: whether the menu offers `-e`, letting Claude edit your file (nil).
 - `research-ask-last-choice`: the menu's options as last used (kept by `savehist-mode`).
+- `research-cite-check-suggest`: whether the report of `research-check-citations-with-claude` suggests papers of your library for the weak sentences (t).
 - `research-bib-order`: `"appearance"` (default) or `"alphabetical"`.
 - `research-keymap-prefix`: `"C-c r"` by default; `nil` to bind `research-command-map` yourself (set it before the
   package loads).

@@ -221,6 +221,37 @@ describe('local API: tools', () => {
   })
 })
 
+describe('local API: suggest_citations', () => {
+  it('suggests library papers with their page and quote, leaving out the keys given', async () => {
+    const { ctx } = await project()
+    const server = await serve({ ctx })
+    const out = await ok(server, 'suggest_citations', {
+      sentences: [{ text: 'We evaluate the parser on sixteen datasets.' }, { text: 'We evaluate the parser on sixteen datasets.', exclude: [LOGHUB_ID] }, { text: 'Zzzq qqqz.' }],
+      per_sentence: 1
+    })
+    expect(out).toEqual([
+      { semantic: false, suggestions: [{ key: LOGHUB_ID, title: expect.stringContaining('Loghub'), year: 2020, page: 2, quote: expect.stringContaining('sixteen Loghub datasets'), score: expect.any(Number) }] },
+      { semantic: false, suggestions: [{ key: DRAIN_ID, title: expect.any(String), year: 2017, page: 2, quote: expect.stringContaining('five datasets'), score: expect.any(Number) }] },
+      { semantic: false, suggestions: [] }
+    ])
+  })
+
+  it('validates its input', async () => {
+    const { ctx } = await project()
+    const server = await serve({ ctx })
+    for (const args of [
+      {},
+      { sentences: [] },
+      { sentences: [{ text: 'x'.repeat(2001) }] },
+      { sentences: Array.from({ length: 51 }, () => ({ text: 'A sentence.' })) },
+      { sentences: [{ text: 'A sentence.' }], per_sentence: 6 },
+      { sentences: [{ text: 'A sentence.', exclude: ['Not A Key!'] }] }
+    ]) {
+      expect((await call(server, 'suggest_citations', args)).isError, JSON.stringify(args).slice(0, 80)).toBe(true)
+    }
+  })
+})
+
 describe('local API: costly tools', () => {
   const runs: (number | null)[] = []
   const fake = costlyTool({

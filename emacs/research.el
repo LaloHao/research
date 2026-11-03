@@ -30,7 +30,9 @@
 ;; `research-style-review' and the tutor's `research-tutor',
 ;; `research-alternatives', `research-reverse-outline', `research-rq-coverage')
 ;; always ask for the API's cost estimate first and run only after
-;; `yes-or-no-p'.  The tutor's never write your text: they point, explain, ask,
+;; `yes-or-no-p'.  The check with Claude also opens a report,
+;; `*research-cite-check*', with each verdict and, for a weak sentence,
+;; papers of your library that may support it (free and local).  The tutor's never write your text: they point, explain, ask,
 ;; outline, or offer options of one sentence for you to choose from.
 ;;
 ;; `research-ask' (`?' in the command map) sends the selection (evil's
@@ -825,7 +827,10 @@ The region (BEG..END) or the buffer.  Shows the estimated cost and asks
 first; the verdicts show as Flymake diagnostics with the paper's quote and
 page: an error when the paper does not support the sentence or its quote
 was not found, a warning for partial support or no passage found, a note
-when it supports it."
+when it supports it.  Then `*research-cite-check*' lists every sentence,
+the weakest first, with each verdict, Claude's note and quote and, for a
+sentence that is not well supported, papers of your library that may
+support it (free and local; see `research-cite-check-suggest')."
   (interactive (if (use-region-p) (list (region-beginning) (region-end))))
   (research--with-errors
     (let* ((beg (or beg (point-min)))
@@ -837,16 +842,22 @@ when it supports it."
           (message "Cancelado")
         (setq research--claude-diagnostics (research--markers (research--verdict-diagnostics answer beg)))
         (research--flymake-refresh)
-        (let ((counts (alist-get 'counts answer)))
-          (message "Claude: %d respaldan, %d en parte, %d no respaldan, %d sin pasaje, %d sin verificar%s (US$%.2f)"
-                   (or (alist-get 'supports counts) 0) (or (alist-get 'partial counts) 0)
-                   (or (alist-get 'does_not_support counts) 0) (or (alist-get 'not_found counts) 0)
-                   (or (alist-get 'unverified counts) 0)
-                   (cond ((alist-get 'error answer) (format "; se detuvo: %s" (alist-get 'error answer)))
-                         ((alist-get 'stopped answer) "; se detuvo")
-                         (t ""))
-                   (or (alist-get 'costUsd answer) 0)))
+        (let ((summary (research--cite-check-summary answer)))
+          (research--cite-check-report answer beg summary)
+          (message "%s — ver *research-cite-check*" summary))
         answer))))
+
+(defun research--cite-check-summary (answer)
+  "The one-line summary of a `cite_check' ANSWER."
+  (let ((counts (alist-get 'counts answer)))
+    (format "Claude: %d respaldan, %d en parte, %d no respaldan, %d sin pasaje, %d sin verificar%s (US$%.2f)"
+            (or (alist-get 'supports counts) 0) (or (alist-get 'partial counts) 0)
+            (or (alist-get 'does_not_support counts) 0) (or (alist-get 'not_found counts) 0)
+            (or (alist-get 'unverified counts) 0)
+            (cond ((alist-get 'error answer) (format "; se detuvo: %s" (alist-get 'error answer)))
+                  ((alist-get 'stopped answer) "; se detuvo")
+                  (t ""))
+            (or (alist-get 'costUsd answer) 0))))
 
 (defconst research--outcomes
   '(("supports" :note "respalda")
@@ -886,6 +897,260 @@ sentence when none names it)."
                               (if note (format ". %s" note) "")))
                 out))))
     (nreverse out)))
+
+;;;;; The report of the check with Claude
+
+(defcustom research-cite-check-suggest t
+  "Whether the report of `research-check-citations-with-claude' suggests papers.
+For each sentence a cited paper does not (fully) support, the app looks
+in your library for papers that may support it (`suggest_citations':
+local and free, no Claude).  They are hints to read, not verified."
+  :type 'boolean)
+
+(defconst research--cite-check-order
+  '("does_not_support" "no_evidence" "not_found" "partial" "unverified" "supports")
+  "The outcomes of the check, worst first: the report's order.")
+
+(defconst research--cite-check-weak '("does_not_support" "partial" "not_found" "no_evidence")
+  "Outcomes for which the report suggests other papers.")
+
+(defvar-local research--cite-check-source nil "The buffer the report is of.")
+
+(defvar research-cite-check-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "RET") #'research-cite-check-visit)
+    (define-key map (kbd "o") #'research-cite-check-open)
+    (define-key map (kbd "i") #'research-cite-check-insert)
+    (define-key map (kbd "n") #'research-cite-check-next)
+    (define-key map (kbd "p") #'research-cite-check-previous)
+    (define-key map (kbd "q") #'quit-window)
+    map)
+  "Keys of `*research-cite-check*'.")
+
+(define-derived-mode research-cite-check-mode org-mode "Research-Cite-Check"
+  "The report of a citation check with Claude, read-only.
+\\{research-cite-check-mode-map}"
+  (setq buffer-read-only t))
+
+(defun research--cite-check-worst (sentence)
+  "The worst outcome of SENTENCE's entries."
+  (let ((outcomes (mapcar (lambda (e) (alist-get 'outcome e)) (alist-get 'entries sentence))))
+    (or (cl-find-if (lambda (o) (member o outcomes)) research--cite-check-order) "unverified")))
+
+(defun research--cite-check-weak-p (sentence)
+  "Whether SENTENCE has an entry for which other papers are suggested."
+  (cl-some (lambda (e) (member (alist-get 'outcome e) research--cite-check-weak)) (alist-get 'entries sentence)))
+
+(defun research--cite-check-icon (outcome)
+  "The heading icon of OUTCOME."
+  (pcase outcome
+    ((or "does_not_support" "no_evidence") "✗")
+    ("supports" "✓")
+    (_ "!")))
+
+(defun research--cite-check-truncate (text n)
+  "TEXT with its whitespace collapsed, cut to N characters."
+  (let ((text (string-trim (replace-regexp-in-string "[ \t\n]+" " " (or text "")))))
+    (if (> (length text) n) (concat (substring text 0 (1- n)) "…") text)))
+
+(defun research--cite-check-suggestions (sentences)
+  "The `suggest_citations' answer for SENTENCES (weak ones), or nil.
+Nil too when suggestions are off or the app does not have the tool."
+  (when (and research-cite-check-suggest sentences)
+    (condition-case err
+        (let ((answer (research-call
+                       "suggest_citations"
+                       `((sentences . ,(vconcat
+                                        (mapcar (lambda (s)
+                                                  `((text . ,(research--cite-check-truncate (alist-get 'text s) 2000))
+                                                    (exclude . ,(vconcat
+                                                                 (cl-remove-if-not
+                                                                  (lambda (k) (string-match-p "\\`[a-z][a-z0-9]*\\'" k))
+                                                                  (delete-dups (mapcar (lambda (e) (alist-get 'key e))
+                                                                                       (alist-get 'entries s))))))))
+                                                sentences)))))))
+          (and (listp answer) answer))
+      (research-error
+       (message "Sin sugerencias de la biblioteca: %s" (research--error-message err))
+       nil))))
+
+(defun research--cite-check-entry-lines (entry)
+  "The lines of one ENTRY (a cited key) of the report."
+  (let* ((key (alist-get 'key entry))
+         (outcome (alist-get 'outcome entry))
+         (words (or (nth 2 (assoc outcome research--outcomes)) "sin verificar"))
+         (reason (cdr (assoc (alist-get 'reason entry) research--unverified-reasons)))
+         (note (alist-get 'note entry))
+         (quote (alist-get 'quote entry))
+         (page (alist-get 'page entry)))
+    (concat (format "- [%s] %s%s" key words (if reason (format " (%s)" reason) ""))
+            (if note (format "\n  Claude: %s" note) "")
+            (if quote
+                (format "\n  «%s»%s — %s" quote (if page (format " (p. %s)" page) "")
+                        (if (alist-get 'found entry) "cita encontrada en el paper" "cita no encontrada en el paper"))
+              "")
+            "\n")))
+
+(defun research--cite-check-suggestion-line (s)
+  "The line of the suggestion S."
+  (format "- [%s] %s (%s)%s: «%s»\n" (alist-get 'key s) (alist-get 'title s)
+          (or (alist-get 'year s) "s. f.")
+          (if (alist-get 'page s) (format ", p. %s" (alist-get 'page s)) "")
+          (alist-get 'quote s)))
+
+(defun research--cite-check-insert-item (text item &optional suggestion)
+  "Insert TEXT, whose `o' opens ITEM (an alist with key, page, quote).
+With SUGGESTION, `i' inserts ITEM's key into the sentence."
+  (let ((start (point)))
+    (insert text)
+    (add-text-properties start (1- (point)) `(research-cite-item ,item research-cite-suggestion ,suggestion))))
+
+(defun research--cite-check-report (answer base summary)
+  "Show `*research-cite-check*' for a `cite_check' ANSWER of text at BASE.
+SUMMARY is the one-line counts and cost.  The current buffer is the one
+checked."
+  (let* ((source (current-buffer))
+         (fmt (research--format))
+         (file (if buffer-file-name (file-name-nondirectory buffer-file-name) (buffer-name)))
+         (section (research--ask-section base))
+         (sentences (mapcar (lambda (s)
+                              (let ((beg (+ base (alist-get 'start s))) (end (+ base (alist-get 'end s))))
+                                (list s (list :beg (copy-marker beg) :end (copy-marker end t)
+                                              :text (buffer-substring-no-properties beg end) :format fmt))))
+                            (alist-get 'sentences answer)))
+         (sorted (cl-stable-sort (copy-sequence sentences) #'<
+                                 :key (lambda (s) (cl-position (research--cite-check-worst (car s)) research--cite-check-order
+                                                               :test #'equal))))
+         (weak (cl-remove-if-not (lambda (s) (research--cite-check-weak-p (car s))) sorted))
+         (suggested (research--cite-check-suggestions (mapcar #'car weak)))
+         (buffer (get-buffer-create "*research-cite-check*")))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (research-cite-check-mode)
+        (setq research--cite-check-source source)
+        (insert "Verificación de citas con Claude\n"
+                (format "Archivo: %s%s\n" file (if (string-empty-p section) "" (concat " › " section)))
+                (format "Fecha: %s\n" (format-time-string "%Y-%m-%d %H:%M"))
+                summary "\n"
+                "RET va a la oración · o abre en la app · i inserta la sugerencia · n/p · q cierra\n")
+        (when (null sorted) (insert "\nNinguna oración con citas que se pudieran verificar.\n"))
+        (dolist (s sorted)
+          (let* ((sentence (car s))
+                 (place (cadr s))
+                 (start (point))
+                 (weak-index (cl-position s weak :test #'eq))
+                 (suggestions (and weak-index (alist-get 'suggestions (nth weak-index suggested)))))
+            (insert "\n* " (research--cite-check-icon (research--cite-check-worst sentence)) " "
+                    (research--cite-check-truncate (alist-get 'text sentence) 120) "\n")
+            (dolist (entry (alist-get 'entries sentence))
+              (research--cite-check-insert-item (research--cite-check-entry-lines entry) entry))
+            (when (and weak-index suggested)
+              (insert "Sugerencias de tu biblioteca:\n")
+              (if (null suggestions)
+                  (insert "  (ninguna)\n")
+                (dolist (sg suggestions)
+                  (research--cite-check-insert-item (research--cite-check-suggestion-line sg) sg t))))
+            (put-text-property start (point) 'research-cite-sentence place)))
+        (goto-char (point-min))))
+    (display-buffer buffer '((display-buffer-in-side-window) (side . right) (window-width . 0.45)))
+    buffer))
+
+(defun research--cite-check-place ()
+  "The sentence (a plist) of the report's entry at point."
+  (or (get-text-property (point) 'research-cite-sentence)
+      (and (> (point) (point-min)) (get-text-property (1- (point)) 'research-cite-sentence))
+      (user-error "Aquí no hay una oración del informe")))
+
+(defun research--cite-check-item ()
+  "The citation or suggestion at point."
+  (or (get-text-property (point) 'research-cite-item)
+      (user-error "Aquí no hay una cita ni una sugerencia")))
+
+(defun research--cite-check-live (place)
+  "PLACE's source buffer, refusing when it is gone or the sentence changed."
+  (let ((buffer (marker-buffer (plist-get place :beg))))
+    (unless (buffer-live-p buffer) (user-error "El búfer de origen ya no existe"))
+    (unless (equal (with-current-buffer buffer
+                     (buffer-substring-no-properties (plist-get place :beg) (plist-get place :end)))
+                   (plist-get place :text))
+      (user-error "La oración cambió desde la verificación: vuelve a verificarla"))
+    buffer))
+
+(defun research-cite-check-visit ()
+  "Go to the sentence of the entry at point in the checked buffer."
+  (interactive)
+  (let* ((place (research--cite-check-place))
+         (marker (plist-get place :beg)))
+    (unless (buffer-live-p (marker-buffer marker)) (user-error "El búfer de origen ya no existe"))
+    (pop-to-buffer (marker-buffer marker))
+    (goto-char marker)))
+
+(defun research-cite-check-open ()
+  "Show the paper of the citation or suggestion at point in the app."
+  (interactive)
+  (let ((item (research--cite-check-item)))
+    (research--with-errors
+      (research--open-in-app (alist-get 'key item) (alist-get 'page item) (alist-get 'quote item))
+      (message "Abriendo %s en la app%s" (alist-get 'key item)
+               (if (alist-get 'page item) (format ", p. %s" (alist-get 'page item)) "")))))
+
+(defun research--cite-check-add-key (beg end key format)
+  "Cite KEY in the sentence BEG..END of the current buffer, in FORMAT.
+Added to the sentence's last citation, else a new citation before the
+sentence's final punctuation."
+  (save-excursion
+    (goto-char beg)
+    (let (last)
+      (while (re-search-forward (alist-get format research--citation-regexps) end t)
+        (setq last (list (match-beginning 0) (match-end 0) (and (eq format 'latex) (match-end 2)))))
+      (if last
+          (pcase format
+            ('latex (goto-char (nth 2 last)) (insert "," key))
+            ('markdown (goto-char (1- (nth 1 last))) (insert "; @" key))
+            (_ (goto-char (1- (nth 1 last))) (insert ";@" key)))
+        (goto-char end)
+        (skip-chars-backward " \t\n" beg)
+        (skip-chars-backward ".!?;:…" beg)
+        (skip-chars-backward " \t\n" beg)
+        (insert " " (research-format-citation key nil format))))))
+
+(defun research-cite-check-insert ()
+  "Add the suggestion at point to its sentence's citation in the checked buffer.
+In the sentence's own citation format (Org `[cite:@a;@key]', LaTeX
+`\\cite{a,key}', Markdown `[@a; @key]'); a sentence without a citation
+gets a new one before its final punctuation.  Refused when the sentence
+changed since the check."
+  (interactive)
+  (let* ((item (research--cite-check-item))
+         (place (research--cite-check-place)))
+    (unless (get-text-property (point) 'research-cite-suggestion)
+      (user-error "Pon el cursor sobre una sugerencia"))
+    (let ((buffer (research--cite-check-live place))
+          (key (alist-get 'key item)))
+      (with-current-buffer buffer
+        (research--cite-check-add-key (plist-get place :beg) (plist-get place :end) key (plist-get place :format))
+        (plist-put place :text (buffer-substring-no-properties (plist-get place :beg) (plist-get place :end))))
+      (message "Cité %s en la oración" key))))
+
+(defun research--cite-check-move (forward)
+  "Move to the next (FORWARD) or previous sentence heading."
+  (let ((found (save-excursion
+                 (if forward
+                     (progn (end-of-line) (and (re-search-forward "^\\* " nil t) (match-beginning 0)))
+                   (beginning-of-line)
+                   (re-search-backward "^\\* " nil t)))))
+    (if found (goto-char found) (message "No hay más oraciones"))))
+
+(defun research-cite-check-next ()
+  "Go to the next sentence of the report."
+  (interactive)
+  (research--cite-check-move t))
+
+(defun research-cite-check-previous ()
+  "Go to the previous sentence of the report."
+  (interactive)
+  (research--cite-check-move nil))
 
 ;;;###autoload
 (defun research-propose-outline (&optional ask)
@@ -2417,7 +2682,8 @@ continues it with a new passage)."
 (declare-function evil-make-intercept-map "evil-core")
 (declare-function evil-get-auxiliary-keymap "evil-core")
 (with-eval-after-load 'evil
-  (dolist (map (list research-ask-mode-map research-passages-mode-map research-alternatives-mode-map research-outline-mode-map))
+  (dolist (map (list research-ask-mode-map research-passages-mode-map research-alternatives-mode-map research-outline-mode-map
+                    research-cite-check-mode-map))
     (dolist (state '(normal motion))
       ;; The state's auxiliary map holds all of MAP's keys and takes precedence in that state.
       (set-keymap-parent (evil-get-auxiliary-keymap map state t t) map)

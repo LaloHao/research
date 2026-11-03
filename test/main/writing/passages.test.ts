@@ -64,4 +64,21 @@ describe('passages', () => {
     })
     expect(await broken.find('p', 'datasets', 1)).toEqual([{ page: 1, text: 'Loghub datasets.' }])
   })
+
+  it('gives a paper’s single best window with the share of the claim’s terms it holds, null when none matches', async () => {
+    const chunks = [
+      { page: 1, text: 'Abstract. We study systems.' },
+      { page: 2, text: 'Anomaly detection reaches high recall on HDFS.' }
+    ]
+    const finder = new PassageFinder({ chunks: () => chunks, embedder: async () => null })
+    expect(await finder.best('p', 'anomaly detection recall precision')).toEqual({
+      passage: { page: 2, text: 'Anomaly detection reaches high recall on HDFS.' },
+      coverage: 0.75,
+      similarity: null
+    })
+    expect(await finder.best('p', 'zzzq qqqz')).toBeNull()
+    expect(await finder.semantic()).toBe(false)
+    const semantic = new PassageFinder({ chunks: () => chunks, embedder: async () => new FakeEmbedder() })
+    expect((await semantic.best('p', 'anomaly detection recall'))?.similarity).toBeGreaterThan(0)
+  })
 })

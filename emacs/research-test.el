@@ -496,7 +496,8 @@ ON-RUN, when given, runs before answering the confirmed call."
                            (citations . [((start . ,c2) (end . ,(+ c2 14)) (keys . ["c2022z"]))])
                            (entries . [((key . "c2022z") (outcome . "partial") (quote . "somewhat") (page . 7) (note . :null))]))]))))
     (research-test--with-app (research-test--costly "cite_check" answer)
-      (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) t)))
+      (let ((research-cite-check-suggest nil))
+       (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) t)))
         (with-temp-buffer
           (org-mode)
           (insert "Intro.\n" text)
@@ -508,7 +509,7 @@ ON-RUN, when given, runs before answering the confirmed call."
                            ("[cite:@c2022z]" :warning "c2022z: respalda en parte — «somewhat», p. 7"))))
           (let (reported)
             (research-flymake (lambda (diags) (setq reported diags)))
-            (should (= (length reported) 3))))))))
+            (should (= (length reported) 3)))))))))
 
 (ert-deftest research-test-check-with-claude-declined-runs-nothing ()
   (research-test--with-app (research-test--costly "cite_check" '((sentences . [])))
@@ -518,6 +519,176 @@ ON-RUN, when given, runs before answering the confirmed call."
         (research-check-citations-with-claude)
         (should (null research--claude-diagnostics))
         (should (= (length research-test--requests) 1))))))
+
+;;;;; The report of the check with Claude
+
+(defun research-test--cite-answer (text specs)
+  "A `cite_check' answer for TEXT: SPECS are (SENTENCE CITATION KEY OUTCOME).
+Offsets are TEXT's (from 0); CITATION is nil for a sentence without one."
+  `((format . "org") (counts . ((supports . 1) (partial . 1) (does_not_support . 1) (not_found . 0) (unverified . 0)))
+    (stopped . :false) (error . :null) (costUsd . 0.05)
+    (sentences . ,(vconcat
+                   (mapcar (lambda (spec)
+                             (let* ((start (string-search (nth 0 spec) text))
+                                    (c (and (nth 1 spec) (+ start (string-search (nth 1 spec) (nth 0 spec))))))
+                               `((start . ,start) (end . ,(+ start (length (nth 0 spec)))) (text . ,(nth 0 spec))
+                                 (citations . ,(if c (vector `((start . ,c) (end . ,(+ c (length (nth 1 spec)))) (keys . [,(nth 2 spec)]))) []))
+                                 (entries . [((key . ,(nth 2 spec)) (outcome . ,(nth 3 spec)) (verdict . :null) (reason . :null)
+                                              (quote . ,(if (equal (nth 3 spec) "not_found") :null "a quote")) (page . 4)
+                                              (found . ,(if (equal (nth 3 spec) "supports") t :false))
+                                              (note . "Claude's note."))]))))
+                           specs)))))
+
+(defun research-test--cite-handler (answer record &optional suggestions)
+  "Answers `cite_check' with ANSWER and `suggest_citations' with SUGGESTIONS.
+RECORD is called with each `suggest_citations' call's arguments;
+SUGGESTIONS nil makes the tool unknown (an old app)."
+  (let ((costly (research-test--costly "cite_check" answer)))
+    (lambda (tool args)
+      (pcase tool
+        ("cite_check" (funcall costly tool args))
+        ("suggest_citations"
+         (funcall record args)
+         (if suggestions
+             (research-test--result (funcall suggestions args))
+           (research-test--result "Tool suggest_citations not found" t)))
+        ("open_in_app" (research-test--result '((opened . t))))))))
+
+(defun research-test--one-suggestion (args)
+  "One suggestion (key d2023w) per sentence of ARGS."
+  (vconcat (mapcar (lambda (_) '((semantic . t) (suggestions . [((key . "d2023w") (title . "Deep logs") (year . 2023) (page . 2) (quote . "It holds.") (score . 0.9))])))
+                   (alist-get 'sentences args))))
+
+(defmacro research-test--with-report (mode text specs suggestions &rest body)
+  "Check TEXT in MODE (a function, or a file name to visit) and run BODY.
+In BODY `calls' holds the `suggest_citations' calls and `report' the
+report buffer; SUGGESTIONS as in `research-test--cite-handler'."
+  (declare (indent 4))
+  `(let ((calls nil))
+     (research-test--with-app (research-test--cite-handler (research-test--cite-answer ,text ,specs) (lambda (a) (push a calls)) ,suggestions)
+       (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) t))
+                 ((symbol-function 'display-buffer) #'ignore))
+         (with-temp-buffer
+           (if (stringp ,mode) (setq buffer-file-name ,mode) (funcall ,mode))
+           (insert ,text)
+           (unwind-protect
+               (progn
+                 (research-check-citations-with-claude)
+                 (let ((report (get-buffer "*research-cite-check*")))
+                   ,@body))
+             (setq buffer-file-name nil)
+             (set-buffer-modified-p nil)
+             (when (get-buffer "*research-cite-check*") (kill-buffer "*research-cite-check*"))))))))
+
+(defun research-test--goto-suggestion (report key)
+  "Point on the suggestion of KEY in REPORT (made current)."
+  (set-buffer report)
+  (goto-char (point-min))
+  (search-forward (format "- [%s]" key))
+  (beginning-of-line)
+  (should (get-text-property (point) 'research-cite-suggestion)))
+
+(ert-deftest research-test-cite-check-report-orders-worst-first-and-suggests-for-weak-sentences ()
+  (let* ((text "A good claim [cite:@a2020x]. A bad claim [cite:@b2021y]. A partial one [cite:@c2022z].")
+         (specs '(("A good claim [cite:@a2020x]." "[cite:@a2020x]" "a2020x" "supports")
+                  ("A bad claim [cite:@b2021y]." "[cite:@b2021y]" "b2021y" "does_not_support")
+                  ("A partial one [cite:@c2022z]." "[cite:@c2022z]" "c2022z" "partial")))
+         messages)
+    (cl-letf (((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+      (research-test--with-report #'org-mode text specs #'research-test--one-suggestion
+        ;; One batched call, only the weak sentences (worst first), each excluding its own keys.
+        (should (= (length calls) 1))
+        (should (equal (alist-get 'sentences (car calls))
+                       '(((text . "A bad claim [cite:@b2021y].") (exclude "b2021y"))
+                         ((text . "A partial one [cite:@c2022z].") (exclude "c2022z")))))
+        (should (string-match-p "— ver \\*research-cite-check\\*\\'" (car messages)))
+        (with-current-buffer report
+          (should (derived-mode-p 'research-cite-check-mode))
+          (should buffer-read-only)
+          (let ((content (buffer-string)))
+            (should (string-match-p "^Fecha: " content))
+            (should (string-match-p "1 no respaldan" content))
+            (should (equal (let (heads) (goto-char (point-min))
+                                (while (re-search-forward "^\\* \\(.*\\)$" nil t) (push (match-string 1) heads))
+                                (nreverse heads))
+                           '("✗ A bad claim [cite:@b2021y]." "! A partial one [cite:@c2022z]." "✓ A good claim [cite:@a2020x].")))
+            (should (string-match-p "- \\[b2021y\\] no respalda\n  Claude: Claude's note.\n  «a quote» (p. 4) — cita no encontrada en el paper" content))
+            (should (string-match-p "Sugerencias de tu biblioteca:\n- \\[d2023w\\] Deep logs (2023), p. 2: «It holds.»" content))
+            ;; The sentence that holds up has no suggestions.
+            (should (= 2 (how-many "Sugerencias de tu biblioteca" (point-min) (point-max))))))))))
+
+(ert-deftest research-test-cite-check-report-insert-adds-the-key-in-each-format ()
+  (dolist (case `((org-mode "Logs hold [cite:@b2021y p. 3]." "[cite:@b2021y p. 3]" "Logs hold [cite:@b2021y p. 3;@d2023w].")
+                  (latex-mode "Logs hold \\cite[p.~3]{b2021y}." "\\cite[p.~3]{b2021y}" "Logs hold \\cite[p.~3]{b2021y,d2023w}.")
+                  ("/tmp/chapter.md" "Logs hold [@b2021y, p. 3]." "[@b2021y, p. 3]" "Logs hold [@b2021y, p. 3; @d2023w].")
+                  (org-mode "Logs hold without one." nil "Logs hold without one [cite:@d2023w].")
+                  (latex-mode "Logs hold without one!" nil "Logs hold without one \\cite{d2023w}!")))
+    (let ((mode (nth 0 case)) (text (nth 1 case)))
+      (research-test--with-report mode text `((,text ,(nth 2 case) "b2021y" "not_found")) #'research-test--one-suggestion
+        (let ((source (with-current-buffer report research--cite-check-source)))
+          (research-test--goto-suggestion report "d2023w")
+          (research-cite-check-insert)
+          (should (equal (with-current-buffer source (buffer-string)) (nth 3 case))))))))
+
+(ert-deftest research-test-cite-check-report-visits-opens-and-refuses-a-changed-sentence ()
+  (let* ((text "Intro text here. A bad claim [cite:@b2021y].")
+         (specs '(("A bad claim [cite:@b2021y]." "[cite:@b2021y]" "b2021y" "does_not_support"))))
+    (research-test--with-report #'org-mode text specs #'research-test--one-suggestion
+      (let ((source (with-current-buffer report research--cite-check-source)))
+        ;; Text added before the sentence: the markers follow it.
+        (with-current-buffer source (goto-char (point-min)) (insert "New. "))
+        (research-test--goto-suggestion report "d2023w")
+        (cl-letf (((symbol-function 'pop-to-buffer) (lambda (b &rest _) (set-buffer b))))
+          (research-cite-check-visit)
+          (should (eq (current-buffer) source))
+          (should (looking-at-p "A bad claim")))
+        ;; `o' on a cited key and on a suggestion.
+        (research-test--goto-suggestion report "d2023w")
+        (research-cite-check-open)
+        (goto-char (point-min))
+        (search-forward "- [b2021y]")
+        (research-cite-check-open)
+        (should (equal (mapcar (lambda (r) (alist-get 'arguments (alist-get 'params (nth 2 r))))
+                               (cl-remove-if-not (lambda (r) (equal (alist-get 'name (alist-get 'params (nth 2 r))) "open_in_app"))
+                                                 (reverse research-test--requests)))
+                       '(((key . "d2023w") (page . 2) (quote . "It holds."))
+                         ((key . "b2021y") (page . 4) (quote . "a quote")))))
+        ;; `i' only on a suggestion, and not once the sentence changed.
+        (should-error (research-cite-check-insert) :type 'user-error)
+        (with-current-buffer source
+          (goto-char (point-min))
+          (search-forward "bad")
+          (replace-match "weak"))
+        (research-test--goto-suggestion report "d2023w")
+        (let ((err (should-error (research-cite-check-insert) :type 'user-error)))
+          (should (string-match-p "cambió" (cadr err))))
+        (should (equal (with-current-buffer source (buffer-string)) "New. Intro text here. A weak claim [cite:@b2021y]."))))))
+
+(ert-deftest research-test-cite-check-report-without-suggestions ()
+  (let* ((text "A bad claim [cite:@b2021y].")
+         (specs '(("A bad claim [cite:@b2021y]." "[cite:@b2021y]" "b2021y" "does_not_support"))))
+    ;; Turned off: no call, the report still shows the verdicts.
+    (let ((research-cite-check-suggest nil))
+      (research-test--with-report #'org-mode text specs #'research-test--one-suggestion
+        (should (null calls))
+        (with-current-buffer report
+          (should (string-match-p "- \\[b2021y\\] no respalda" (buffer-string)))
+          (should-not (string-match-p "Sugerencias" (buffer-string))))))
+    ;; An app without the tool: the report all the same, without suggestions.
+    (research-test--with-report #'org-mode text specs nil
+      (should (= (length calls) 1))
+      (with-current-buffer report
+        (should (string-match-p "^\\* ✗ A bad claim" (buffer-string)))
+        (should-not (string-match-p "Sugerencias" (buffer-string)))))))
+
+(ert-deftest research-test-cite-check-report-asks-nothing-when-all-supported ()
+  (let* ((text "A good claim [cite:@a2020x].")
+         (specs '(("A good claim [cite:@a2020x]." "[cite:@a2020x]" "a2020x" "supports"))))
+    (research-test--with-report #'org-mode text specs #'research-test--one-suggestion
+      (should (null calls))
+      (with-current-buffer report
+        (should (string-match-p "^\\* ✓ A good claim" (buffer-string)))
+        (should (string-match-p "«a quote» (p. 4) — cita encontrada en el paper" (buffer-string)))))))
 
 (ert-deftest research-test-propose-outline-inserts-the-proposal ()
   (research-test--with-app
@@ -1368,6 +1539,14 @@ The selection is read as when the menu opens; the question with `read-string'."
       (should (eq (key-binding (kbd "f")) #'research-ask-follow-up))
       (should (eq (key-binding (kbd "c")) #'research-ask-open-citation))
       (should (eq (key-binding (kbd "s")) #'research-ask-stop))
+      (evil-local-mode -1))
+    (with-temp-buffer
+      (research-cite-check-mode)
+      (evil-local-mode 1)
+      (evil-normal-state)
+      (should (eq (key-binding (kbd "o")) #'research-cite-check-open))
+      (should (eq (key-binding (kbd "i")) #'research-cite-check-insert))
+      (should (eq (key-binding (kbd "RET")) #'research-cite-check-visit))
       (evil-local-mode -1))))
 
 (ert-deftest research-test-ask-resume-reopens-a-conversation-and-finds-its-passage ()
