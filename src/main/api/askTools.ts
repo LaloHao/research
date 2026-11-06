@@ -4,6 +4,7 @@ import {
   MAX_CHAT_MESSAGE,
   MAX_WRITING_CHAPTER,
   MAX_WRITING_FILE,
+  MAX_WRITING_GOAL,
   MAX_WRITING_OUTLINE,
   MAX_WRITING_PASSAGE,
   MAX_WRITING_SECTION,
@@ -17,6 +18,7 @@ import {
 } from '../../shared/chat'
 import { LLM_MODELS, type LlmModel } from '../../shared/summary'
 import { extractEdits } from '../../shared/writing/answerEdits'
+import { extractGoal } from '../../shared/writing/answerGoal'
 import { answerToOrg } from '../../shared/writing/answerOrg'
 import { UserFacingError } from '../library/UserFacingError'
 import { operationPlan } from '../llm/cappedOperation'
@@ -58,6 +60,11 @@ const ASK_INPUT = {
   outline: capped(MAX_WRITING_OUTLINE)
     .optional()
     .describe(`Background: the headings of the whole thesis by file, the current file and section marked (at most ${MAX_WRITING_OUTLINE} characters). Sent with every question`),
+  goal: capped(MAX_WRITING_GOAL)
+    .optional()
+    .describe(
+      `What the author is working toward in this conversation, with the context they added to it (at most ${MAX_WRITING_GOAL} characters): every answer then reviews the passage against it and ends with a verdict (goal in ask_status). In a follow-up it replaces the conversation's goal; an empty string removes it; omitted, the goal stays`
+    ),
   conversation_id: conversationId.optional().describe('A follow-up question in that conversation'),
   model: z.enum(LLM_MODELS).optional().describe("sonnet, haiku or opus for a new conversation; the project's model when missing")
 }
@@ -75,7 +82,7 @@ const contextOf = (args: AskArgs): ChatWritingContext | undefined => {
 async function inputChars(ctx: ApiContext, args: AskArgs, summary: ChatSummary | null): Promise<number> {
   const passage =
     summary && args.text === undefined ? [...((await ctx.chats.open(summary.id).catch(chatError)).writing?.passage ?? '')].length : [...(args.text ?? '')].length
-  return passage + [...(args.chapter ?? '')].length + [...(args.outline ?? '')].length
+  return passage + [...(args.chapter ?? '')].length + [...(args.outline ?? '')].length + [...(args.goal ?? '')].length
 }
 
 const fileName = (path: string | undefined): string => (path ?? '').split(/[\\/]/).pop()!.trim().slice(0, MAX_WRITING_FILE)
@@ -133,7 +140,7 @@ export const ASK_API_TOOLS: ApiTool[] = [
   costlyTool({
     name: 'ask',
     description:
-      "«Preguntar a Claude»: Claude's opinion on a passage the user is writing (its file and heading path given), with the library's read-only tools and the thesis context, and as background the chapter the passage is in and the thesis outline; every claim about a paper is cited with a quote and page the app checks. By default (mode opinion) Claude comments, critiques, suggests and asks, and does not rewrite the passage; mode rewrite (only when the user explicitly allowed it for this question) may add a proposed version set apart as Claude's. Starts a conversation in the app's Chat view (or, with conversation_id, asks a follow-up in it) and answers at once with its conversation_id: follow the answer with ask_status (free), stop it with ask_stop. Costs Claude quota (one chat answer, under the per-message cap): without confirmed it answers the plan.",
+      "«Preguntar a Claude»: Claude's opinion on a passage the user is writing (its file and heading path given), with the library's read-only tools and the thesis context, and as background the chapter the passage is in and the thesis outline; every claim about a paper is cited with a quote and page the app checks. By default (mode opinion) Claude comments, critiques, suggests and asks, and does not rewrite the passage; mode rewrite (only when the user explicitly allowed it for this question) may add a proposed version set apart as Claude's. With a goal (what the author is working toward), every answer reviews the passage against it and ends with a verdict. Starts a conversation in the app's Chat view (or, with conversation_id, asks a follow-up in it) and answers at once with its conversation_id: follow the answer with ask_status (free), stop it with ask_stop. Costs Claude quota (one chat answer, under the per-message cap): without confirmed it answers the plan.",
     input: ASK_INPUT,
     cost: {
       kind: 'chat',
@@ -175,6 +182,7 @@ export const ASK_API_TOOLS: ApiTool[] = [
           excerpt: null,
           mode,
           ...(contextOf(args) ? { context: contextOf(args) } : {}),
+          ...(summary && args.goal !== undefined ? { goal: args.goal } : {}),
           ...(summary
             ? args.text !== undefined
               ? {
@@ -193,6 +201,7 @@ export const ASK_API_TOOLS: ApiTool[] = [
                   section: (args.section ?? '').replace(/\s+/g, ' ').trim(),
                   scope: args.scope ?? 'region',
                   mode,
+                  ...(args.goal?.trim() ? { goal: args.goal.trim() } : {}),
                   passage: args.text!
                 }
               })
@@ -205,7 +214,7 @@ export const ASK_API_TOOLS: ApiTool[] = [
   freeTool({
     name: 'ask_status',
     description:
-      "A conversation's latest answer: running (with its text so far, as Org), done or stopped (the answer as plain Org text, each citation as [key, p. N] with its offsets in characters, the key, page, quote and whether the app found the quote in the paper; the answer's cost; for a question in mode edit, `edits`: the changes {find, replace, why, state} taken out of the answer's text, state ok only when find occurs exactly once in the passage), or error with its code. Free.",
+      "A conversation's latest answer: running (with its text so far, as Org), done or stopped (the answer as plain Org text, each citation as [key, p. N] with its offsets in characters, the key, page, quote and whether the app found the quote in the paper; the answer's cost; for a question in mode edit, `edits`: the changes {find, replace, why, state} taken out of the answer's text, state ok only when find occurs exactly once in the passage; in a conversation with a goal, the goal and `goal_verdict` {met, pending}: whether the passage meets it and what is still missing), or error with its code. Free.",
     input: { conversation_id: conversationId },
     async run(ctx, args) {
       const id = args.conversation_id
@@ -220,10 +229,14 @@ export const ASK_API_TOOLS: ApiTool[] = [
       const answer = lastAnswer(chat)
       // A question left without an answer and nothing running: the app closed (or restarted) while it answered.
       if (!answer) return { conversation_id: id, status: 'error', error: 'interrupted' }
-      const withEdits = extractEdits(answer.text, chat.writing?.passage ?? '')
+      const withGoal = extractGoal(answer.text)
+      const withEdits = extractEdits(withGoal.text, chat.writing?.passage ?? '')
       const org = answerToOrg(withEdits.text, answer.citations)
       return {
         conversation_id: id,
+        goal: chat.writing?.goal ?? null,
+        // A stopped answer's verdict may be cut: none is given.
+        ...(withGoal.goal && !answer.stopped ? { goal_verdict: withGoal.goal } : {}),
         status: answer.stopped ? 'stopped' : 'done',
         // A stopped answer's changes may be cut: none are applied.
         ...(withEdits.edits && !answer.stopped ? { edits: withEdits.edits } : {}),
@@ -271,7 +284,7 @@ export const ASK_API_TOOLS: ApiTool[] = [
   freeTool({
     name: 'ask_history',
     description:
-      'A conversation started with ask, to continue it: its passage (the latest one sent) with file, section, scope and mode, and every question and answer in order (answers as plain Org text with their citations, as ask_status gives them). Free.',
+      'A conversation started with ask, to continue it: its passage (the latest one sent) with file, section, scope, mode and goal, and every question and answer in order (answers as plain Org text with their citations, as ask_status gives them). Free.',
     input: { conversation_id: conversationId },
     async run(ctx, args) {
       followed(ctx, args.conversation_id)
@@ -280,7 +293,8 @@ export const ASK_API_TOOLS: ApiTool[] = [
         if (m.role === 'user') return [{ role: 'question', text: m.text, at: m.at }]
         if (m.role !== 'assistant') return []
         const answer = m as AssistantView
-        const withEdits = extractEdits(answer.text, chat.writing?.passage ?? '')
+        const withGoal = extractGoal(answer.text)
+        const withEdits = extractEdits(withGoal.text, chat.writing?.passage ?? '')
         const org = answerToOrg(withEdits.text, answer.citations)
         return [
           {
@@ -292,7 +306,8 @@ export const ASK_API_TOOLS: ApiTool[] = [
             unverified: answer.unverified,
             costUsd: answer.costUsd,
             // Checked against the passage the conversation has now, which may be a later one.
-            ...(withEdits.edits ? { edits: withEdits.edits.map(({ find, replace, why }) => ({ find, replace, why })) } : {})
+            ...(withEdits.edits ? { edits: withEdits.edits.map(({ find, replace, why }) => ({ find, replace, why })) } : {}),
+            ...(withGoal.goal ? { goal_verdict: withGoal.goal } : {})
           }
         ]
       })
@@ -304,6 +319,7 @@ export const ASK_API_TOOLS: ApiTool[] = [
         scope: chat.writing?.scope ?? null,
         mode: chat.writing?.mode ?? null,
         passage: chat.writing?.passage ?? null,
+        goal: chat.writing?.goal ?? null,
         answering: ctx.chats.answering(chat.summary.id),
         conversation_cost_usd: chat.summary.costUsd,
         turns

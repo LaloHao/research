@@ -184,6 +184,40 @@ describe('local API: ask (Claude’s opinion on a passage)', () => {
     expect((await ok(server, 'ask_history', { conversation_id: id })).turns[1].edits).toEqual([changes[0], changes[1]])
   })
 
+  it('a goal: kept with the conversation, sent in every prompt, changed or removed by a follow-up; ask_status gives the verdict out of the text', async () => {
+    const verdict = { met: false, pending: ['Falta decir quién se ve afectado.'] }
+    const { provider, chats, ctx } = await project([
+      chatAnswer('Va bien.\n\n```goal\n' + JSON.stringify(verdict) + '\n```\n'),
+      chatAnswer('Cumplido.\n\n```goal\n{"met": true, "pending": []}\n```'),
+      chatAnswer('Sin objetivo.')
+    ])
+    const server = await serve(ctx)
+    const goal = 'Un planteamiento directo, con los diez pasos del director.'
+    const { conversation_id: id } = await ok(server, 'ask', { ...START, goal, confirmed: true })
+    await chats.idle()
+    expect(provider.chatCalls[0].system).toContain('```goal')
+    expect(provider.chatCalls[0].input).toContain(`<goal>\n${goal}\n</goal>`)
+    const status = await ok(server, 'ask_status', { conversation_id: id })
+    expect(status).toMatchObject({ status: 'done', text: 'Va bien.', goal, goal_verdict: verdict })
+
+    const more = goal + '\nContexto: los párrafos pueden volver a la introducción.'
+    await ok(server, 'ask', { question: 'Revisa de nuevo', conversation_id: id, goal: more, confirmed: true })
+    await chats.idle()
+    expect(provider.chatCalls[1].input).toContain('volver a la introducción')
+    expect(await ok(server, 'ask_status', { conversation_id: id })).toMatchObject({ goal: more, goal_verdict: { met: true, pending: [] } })
+
+    await ok(server, 'ask', { question: 'Otra cosa', conversation_id: id, goal: '', confirmed: true })
+    await chats.idle()
+    expect(provider.chatCalls[2].system).not.toContain('```goal')
+    expect(provider.chatCalls[2].input).not.toContain('<goal>')
+    const last = await ok(server, 'ask_status', { conversation_id: id })
+    expect(last.goal).toBeNull()
+    expect(last.goal_verdict).toBeUndefined()
+    const history = await ok(server, 'ask_history', { conversation_id: id })
+    expect(history.goal).toBeNull()
+    expect(history.turns[1].goal_verdict).toEqual(verdict)
+  })
+
   it('refuses before spending: no passage, a passage in a follow-up, an unknown or non-editor conversation, a passage too long', async () => {
     const { provider, chats, ctx } = await project([chatAnswer('ok'), chatAnswer('ok')])
     const server = await serve(ctx)
