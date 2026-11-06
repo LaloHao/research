@@ -2225,7 +2225,7 @@ adds context to it and `A' reviews on save.  `research-ask' is its menu."
                            (if notice (propertize (concat notice "\n") 'face 'warning) "")
                            (research--ask-goal-line goal)
                            (propertize research--ask-keys-line 'face 'shadow)))))
-             (research--ask-begin buffer question mode)
+             (research--ask-begin buffer question mode t)
              (display-buffer buffer '((display-buffer-in-side-window) (side . right) (window-width . 0.45)))
              (message "%sClaude %s en `*research-ask*' (s lo detiene)" (if notice (concat notice " ") "")
                       (if continue "sigue la conversación" "está respondiendo"))
@@ -2238,13 +2238,22 @@ for `research--ask-state'."
     (list :source (current-buffer) :path buffer-file-name :scope (car scope)
           :beg (copy-marker beg) :end (copy-marker end t) :pos beg :end-pos end)))
 
-(defun research--ask-begin (buffer question mode)
-  "Add QUESTION (MODE) to BUFFER and follow its answer on a timer."
+(defun research--ask-passage-now (state)
+  "The passage of STATE as it is now in its buffer (or file); nil when gone."
+  (ignore-errors (alist-get 'text (research--ask-fresh-context state))))
+
+(defun research--ask-begin (buffer question mode &optional sent)
+  "Add QUESTION (MODE) to BUFFER and follow its answer on a timer.
+SENT: the question just went with the passage as it is now, so the header
+says when, and the answer says whether you edited it while Claude read it."
   (with-current-buffer buffer
     (let ((inhibit-read-only t))
+      (plist-put research--ask-state :sent-text (and sent (research--ask-passage-now research--ask-state)))
       (goto-char (point-max))
       (insert "\n* " (replace-regexp-in-string "[ \t\n]+" " " question) "\n")
       (insert (format "Modo: %s · " (research--label mode research--ask-modes)))
+      (when (plist-get research--ask-state :sent-text)
+        (insert (format-time-string "texto de las %H:%M") " · "))
       (let ((status-beg (point-marker)))
         (insert "respondiendo…\n\n")
         ;; Made after the blank lines, so inserting them did not move it.
@@ -2335,9 +2344,14 @@ for `research--ask-state'."
             (insert (research--ask-citation-line c))
             (add-text-properties start (1- (point)) `(research-ask-citation ,c face ,(if (alist-get 'verified c) 'default 'warning)))))))
     (research--ask-replace (plist-get research--ask-state :status)
-                           (format "%sUS$%.2f (conversación US$%.2f)"
-                                   (if (equal (alist-get 'status status) "stopped") "detenida · " "")
-                                   (or (alist-get 'costUsd status) 0) (or (alist-get 'conversation_cost_usd status) 0)))
+                           (concat (format "%sUS$%.2f (conversación US$%.2f)"
+                                           (if (equal (alist-get 'status status) "stopped") "detenida · " "")
+                                           (or (alist-get 'costUsd status) 0) (or (alist-get 'conversation_cost_usd status) 0))
+                                   (if (research--ask-edited-since-sent)
+                                       (propertize (format "\nEditaste el pasaje después de enviarlo: esta respuesta es sobre el texto de antes%s"
+                                                           (if (plist-get research--ask-state :goal) " (r lo revisa como está ahora)" ""))
+                                                   'face 'warning)
+                                     "")))
     (message "Claude respondió%s%s: %d citas, %d sin verificar (US$%.2f)"
              (if (equal (alist-get 'status status) "stopped") " (detenida)" "")
              (let ((verdict (alist-get 'goal_verdict status)))
@@ -2345,6 +2359,16 @@ for `research--ask-state'."
                      ((eq (alist-get 'met verdict) t) " · objetivo cumplido")
                      (t (format " · objetivo: faltan %d" (length (alist-get 'pending verdict))))))
              (length citations) (or (alist-get 'unverified status) 0) (or (alist-get 'costUsd status) 0))))
+
+(defun research--ask-edited-since-sent ()
+  "Whether the passage changed since this buffer's question went with it.
+Changes Claude applied in mode edit do not count."
+  (let ((sent (plist-get research--ask-state :sent-text))
+        (now (research--ask-passage-now research--ask-state)))
+    (and sent now (not (equal sent now))
+         (not (seq-some (lambda (o) (overlay-get o 'research-ask-original))
+                        (let ((source (plist-get research--ask-state :source)))
+                          (and (buffer-live-p source) (research--ask-edit-overlays source))))))))
 
 (defconst research--ask-edit-reasons
   '(("not_found" . "ese texto no está en el pasaje") ("ambiguous" . "aparece más de una vez")
@@ -2531,7 +2555,7 @@ as they are now too.  `research-ask-follow-up' is its menu."
                                   ,@(and (plist-get state :goal-clear) '((goal . "")))
                                   ,@(research--ask-fresh-context state)))
         (plist-put research--ask-state :goal-clear nil)
-        (research--ask-begin (current-buffer) question mode)
+        (research--ask-begin (current-buffer) question mode t)
         (goto-char (point-max))
         (message "Claude está respondiendo (s lo detiene)")))))
 
@@ -2708,7 +2732,7 @@ and outline go as they are now; the mode is the last one used."
         (let ((inhibit-read-only t))
           (goto-char (point-max))
           (insert "\n" (propertize (format "Objetivo nuevo: %s\n" (replace-regexp-in-string "\n" " · " goal)) 'face 'bold))))
-      (research--ask-begin (current-buffer) research--ask-goal-question mode)
+      (research--ask-begin (current-buffer) research--ask-goal-question mode t)
       (goto-char (point-max))
       (message "Claude revisa el texto contra el objetivo (s lo detiene)")
       t)))

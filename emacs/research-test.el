@@ -969,7 +969,7 @@ The selection is read as when the menu opens; the question with `read-string'."
               (should (derived-mode-p 'org-mode))
               (should buffer-read-only)
               (should (string-match-p "Alcance: párrafo (53 caracteres) · contexto: capítulo (109 caracteres) e índice de la tesis (3 títulos)" (buffer-string)))
-              (should (string-match-p "\\* ¿Se sostiene\\?\nModo: opinión (sin reescribir tu texto) · respondiendo…" (buffer-string))))
+              (should (string-match-p "\\* ¿Se sostiene\\?\nModo: opinión (sin reescribir tu texto) · texto de las [0-9][0-9]:[0-9][0-9] · respondiendo…" (buffer-string))))
             (funcall poll)
             (with-current-buffer "*research-ask*"
               (should (string-match-p "respondiendo…\n\n\\*Bien\\*: la idea\\'" (buffer-string))))
@@ -977,7 +977,7 @@ The selection is read as when the menu opens; the question with `read-string'."
               (funcall poll))
             (should-not (plist-get (buffer-local-value 'research--ask-state (get-buffer "*research-ask*")) :timer))
             (with-current-buffer "*research-ask*"
-              (should (string-match-p "Modo: opinión (sin reescribir tu texto) · US\\$0\\.04 (conversación US\\$0\\.04)" (buffer-string)))
+              (should (string-match-p "Modo: opinión (sin reescribir tu texto) · texto de las [0-9][0-9]:[0-9][0-9] · US\\$0\\.04 (conversación US\\$0\\.04)" (buffer-string)))
               (should (string-match-p "pero falta \\[zhu2020loghub\\]\\.\n\nCitas:\n- \\[he2017drain, p\\. 1\\] verificada: «Drain parses log messages online»\n- \\[zhu2020loghub\\] sin verificar: «A dataset»\n" (buffer-string)))
               (goto-char (point-min))
               (search-forward "[he2017")
@@ -1026,6 +1026,9 @@ The selection is read as when the menu opens; the question with `read-string'."
                 (should (string-match-p "^Objetivo: Un planteamiento directo$" (buffer-string)))
                 (should (string-match-p "Objetivo: faltan 2 puntos:\n- Falta el paso 3\\.\n- Corrige «aun»\\." (buffer-string)))
                 (should (string-match-p "objetivo: faltan 2" (car messages)))
+                ;; The header says when the text went; unedited, no warning.
+                (should (string-match-p "^Modo: .* · texto de las [0-9][0-9]:[0-9][0-9] · US\\$" (buffer-string)))
+                (should-not (string-match-p "Editaste el pasaje" (buffer-string)))
                 ;; r: a review in the same conversation; the goal stays as it is (not sent again).
                 (setq asked nil)
                 (research-ask-goal-review)
@@ -1033,7 +1036,12 @@ The selection is read as when the menu opens; the question with `read-string'."
                   (should (equal (alist-get 'conversation_id run) research-test--ask-id))
                   (should (equal (alist-get 'question run) research--ask-goal-question))
                   (should-not (assq 'goal run)))
+                ;; Edited while Claude reads it: the answer says it is about the text before.
+                (let ((end (plist-get research--ask-state :end)))
+                  (with-current-buffer source (save-excursion (goto-char end) (insert "Otra frase.\n"))))
                 (funcall poll)
+                (should (string-match-p "Editaste el pasaje después de enviarlo: esta respuesta es sobre el texto de antes (r lo revisa como está ahora)"
+                                        (buffer-string)))
                 ;; +: the context goes after the goal, and the review with it.
                 (setq asked nil)
                 (research-ask-goal-add-context "puedo regresar párrafos a la introducción")
@@ -1122,7 +1130,7 @@ The selection is read as when the menu opens; the question with `read-string'."
                 (should (string-match-p "^\\*\\* Parsers$" (alist-get 'text follow)))
                 (should-not (alist-get 'chapter follow))
                 (should (string-match-p "^\\*\\* Parsers$" (alist-get 'outline follow))))
-              (should (string-match-p "\\* ¿Y si lo reescribes\\?\nModo: propuesta de redacción permitida · respondiendo…" (buffer-string)))
+              (should (string-match-p "\\* ¿Y si lo reescribes\\?\nModo: propuesta de redacción permitida · texto de las [0-9][0-9]:[0-9][0-9] · respondiendo…" (buffer-string)))
               (funcall poll)
               (should (= 2 (how-many "^Citas:" (point-min) (point-max))))
               (should (string-match-p "\\* Q1\n.*US\\$0\\.04" (buffer-string))))))))))
@@ -1367,7 +1375,7 @@ The selection is read as when the menu opens; the question with `read-string'."
             (research-ask-question "Q" "rewrite")
             (funcall poll)
             (with-current-buffer "*research-ask*"
-              (should (string-match-p "Modo: propuesta de redacción permitida · sin respuesta: se alcanzó el tope por mensaje de chat" (buffer-string)))
+              (should (string-match-p "Modo: propuesta de redacción permitida · texto de las [0-9][0-9]:[0-9][0-9] · sin respuesta: se alcanzó el tope por mensaje de chat" (buffer-string)))
               (should-not (plist-get research--ask-state :timer)))
             (should (string-match-p "Claude no respondió" (car messages)))))))))
 
