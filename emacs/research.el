@@ -1657,6 +1657,21 @@ question go to it, with its history) or to start a new one (n).  Nil:
 always a new conversation."
   :type 'boolean)
 
+(defcustom research-ask-goal-review-on-save nil
+  "Whether a conversation with a goal reviews your file again when you save it.
+When non-nil, a conversation started with a goal (`g' in `research-ask')
+asks Claude to review the passage against the goal each time you save its
+file (when no answer is running; under `research-ask-auto-send-below' it
+goes at once).  `A' in `*research-ask*' turns it on or off for that
+conversation."
+  :type 'boolean)
+
+(defvar research--ask-goal-history nil "Goals given to `research-ask'.")
+
+(defconst research--ask-goal-question
+  "Revisa el pasaje como está ahora contra el objetivo: qué ya lo cumple, qué falta, qué sobra o va en otra sección (dónde y cómo conectarlo) y los errores de redacción."
+  "The question of a review against the conversation's goal.")
+
 (defconst research--ask-max-chars 30000
   "The most characters of the passage `research-ask' sends.")
 
@@ -1694,15 +1709,21 @@ characters around the passage.")
 
 (defvar-local research--ask-state nil
   "The conversation of this `*research-ask*' buffer: a plist with `:id',
-`:timer', `:failures', where the passage is (`:source' buffer, `:path',
-`:scope', `:beg' and `:end' markers, `:pos' and `:end-pos' numbers), so a
-follow-up sends its background again, and, for the question being
-answered, the markers `:status' and `:answer' (each a cons of start and
-end).")
+`:timer', `:failures', its `:goal' (a string, or nil), `:goal-clear' (the
+goal was removed: the next question says so) and `:auto' (whether saving
+the file reviews it against the goal), where the passage is (`:source'
+buffer, `:path', `:scope', `:beg' and `:end' markers, `:pos' and
+`:end-pos' numbers), so a follow-up sends its background again, and, for
+the question being answered, the markers `:status' and `:answer' (each a
+cons of start and end).")
 
 (defvar research-ask-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "f") #'research-ask-follow-up)
+    (define-key map (kbd "r") #'research-ask-goal-review)
+    (define-key map (kbd "G") #'research-ask-goal-edit)
+    (define-key map (kbd "+") #'research-ask-goal-add-context)
+    (define-key map (kbd "A") #'research-ask-goal-toggle-auto)
     (define-key map (kbd "RET") #'research-ask-visit-edit)
     (define-key map (kbd "y") #'research-ask-accept-edits)
     (define-key map (kbd "d") #'research-ask-reject-edit)
@@ -2019,6 +2040,41 @@ FOLLOW-UP: the follow-up menu's, which has no conversation option."
   (interactive)
   (research--ask-from-menu '(4)))
 
+(transient-define-suffix research--ask-menu-goal ()
+  "Start a conversation with a goal about the selection, else the section at point."
+  :key "g" :description "con un objetivo (selección o sección)"
+  (interactive)
+  (let ((args (transient-args 'research-ask))
+        (selection research--ask-pending-selection))
+    (research--ask-remember args)
+    (setq research--ask-pending-selection nil)
+    (research-ask-with-goal (research--ask-read-goal) selection (research--ask-menu-mode args))))
+
+(defun research--ask-read-goal ()
+  "Read the goal of a new conversation, with history."
+  (let ((goal (string-trim (read-string "Objetivo (lo que quieres lograr con este texto): " nil 'research--ask-goal-history))))
+    (when (string-empty-p goal) (user-error "Escribe el objetivo"))
+    goal))
+
+;;;###autoload
+(defun research-ask-with-goal (goal &optional selection mode)
+  "Start a conversation with Claude with GOAL: what you want this text to achieve.
+About SELECTION (a cons of positions; interactively the active region or
+evil's visual selection), else the Org section at point; in MODE (the
+last one used when nil).  Every answer reviews the passage against the
+goal (what meets it, what is missing, what belongs elsewhere and how to
+connect it, writing errors) and ends with a verdict.  In `*research-ask*'
+`r' reviews again, `G' changes the goal, `+' adds context to it and `A'
+reviews each time you save.  `g' in `research-ask' does the same."
+  (interactive (let ((selection (research--ask-selection)))
+                 (list (research--ask-read-goal) selection)))
+  (let ((buffer (get-buffer "*research-ask*")))
+    (when (and buffer (plist-get (buffer-local-value 'research--ask-state buffer) :timer))
+      (user-error "Claude todavía está respondiendo en `*research-ask*': espera o detén la respuesta con `s'")))
+  (research-ask-question research--ask-goal-question
+                         (or mode (research--ask-menu-mode (research--ask-menu-value t)))
+                         (unless selection '(16)) selection t goal))
+
 (transient-define-suffix research--ask-menu-section ()
   "Ask about the Org subtree at point (a section)."
   :key "S" :description "sobre la sección"
@@ -2035,7 +2091,10 @@ Claude edit your file, -n starts a new conversation instead of going on
 with the one of `*research-ask*'.  `?' asks about the selection (the
 active region or evil's visual selection, read when the menu opens), else
 the whole file; `p' the paragraph at point; `S' the Org subtree (a
-section).  See `research-ask-question'.  `.' resumes an earlier conversation."
+section).  `g' starts a conversation with a goal (what you want this text
+to achieve) about the selection, else the section: every answer reviews
+the passage against it.  See `research-ask-question'.  `.' resumes an
+earlier conversation."
   :init-value (lambda (obj) (oset obj value (research--ask-menu-value)))
   :incompatible '(("--rewrite" "--edit"))
   [:description research--ask-menu-header
@@ -2046,7 +2105,8 @@ section).  See `research-ask-question'.  `.' resumes an earlier conversation."
    ["Preguntar"
     (research--ask-menu-ask)
     (research--ask-menu-paragraph)
-    (research--ask-menu-section)]
+    (research--ask-menu-section)
+    (research--ask-menu-goal)]
    ["Conversaciones"
     ("." "retomar una anterior" research-ask-resume)]]
   (interactive)
@@ -2082,11 +2142,11 @@ rewrite, -e (with `research-ask-allow-edits') lets Claude edit your file.
   (transient-setup 'research-ask-follow-up))
 
 (defconst research--ask-keys-line
-  "f: otra pregunta · c: abrir la cita · RET: ir al cambio · y: aceptar cambios · d: deshacer el cambio · a: abrir en la app · s: detener · q: cerrar\n"
+  "f: otra pregunta · r: revisar contra el objetivo · G: cambiar el objetivo · +: agregarle contexto · A: revisar al guardar · c: abrir la cita · RET: ir al cambio · y: aceptar cambios · d: deshacer el cambio · a: abrir en la app · s: detener · q: cerrar\n"
   "The keys of `*research-ask*', under its header.")
 
 ;;;###autoload
-(defun research-ask-question (question mode &optional arg selection new)
+(defun research-ask-question (question mode &optional arg selection new goal)
   "Ask Claude, through the app, QUESTION about what you are writing.
 The passage is SELECTION (a cons of positions), else the whole file; with
 ARG (4) the paragraph at point, (16) the current Org subtree.  A file
@@ -2106,7 +2166,10 @@ after confirming it.  The answer streams into `*research-ask*', a
 conversation of the app's Chat view: there `f' asks a follow-up, `c' opens
 the citation at point in the app, RET goes to a change Claude made, `a'
 opens the conversation in the app, `s' stops the answer and `q' closes.
-`research-ask' is its menu."
+With GOAL (what the author wants the text to achieve) a new conversation
+starts with it: every answer reviews the passage against the goal and
+ends with a verdict; there `r' reviews again, `G' changes the goal, `+'
+adds context to it and `A' reviews on save.  `research-ask' is its menu."
   (research--with-errors
    (let* ((fit (research--ask-fit (research--ask-scope arg selection)))
           (scope (car fit))
@@ -2123,13 +2186,14 @@ opens the conversation in the app, `s' stops the answer and `q' closes.
             (context (research--ask-context (car scope) beg end buffer-file-name))
             (place (research--ask-place scope))
             (mode (or mode "opinion"))
-            (continue (and research-ask-offer-continue current (not new) t))
+            (continue (and research-ask-offer-continue current (not new) (not goal) t))
             (id (progn
                   (when (plist-get state :timer)
                     (user-error "Claude todavía está respondiendo en `*research-ask*': espera o detén la respuesta con `s'"))
                   (research--ask-send `((question . ,question)
                                         ,@(and continue `((conversation_id . ,current)))
                                         (text . ,text) (file . ,file) (section . ,section) (scope . ,(car scope)) (mode . ,mode)
+                                        ,@(and goal `((goal . ,goal)))
                                         ,@(car context))
                                       notice))))
        (when id
@@ -2138,7 +2202,10 @@ opens the conversation in the app, `s' stops the answer and `q' closes.
              (with-current-buffer buffer
                (if continue
                    (let ((inhibit-read-only t))
-                     (setq research--ask-state (append (list :id id :failures 0) place))
+                     (setq research--ask-state (append (list :id id :failures 0
+                                                             :goal (plist-get research--ask-state :goal)
+                                                             :auto (plist-get research--ask-state :auto))
+                                                       place))
                      (goto-char (point-max))
                      (insert "\n" (propertize (format "Nuevo pasaje — %s · alcance: %s (%d caracteres) · contexto: %s\n"
                                                       (string-join (seq-remove #'string-empty-p (list file section)) " › ")
@@ -2146,7 +2213,8 @@ opens the conversation in the app, `s' stops the answer and `q' closes.
                                               'face 'shadow)))
                  (research--ask-forget)
                  (research-ask-mode)
-                 (setq research--ask-state (append (list :id id :failures 0) place))
+                 (setq research--ask-state (append (list :id id :failures 0 :goal goal :auto (and goal research-ask-goal-review-on-save))
+                                                   place))
                  (let ((inhibit-read-only t))
                    (erase-buffer)
                    (insert (propertize (format "Preguntar a Claude — %s\n" (string-join (seq-remove #'string-empty-p (list file section)) " › "))
@@ -2155,6 +2223,7 @@ opens the conversation in the app, `s' stops the answer and `q' closes.
                                                (research--label (car scope) research--ask-scopes) (length text) (cdr context))
                                        'face 'shadow)
                            (if notice (propertize (concat notice "\n") 'face 'warning) "")
+                           (research--ask-goal-line goal)
                            (propertize research--ask-keys-line 'face 'shadow)))))
              (research--ask-begin buffer question mode)
              (display-buffer buffer '((display-buffer-in-side-window) (side . right) (window-width . 0.45)))
@@ -2257,6 +2326,8 @@ for `research--ask-state'."
       (goto-char (cdr answer))
       (when-let* ((edits (alist-get 'edits status)))
         (research--ask-insert-edits (research--ask-apply-edits edits (equal (alist-get 'mode status) "edit"))))
+      (when-let* ((verdict (alist-get 'goal_verdict status)))
+        (research--ask-insert-verdict verdict))
       (when citations
         (insert "\n\nCitas:\n")
         (dolist (c citations)
@@ -2267,8 +2338,12 @@ for `research--ask-state'."
                            (format "%sUS$%.2f (conversación US$%.2f)"
                                    (if (equal (alist-get 'status status) "stopped") "detenida · " "")
                                    (or (alist-get 'costUsd status) 0) (or (alist-get 'conversation_cost_usd status) 0)))
-    (message "Claude respondió%s: %d citas, %d sin verificar (US$%.2f)"
+    (message "Claude respondió%s%s: %d citas, %d sin verificar (US$%.2f)"
              (if (equal (alist-get 'status status) "stopped") " (detenida)" "")
+             (let ((verdict (alist-get 'goal_verdict status)))
+               (cond ((not verdict) "")
+                     ((eq (alist-get 'met verdict) t) " · objetivo cumplido")
+                     (t (format " · objetivo: faltan %d" (length (alist-get 'pending verdict))))))
              (length citations) (or (alist-get 'unverified status) 0) (or (alist-get 'costUsd status) 0))))
 
 (defconst research--ask-edit-reasons
@@ -2453,7 +2528,9 @@ as they are now too.  `research-ask-follow-up' is its menu."
       (when (plist-get state :timer)
         (user-error "Claude todavía está respondiendo: espera o detén la respuesta con `s'"))
       (when (research--ask-send `((question . ,question) (conversation_id . ,(plist-get state :id)) (mode . ,mode)
+                                  ,@(and (plist-get state :goal-clear) '((goal . "")))
                                   ,@(research--ask-fresh-context state)))
+        (plist-put research--ask-state :goal-clear nil)
         (research--ask-begin (current-buffer) question mode)
         (goto-char (point-max))
         (message "Claude está respondiendo (s lo detiene)")))))
@@ -2535,6 +2612,7 @@ otherwise PASSAGE is looked up as it is (nil when you changed it since)."
                                         (text . ,(alist-get 'text answer))
                                         (citations . ,(alist-get 'citations answer))
                                         (unverified . ,(alist-get 'unverified answer))
+                                        (goal_verdict . ,(alist-get 'goal_verdict answer))
                                         (costUsd . ,(alist-get 'costUsd answer))
                                         (conversation_cost_usd . ,(plist-get research--ask-state :cost)))))))))))))
 
@@ -2568,7 +2646,10 @@ continues it with a new passage)."
      (with-current-buffer buffer
        (research--ask-forget)
        (research-ask-mode)
-       (setq research--ask-state (append (list :id id :failures 0 :cost (alist-get 'conversation_cost_usd history)) place))
+       (setq research--ask-state (append (list :id id :failures 0 :cost (alist-get 'conversation_cost_usd history)
+                                               :goal (alist-get 'goal history)
+                                               :auto (and (alist-get 'goal history) research-ask-goal-review-on-save))
+                                         place))
        (let ((inhibit-read-only t))
          (erase-buffer)
          (insert (propertize (format "Preguntar a Claude — %s\n" (string-join (seq-remove #'string-empty-p (list file section)) " › "))
@@ -2577,6 +2658,7 @@ continues it with a new passage)."
                                      (research--label scope research--ask-scopes)
                                      (if place "tu archivo como está ahora" "el último que se envió (no lo encontré en tu archivo)"))
                              'face 'shadow)
+                 (research--ask-goal-line (alist-get 'goal history))
                  (propertize research--ask-keys-line 'face 'shadow))
          (research--ask-insert-turns (if last-question (butlast turns) turns)))
        (when last-question
@@ -2585,6 +2667,169 @@ continues it with a new passage)."
      (display-buffer buffer '((display-buffer-in-side-window) (side . right) (window-width . 0.45)))
      (message "Conversación retomada en `*research-ask*': f sigue con ella")
      id)))
+
+;;;;; A goal: what the conversation works toward
+
+(defun research--ask-goal-line (goal)
+  "The header line of GOAL (nil: none)."
+  (if (not goal) ""
+    (propertize (format "Objetivo: %s\n" (replace-regexp-in-string "\n" " · " goal)) 'face 'bold)))
+
+(defun research--ask-insert-verdict (verdict)
+  "Insert Claude's VERDICT on the goal (from `ask_status') here."
+  (if (eq (alist-get 'met verdict) t)
+      (insert "\n\n" (propertize "Objetivo: ✓ cumplido" 'face 'success))
+    (let ((pending (append (alist-get 'pending verdict) nil)))
+      (insert "\n\n" (propertize (format "Objetivo: faltan %d %s" (length pending) (if (= 1 (length pending)) "punto" "puntos"))
+                                   'face 'warning)
+              (if pending ":\n" "")
+              (mapconcat (lambda (p) (concat "- " p)) pending "\n")))))
+
+(defun research--ask-goal-state ()
+  "This conversation's state, when it has a goal; else a `user-error'."
+  (let ((state (research--ask-buffer-state)))
+    (unless (plist-get state :goal)
+      (user-error "Esta conversación no tiene objetivo: ponle uno con G, o empieza una con g en `research-ask'"))
+    state))
+
+(defun research--ask-goal-send (state &optional goal)
+  "Ask for a review against the goal in this buffer's conversation (STATE).
+With GOAL, it first becomes the conversation's goal.  The passage, chapter
+and outline go as they are now; the mode is the last one used."
+  (when (plist-get state :timer)
+    (user-error "Claude todavía está respondiendo: espera o detén la respuesta con `s'"))
+  (let ((mode (let ((m (plist-get research-ask-last-choice :mode))) (if (and (equal m "edit") (not research-ask-allow-edits)) "opinion" (or m "opinion")))))
+    (when (research--ask-send `((question . ,research--ask-goal-question) (conversation_id . ,(plist-get state :id)) (mode . ,mode)
+                                ,@(and goal `((goal . ,goal)))
+                                ,@(research--ask-fresh-context state)))
+      (when goal
+        (plist-put research--ask-state :goal goal)
+        (plist-put research--ask-state :goal-clear nil)
+        (let ((inhibit-read-only t))
+          (goto-char (point-max))
+          (insert "\n" (propertize (format "Objetivo nuevo: %s\n" (replace-regexp-in-string "\n" " · " goal)) 'face 'bold))))
+      (research--ask-begin (current-buffer) research--ask-goal-question mode)
+      (goto-char (point-max))
+      (message "Claude revisa el texto contra el objetivo (s lo detiene)")
+      t)))
+
+(defun research-ask-goal-review ()
+  "Ask Claude to review the passage, as it is now, against the conversation's goal.
+What already meets it, what is missing, what belongs in another section
+(where, and how to connect it) and the writing errors; the answer ends
+with the verdict: met, or what is still missing."
+  (interactive)
+  (research--with-errors
+    (research--ask-goal-send (research--ask-goal-state))))
+
+(defvar research--ask-goal-edit-conversation nil
+  "The `*research-ask*' buffer whose goal the `*research-ask-goal*' buffer edits.")
+
+(defvar research-ask-goal-edit-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-c") #'research-ask-goal-edit-finish)
+    (define-key map (kbd "C-c C-k") #'research-ask-goal-edit-cancel)
+    map)
+  "Keys of `*research-ask-goal*'.")
+
+(define-derived-mode research-ask-goal-edit-mode text-mode "Research-Goal"
+  "Edit the goal of a `research-ask' conversation.
+\\[research-ask-goal-edit-finish] saves it and asks for a review against it;
+\\[research-ask-goal-edit-cancel] leaves it as it was.
+\\{research-ask-goal-edit-mode-map}"
+  (setq-local header-line-format
+              (substitute-command-keys
+               "Objetivo de la conversación · \\[research-ask-goal-edit-finish]: guardar y revisar · \\[research-ask-goal-edit-cancel]: cancelar · vacío: quitarlo")))
+
+(defun research-ask-goal-edit ()
+  "Change the conversation's goal (or give it one) in a buffer of its own.
+There \\<research-ask-goal-edit-mode-map>\\[research-ask-goal-edit-finish] saves it and asks for a review against it; an empty
+goal removes it."
+  (interactive)
+  (let* ((state (research--ask-buffer-state))
+         (conversation (current-buffer))
+         (buffer (get-buffer-create "*research-ask-goal*")))
+    (when (plist-get state :timer)
+      (user-error "Claude todavía está respondiendo: espera o detén la respuesta con `s'"))
+    (with-current-buffer buffer
+      (research-ask-goal-edit-mode)
+      (setq-local research--ask-goal-edit-conversation conversation)
+      (erase-buffer)
+      (insert (or (plist-get state :goal) "")))
+    (pop-to-buffer buffer '((display-buffer-below-selected) (window-height . 8)))
+    (goto-char (point-max))))
+
+(defun research--ask-goal-edit-close ()
+  "Close this `*research-ask-goal*' buffer and its window."
+  (let ((buffer (current-buffer)))
+    (when-let* ((window (get-buffer-window buffer)))
+      (quit-window nil window))
+    (kill-buffer buffer)))
+
+(defun research-ask-goal-edit-finish ()
+  "Save the goal of `*research-ask-goal*' and ask for a review against it.
+An empty goal removes it (no review)."
+  (interactive)
+  (let ((goal (string-trim (buffer-string)))
+        (conversation research--ask-goal-edit-conversation))
+    (unless (buffer-live-p conversation) (user-error "La conversación ya no está abierta"))
+    (when (> (length goal) 4000) (user-error "El objetivo tiene %d caracteres y caben 4000" (length goal)))
+    (research--ask-goal-edit-close)
+    (with-current-buffer conversation
+      (research--with-errors
+        (if (not (string-empty-p goal))
+            (research--ask-goal-send (research--ask-buffer-state) goal)
+          ;; Removed with the next question (`f'): removing it costs no answer.
+          (when (plist-get (research--ask-buffer-state) :goal)
+            (plist-put research--ask-state :goal nil)
+            (plist-put research--ask-state :auto nil)
+            (plist-put research--ask-state :goal-clear t)
+            (let ((inhibit-read-only t))
+              (goto-char (point-max))
+              (insert "\n" (propertize "Objetivo quitado (desde la próxima pregunta)\n" 'face 'shadow)))
+            (message "Quité el objetivo: las próximas preguntas (f) van sin él")))))))
+
+(defun research-ask-goal-edit-cancel ()
+  "Leave the goal as it was."
+  (interactive)
+  (research--ask-goal-edit-close)
+  (message "El objetivo quedó como estaba"))
+
+(defun research-ask-goal-add-context (context)
+  "Add CONTEXT to the conversation's goal and ask for a review against it.
+For instance «puedo regresar los párrafos a la introducción: dime dónde y
+cómo conectarlos»: it goes on a line of its own after the goal."
+  (interactive (progn (research--ask-goal-state)
+                      (list (string-trim (read-string "Contexto para el objetivo: ")))))
+  (when (string-empty-p context) (user-error "Escribe el contexto"))
+  (research--with-errors
+    (let* ((state (research--ask-goal-state))
+           (goal (concat (plist-get state :goal) "\n- " context)))
+      (when (> (length goal) 4000)
+        (user-error "El objetivo con su contexto pasaría de 4000 caracteres: resúmelo con G"))
+      (research--ask-goal-send state goal))))
+
+(defun research-ask-goal-toggle-auto ()
+  "Turn on or off the review against the goal each time you save the file."
+  (interactive)
+  (let ((state (research--ask-goal-state)))
+    (plist-put research--ask-state :auto (not (plist-get state :auto)))
+    (message (if (plist-get research--ask-state :auto)
+                 "Al guardar %s, Claude lo revisará contra el objetivo (A lo apaga)"
+               "Ya no se revisa al guardar %s")
+             (let ((source (plist-get state :source))) (if (buffer-live-p source) (buffer-name source) "el archivo")))))
+
+(defun research--ask-goal-after-save ()
+  "Review the saved buffer against the goal of `*research-ask*', if it asks."
+  (when-let* ((conversation (get-buffer "*research-ask*"))
+              (state (buffer-local-value 'research--ask-state conversation)))
+    (when (and (plist-get state :goal) (plist-get state :auto) (eq (plist-get state :source) (current-buffer)))
+      (if (plist-get state :timer)
+          (message "Claude todavía responde: revisa de nuevo con r cuando termine")
+        (with-current-buffer conversation
+          (research--with-errors (research--ask-goal-send state)))))))
+
+(add-hook 'after-save-hook #'research--ask-goal-after-save)
 
 (defun research-ask-open-citation ()
   "Show the paper of the citation at point in the app, the quote highlighted."
@@ -2640,6 +2885,7 @@ continues it with a new passage)."
     (define-key map (kbd "T") #'research-prose-auto-gls-mode)
     (define-key map (kbd "?") #'research-ask)
     (define-key map (kbd ".") #'research-ask-resume)
+    (define-key map (kbd "O") #'research-ask-with-goal)
     (define-key map (kbd "y") #'research-ask-accept-edits)
     (define-key map (kbd "x") #'research-ask-reject-edit)
     map)

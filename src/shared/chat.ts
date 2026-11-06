@@ -35,6 +35,8 @@ export const MAX_WRITING_SECTION = 500
 export const MAX_WRITING_CHAPTER = 80_000
 /** The thesis outline (its headings) sent as background. */
 export const MAX_WRITING_OUTLINE = 30_000
+/** What the author is working toward in a writing conversation (with the context they add to it). */
+export const MAX_WRITING_GOAL = 4000
 
 /**
  * Background of a writing conversation, not its focus: the chapter the passage is in and the thesis outline. Never
@@ -62,6 +64,14 @@ export const ChatWritingSchema = z.looseObject({
   section: z.string().max(MAX_WRITING_SECTION),
   scope: z.enum(WRITING_SCOPES),
   mode: z.enum(WRITING_MODES),
+  /**
+   * What the author is working toward (e.g. «a direct problem statement»), with the context they added to it: every
+   * answer reviews the passage against it and says whether it is met. Absent: plain questions.
+   */
+  goal: z
+    .string()
+    .refine((s) => [...s].length <= MAX_WRITING_GOAL)
+    .optional(),
   /** Counted in characters (code points), as the editor that sent it counts them. */
   passage: z
     .string()
@@ -339,6 +349,8 @@ export interface ChatSendRequest {
    */
   passage?: string
   place?: Partial<Pick<ChatWriting, 'file' | 'section' | 'scope'>>
+  /** In a follow-up from the editor, the conversation's new goal; '' removes it. */
+  goal?: string
 }
 
 export type ChatStreamEvent =

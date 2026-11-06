@@ -991,6 +991,86 @@ The selection is read as when the menu opens; the question with `read-string'."
             (should (equal (buffer-string) before))
             (should-not (buffer-modified-p))))))))
 
+(ert-deftest research-test-ask-goal-review-change-context-remove-and-on-save ()
+  (let ((verdict '((met . :false) (pending . ["Falta el paso 3." "Corrige «aun»."])))
+        poll asked messages)
+    (research-test--with-app
+        (lambda (tool args)
+          (pcase tool
+            ("ask"
+             (push args asked)
+             (if (alist-get 'confirmed args)
+                 (research-test--result `((conversation_id . ,research-test--ask-id) (status . "running")))
+               (research-test--ask-plan)))
+            ("ask_status"
+             (research-test--result (append `((goal_verdict . ,verdict)) research-test--ask-done)))))
+      (research-test--with-draft-timer poll
+        (research-test--with-ask-buffer
+          (let ((source (current-buffer))
+                (research-ask-auto-send-below 1)
+                (research-ask-goal-review-on-save nil)
+                (research-ask-last-choice nil))
+            (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "Un planteamiento directo"))
+                      ((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+              ;; `g' in the menu: a new conversation with the goal, about the section at point.
+              (setq research--ask-pending-selection nil)
+              (cl-letf (((symbol-function 'transient-args) (lambda (_) nil)))
+                (research--ask-menu-goal))
+              (let ((run (car asked)))
+                (should (equal (alist-get 'goal run) "Un planteamiento directo"))
+                (should (equal (alist-get 'scope run) "subtree"))
+                (should (equal (alist-get 'question run) research--ask-goal-question))
+                (should-not (alist-get 'conversation_id run)))
+              (funcall poll)
+              (with-current-buffer "*research-ask*"
+                (should (string-match-p "^Objetivo: Un planteamiento directo$" (buffer-string)))
+                (should (string-match-p "Objetivo: faltan 2 puntos:\n- Falta el paso 3\\.\n- Corrige «aun»\\." (buffer-string)))
+                (should (string-match-p "objetivo: faltan 2" (car messages)))
+                ;; r: a review in the same conversation; the goal stays as it is (not sent again).
+                (setq asked nil)
+                (research-ask-goal-review)
+                (let ((run (car asked)))
+                  (should (equal (alist-get 'conversation_id run) research-test--ask-id))
+                  (should (equal (alist-get 'question run) research--ask-goal-question))
+                  (should-not (assq 'goal run)))
+                (funcall poll)
+                ;; +: the context goes after the goal, and the review with it.
+                (setq asked nil)
+                (research-ask-goal-add-context "puedo regresar párrafos a la introducción")
+                (should (equal (alist-get 'goal (car asked)) "Un planteamiento directo\n- puedo regresar párrafos a la introducción"))
+                (should (equal (plist-get research--ask-state :goal) (alist-get 'goal (car asked))))
+                (funcall poll)
+                ;; A: saving the source reviews it again.
+                (research-ask-goal-toggle-auto)
+                (should (plist-get research--ask-state :auto)))
+              (setq asked nil)
+              (with-current-buffer source (run-hooks 'after-save-hook))
+              (should (equal (alist-get 'question (car asked)) research--ask-goal-question))
+              (funcall poll)
+              ;; G with an empty goal removes it: the next question (f) says so, at no extra cost.
+              (with-current-buffer "*research-ask*"
+                (setq asked nil)
+                (save-current-buffer (research-ask-goal-edit))
+                (with-current-buffer "*research-ask-goal*"
+                  (should (equal (buffer-string) "Un planteamiento directo\n- puedo regresar párrafos a la introducción"))
+                  (erase-buffer)
+                  (research-ask-goal-edit-finish))
+                (should-not asked)
+                (should-not (plist-get research--ask-state :goal))
+                (should-not (plist-get research--ask-state :auto))
+                (should-error (research-ask-goal-review) :type 'user-error)
+                (research-test--follow-up nil)
+                (should (equal (alist-get 'goal (car asked)) ""))
+                (funcall poll)
+                (setq asked nil)
+                (research-test--follow-up nil)
+                (should-not (assq 'goal (car asked))))
+              ;; Saving no longer reviews.
+              (funcall poll)
+              (setq asked nil)
+              (with-current-buffer source (run-hooks 'after-save-hook))
+              (should-not asked))))))))
+
 (ert-deftest research-test-ask-follow-up-stop-citation-and-conversation-in-the-app ()
   (let (poll asked opened)
     (research-test--with-app

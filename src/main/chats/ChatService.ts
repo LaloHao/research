@@ -518,6 +518,8 @@ export class ChatService {
     // A fresh passage only replaces the one of an existing conversation.
     if (req.passage !== undefined && (!req.chatId || !req.passage.trim())) throw new UserFacingError('invalid_edit')
     if (req.place && req.passage === undefined) throw new UserFacingError('invalid_edit')
+    // A new goal only changes an existing conversation's (a new one carries it in its writing).
+    if (req.goal !== undefined && !req.chatId) throw new UserFacingError('invalid_edit')
     if (req.chatId) this.sending.add(req.chatId)
     try {
       const reservation = await this.deps.budget.admit(undefined, 'chat')
@@ -529,11 +531,14 @@ export class ChatService {
           meta.writing
             ? {
                 ...meta,
-                writing: {
-                  ...meta.writing,
-                  mode: req.mode ?? 'opinion',
-                  ...(req.passage !== undefined ? { passage: req.passage, ...compactPlace(req.place) } : {})
-                }
+                writing: withGoal(
+                  {
+                    ...meta.writing,
+                    mode: req.mode ?? 'opinion',
+                    ...(req.passage !== undefined ? { passage: req.passage, ...compactPlace(req.place) } : {})
+                  },
+                  req.goal
+                )
               }
             : meta
         id = req.chatId
@@ -937,7 +942,7 @@ export class ChatService {
         run.controller.signal.throwIfAborted()
         result = await provider.chat(
           {
-            system: meta.writing ? writingSystemPrompt(meta.writing.mode, on) : chatSystemPrompt(meta.scope, on),
+            system: meta.writing ? writingSystemPrompt(meta.writing.mode, on, Boolean(meta.writing.goal)) : chatSystemPrompt(meta.scope, on),
             input,
             model: meta.model,
             maxUsd: store.config.llm.budget.per_chat_message_usd,
@@ -1016,6 +1021,13 @@ export class ChatService {
   private async paperContext(scope: ChatScope): Promise<PaperContext | null> {
     return scope === 'library' ? null : readPaperContext(this.deps.store, scope.paper, PAPER_SUMMARY_FIELDS)
   }
+}
+
+/** WRITING with GOAL as its goal ('' removes it), or as it was when GOAL is undefined. */
+function withGoal(writing: ChatWriting, goal: string | undefined): ChatWriting {
+  if (goal === undefined) return writing
+  const { goal: _old, ...rest } = writing
+  return goal.trim() ? { ...rest, goal: goal.trim() } : rest
 }
 
 /** The parts of a new passage's place that were given. */
