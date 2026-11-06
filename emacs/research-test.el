@@ -1704,5 +1704,24 @@ The selection is read as when the menu opens; the question with `read-string'."
       (when (get-buffer "*research-ask*") (kill-buffer "*research-ask*"))
       (delete-directory dir t))))
 
+;; A section edited after its last question is found again by its heading.
+(ert-deftest research-test-ask-resume-finds-an-edited-section-by-its-heading ()
+  (let* ((dir (make-temp-file "research-thesis" t))
+         (file (expand-file-name "01-intro.org" dir)))
+    (with-temp-file file
+      (insert "* Introducción\nTexto.\n** Planteamiento del problema\nNuevo texto, editado.\n** Preguntas\nPI1.\n"))
+    (unwind-protect
+        (with-temp-buffer
+          (setq buffer-file-name (expand-file-name "otro.org" dir))
+          (let ((place (research--ask-find-source "01-intro.org" "subtree" "** Planteamiento del problema\nTexto viejo.\n")))
+            (should place)
+            (with-current-buffer (plist-get place :source)
+              (should (equal (buffer-substring-no-properties (plist-get place :beg) (plist-get place :end))
+                             "** Planteamiento del problema\nNuevo texto, editado.\n"))))
+          ;; A paragraph you changed is not guessed.
+          (should-not (research--ask-find-source "01-intro.org" "paragraph" "Texto viejo.")))
+      (when (get-file-buffer file) (kill-buffer (get-file-buffer file)))
+      (delete-directory dir t))))
+
 (provide 'research-test)
 ;;; research-test.el ends here

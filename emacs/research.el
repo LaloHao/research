@@ -2587,7 +2587,8 @@ as they are now too.  `research-ask-follow-up' is its menu."
 FILE is a file name without folder: the current buffer when it visits it,
 else a buffer visiting it, else that file in the current buffer's folder
 or the thesis folder (opened).  A whole-file SCOPE is the whole buffer;
-otherwise PASSAGE is looked up as it is (nil when you changed it since)."
+otherwise PASSAGE is looked up as it is, and a section you changed since
+by its heading line (nil when neither is found)."
   (let* ((visiting (lambda (b) (and (buffer-file-name b) (equal (file-name-nondirectory (buffer-file-name b)) file))))
          (buffer (or (and (funcall visiting (current-buffer)) (current-buffer))
                      (seq-find visiting (buffer-list))
@@ -2609,8 +2610,15 @@ otherwise PASSAGE is looked up as it is (nil when you changed it since)."
               (research--ask-place (cons scope (cons (point-min) (point-max))))
             (save-excursion
               (goto-char (point-min))
-              (when (and passage (search-forward passage nil t))
-                (research--ask-place (cons scope (cons (match-beginning 0) (match-end 0))))))))))))
+              (cond
+               ((and passage (search-forward passage nil t))
+                (research--ask-place (cons scope (cons (match-beginning 0) (match-end 0)))))
+               ;; A section you edited since: found by its heading, as it is now.
+               ((and passage (equal scope "subtree") (derived-mode-p 'org-mode)
+                     (string-match "\\`\\*+ [^\n]*" passage)
+                     (re-search-forward (concat "^" (regexp-quote (match-string 0 passage)) "[ \t]*$") nil t))
+                (goto-char (match-beginning 0))
+                (research--ask-place (cons scope (research--section-bounds))))))))))))
 
 (defun research--ask-insert-turns (turns)
   "Insert the questions and answers TURNS (from `ask_history') at the end."
@@ -2648,7 +2656,8 @@ ARCHIVED ones too), each with its date, file › section, first question and
 how many questions.  Its questions and answers are shown, and `f' goes on
 with it, with its history.  The passage is found in its file (a buffer
 visiting it, else the file in this folder or the thesis folder): the
-whole file, or the passage's text when you have not changed it; then each
+whole file, a section by its heading (even when you changed it), or the
+passage's text when you have not changed it; then each
 follow-up sends it as it is then.  When not found, the follow-ups go with
 the last passage the conversation got (and `\\[research-ask]' with c
 continues it with a new passage)."
