@@ -162,7 +162,8 @@ export const METADATA_DATE = /^\d{4}(-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?)?
 /**
  * «Editar metadatos»: the fields the user changed (undefined: left as is; null: removed). `date` is a web page's
  * publication date (YYYY, YYYY-MM or YYYY-MM-DD) and sets the year with it. `kind` changes the entry's type (a web
- * page that is a book chapter); `editors`, `publisher`, `chapter` and `pages` live only in the BibTeX entry.
+ * page that is a book chapter); `editors`, `publisher`, `chapter` and `pages` live only in the BibTeX entry; `isbn` is any form of
+ * an ISBN, kept as its ISBN-13.
  */
 export interface MetadataEdit {
   kind?: PaperKind
@@ -176,6 +177,7 @@ export interface MetadataEdit {
   publisher?: string | null
   chapter?: string | null
   pages?: string | null
+  isbn?: string | null
 }
 
 /** A metadata edit: `undoToken` is what «Deshacer» sends back (null when nothing changed). */

@@ -1,3 +1,4 @@
+import { normalizeIsbn } from '../../shared/isbn'
 import { METADATA_DATE, type MetadataEdit } from '../../shared/library'
 import type { Author, Paper } from '../../shared/schemas'
 import { bibFields } from '../../shared/writing/bibtex'
@@ -92,6 +93,13 @@ export function applyMetadataEdit(paper: Paper, edit: MetadataEdit): Paper {
     // A range is written with BibTeX's en dash.
     const pages = oneLine(edit.pages)?.replace(/\s*[-–—]+\s*/g, '--') ?? null
     bib.pages = pages ? { value: pages, raw: true } : null
+  }
+  if (edit.isbn !== undefined) {
+    const isbn = edit.isbn?.trim() ? normalizeIsbn(edit.isbn) : null
+    if (edit.isbn?.trim() && !isbn) throw new InvalidEdit('Not an ISBN')
+    if (isbn) next.identifiers.isbn = isbn
+    else delete next.identifiers.isbn
+    bib.isbn = isbn ? { value: isbn, raw: true } : null
   }
   if (edit.url !== undefined) {
     const url = edit.url?.trim() || null

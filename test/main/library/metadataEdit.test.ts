@@ -114,6 +114,16 @@ describe('applyMetadataEdit', () => {
     expect(applyMetadataEdit(WEB, { kind: 'web' }).bibtex).toBe(WEB.bibtex)
   })
 
+  it('keeps an ISBN as its ISBN-13 in paper.yaml and the entry, removes an emptied one and refuses a wrong one', () => {
+    const book = applyMetadataEdit(WEB, { kind: 'book', isbn: '1-4919-2912-X' })
+    expect(book.identifiers.isbn).toBe('9781491929124')
+    expect(bibFields(book.bibtex).get('isbn')).toBe('9781491929124')
+    const without = applyMetadataEdit(book, { isbn: null })
+    expect(without.identifiers.isbn).toBeUndefined()
+    expect(bibFields(without.bibtex).has('isbn')).toBe(false)
+    expect(() => applyMetadataEdit(book, { isbn: '978-1-4919-2912-5' })).toThrow(InvalidEdit)
+  })
+
   it('refuses an empty title and a malformed date', () => {
     expect(() => applyMetadataEdit(WEB, { title: '   ' })).toThrow(InvalidEdit)
     expect(() => applyMetadataEdit(WEB, { date: '14/03/2023' })).toThrow(InvalidEdit)

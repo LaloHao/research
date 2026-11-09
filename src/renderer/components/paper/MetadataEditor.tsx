@@ -21,7 +21,7 @@ const VENUE_LABEL: Record<PaperKind, string> = {
 
 /**
  * «Editar metadatos»: the kind, title, authors, year (a web page's date), venue (a web page's site, a chapter's book)
- * and URL, and for books and chapters their editors, publisher, chapter and pages. Saving writes paper.yaml and the
+ * and URL, and for books and chapters their editors, publisher, chapter, pages and ISBN. Saving writes paper.yaml and the
  * BibTeX entry; the citation key stays. «Deshacer» puts back what the edit changed.
  */
 export function MetadataEditor({ paper }: { paper: Paper }): React.JSX.Element {
@@ -146,7 +146,7 @@ export function MetadataEditor({ paper }: { paper: Paper }): React.JSX.Element {
           <input value={form.venue} onChange={set('venue')} />
         </label>
       </div>
-      {(shown.publisher || shown.chapter || shown.pages) && (
+      {(shown.publisher || shown.chapter || shown.pages || shown.isbn) && (
         <div className="row">
           {shown.publisher && (
             <label className="grow">
@@ -164,6 +164,12 @@ export function MetadataEditor({ paper }: { paper: Paper }): React.JSX.Element {
             <label>
               {t('paper.edit.pages')}
               <input value={form.pages} placeholder={t('paper.edit.pages_hint')} onChange={set('pages')} />
+            </label>
+          )}
+          {shown.isbn && (
+            <label>
+              {t('paper.edit.isbn')}
+              <input value={form.isbn} onChange={set('isbn')} />
             </label>
           )}
         </div>

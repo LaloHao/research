@@ -521,6 +521,7 @@
       "chapter": "Capítulo",
       "pages": "Páginas",
       "pages_hint": "169-175",
+      "isbn": "ISBN",
       "url": "URL",
       "key_stays": "La clave de cita ({{key}}) no cambia; para cambiarla usa «Cambiar» junto a ella.",
       "save": "Guardar",
@@ -532,7 +533,8 @@
         "title": "El título no puede quedar vacío.",
         "year": "El año va con cuatro cifras.",
         "date": "La fecha va como AAAA, AAAA-MM o AAAA-MM-DD.",
-        "url": "La URL debe empezar con http:// o https://."
+        "url": "La URL debe empezar con http:// o https://.",
+        "isbn": "No es un ISBN válido: revisa los dígitos (10 o 13, con o sin guiones)."
       }
     },
     "metadata": {

@@ -94,7 +94,8 @@ export const ipcArgs = {
     editors: metadataAuthors.optional(),
     publisher: metadataText(1000).nullable().optional(),
     chapter: metadataText(100).nullable().optional(),
-    pages: metadataText(100).nullable().optional()
+    pages: metadataText(100).nullable().optional(),
+    isbn: metadataText(100).nullable().optional()
   }),
   /** «Cambiar clave»: any short text; a malformed key is the user's typo, answered as `invalid_key`. */
   newKey: z.string().max(200),
