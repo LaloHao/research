@@ -1,5 +1,5 @@
 import type { CitationsStatus } from './relations'
-import type { Author, Paper } from './schemas'
+import type { Author, Paper, PaperKind } from './schemas'
 import type { ExtractionFile, ExtractionForm, SummaryFile, SummaryStatus } from './summary'
 
 export const TEXT_STATUSES = ['pending', 'ok', 'no_text', 'no_source', 'error'] as const
@@ -161,15 +161,21 @@ export const METADATA_DATE = /^\d{4}(-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?)?
 
 /**
  * «Editar metadatos»: the fields the user changed (undefined: left as is; null: removed). `date` is a web page's
- * publication date (YYYY, YYYY-MM or YYYY-MM-DD) and sets the year with it.
+ * publication date (YYYY, YYYY-MM or YYYY-MM-DD) and sets the year with it. `kind` changes the entry's type (a web
+ * page that is a book chapter); `editors`, `publisher`, `chapter` and `pages` live only in the BibTeX entry.
  */
 export interface MetadataEdit {
+  kind?: PaperKind
   title?: string
   authors?: Author[]
   year?: number | null
   date?: string | null
   venue?: string | null
   url?: string | null
+  editors?: Author[]
+  publisher?: string | null
+  chapter?: string | null
+  pages?: string | null
 }
 
 /** A metadata edit: `undoToken` is what «Deshacer» sends back (null when nothing changed). */

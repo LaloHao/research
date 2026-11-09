@@ -1,14 +1,28 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { Paper } from '../../../shared/schemas'
+import { PAPER_KINDS, type Paper, type PaperKind } from '../../../shared/schemas'
 import { errorText } from '../../lib/errorText'
-import { editFromForm, formFromPaper, type MetadataForm } from '../../lib/metadataForm'
+import { editFromForm, formFields, formFromPaper, type MetadataForm } from '../../lib/metadataForm'
 
 type Saved = { token: string | null; undone: boolean; error: string | null }
 
+/** What the venue is for each kind: a book chapter's is its book, a book's its publisher. */
+const VENUE_LABEL: Record<PaperKind, string> = {
+  article: 'journal',
+  conference: 'event',
+  preprint: 'venue',
+  book: 'publisher',
+  chapter: 'book',
+  thesis: 'institution',
+  report: 'institution',
+  web: 'site',
+  other: 'venue'
+}
+
 /**
- * «Editar metadatos»: title, authors, year (a web page's date), venue (its site) and URL. Saving writes paper.yaml
- * and the BibTeX entry; the citation key stays. «Deshacer» puts back what the edit changed.
+ * «Editar metadatos»: the kind, title, authors, year (a web page's date), venue (a web page's site, a chapter's book)
+ * and URL, and for books and chapters their editors, publisher, chapter and pages. Saving writes paper.yaml and the
+ * BibTeX entry; the citation key stays. «Deshacer» puts back what the edit changed.
  */
 export function MetadataEditor({ paper }: { paper: Paper }): React.JSX.Element {
   const { t } = useTranslation()
@@ -16,14 +30,13 @@ export function MetadataEditor({ paper }: { paper: Paper }): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState<Saved | null>(null)
-  const web = paper.kind === 'web'
 
   const open = (): void => {
     setForm(formFromPaper(paper))
     setError(null)
     setSaved(null)
   }
-  const set = (field: keyof MetadataForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+  const set = (field: keyof MetadataForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
     setForm((f) => (f ? { ...f, [field]: e.target.value } : f))
 
   const save = (e: React.FormEvent): void => {
@@ -88,8 +101,21 @@ export function MetadataEditor({ paper }: { paper: Paper }): React.JSX.Element {
       </div>
     )
   }
+  const shown = formFields(form.kind)
+  // A date already in the entry stays editable whatever the kind.
+  const dated = shown.date || Boolean(form.date.trim())
   return (
     <form className="metadata-editor column" onSubmit={save}>
+      <label>
+        {t('paper.edit.kind')}
+        <select value={form.kind} onChange={set('kind')}>
+          {PAPER_KINDS.map((k) => (
+            <option key={k} value={k}>
+              {t(`paper.edit.kinds.${k}`)}
+            </option>
+          ))}
+        </select>
+      </label>
       <label>
         {t('paper.edit.title')}
         <input value={form.title} onChange={set('title')} />
@@ -98,8 +124,14 @@ export function MetadataEditor({ paper }: { paper: Paper }): React.JSX.Element {
         {t('paper.edit.authors')}
         <textarea rows={3} value={form.authors} placeholder={t('paper.edit.authors_hint')} onChange={set('authors')} />
       </label>
+      {shown.editors && (
+        <label>
+          {t('paper.edit.editors')}
+          <textarea rows={3} value={form.editors} placeholder={t('paper.edit.authors_hint')} onChange={set('editors')} />
+        </label>
+      )}
       <div className="row">
-        {web ? (
+        {dated ? (
           <label>
             {t('paper.edit.date')}
             <input value={form.date} placeholder={t('paper.edit.date_hint')} onChange={set('date')} />
@@ -107,13 +139,35 @@ export function MetadataEditor({ paper }: { paper: Paper }): React.JSX.Element {
         ) : null}
         <label>
           {t('paper.edit.year')}
-          <input value={form.year} inputMode="numeric" disabled={web && Boolean(form.date.trim())} onChange={set('year')} />
+          <input value={form.year} inputMode="numeric" disabled={dated && Boolean(form.date.trim())} onChange={set('year')} />
         </label>
         <label className="grow">
-          {t(web ? 'paper.edit.site' : 'paper.edit.venue')}
+          {t(`paper.edit.venue_as.${VENUE_LABEL[form.kind]}`)}
           <input value={form.venue} onChange={set('venue')} />
         </label>
       </div>
+      {(shown.publisher || shown.chapter || shown.pages) && (
+        <div className="row">
+          {shown.publisher && (
+            <label className="grow">
+              {t('paper.edit.publisher')}
+              <input value={form.publisher} onChange={set('publisher')} />
+            </label>
+          )}
+          {shown.chapter && (
+            <label>
+              {t('paper.edit.chapter')}
+              <input value={form.chapter} onChange={set('chapter')} />
+            </label>
+          )}
+          {shown.pages && (
+            <label>
+              {t('paper.edit.pages')}
+              <input value={form.pages} placeholder={t('paper.edit.pages_hint')} onChange={set('pages')} />
+            </label>
+          )}
+        </div>
+      )}
       <label>
         {t('paper.edit.url')}
         <input value={form.url} onChange={set('url')} />

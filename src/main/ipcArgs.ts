@@ -25,7 +25,7 @@ import { API_PORTS } from '../shared/localApi'
 import { RENDERER_ERROR_KINDS } from '../shared/ipc'
 import { CANDIDATE_DIRECTIONS, OPENALEX_ID } from '../shared/relations'
 import { METADATA_DATE } from '../shared/library'
-import { PDF_POLICIES } from '../shared/schemas'
+import { PAPER_KINDS, PDF_POLICIES } from '../shared/schemas'
 import { AUTO_SYNC_MINUTES, CLOSE_DECISIONS, CONFLICT_CHOICES, CONFLICT_ID, CONFLICT_VERSION, isRemoteUrl } from '../shared/sync'
 import { AUTO_SUGGEST_FACETS_AFTER_MAX, ExtractionFormSchema, FacetDefSchema, LLM_MODELS, ThesisContextSchema } from '../shared/summary'
 import { MAX_JUSTIFICATION, RELATION_ID, RELATION_STATUSES, RELATION_TYPES } from '../shared/typedRelations'
@@ -77,18 +77,24 @@ const webUrlSchema = z
   .transform((v) => v.trim())
 
 const metadataText = (max: number) => z.string().max(max)
+const metadataAuthors = z.array(z.strictObject({ family: metadataText(300), given: metadataText(300).optional() })).max(500)
 
 export const ipcArgs = {
   paperId: paperIdSchema,
   webUrl: webUrlSchema,
   /** «Editar metadatos»: only the fields the user changed; null removes one. */
   metadataEdit: z.strictObject({
+    kind: z.enum(PAPER_KINDS).optional(),
     title: metadataText(1000).optional(),
-    authors: z.array(z.strictObject({ family: metadataText(300), given: metadataText(300).optional() })).max(500).optional(),
+    authors: metadataAuthors.optional(),
     year: z.number().int().min(1000).max(2999).nullable().optional(),
     date: z.string().regex(METADATA_DATE).nullable().optional(),
     venue: metadataText(1000).nullable().optional(),
-    url: webUrlSchema.nullable().optional()
+    url: webUrlSchema.nullable().optional(),
+    editors: metadataAuthors.optional(),
+    publisher: metadataText(1000).nullable().optional(),
+    chapter: metadataText(100).nullable().optional(),
+    pages: metadataText(100).nullable().optional()
   }),
   /** «Cambiar clave»: any short text; a malformed key is the user's typo, answered as `invalid_key`. */
   newKey: z.string().max(200),
