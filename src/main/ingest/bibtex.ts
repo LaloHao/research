@@ -97,7 +97,8 @@ export function buildOnlineEntry(p: {
   ])
 }
 
-const TYPE_BY_KIND: Record<PaperKind, string> = {
+/** The BibTeX entry type each kind of paper gets. */
+export const TYPE_BY_KIND: Record<PaperKind, string> = {
   article: 'article',
   conference: 'inproceedings',
   preprint: 'misc',
@@ -218,6 +219,12 @@ export function setBibFields(entry: string, changes: Record<string, { value: str
   }
   for (const [name, change] of pending) if (change) lines.push(`  ${name} = ${braced(change)}`)
   return `@${parsed.type}{${parsed.key},\n${lines.join(',\n')}\n}`
+}
+
+/** The entry with another type; its key and fields stay as written. Throws when `entry` is not a BibTeX entry. */
+export function setBibType(entry: string, type: string): string {
+  if (!HEAD.test(entry)) throw new Error('Not a BibTeX entry')
+  return entry.replace(/^(\s*@)\w+/, `$1${type}`)
 }
 
 /** The entry's type, lowercase (`article`, `online`, …); null when it is not an entry. */

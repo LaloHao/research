@@ -66,6 +66,54 @@ describe('applyMetadataEdit', () => {
     expect(bibFields(next.bibtex).get('title')).toBe('Fixed')
   })
 
+  it('turns a web page into a book chapter: the entry type, its site as the book, editors, publisher, chapter and pages', () => {
+    const page = samplePaper({
+      id: 'lunneyndblameless',
+      kind: 'web',
+      title: 'Blameless Postmortem for System Resilience',
+      authors: [{ family: 'Lunney', given: 'John' }],
+      year: undefined,
+      venue: 'sre.google',
+      identifiers: { url: 'https://sre.google/sre-book/postmortem-culture/' },
+      bibtex:
+        '@online{lunneyndblameless,\n  author = {Lunney, John},\n  title = {Blameless Postmortem for System Resilience},\n  organization = {sre.google},\n  url = {https://sre.google/sre-book/postmortem-culture/},\n  urldate = {2026-10-09}\n}'
+    })
+    const next = applyMetadataEdit(page, {
+      kind: 'chapter',
+      title: 'Postmortem Culture: Learning from Failure',
+      authors: [{ family: 'Lunney', given: 'John' }, { family: 'Lueder', given: 'Sue' }],
+      year: 2016,
+      venue: 'Site Reliability Engineering',
+      editors: [{ family: 'Beyer', given: 'Betsy' }, { family: 'Jones', given: 'Chris' }],
+      publisher: "O'Reilly Media",
+      chapter: '15',
+      pages: '169 - 175'
+    })
+    expect(next).toMatchObject({ id: 'lunneyndblameless', kind: 'chapter', year: 2016, venue: 'Site Reliability Engineering' })
+    expect(next.bibtex.startsWith('@incollection{lunneyndblameless,')).toBe(true)
+    const fields = bibFields(next.bibtex)
+    expect(fields.has('organization')).toBe(false)
+    expect(fields.get('booktitle')).toBe('Site Reliability Engineering')
+    expect(fields.get('author')).toBe('Lunney, John and Lueder, Sue')
+    expect(fields.get('editor')).toBe('Beyer, Betsy and Jones, Chris')
+    expect(fields.get('publisher')).toBe("O'Reilly Media")
+    expect(fields.get('chapter')).toBe('15')
+    expect(fields.get('pages')).toBe('169--175')
+    expect(fields.get('url')).toBe('https://sre.google/sre-book/postmortem-culture/')
+  })
+
+  it('moves the venue to where the new type keeps it, unless that field is already there', () => {
+    const book = applyMetadataEdit(WEB, { kind: 'book' })
+    expect(book.bibtex.startsWith('@book{')).toBe(true)
+    expect(bibFields(book.bibtex).get('publisher')).toBe('towardsdatascience.com')
+    expect(bibFields(book.bibtex).has('organization')).toBe(false)
+    const chapter = samplePaper({ kind: 'chapter', bibtex: '@incollection{x, title={T}, booktitle={B}, publisher={P}, year={2016}}' })
+    const asBook = bibFields(applyMetadataEdit(chapter, { kind: 'book', editors: [] }).bibtex)
+    expect(asBook.get('publisher')).toBe('P')
+    expect(asBook.get('booktitle')).toBe('B')
+    expect(applyMetadataEdit(WEB, { kind: 'web' }).bibtex).toBe(WEB.bibtex)
+  })
+
   it('refuses an empty title and a malformed date', () => {
     expect(() => applyMetadataEdit(WEB, { title: '   ' })).toThrow(InvalidEdit)
     expect(() => applyMetadataEdit(WEB, { date: '14/03/2023' })).toThrow(InvalidEdit)

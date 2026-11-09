@@ -1,7 +1,7 @@
 import { METADATA_DATE, type MetadataEdit } from '../../shared/library'
-import type { Paper } from '../../shared/schemas'
+import type { Author, Paper } from '../../shared/schemas'
 import { bibFields } from '../../shared/writing/bibtex'
-import { bibType, buildFallbackEntry, buildOnlineEntry, formatAuthors, setBibFields } from '../ingest/bibtex'
+import { bibType, buildFallbackEntry, buildOnlineEntry, formatAuthors, setBibFields, setBibType, TYPE_BY_KIND } from '../ingest/bibtex'
 import { InvalidEdit } from '../summary/merge'
 import { compact } from './buildPaper'
 
@@ -26,13 +26,27 @@ type BibChange = { value: string; raw?: boolean } | null
 
 /**
  * The paper with the user's edit applied: paper.yaml fields and the same fields in its BibTeX entry. Fields the
- * edit leaves out (undefined) stay as they are; null removes one. Metadata a user completed (title, authors and a
- * year) counts as complete. The id and the entry's key never change.
+ * edit leaves out (undefined) stay as they are; null removes one. A new kind changes the entry's type and moves the
+ * venue to the field that type keeps it in (a web page's site becomes a chapter's book title). Metadata a user
+ * completed (title, authors and a year) counts as complete. The id and the entry's key never change.
  */
 export function applyMetadataEdit(paper: Paper, edit: MetadataEdit): Paper {
   const next: Paper = { ...paper, identifiers: { ...paper.identifiers } }
   const bib: Record<string, BibChange> = {}
-  const fields = safeFields(paper.bibtex)
+  let entry = paper.bibtex
+  let fields = safeFields(entry)
+  if (edit.kind !== undefined && edit.kind !== paper.kind) {
+    next.kind = edit.kind
+    if (fields) {
+      const type = TYPE_BY_KIND[edit.kind]
+      const from = VENUE_FIELDS.find((f) => fields!.has(f))
+      const to = VENUE_BY_TYPE[type]
+      entry = setBibType(entry, type)
+      // Where the old type kept the venue is not where the new one looks for it; a field the new type already has stays.
+      if (from && to && from !== to && !fields.has(to)) entry = setBibFields(entry, { [from]: null, [to]: { value: fields.get(from)!, raw: true } })
+      fields = safeFields(entry)
+    }
+  }
   if (edit.title !== undefined) {
     const title = edit.title.replace(/\s+/g, ' ').trim()
     if (!title) throw new InvalidEdit('A paper needs a title')
@@ -40,13 +54,13 @@ export function applyMetadataEdit(paper: Paper, edit: MetadataEdit): Paper {
     bib.title = { value: title }
   }
   if (edit.authors !== undefined) {
-    const authors = edit.authors.flatMap((a) => {
-      const family = a.family.trim()
-      const given = a.given?.trim()
-      return family ? [given ? { family, given } : { family }] : []
-    })
+    const authors = cleanAuthors(edit.authors)
     next.authors = authors
     bib.author = authors.length ? { value: formatAuthors(authors), raw: true } : null
+  }
+  if (edit.editors !== undefined) {
+    const editors = cleanAuthors(edit.editors)
+    bib.editor = editors.length ? { value: formatAuthors(editors), raw: true } : null
   }
   if (edit.date) {
     if (!METADATA_DATE.test(edit.date)) throw new InvalidEdit('Dates are YYYY, YYYY-MM or YYYY-MM-DD')
@@ -66,11 +80,18 @@ export function applyMetadataEdit(paper: Paper, edit: MetadataEdit): Paper {
     }
   }
   if (edit.venue !== undefined) {
-    const venue = edit.venue?.replace(/\s+/g, ' ').trim() || null
+    const venue = oneLine(edit.venue)
     if (venue) next.venue = venue
     else delete next.venue
-    const name = VENUE_FIELDS.find((f) => fields?.has(f)) ?? VENUE_BY_TYPE[bibType(paper.bibtex) ?? ''] ?? 'howpublished'
+    const name = VENUE_FIELDS.find((f) => fields?.has(f)) ?? VENUE_BY_TYPE[bibType(entry) ?? ''] ?? 'howpublished'
     bib[name] = venue ? { value: venue } : null
+  }
+  if (edit.publisher !== undefined) bib.publisher = textChange(edit.publisher)
+  if (edit.chapter !== undefined) bib.chapter = textChange(edit.chapter)
+  if (edit.pages !== undefined) {
+    // A range is written with BibTeX's en dash.
+    const pages = oneLine(edit.pages)?.replace(/\s*[-–—]+\s*/g, '--') ?? null
+    bib.pages = pages ? { value: pages, raw: true } : null
   }
   if (edit.url !== undefined) {
     const url = edit.url?.trim() || null
@@ -78,9 +99,26 @@ export function applyMetadataEdit(paper: Paper, edit: MetadataEdit): Paper {
     else delete next.identifiers.url
     bib.url = url ? { value: url, raw: true } : null
   }
-  next.bibtex = fields ? setBibFields(paper.bibtex, bib) : rebuiltEntry(next)
+  next.bibtex = setBibFields(fields ? entry : rebuiltEntry(next), bib)
   if (next.title && next.authors.length > 0 && next.year !== undefined) next.metadata_status = 'complete'
   return compact(next) as Paper
+}
+
+function cleanAuthors(authors: Author[]): Author[] {
+  return authors.flatMap((a) => {
+    const family = a.family.trim()
+    const given = a.given?.trim()
+    return family ? [given ? { family, given } : { family }] : []
+  })
+}
+
+function oneLine(text: string | null): string | null {
+  return text?.replace(/\s+/g, ' ').trim() || null
+}
+
+function textChange(text: string | null): BibChange {
+  const value = oneLine(text)
+  return value ? { value } : null
 }
 
 function safeFields(entry: string): Map<string, string> | null {

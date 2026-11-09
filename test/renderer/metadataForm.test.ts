@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { authorsText, editFromForm, formFromPaper, parseAuthors } from '../../src/renderer/lib/metadataForm'
+import { authorsText, editFromForm, formFields, formFromPaper, parseAuthors } from '../../src/renderer/lib/metadataForm'
 import { samplePaper } from '../helpers/papers'
 
 const WEB = samplePaper({
@@ -25,7 +25,35 @@ describe('metadata form', () => {
   })
 
   it('starts from the paper, the date from its entry', () => {
-    expect(formFromPaper(WEB)).toEqual({ title: 'Why Logs Matter', authors: '', year: '', date: '2024-05-02', venue: 'acme.test', url: 'https://acme.test/why-logs-matter' })
+    expect(formFromPaper(WEB)).toEqual({
+      kind: 'web',
+      title: 'Why Logs Matter',
+      authors: '',
+      year: '',
+      date: '2024-05-02',
+      venue: 'acme.test',
+      url: 'https://acme.test/why-logs-matter',
+      editors: '',
+      publisher: '',
+      chapter: '',
+      pages: ''
+    })
+  })
+
+  it('reads a chapter\'s editors, publisher and pages, and sends the kind and only what changed', () => {
+    const chapter = samplePaper({
+      kind: 'chapter',
+      bibtex: '@incollection{x,\n  title = {T},\n  editor = {Beyer, Betsy and {SRE Team}},\n  publisher = {O\'Reilly},\n  chapter = {15},\n  pages = {169--175}\n}'
+    })
+    const form = formFromPaper(chapter)
+    expect(form).toMatchObject({ editors: 'Beyer, Betsy\n{SRE Team}', publisher: "O'Reilly", chapter: '15', pages: '169-175' })
+    expect(editFromForm(chapter, form)).toEqual({ edit: {} })
+    expect(editFromForm(chapter, { ...form, kind: 'book', editors: 'Beyer, Betsy', pages: '' })).toEqual({
+      edit: { kind: 'book', editors: [{ family: 'Beyer', given: 'Betsy' }], pages: null }
+    })
+    expect(formFields('chapter')).toEqual({ date: false, editors: true, publisher: true, chapter: true, pages: true })
+    expect(formFields('book')).toMatchObject({ editors: true, publisher: false, pages: false })
+    expect(formFields('web')).toMatchObject({ date: true, editors: false })
   })
 
   it('sends only what changed; an emptied field is removed', () => {

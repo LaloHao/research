@@ -1,10 +1,11 @@
 import { METADATA_DATE, type MetadataEdit } from '../../shared/library'
-import type { Author, Paper } from '../../shared/schemas'
+import type { Author, Paper, PaperKind } from '../../shared/schemas'
 import { bibFields } from '../../shared/writing/bibtex'
 import { isWebAddress } from './appBrowser'
 
 /** «Editar metadatos» as the form holds it: text fields, authors one per line. */
 export interface MetadataForm {
+  kind: PaperKind
   title: string
   authors: string
   year: string
@@ -12,6 +13,18 @@ export interface MetadataForm {
   date: string
   venue: string
   url: string
+  /** Books and chapters: one per line, as the authors. */
+  editors: string
+  /** Chapters only (a book's publisher is its venue). */
+  publisher: string
+  chapter: string
+  pages: string
+}
+
+/** Which fields «Editar metadatos» shows for a kind of paper. */
+export function formFields(kind: PaperKind): { date: boolean; editors: boolean; publisher: boolean; chapter: boolean; pages: boolean } {
+  const chapter = kind === 'chapter'
+  return { date: kind === 'web', editors: chapter || kind === 'book', publisher: chapter, chapter, pages: chapter || kind === 'article' || kind === 'conference' }
 }
 
 export type MetadataFormError = 'title' | 'year' | 'date' | 'url'
@@ -41,19 +54,25 @@ export function parseAuthors(text: string): Author[] {
 }
 
 export function formFromPaper(paper: Paper): MetadataForm {
-  let date = ''
+  let fields = new Map<string, string>()
   try {
-    date = bibFields(paper.bibtex).get('date') ?? ''
+    fields = bibFields(paper.bibtex)
   } catch {
-    // An unreadable entry has no date to show.
+    // An unreadable entry has no fields to show.
   }
+  const date = fields.get('date') ?? ''
   return {
+    kind: paper.kind,
     title: paper.title,
     authors: authorsText(paper.authors),
     year: paper.year !== undefined ? String(paper.year) : '',
     date: METADATA_DATE.test(date) ? date : '',
     venue: paper.venue ?? '',
-    url: paper.identifiers.url ?? ''
+    url: paper.identifiers.url ?? '',
+    editors: (fields.get('editor') ?? '').split(/\s+and\s+/).filter(Boolean).join('\n'),
+    publisher: fields.get('publisher') ?? '',
+    chapter: fields.get('chapter') ?? '',
+    pages: (fields.get('pages') ?? '').replace(/-+/g, '-')
   }
 }
 
@@ -61,6 +80,7 @@ export function formFromPaper(paper: Paper): MetadataForm {
 export function editFromForm(paper: Paper, form: MetadataForm): { edit: MetadataEdit } | { error: MetadataFormError } {
   const before = formFromPaper(paper)
   const edit: MetadataEdit = {}
+  if (form.kind !== before.kind) edit.kind = form.kind
   const title = form.title.replace(/\s+/g, ' ').trim()
   if (!title) return { error: 'title' }
   if (title !== before.title) edit.title = title
@@ -78,5 +98,11 @@ export function editFromForm(paper: Paper, form: MetadataForm): { edit: Metadata
   const url = form.url.trim()
   if (url && !isWebAddress(url)) return { error: 'url' }
   if (url !== before.url) edit.url = url || null
+  const editors = parseAuthors(form.editors)
+  if (JSON.stringify(editors) !== JSON.stringify(parseAuthors(before.editors))) edit.editors = editors
+  for (const field of ['publisher', 'chapter', 'pages'] as const) {
+    const value = form[field].replace(/\s+/g, ' ').trim()
+    if (value !== before[field]) edit[field] = value || null
+  }
   return { edit }
 }

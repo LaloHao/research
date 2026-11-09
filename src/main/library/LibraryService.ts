@@ -819,8 +819,9 @@ export class LibraryService {
   }
 
   /**
-   * «Editar metadatos»: title, authors, year or date, venue (a web page's site) and URL as the user typed them. The
-   * BibTeX entry gets the same fields (its key and every other field stay); library.bib follows. The citation key
+   * «Editar metadatos»: kind, title, authors, year or date, venue (a web page's site, a chapter's book) and URL as the
+   * user typed them, and the entry-only editors, publisher, chapter and pages. The BibTeX entry gets the same fields
+   * (a new kind, a new entry type; its key and every other field stay); library.bib follows. The citation key
    * never changes. Returns the token «Deshacer» sends back; null when the edit changed nothing.
    */
   editMetadata(id: string, edit: MetadataEdit): Promise<string | null> {
