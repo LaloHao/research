@@ -1731,6 +1731,7 @@ cons of start and end).")
     (define-key map (kbd "a") #'research-ask-open-in-app)
     (define-key map (kbd "s") #'research-ask-stop)
     (define-key map (kbd "q") #'quit-window)
+    (define-key map (kbd "?") #'research-ask-keys)
     map)
   "Keys of `*research-ask*'.")
 
@@ -1738,6 +1739,7 @@ cons of start and end).")
   "Claude's answers about a passage you are writing, read-only.
 \\{research-ask-mode-map}"
   (setq buffer-read-only t)
+  (setq-local header-line-format '(:eval (research--ask-header-keys)))
   (add-hook 'kill-buffer-hook #'research--ask-forget nil t))
 
 (defun research--ask-visual-bounds (beg end type)
@@ -2142,8 +2144,21 @@ rewrite, -e (with `research-ask-allow-edits') lets Claude edit your file.
   (transient-setup 'research-ask-follow-up))
 
 (defconst research--ask-keys-line
-  "f: otra pregunta · r: revisar contra el objetivo · G: cambiar el objetivo · +: agregarle contexto · A: revisar al guardar · c: abrir la cita · RET: ir al cambio · y: aceptar cambios · d: deshacer el cambio · a: abrir en la app · s: detener · q: cerrar\n"
-  "The keys of `*research-ask*', under its header.")
+  "f: otra pregunta · r: revisar contra el objetivo · G: cambiar el objetivo · +: agregarle contexto · A: revisar al guardar · c: abrir la cita · RET: ir al cambio · y: aceptar cambios · d: deshacer el cambio · a: abrir en la app · s: detener · q: cerrar"
+  "Every key of `*research-ask*', as `?' shows them.")
+
+(defun research--ask-header-keys ()
+  "The keys at the top of the `*research-ask*' window, always in sight.
+The goal's keys only when the conversation has one; `?' lists them all."
+  (concat " "
+          (if (plist-get research--ask-state :goal)
+              "f preguntar · r revisar · G objetivo · + contexto · y aceptar · d deshacer · RET ir · ? todas"
+            "f preguntar · y aceptar · d deshacer · RET ir al cambio · c cita · s detener · ? todas")))
+
+(defun research-ask-keys ()
+  "Show every key of `*research-ask*' in the echo area."
+  (interactive)
+  (message "%s" research--ask-keys-line))
 
 ;;;###autoload
 (defun research-ask-question (question mode &optional arg selection new goal)
@@ -2223,8 +2238,7 @@ adds context to it and `A' reviews on save.  `research-ask' is its menu."
                                                (research--label (car scope) research--ask-scopes) (length text) (cdr context))
                                        'face 'shadow)
                            (if notice (propertize (concat notice "\n") 'face 'warning) "")
-                           (research--ask-goal-line goal)
-                           (propertize research--ask-keys-line 'face 'shadow)))))
+                           (research--ask-goal-line goal)))))
              (research--ask-begin buffer question mode t)
              (display-buffer buffer '((display-buffer-in-side-window) (side . right) (window-width . 0.45)))
              (message "%sClaude %s en `*research-ask*' (s lo detiene)" (if notice (concat notice " ") "")
@@ -2691,8 +2705,7 @@ continues it with a new passage)."
                                      (research--label scope research--ask-scopes)
                                      (if place "tu archivo como está ahora" "el último que se envió (no lo encontré en tu archivo)"))
                              'face 'shadow)
-                 (research--ask-goal-line (alist-get 'goal history))
-                 (propertize research--ask-keys-line 'face 'shadow))
+                 (research--ask-goal-line (alist-get 'goal history)))
          (research--ask-insert-turns (if last-question (butlast turns) turns)))
        (when last-question
          (research--ask-begin buffer (alist-get 'text last-question) (or (alist-get 'mode history) "opinion")))

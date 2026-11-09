@@ -1723,5 +1723,17 @@ The selection is read as when the menu opens; the question with `read-string'."
       (when (get-file-buffer file) (kill-buffer (get-file-buffer file)))
       (delete-directory dir t))))
 
+;; The keys stay in sight at the top of the window, the goal's only with a goal.
+(ert-deftest research-test-ask-header-keys ()
+  (with-temp-buffer
+    (research-ask-mode)
+    (setq research--ask-state (list :id "c1"))
+    (should (equal header-line-format '(:eval (research--ask-header-keys))))
+    (should (string-match-p "f preguntar" (research--ask-header-keys)))
+    (should-not (string-match-p "G objetivo" (research--ask-header-keys)))
+    (plist-put research--ask-state :goal "Terminar el planteamiento")
+    (should (string-match-p "r revisar · G objetivo" (research--ask-header-keys)))
+    (should (eq (lookup-key research-ask-mode-map (kbd "?")) #'research-ask-keys))))
+
 (provide 'research-test)
 ;;; research-test.el ends here
