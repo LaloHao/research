@@ -49,7 +49,7 @@ const ASK_INPUT = {
     .enum(WRITING_MODES)
     .optional()
     .describe(
-      'opinion (default): comments, critique, suggestions and questions, never a rewrite; rewrite: only when the user explicitly allowed a proposed rewrite for this question; edit: only when the user explicitly allowed Claude to edit the file for this question (the answer then carries exact changes, in edits, that the editor applies to the passage)'
+      'opinion (default): comments, critique, suggestions and questions, never a rewrite; rewrite: only when the user explicitly allowed a proposed rewrite for this question; edit: only when the user explicitly allowed Claude to edit the file for this question (the answer then carries exact changes, in edits, that the editor applies to the passage, or elsewhere in the chapter when it was sent whole)'
     ),
   chapter: capped(MAX_WRITING_CHAPTER)
     .optional()
@@ -76,6 +76,11 @@ const contextOf = (args: AskArgs): ChatWritingContext | undefined => {
   const outline = args.outline?.trim() ? args.outline : undefined
   if (!chapter && !outline) return undefined
   return { ...(chapter ? { chapter, chapterCut: args.chapter_truncated === true } : {}), ...(outline ? { outline } : {}) }
+}
+
+/** The chapter Claude was sent with the question, when it was the whole file (a window of it cannot place a change). */
+function wholeChapter(context: ChatWritingContext | undefined): string | undefined {
+  return context?.chapter && !context.chapterCut ? context.chapter : undefined
 }
 
 /** The characters this question sends Claude beyond a plain chat question: the passage and its background. */
@@ -214,7 +219,7 @@ export const ASK_API_TOOLS: ApiTool[] = [
   freeTool({
     name: 'ask_status',
     description:
-      "A conversation's latest answer: running (with its text so far, as Org), done or stopped (the answer as plain Org text, each citation as [key, p. N] with its offsets in characters, the key, page, quote and whether the app found the quote in the paper; the answer's cost; for a question in mode edit, `edits`: the changes {find, replace, why, state} taken out of the answer's text, state ok only when find occurs exactly once in the passage; in a conversation with a goal, the goal and `goal_verdict` {met, pending}: whether the passage meets it and what is still missing), or error with its code. Free.",
+      "A conversation's latest answer: running (with its text so far, as Org), done or stopped (the answer as plain Org text, each citation as [key, p. N] with its offsets in characters, the key, page, quote and whether the app found the quote in the paper; the answer's cost; for a question in mode edit, `edits`: the changes {find, replace, why, state} taken out of the answer's text, state ok only when find occurs exactly once in the passage, or, outside it, once in the whole chapter sent with the question (where: chapter); in a conversation with a goal, the goal and `goal_verdict` {met, pending}: whether the passage meets it and what is still missing), or error with its code. Free.",
     input: { conversation_id: conversationId },
     async run(ctx, args) {
       const id = args.conversation_id
@@ -230,7 +235,7 @@ export const ASK_API_TOOLS: ApiTool[] = [
       // A question left without an answer and nothing running: the app closed (or restarted) while it answered.
       if (!answer) return { conversation_id: id, status: 'error', error: 'interrupted' }
       const withGoal = extractGoal(answer.text)
-      const withEdits = extractEdits(withGoal.text, chat.writing?.passage ?? '')
+      const withEdits = extractEdits(withGoal.text, chat.writing?.passage ?? '', wholeChapter(ctx.chats.writingContext(id)))
       const org = answerToOrg(withEdits.text, answer.citations)
       return {
         conversation_id: id,

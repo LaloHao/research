@@ -1551,6 +1551,32 @@ The selection is read as when the menu opens; the question with `read-string'."
               (should (string-match-p "Drain es el mejor \\[cite:@he2017drain\\]\\.\nSigue la idea\\." (buffer-string)))
               (should (string-match-p "Al final\\.\n\\'" (buffer-string))))))))))
 
+;; A change of the chapter outside the passage is applied in the whole file; one without `where' stays in the passage.
+(ert-deftest research-test-ask-edit-of-the-chapter-outside-the-passage ()
+  (let* (poll
+         (edits [((find . "Fin.") (replace . "Fin de la sección.") (why . "Cierre.") (state . "ok") (where . "chapter"))
+                 ((find . "Primer párrafo.") (replace . "X") (why . "") (state . "ok"))])
+         (done `((conversation_id . ,research-test--ask-id) (status . "done") (mode . "edit")
+                 (text . "Ok.") (citations . []) (unverified . 0) (costUsd . 0.03)
+                 (conversation_cost_usd . 0.03) (edits . ,edits))))
+    (research-test--with-app
+        (lambda (tool args)
+          (pcase tool
+            ("ask" (if (alist-get 'confirmed args)
+                       (research-test--result `((conversation_id . ,research-test--ask-id) (status . "running")))
+                     (research-test--ask-plan)))
+            ("ask_status" (research-test--result done))))
+      (research-test--with-draft-timer poll
+        (research-test--with-ask-buffer
+          (let ((research-ask-allow-edits t))
+            (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_) t))
+                      ((symbol-function 'message) #'ignore))
+              (research-ask-question "Cierra la otra sección" "edit" '(4))
+              (funcall poll))
+            (should (string-match-p "\n\\*\\* Otra\nFin de la sección\.\n" (buffer-string)))
+            (should (string-match-p "\nPrimer párrafo\.\n" (buffer-string)))
+            (should (= 1 (length (research--ask-edit-overlays (current-buffer)))))))))))
+
 (ert-deftest research-test-ask-edits-are-accepted-or-put-back ()
   (let* (poll
          (edits [((find . "es el mejor") (replace . "es uno de los mejores") (why . "Matiza.") (state . "ok"))

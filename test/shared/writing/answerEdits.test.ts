@@ -24,6 +24,17 @@ describe('extractEdits', () => {
     expect(edits?.[0]).toEqual({ find: 'ingenieria', replace: 'ingeniería', why: 'Acento.', state: 'ok' })
   })
 
+  it('checks a change not in the passage against the whole chapter, when there is one', () => {
+    const chapter = `Introducción: la IA llega. Fin.\n${PASSAGE}\nFin.`
+    const answer = '```edits\n' + JSON.stringify([{ find: 'la IA llega', replace: 'la IA llegó' }, { find: 'Fin.', replace: 'x' }, { find: 'Los servicios fallan.', replace: 'x' }]) + '\n```'
+    expect(extractEdits(answer, PASSAGE, chapter).edits?.map((e) => [e.state, e.where])).toEqual([
+      ['ok', 'chapter'],
+      ['ambiguous', undefined],
+      ['ok', undefined]
+    ])
+    expect(extractEdits(answer, PASSAGE).edits?.[0].state).toBe('not_found')
+  })
+
   it('gives no edits without a block, none for an unreadable one, and leaves a block holding a citation marker', () => {
     expect(extractEdits('Solo comentarios.', PASSAGE)).toEqual({ text: 'Solo comentarios.', edits: null })
     expect(extractEdits('Antes.\n```edits\nnot json\n```', PASSAGE)).toEqual({ text: 'Antes.', edits: [] })

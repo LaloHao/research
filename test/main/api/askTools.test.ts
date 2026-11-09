@@ -184,6 +184,26 @@ describe('local API: ask (Claude’s opinion on a passage)', () => {
     expect((await ok(server, 'ask_history', { conversation_id: id })).turns[1].edits).toEqual([changes[0], changes[1]])
   })
 
+  it('mode edit: a change outside the passage counts when its text is once in the whole chapter, never in a window of it', async () => {
+    const chapter = `* Introducción\nLa IA llega a la ingeniería.\n* Estado del arte\n${PASSAGE}\n`
+    const changes = [
+      { find: 'La IA llega a la ingeniería.', replace: 'La IA ya llegó a la ingeniería.', why: 'Tiempo.' },
+      { find: '* ', replace: '** ', why: 'Ambiguo.' }
+    ]
+    const answer = chatAnswer('Cambio la introducción.\n\n```edits\n' + JSON.stringify(changes) + '\n```\n')
+    const { chats, ctx } = await project([answer, answer])
+    const server = await serve(ctx)
+    const { conversation_id: id } = await ok(server, 'ask', { ...START, chapter, mode: 'edit', confirmed: true })
+    await chats.idle()
+    expect((await ok(server, 'ask_status', { conversation_id: id })).edits).toEqual([
+      { ...changes[0], state: 'ok', where: 'chapter' },
+      { ...changes[1], state: 'ambiguous' }
+    ])
+    await ok(server, 'ask', { question: 'Otra vez', conversation_id: id, text: PASSAGE, chapter, chapter_truncated: true, mode: 'edit', confirmed: true })
+    await chats.idle()
+    expect((await ok(server, 'ask_status', { conversation_id: id })).edits[0]).toEqual({ ...changes[0], state: 'not_found' })
+  })
+
   it('a goal: kept with the conversation, sent in every prompt, changed or removed by a follow-up; ask_status gives the verdict out of the text', async () => {
     const verdict = { met: false, pending: ['Falta decir quién se ve afectado.'] }
     const { provider, chats, ctx } = await project([

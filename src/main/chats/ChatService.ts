@@ -557,6 +557,11 @@ export class ChatService {
   }
 
   /** Keeps a writing conversation's background, the most recently used ones only (each may hold a whole chapter). */
+  /** The background the editor sent with the conversation's latest question, while the app keeps it (in memory). */
+  writingContext(id: string): ChatWritingContext | undefined {
+    return this.contexts.get(id)
+  }
+
   private keepContext(id: string, context: ChatWritingContext): void {
     this.contexts.delete(id)
     this.contexts.set(id, context)
