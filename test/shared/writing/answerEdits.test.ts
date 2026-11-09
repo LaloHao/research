@@ -35,6 +35,12 @@ describe('extractEdits', () => {
     expect(extractEdits(answer, PASSAGE).edits?.[0].state).toBe('not_found')
   })
 
+  it('takes an Org link in a change for what it is, not a citation marker', () => {
+    const passage = 'Ver [[#cap-estado-del-arte]], no se encontró un método.'
+    const answer = '```edits\n' + JSON.stringify([{ find: 'Ver [[#cap-estado-del-arte]], no', replace: 'Según [[#cap-estado-del-arte]], no' }]) + '\n```'
+    expect(extractEdits(answer, passage).edits?.map((e) => e.state)).toEqual(['ok'])
+  })
+
   it('gives no edits without a block, none for an unreadable one, and leaves a block holding a citation marker', () => {
     expect(extractEdits('Solo comentarios.', PASSAGE)).toEqual({ text: 'Solo comentarios.', edits: null })
     expect(extractEdits('Antes.\n```edits\nnot json\n```', PASSAGE)).toEqual({ text: 'Antes.', edits: [] })

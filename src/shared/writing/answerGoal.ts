@@ -4,6 +4,8 @@
  * The editor shows it after each answer, so the author sees how far the passage is from the goal.
  */
 
+import { hasCitationMarker } from '../chatCitations'
+
 export const MAX_GOAL_PENDING = 10
 const MAX_PENDING_CHARS = 300
 
@@ -25,7 +27,7 @@ const GOAL_BLOCK = /(^|\n)[ \t]*```+[ \t]*goal[ \t]*\n([\s\S]*?)\n[ \t]*```+[ \t
 /** Takes the goal block out of the answer's Markdown. A block with a citation marker in it is left in the text. */
 export function extractGoal(markdown: string): AnswerWithGoal {
   const m = markdown.match(GOAL_BLOCK)
-  if (!m || m.index === undefined || m[2].includes('[[')) return { text: markdown, goal: null }
+  if (!m || m.index === undefined || hasCitationMarker(m[2])) return { text: markdown, goal: null }
   const text = (markdown.slice(0, m.index) + m[1] + markdown.slice(m.index + m[0].length)).replace(/\n{3,}/g, '\n\n').trimEnd()
   let parsed: unknown
   try {

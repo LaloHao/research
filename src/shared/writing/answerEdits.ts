@@ -5,6 +5,8 @@
  * chapter, a change outside the passage counts too if its `find` occurs exactly once in the chapter (`where: chapter`).
  */
 
+import { hasCitationMarker } from '../chatCitations'
+
 export const MAX_ANSWER_EDITS = 20
 export const MAX_EDIT_FIND = 1000
 
@@ -55,7 +57,7 @@ function checkEdit(raw: unknown, passage: string, chapter: string | undefined): 
  */
 export function extractEdits(markdown: string, passage: string, chapter?: string): AnswerWithEdits {
   const m = markdown.match(EDITS_BLOCK)
-  if (!m || m.index === undefined || m[2].includes('[[')) return { text: markdown, edits: null }
+  if (!m || m.index === undefined || hasCitationMarker(m[2])) return { text: markdown, edits: null }
   const text = (markdown.slice(0, m.index) + m[1] + markdown.slice(m.index + m[0].length)).replace(/\n{3,}/g, '\n\n').trimEnd()
   let parsed: unknown
   try {
