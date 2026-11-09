@@ -1,6 +1,7 @@
 import { METADATA_DATE, type MetadataEdit } from '../../shared/library'
 import type { Author, Paper, PaperKind } from '../../shared/schemas'
 import { bibFields } from '../../shared/writing/bibtex'
+import { normalizeIsbn } from '../../shared/isbn'
 import { isWebAddress } from './appBrowser'
 
 /** «Editar metadatos» as the form holds it: text fields, authors one per line. */
@@ -19,15 +20,17 @@ export interface MetadataForm {
   publisher: string
   chapter: string
   pages: string
+  /** Books and chapters. */
+  isbn: string
 }
 
 /** Which fields «Editar metadatos» shows for a kind of paper. */
-export function formFields(kind: PaperKind): { date: boolean; editors: boolean; publisher: boolean; chapter: boolean; pages: boolean } {
+export function formFields(kind: PaperKind): { date: boolean; editors: boolean; publisher: boolean; chapter: boolean; pages: boolean; isbn: boolean } {
   const chapter = kind === 'chapter'
-  return { date: kind === 'web', editors: chapter || kind === 'book', publisher: chapter, chapter, pages: chapter || kind === 'article' || kind === 'conference' }
+  return { date: kind === 'web', editors: chapter || kind === 'book', publisher: chapter, chapter, pages: chapter || kind === 'article' || kind === 'conference', isbn: chapter || kind === 'book' }
 }
 
-export type MetadataFormError = 'title' | 'year' | 'date' | 'url'
+export type MetadataFormError = 'title' | 'year' | 'date' | 'url' | 'isbn'
 
 /** One line per author, «Apellido, Nombre»; an author without a given name (an organization) is just its name. */
 export function authorsText(authors: Author[]): string {
@@ -72,7 +75,8 @@ export function formFromPaper(paper: Paper): MetadataForm {
     editors: (fields.get('editor') ?? '').split(/\s+and\s+/).filter(Boolean).join('\n'),
     publisher: fields.get('publisher') ?? '',
     chapter: fields.get('chapter') ?? '',
-    pages: (fields.get('pages') ?? '').replace(/-+/g, '-')
+    pages: (fields.get('pages') ?? '').replace(/-+/g, '-'),
+    isbn: paper.identifiers.isbn ?? ''
   }
 }
 
@@ -104,5 +108,8 @@ export function editFromForm(paper: Paper, form: MetadataForm): { edit: Metadata
     const value = form[field].replace(/\s+/g, ' ').trim()
     if (value !== before[field]) edit[field] = value || null
   }
+  const isbn = form.isbn.trim()
+  if (isbn && !normalizeIsbn(isbn)) return { error: 'isbn' }
+  if (isbn !== before.isbn) edit.isbn = isbn || null
   return { edit }
 }

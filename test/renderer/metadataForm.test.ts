@@ -36,7 +36,8 @@ describe('metadata form', () => {
       editors: '',
       publisher: '',
       chapter: '',
-      pages: ''
+      pages: '',
+      isbn: ''
     })
   })
 
@@ -51,7 +52,12 @@ describe('metadata form', () => {
     expect(editFromForm(chapter, { ...form, kind: 'book', editors: 'Beyer, Betsy', pages: '' })).toEqual({
       edit: { kind: 'book', editors: [{ family: 'Beyer', given: 'Betsy' }], pages: null }
     })
-    expect(formFields('chapter')).toEqual({ date: false, editors: true, publisher: true, chapter: true, pages: true })
+    expect(formFields('chapter')).toEqual({ date: false, editors: true, publisher: true, chapter: true, pages: true, isbn: true })
+    const book = samplePaper({ kind: 'book', identifiers: { isbn: '9781491929124' } })
+    expect(formFromPaper(book).isbn).toBe('9781491929124')
+    expect(editFromForm(book, { ...formFromPaper(book), isbn: '978-1-4919-2912-4' })).toEqual({ edit: { isbn: '978-1-4919-2912-4' } })
+    expect(editFromForm(book, { ...formFromPaper(book), isbn: '978-1-4919-2912-5' })).toEqual({ error: 'isbn' })
+    expect(editFromForm(book, { ...formFromPaper(book), isbn: '' })).toEqual({ edit: { isbn: null } })
     expect(formFields('book')).toMatchObject({ editors: true, publisher: false, pages: false })
     expect(formFields('web')).toMatchObject({ date: true, editors: false })
   })
