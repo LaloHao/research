@@ -25,7 +25,7 @@ export interface ApiContext {
   /** Budget, ledger and caps, for `operationPlan` and `runCappedOperation`. */
   capped: CappedDeps
   /** «Preguntar a Claude» from the editor: its conversations are the Chat view's. */
-  chats: Pick<ChatService, 'send' | 'stop' | 'open' | 'list' | 'progress' | 'outcome' | 'answering'>
+  chats: Pick<ChatService, 'send' | 'stop' | 'open' | 'list' | 'progress' | 'outcome' | 'answering' | 'writingContext'>
   /** Focuses the app's window and shows the paper at that page, the quote highlighted. */
   openInApp: (request: ApiOpenPaper) => void
   /** Focuses the app's window and opens the conversation in the Chat view. */

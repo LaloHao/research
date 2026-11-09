@@ -2394,7 +2394,8 @@ Changes Claude applied in mode edit do not count."
 (defun research--ask-apply-edits (edits allowed)
   "Apply Claude's EDITS (from `ask_status') to the passage, when ALLOWED.
 Each change whose `find' is, exactly once, inside the passage of this
-conversation's source buffer is replaced there and marked with the face
+conversation's source buffer (in the whole buffer, for a change of the
+chapter outside the passage: `where' chapter) is replaced there and marked with the face
 `research-ask-edit'; all of them are one undo step, so one `undo' takes
 them back.  Returns the edits, each with `applied' (a marker at the change)
 or `reason'."
@@ -2416,9 +2417,11 @@ or `reason'."
           (save-restriction
             (widen)
             (dolist (e edits)
-              (let ((find (alist-get 'find e))
-                    (from (if (equal scope "file") (point-min) (marker-position beg)))
-                    (to (if (equal scope "file") (point-max) (marker-position end))))
+              (let* ((find (alist-get 'find e))
+                     ;; A change of the chapter outside the passage (`where' chapter) is once in the whole file.
+                     (whole (or (equal scope "file") (equal (alist-get 'where e) "chapter")))
+                     (from (if whole (point-min) (marker-position beg)))
+                     (to (if whole (point-max) (marker-position end))))
                 (if (not (equal (alist-get 'state e) "ok"))
                     (push (cons (cons 'reason (alist-get 'state e)) e) out)
                   (goto-char from)

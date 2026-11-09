@@ -1,7 +1,8 @@
 /**
  * The changes Claude gives in an answer to a question that allowed editing the file (mode `edit`): one fenced block
  * ```edits holding a JSON array of {find, replace, why}. Each is checked against the passage it was given: `find` must
- * occur in it exactly once, so the editor can apply it to that same text and nowhere else.
+ * occur in it exactly once, so the editor can apply it to that same text and nowhere else. When Claude had the whole
+ * chapter, a change outside the passage counts too if its `find` occurs exactly once in the chapter (`where: chapter`).
  */
 
 export const MAX_ANSWER_EDITS = 20
@@ -14,6 +15,8 @@ export interface AnswerEdit {
   replace: string
   why: string
   state: AnswerEditState
+  /** Only for a change outside the passage: it is in the chapter, once. */
+  where?: 'chapter'
 }
 
 export interface AnswerWithEdits {
@@ -31,21 +34,26 @@ const occurrences = (haystack: string, needle: string): number => {
   return count
 }
 
-function checkEdit(raw: unknown, passage: string): AnswerEdit {
+function checkEdit(raw: unknown, passage: string, chapter: string | undefined): AnswerEdit {
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
   const find = typeof o.find === 'string' ? o.find : ''
   const replace = typeof o.replace === 'string' ? o.replace : ''
   const why = typeof o.why === 'string' ? o.why.trim() : ''
   if (!find || find.length > MAX_EDIT_FIND || typeof o.replace !== 'string' || find === replace) return { find, replace, why, state: 'invalid' }
   const n = occurrences(passage, find)
+  if (n === 0 && chapter) {
+    const m = occurrences(chapter, find)
+    return m === 1 ? { find, replace, why, state: 'ok', where: 'chapter' } : { find, replace, why, state: m === 0 ? 'not_found' : 'ambiguous' }
+  }
   return { find, replace, why, state: n === 1 ? 'ok' : n === 0 ? 'not_found' : 'ambiguous' }
 }
 
 /**
- * Takes the edits block out of the answer's Markdown and checks its changes against `passage`. A block with a citation
- * marker in it is left in the text (the citations' order must not change); an unreadable block gives no edits.
+ * Takes the edits block out of the answer's Markdown and checks its changes against `passage`, and those not in it
+ * against `chapter` (the whole file Claude was sent; never a window of it). A block with a citation marker in it is
+ * left in the text (the citations' order must not change); an unreadable block gives no edits.
  */
-export function extractEdits(markdown: string, passage: string): AnswerWithEdits {
+export function extractEdits(markdown: string, passage: string, chapter?: string): AnswerWithEdits {
   const m = markdown.match(EDITS_BLOCK)
   if (!m || m.index === undefined || m[2].includes('[[')) return { text: markdown, edits: null }
   const text = (markdown.slice(0, m.index) + m[1] + markdown.slice(m.index + m[0].length)).replace(/\n{3,}/g, '\n\n').trimEnd()
@@ -56,5 +64,5 @@ export function extractEdits(markdown: string, passage: string): AnswerWithEdits
     return { text, edits: [] }
   }
   const list = Array.isArray(parsed) ? parsed.slice(0, MAX_ANSWER_EDITS) : []
-  return { text, edits: list.map((e) => checkEdit(e, passage)) }
+  return { text, edits: list.map((e) => checkEdit(e, passage, chapter)) }
 }
