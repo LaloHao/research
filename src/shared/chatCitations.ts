@@ -5,6 +5,14 @@
  */
 export const CITATION_MARKER = /\[\[([a-z][a-z0-9]*)(?:\|p\. ?([1-9][0-9]{0,4}))?\|"((?:(?!\[\[)[^\n]){1,1000}?)"\]\]/g
 
+/**
+ * Whether text holds something like a citation marker: `[[key|…`, or `[[key, …` (a marker the model got wrong). An Org
+ * link such as `[[#sec-intro]]` or `[[file:x.org][x]]` is not one.
+ */
+export function hasCitationMarker(text: string): boolean {
+  return /\[\[[a-z][a-z0-9]*\s*[|,]/.test(text)
+}
+
 export interface CitationMarker {
   /** Offsets of the whole marker in the Markdown. */
   start: number
